@@ -10,12 +10,24 @@ const CreateDataset = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   
-  const onSubmit = async (data: Omit<Dataset, "id" | "createdAt" | "imageCount" | "annotationCount">) => {
+  const onSubmit = async (
+    data: Omit<Dataset, "id" | "createdAt" | "imageCount" | "annotationCount" | "thumbnailUrl">, 
+    logoFile?: File
+  ) => {
     setLoading(true);
     
     try {
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // In a real app, you would upload the logo file to storage and get back a URL
+      let thumbnailUrl: string | undefined = undefined;
+      
+      if (logoFile) {
+        // Simulate file upload and getting back a URL
+        // In a real application, you would upload to storage and get back the URL
+        thumbnailUrl = URL.createObjectURL(logoFile);
+      }
       
       // Create a mock dataset with generated ID
       const newDataset: Dataset = {
@@ -25,7 +37,7 @@ const CreateDataset = () => {
         createdAt: new Date().toISOString(),
         imageCount: 0,
         annotationCount: 0,
-        thumbnailUrl: data.thumbnailUrl
+        thumbnailUrl
       };
       
       // Show success message
