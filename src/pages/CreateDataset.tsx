@@ -10,8 +10,14 @@ const CreateDataset = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   
+  // Updated to match DatasetForm's data structure
   const onSubmit = async (
-    data: Omit<Dataset, "id" | "createdAt" | "imageCount" | "annotationCount" | "thumbnailUrl">, 
+    data: {
+      name: string;
+      description: string;
+      type?: "classification" | "segmentation" | "panomatic";
+      tags?: string[];
+    }, 
     logoFile?: File
   ) => {
     setLoading(true);
@@ -25,12 +31,8 @@ const CreateDataset = () => {
       
       if (logoFile) {
         // Simulate file upload and getting back a URL
-        // In a real application, you would upload to storage and get back the URL
         thumbnailUrl = URL.createObjectURL(logoFile);
       }
-      
-      // Parse tags from the comma-separated string
-      const tags = data.tags ? data.tags.split(',') : [];
       
       // Create a mock dataset with generated ID
       const newDataset: Dataset = {
@@ -38,7 +40,7 @@ const CreateDataset = () => {
         name: data.name,
         description: data.description,
         type: data.type,
-        tags,
+        tags: data.tags,
         createdAt: new Date().toISOString(),
         imageCount: 0,
         annotationCount: 0,
