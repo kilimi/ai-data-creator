@@ -16,11 +16,16 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Loader2, Image as ImageIcon, UploadCloud, X } from "lucide-react";
+import { Loader2, Image as ImageIcon, UploadCloud, X, Tag, Plus } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 const datasetSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters" }).max(50, { message: "Name cannot exceed 50 characters" }),
   description: z.string().max(500, { message: "Description cannot exceed 500 characters" }).optional(),
+  type: z.enum(["classification", "segmentation", "panomatic"], {
+    required_error: "Please select a dataset type",
+  }),
+  tags: z.string().optional(),
 });
 
 type DatasetFormValues = z.infer<typeof datasetSchema>;
@@ -34,13 +39,18 @@ interface DatasetFormProps {
 export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetFormProps) {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | undefined>(initialData?.thumbnailUrl);
+  const [tags, setTags] = useState<string[]>(initialData?.tags || []);
+  const [tagInput, setTagInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tagInputRef = useRef<HTMLInputElement>(null);
   
   const form = useForm<DatasetFormValues>({
     resolver: zodResolver(datasetSchema),
     defaultValues: {
       name: initialData?.name || "",
       description: initialData?.description || "",
+      type: initialData?.type || "classification",
+      tags: "",
     },
   });
   
@@ -79,8 +89,34 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
     }
   };
   
+  const addTag = () => {
+    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
+      setTags([...tags, tagInput.trim()]);
+      setTagInput("");
+      if (tagInputRef.current) {
+        tagInputRef.current.focus();
+      }
+    }
+  };
+  
+  const removeTag = (tagToRemove: string) => {
+    setTags(tags.filter(tag => tag !== tagToRemove));
+  };
+  
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addTag();
+    }
+  };
+  
   const handleSubmit = (data: DatasetFormValues) => {
-    onSubmit(data, logoFile || undefined);
+    // Include tags in the submission
+    const formData = {
+      ...data,
+      tags: tags.join(","),
+    };
+    onSubmit(formData, logoFile || undefined);
   };
   
   return (
@@ -98,6 +134,47 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
               </FormControl>
               <FormDescription>
                 A short, descriptive name for your dataset
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        
+        {/* Dataset type field */}
+        <FormField
+          control={form.control}
+          name="type"
+          render={({ field }) => (
+            <FormItem className="space-y-3">
+              <FormLabel>Dataset Type</FormLabel>
+              <FormControl>
+                <RadioGroup
+                  onValueChange={field.onChange}
+                  defaultValue={field.value}
+                  className="flex flex-col space-y-1"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="classification" id="classification" />
+                    <label htmlFor="classification" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                      Classification
+                    </label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="segmentation" id="segmentation" />
+                    <label htmlFor="segmentation" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                      Segmentation
+                    </label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="panomatic" id="panomatic" />
+                    <label htmlFor="panomatic" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                      Panomatic
+                    </label>
+                  </div>
+                </RadioGroup>
+              </FormControl>
+              <FormDescription>
+                Select the type of dataset you want to create
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -125,6 +202,59 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
             </FormItem>
           )}
         />
+        
+        {/* Tags input */}
+        <div className="space-y-2">
+          <FormLabel>Tags</FormLabel>
+          <FormDescription>
+            Add tags to help organize and search for this dataset
+          </FormDescription>
+          
+          <div className="flex items-center space-x-2">
+            <div className="relative flex-1">
+              <Tag className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+              <Input
+                ref={tagInputRef}
+                placeholder="Add tags..."
+                className="pl-9"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+              />
+            </div>
+            <Button 
+              type="button" 
+              size="sm"
+              variant="outline" 
+              onClick={addTag}
+              disabled={!tagInput.trim()}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Add
+            </Button>
+          </div>
+          
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              {tags.map((tag, index) => (
+                <div
+                  key={index}
+                  className="flex items-center bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-sm"
+                >
+                  <span>{tag}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-4 w-4 p-0 ml-2 text-secondary-foreground"
+                    onClick={() => removeTag(tag)}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         
         {/* Logo upload section */}
         <div className="space-y-2">
@@ -161,6 +291,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
                 size="icon" 
                 onClick={handleRemoveLogo}
                 className="absolute top-2 right-2 h-8 w-8"
+                type="button"
               >
                 <X className="h-4 w-4" />
               </Button>

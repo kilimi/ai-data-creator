@@ -3,6 +3,8 @@ export interface Dataset {
   id: string;
   name: string;
   description: string;
+  type?: "classification" | "segmentation" | "panomatic";
+  tags?: string[];
   createdAt: string;
   imageCount: number;
   annotationCount: number;

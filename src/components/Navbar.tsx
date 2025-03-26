@@ -2,7 +2,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Database, FolderPlus, Home, Settings, Image, Layers } from "lucide-react";
+import { Database, FolderPlus, Home, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export function Navbar() {
@@ -30,16 +30,6 @@ export function Navbar() {
       path: "/datasets", 
       icon: <Database className="w-4 h-4 mr-2" /> 
     },
-    { 
-      name: "Images", 
-      path: "/images", 
-      icon: <Image className="w-4 h-4 mr-2" /> 
-    },
-    { 
-      name: "Annotations", 
-      path: "/annotations", 
-      icon: <Layers className="w-4 h-4 mr-2" /> 
-    },
   ];
 
   return (
@@ -58,7 +48,7 @@ export function Navbar() {
             className="mr-8 flex items-center gap-2 text-xl font-semibold tracking-tight"
           >
             <div className="rounded-md bg-primary p-1 text-primary-foreground">
-              <Layers className="h-5 w-5" />
+              <Database className="h-5 w-5" />
             </div>
             <span>DataVision</span>
           </Link>

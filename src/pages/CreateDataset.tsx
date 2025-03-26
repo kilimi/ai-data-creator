@@ -29,11 +29,16 @@ const CreateDataset = () => {
         thumbnailUrl = URL.createObjectURL(logoFile);
       }
       
+      // Parse tags from the comma-separated string
+      const tags = data.tags ? data.tags.split(',') : [];
+      
       // Create a mock dataset with generated ID
       const newDataset: Dataset = {
         id: Math.random().toString(36).substring(2, 11),
         name: data.name,
         description: data.description,
+        type: data.type,
+        tags,
         createdAt: new Date().toISOString(),
         imageCount: 0,
         annotationCount: 0,
