@@ -8,6 +8,7 @@ import Index from "./pages/Index";
 import Datasets from "./pages/Datasets";
 import DatasetDetail from "./pages/DatasetDetail";
 import NotFound from "./pages/NotFound";
+import CreateDataset from "./pages/CreateDataset";
 
 const queryClient = new QueryClient();
 
@@ -20,6 +21,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/datasets" element={<Datasets />} />
+          <Route path="/datasets/new" element={<CreateDataset />} />
           <Route path="/datasets/:id" element={<DatasetDetail />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
