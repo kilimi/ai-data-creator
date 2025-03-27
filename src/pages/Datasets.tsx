@@ -4,7 +4,7 @@ import { Navbar } from "@/components/Navbar";
 import { useState, useEffect } from "react";
 import { Dataset } from "@/types";
 import { DatasetCard, DatasetCardSkeleton } from "@/components/DatasetCard";
-import { FolderPlus, Search, SlidersHorizontal } from "lucide-react";
+import { FolderPlus, Search, SlidersHorizontal, Tag } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,13 +14,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 
-// Extended mock data for the datasets page
+// Extended mock data for the datasets page with types and tags
 const mockDatasets: Dataset[] = [
   {
     id: "1",
     name: "Vehicle Detection",
     description: "Urban traffic dataset with annotations for cars, trucks, and pedestrians",
+    type: "classification",
+    tags: ["traffic", "vehicles", "urban"],
     createdAt: "2023-06-15T10:30:00Z",
     imageCount: 1250,
     annotationCount: 4932,
@@ -30,6 +33,8 @@ const mockDatasets: Dataset[] = [
     id: "2",
     name: "Retail Products",
     description: "Product recognition dataset with shelf items and packaging",
+    type: "segmentation",
+    tags: ["retail", "products", "packaging"],
     createdAt: "2023-09-22T14:15:00Z",
     imageCount: 873,
     annotationCount: 3218,
@@ -39,6 +44,8 @@ const mockDatasets: Dataset[] = [
     id: "3",
     name: "Medical Imagery",
     description: "X-ray and MRI scans with annotated features for disease detection",
+    type: "panomatic",
+    tags: ["medical", "xray", "healthcare"],
     createdAt: "2023-11-03T09:45:00Z",
     imageCount: 615,
     annotationCount: 1845,
@@ -48,6 +55,8 @@ const mockDatasets: Dataset[] = [
     id: "4",
     name: "Aerial Photography",
     description: "Drone imagery for geographic feature detection and mapping",
+    type: "segmentation",
+    tags: ["aerial", "drone", "geography"],
     createdAt: "2023-08-17T16:20:00Z",
     imageCount: 527,
     annotationCount: 1432,
@@ -57,6 +66,8 @@ const mockDatasets: Dataset[] = [
     id: "5",
     name: "Wildlife Monitoring",
     description: "Camera trap imagery of wildlife with species annotations",
+    type: "classification",
+    tags: ["wildlife", "nature", "animals"],
     createdAt: "2023-10-05T11:40:00Z",
     imageCount: 942,
     annotationCount: 2854,
@@ -66,6 +77,8 @@ const mockDatasets: Dataset[] = [
     id: "6",
     name: "Industrial Defects",
     description: "Manufacturing quality control with annotated defect regions",
+    type: "panomatic",
+    tags: ["industrial", "manufacturing", "quality"],
     createdAt: "2023-07-29T08:50:00Z",
     imageCount: 318,
     annotationCount: 563,
@@ -77,6 +90,7 @@ const Datasets = () => {
   const [loading, setLoading] = useState(true);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   
   useEffect(() => {
@@ -90,16 +104,31 @@ const Datasets = () => {
     fetchData();
   }, []);
   
+  // Extract all unique tags from datasets
+  const allTags = Array.from(
+    new Set(
+      datasets.flatMap(dataset => dataset.tags || [])
+    )
+  ).sort();
+  
   const filteredAndSortedDatasets = () => {
     let result = [...datasets];
     
-    // Filter by search query
+    // Filter by search query (name, description or tags)
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(
         dataset => 
           dataset.name.toLowerCase().includes(query) || 
-          dataset.description.toLowerCase().includes(query)
+          dataset.description.toLowerCase().includes(query) ||
+          (dataset.tags && dataset.tags.some(tag => tag.toLowerCase().includes(query)))
+      );
+    }
+    
+    // Filter by selected tag
+    if (selectedTag) {
+      result = result.filter(
+        dataset => dataset.tags && dataset.tags.includes(selectedTag)
       );
     }
     
@@ -139,11 +168,11 @@ const Datasets = () => {
           </Button>
         </div>
         
-        <div className="flex flex-col sm:flex-row gap-4 mb-8 animate-fade-in delay-150">
+        <div className="flex flex-col sm:flex-row gap-4 mb-4 animate-fade-in delay-150">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
             <Input
-              placeholder="Search datasets..."
+              placeholder="Search datasets by name, description or tags..."
               className="pl-9"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -167,6 +196,32 @@ const Datasets = () => {
           </div>
         </div>
         
+        {/* Tag filtering */}
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-6 animate-fade-in delay-200">
+            <Button
+              variant={selectedTag === null ? "default" : "outline"}
+              size="sm"
+              onClick={() => setSelectedTag(null)}
+              className="gap-1"
+            >
+              All
+            </Button>
+            {allTags.map(tag => (
+              <Button
+                key={tag}
+                variant={selectedTag === tag ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedTag(tag)}
+                className="gap-1"
+              >
+                <Tag className="w-3 h-3" />
+                {tag}
+              </Button>
+            ))}
+          </div>
+        )}
+        
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array(6).fill(0).map((_, i) => (
@@ -183,8 +238,8 @@ const Datasets = () => {
           <div className="text-center py-16 animate-fade-in">
             <h3 className="text-lg font-medium mb-2">No datasets found</h3>
             <p className="text-muted-foreground mb-6">
-              {searchQuery 
-                ? `No datasets matching "${searchQuery}"`
+              {searchQuery || selectedTag
+                ? `No datasets matching your search criteria`
                 : "You haven't created any datasets yet."
               }
             </p>

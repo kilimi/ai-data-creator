@@ -4,9 +4,10 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +22,20 @@ interface DatasetCardProps {
 
 export function DatasetCard({ dataset, className }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
+  
+  // Function to get dataset type badge color
+  const getTypeColor = (type?: string) => {
+    switch (type) {
+      case "classification":
+        return "bg-blue-500";
+      case "segmentation":
+        return "bg-green-500";
+      case "panomatic":
+        return "bg-purple-500";
+      default:
+        return "bg-gray-500";
+    }
+  };
   
   return (
     <Card className={cn("overflow-hidden hover-card", className)}>
@@ -54,6 +69,13 @@ export function DatasetCard({ dataset, className }: DatasetCardProps) {
               <div className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground">
                 {new Date(dataset.createdAt).toLocaleDateString()}
               </div>
+              
+              {/* Dataset type badge */}
+              {dataset.type && (
+                <div className={`rounded-md px-1.5 py-0.5 text-xs font-medium text-white ${getTypeColor(dataset.type)}`}>
+                  {dataset.type.charAt(0).toUpperCase() + dataset.type.slice(1)}
+                </div>
+              )}
             </div>
             
             <DropdownMenu>
@@ -84,6 +106,18 @@ export function DatasetCard({ dataset, className }: DatasetCardProps) {
           <p className="text-sm text-muted-foreground line-clamp-2">
             {dataset.description || "No description provided"}
           </p>
+          
+          {/* Display tags if available */}
+          {dataset.tags && dataset.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-2">
+              {dataset.tags.map(tag => (
+                <Badge key={tag} variant="secondary" className="text-xs">
+                  <Tag className="h-3 w-3 mr-1" />
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
       </CardContent>
       

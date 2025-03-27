@@ -10,11 +10,11 @@ const CreateDataset = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   
-  // Updated to match DatasetForm's data structure
+  // Updated to match DatasetForm's data structure correctly
   const onSubmit = async (
     data: {
-      name: string;
-      description: string;
+      name?: string; 
+      description?: string;
       type?: "classification" | "segmentation" | "panomatic";
       tags?: string[];
     }, 
@@ -23,6 +23,10 @@ const CreateDataset = () => {
     setLoading(true);
     
     try {
+      // Ensure required fields have values
+      if (!data.name) throw new Error("Name is required");
+      if (!data.description) throw new Error("Description is required");
+      
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
       
