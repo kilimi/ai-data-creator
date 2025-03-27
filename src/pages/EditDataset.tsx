@@ -19,7 +19,7 @@ import {
   Save,
   X,
   Pencil,
-  UploadCloud
+  Tag
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImageLoad } from "@/utils/animations";
@@ -40,6 +40,12 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import {
+  Badge,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -60,6 +66,14 @@ type AnnotationFile = {
   fileSize: number;
   uploadedAt: string;
   classStats?: { className: string; count: number; color: string }[];
+  samples?: AnnotationSample[];
+};
+
+type AnnotationSample = {
+  imageId: string;
+  bbox: [number, number, number, number]; // [x, y, width, height]
+  className: string;
+  confidence?: number;
 };
 
 const EditDataset = () => {
@@ -79,6 +93,7 @@ const EditDataset = () => {
   const [selectedAnnotation, setSelectedAnnotation] = useState<AnnotationFile | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newFilename, setNewFilename] = useState("");
+  const [showAnnotationsOnImage, setShowAnnotationsOnImage] = useState<AnnotationSample[]>([]);
 
   useEffect(() => {
     // Simulate API call to fetch dataset
@@ -137,7 +152,7 @@ const EditDataset = () => {
     try {
       // Process each annotation file
       for (const file of files) {
-        const stats = await processCOCOAnnotations(file);
+        const { stats, samples } = await processCOCOAnnotations(file);
         const annotationCount = stats.reduce((acc, stat) => acc + stat.count, 0);
         
         const newAnnotation = {
@@ -146,6 +161,7 @@ const EditDataset = () => {
           fileSize: file.size,
           uploadedAt: new Date().toISOString(),
           classStats: stats,
+          samples: samples,
         };
         
         setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
@@ -245,6 +261,27 @@ const EditDataset = () => {
     });
   };
   
+  // Handle showing annotations on image
+  const handleShowAnnotationsOnImage = (annotation: AnnotationFile) => {
+    // Here we would normally fetch annotation samples from the API
+    // We'll use the mock samples stored with the annotation for demonstration
+    if (annotation.samples && annotation.samples.length > 0) {
+      // Only show the first 5 samples
+      setShowAnnotationsOnImage(annotation.samples.slice(0, 5));
+      setActiveTab("images"); // Switch to images tab to show annotations
+      toast({
+        title: "Annotations loaded",
+        description: `Showing annotations from ${annotation.fileName}`,
+      });
+    } else {
+      toast({
+        variant: "destructive",
+        title: "No annotation samples",
+        description: "This file doesn't contain any annotation samples to display.",
+      });
+    }
+  };
+  
   // Handle saving dataset
   const handleSave = async () => {
     setSaving(true);
@@ -306,7 +343,7 @@ const EditDataset = () => {
     <div className="min-h-screen pb-20">
       <Navbar />
       
-      <div className="bg-muted py-4 border-b">
+      <div className="bg-muted py-4 border-b mt-16">
         <div className="container max-w-7xl">
           <div className="flex items-center">
             <Button 
@@ -378,12 +415,22 @@ const EditDataset = () => {
                               onClick={() => setSelectedImage(image)}
                               className="cursor-pointer relative group rounded-md overflow-hidden border bg-card hover:border-primary/50 transition-colors"
                             >
-                              <div className="aspect-square">
+                              <div className="aspect-square relative">
                                 <img 
                                   src={image.thumbnailUrl} 
                                   alt={image.fileName} 
                                   className="w-full h-full object-cover"
                                 />
+                                {/* Show badges for annotations */}
+                                {showAnnotationsOnImage.length > 0 && 
+                                 showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
+                                  <div className="absolute top-2 right-2">
+                                    <Badge variant="secondary" className="bg-primary/70 backdrop-blur-sm">
+                                      <Tag className="h-3 w-3 mr-1" />
+                                      {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
+                                    </Badge>
+                                  </div>
+                                )}
                               </div>
                               <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                 <Button 
@@ -442,7 +489,7 @@ const EditDataset = () => {
                                 <TableHead>Filename</TableHead>
                                 <TableHead>Size</TableHead>
                                 <TableHead>Date</TableHead>
-                                <TableHead className="w-[100px]">Actions</TableHead>
+                                <TableHead className="w-[130px]">Actions</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -463,6 +510,18 @@ const EditDataset = () => {
                                   </TableCell>
                                   <TableCell>
                                     <div className="flex items-center gap-1">
+                                      <Button 
+                                        variant="outline" 
+                                        size="icon" 
+                                        className="h-8 w-8"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleShowAnnotationsOnImage(annotation);
+                                        }}
+                                        title="Show annotations on images"
+                                      >
+                                        <Tag className="h-4 w-4" />
+                                      </Button>
                                       <Button 
                                         variant="ghost" 
                                         size="icon" 
@@ -533,6 +592,38 @@ const EditDataset = () => {
                 className="max-w-full max-h-full object-contain"
               />
             )}
+            
+            {/* Show annotation boxes for this image */}
+            {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).map((anno, index) => (
+              <div 
+                key={`anno-${index}`}
+                className="absolute border-2 border-primary"
+                style={{
+                  left: `${anno.bbox[0]}%`,
+                  top: `${anno.bbox[1]}%`,
+                  width: `${anno.bbox[2]}%`,
+                  height: `${anno.bbox[3]}%`
+                }}
+              >
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Badge 
+                      className="absolute -top-6 -left-1 cursor-pointer bg-primary text-primary-foreground"
+                    >
+                      {anno.className}
+                    </Badge>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-2">
+                    <div className="grid gap-1 text-xs">
+                      <div className="font-semibold">{anno.className}</div>
+                      {anno.confidence && (
+                        <div>Confidence: {Math.round(anno.confidence * 100)}%</div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            ))}
           </div>
           
           <DialogFooter>
@@ -567,6 +658,32 @@ const EditDataset = () => {
           {selectedAnnotation?.classStats && selectedAnnotation.classStats.length > 0 ? (
             <div className="max-h-[60vh] overflow-y-auto">
               <ClassStatistics statistics={selectedAnnotation.classStats} />
+              
+              {/* Sample Annotations Section */}
+              {selectedAnnotation.samples && selectedAnnotation.samples.length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-lg font-medium mb-2">Sample Annotations</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Showing {Math.min(5, selectedAnnotation.samples.length)} of {selectedAnnotation.samples.length} annotations
+                  </p>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {selectedAnnotation.samples.slice(0, 5).map((sample, idx) => (
+                      <div key={idx} className="rounded-md border p-2 bg-muted/30">
+                        <div className="font-medium">{sample.className}</div>
+                        <div className="text-xs text-muted-foreground">
+                          Image ID: {sample.imageId.substring(0, 6)}...
+                        </div>
+                        {sample.confidence && (
+                          <div className="text-xs text-muted-foreground">
+                            Confidence: {Math.round(sample.confidence * 100)}%
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="py-8 text-center">
@@ -587,6 +704,18 @@ const EditDataset = () => {
               >
                 <Pencil className="mr-2 h-4 w-4" />
                 Rename
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (selectedAnnotation) {
+                    handleShowAnnotationsOnImage(selectedAnnotation);
+                    setSelectedAnnotation(null); // Close this dialog
+                  }
+                }}
+              >
+                <Tag className="mr-2 h-4 w-4" />
+                Show on Images
               </Button>
             </div>
             <Button

@@ -1,10 +1,13 @@
 
 /**
- * Process COCO annotation file and extract class statistics
+ * Process COCO annotation file and extract class statistics and samples
  * @param file COCO format annotation JSON file
- * @returns Statistics about classes in the dataset
+ * @returns Statistics about classes in the dataset and sample annotations
  */
-export const processCOCOAnnotations = async (file: File): Promise<{ className: string; count: number; color: string }[]> => {
+export const processCOCOAnnotations = async (file: File): Promise<{ 
+  stats: { className: string; count: number; color: string }[];
+  samples: { imageId: string; bbox: [number, number, number, number]; className: string; confidence?: number }[];
+}> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     
@@ -58,7 +61,37 @@ export const processCOCOAnnotations = async (file: File): Promise<{ className: s
         // Sort by count (descending)
         statistics.sort((a, b) => b.count - a.count);
         
-        resolve(statistics);
+        // Extract sample annotations for visualization
+        const samples: { imageId: string; bbox: [number, number, number, number]; className: string; confidence?: number }[] = [];
+        
+        data.annotations.slice(0, 50).forEach((annotation: { 
+          image_id: string; 
+          category_id: number; 
+          bbox: number[]; 
+          score?: number 
+        }) => {
+          const category = categoryMap.get(annotation.category_id);
+          
+          if (category) {
+            // Convert from absolute to percentage coordinates for easier rendering
+            // Assuming the image is 100x100%
+            const bbox: [number, number, number, number] = [
+              annotation.bbox[0], 
+              annotation.bbox[1], 
+              annotation.bbox[2], 
+              annotation.bbox[3]
+            ];
+            
+            samples.push({
+              imageId: annotation.image_id.toString(),
+              bbox,
+              className: category.name,
+              confidence: annotation.score
+            });
+          }
+        });
+        
+        resolve({ stats: statistics, samples });
       } catch (error) {
         console.error("Error processing COCO annotations:", error);
         reject(error);
