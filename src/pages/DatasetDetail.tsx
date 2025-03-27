@@ -1,4 +1,3 @@
-
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Link, useParams } from "react-router-dom";
@@ -20,7 +19,6 @@ import {
 import { cn } from "@/lib/utils";
 import { useImageLoad } from "@/utils/animations";
 
-// Mock data for a single dataset
 const getMockDataset = (id: string): Dataset => ({
   id,
   name: "Vehicle Detection",
@@ -31,7 +29,6 @@ const getMockDataset = (id: string): Dataset => ({
   thumbnailUrl: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
 });
 
-// Mock statistics data
 const getMockStats = (): DatasetStats => ({
   imageCount: 1250,
   annotationCount: 4932,
@@ -47,7 +44,6 @@ const getMockStats = (): DatasetStats => ({
   ],
 });
 
-// Mock images data
 const getMockImages = (): Image[] => [
   {
     id: "1",
@@ -133,7 +129,6 @@ const DatasetDetail = () => {
   const { toast } = useToast();
   
   useEffect(() => {
-    // Simulate API calls
     const fetchData = async () => {
       await new Promise(resolve => setTimeout(resolve, 1200));
       if (id) {
@@ -153,7 +148,6 @@ const DatasetDetail = () => {
       description: `Uploading ${files.length} images...`,
     });
     
-    // Simulate upload delay
     setTimeout(() => {
       toast({
         title: "Upload complete",
@@ -168,7 +162,6 @@ const DatasetDetail = () => {
       description: `Processing ${files.length} COCO annotation files...`,
     });
     
-    // Simulate processing delay
     setTimeout(() => {
       toast({
         title: "Annotations added",
@@ -246,9 +239,16 @@ const DatasetDetail = () => {
             </div>
             
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" className="flex items-center gap-1.5">
-                <Pencil className="h-3.5 w-3.5" />
-                Edit
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="flex items-center gap-1.5"
+                asChild
+              >
+                <Link to={`/datasets/${dataset.id}/edit`}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Link>
               </Button>
               <Button variant="outline" size="sm" className="flex items-center gap-1.5 text-destructive border-destructive/20 hover:bg-destructive/10">
                 <Trash2 className="h-3.5 w-3.5" />
@@ -285,10 +285,12 @@ const DatasetDetail = () => {
                   variant="outline" 
                   size="sm" 
                   className="flex items-center gap-1.5"
-                  onClick={() => setActiveTab("upload")}
+                  asChild
                 >
-                  <UploadCloud className="h-3.5 w-3.5" />
-                  Upload Images
+                  <Link to={`/datasets/${dataset.id}/edit`}>
+                    <UploadCloud className="h-3.5 w-3.5" />
+                    Upload Images
+                  </Link>
                 </Button>
               </div>
               
@@ -306,10 +308,12 @@ const DatasetDetail = () => {
                   variant="outline" 
                   size="sm" 
                   className="flex items-center gap-1.5"
-                  onClick={() => setActiveTab("upload")}
+                  asChild
                 >
-                  <Upload className="h-3.5 w-3.5" />
-                  Upload Annotations
+                  <Link to={`/datasets/${dataset.id}/edit`}>
+                    <Upload className="h-3.5 w-3.5" />
+                    Upload Annotations
+                  </Link>
                 </Button>
               </div>
               
@@ -325,28 +329,17 @@ const DatasetDetail = () => {
             </TabsContent>
             
             <TabsContent value="upload" className="mt-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div>
-                  <h2 className="text-xl font-semibold mb-4">Upload Images</h2>
-                  <UploadCard
-                    title="Add Images to Dataset"
-                    description="Drag and drop images or click to browse"
-                    accept="image/jpeg,image/png,image/webp"
-                    onFilesSelected={handleImageUpload}
-                    type="images"
-                  />
-                </div>
-                
-                <div>
-                  <h2 className="text-xl font-semibold mb-4">Upload Annotations</h2>
-                  <UploadCard
-                    title="Add COCO Annotations"
-                    description="Upload JSON files in COCO format"
-                    accept=".json"
-                    onFilesSelected={handleAnnotationUpload}
-                    type="annotations"
-                  />
-                </div>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <UploadCloud className="h-16 w-16 text-muted-foreground mb-4" />
+                <h3 className="text-xl font-semibold mb-2">Upload Content</h3>
+                <p className="text-muted-foreground max-w-md mb-6">
+                  Go to the edit page to upload images and annotations for this dataset
+                </p>
+                <Button asChild>
+                  <Link to={`/datasets/${dataset.id}/edit`}>
+                    Edit Dataset
+                  </Link>
+                </Button>
               </div>
             </TabsContent>
           </Tabs>
