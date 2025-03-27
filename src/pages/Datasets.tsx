@@ -1,10 +1,9 @@
-
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { useState, useEffect } from "react";
 import { Dataset } from "@/types";
 import { DatasetCard, DatasetCardSkeleton } from "@/components/DatasetCard";
-import { FolderPlus, Search, SlidersHorizontal, Tag } from "lucide-react";
+import { FolderPlus, Search, Settings, SlidersHorizontal, Tag } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,9 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 
-// Extended mock data for the datasets page with types and tags
 const mockDatasets: Dataset[] = [
   {
     id: "1",
@@ -94,7 +91,6 @@ const Datasets = () => {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   
   useEffect(() => {
-    // Simulate API call
     const fetchData = async () => {
       await new Promise(resolve => setTimeout(resolve, 1200));
       setDatasets(mockDatasets);
@@ -104,7 +100,6 @@ const Datasets = () => {
     fetchData();
   }, []);
   
-  // Extract all unique tags from datasets
   const allTags = Array.from(
     new Set(
       datasets.flatMap(dataset => dataset.tags || [])
@@ -114,7 +109,6 @@ const Datasets = () => {
   const filteredAndSortedDatasets = () => {
     let result = [...datasets];
     
-    // Filter by search query (name, description or tags)
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(
@@ -125,14 +119,12 @@ const Datasets = () => {
       );
     }
     
-    // Filter by selected tag
     if (selectedTag) {
       result = result.filter(
         dataset => dataset.tags && dataset.tags.includes(selectedTag)
       );
     }
     
-    // Sort
     switch (sortOrder) {
       case "newest":
         return result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -160,12 +152,19 @@ const Datasets = () => {
             <p className="text-muted-foreground">Create and manage your training datasets</p>
           </div>
           
-          <Button asChild>
-            <Link to="/datasets/new" className="flex items-center gap-2">
-              <FolderPlus className="w-4 h-4" />
-              New Dataset
-            </Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="icon" className="h-10 w-10">
+              <Link to="/api-settings" title="API Settings">
+                <Settings className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link to="/datasets/new" className="flex items-center gap-2">
+                <FolderPlus className="w-4 h-4" />
+                New Dataset
+              </Link>
+            </Button>
+          </div>
         </div>
         
         <div className="flex flex-col sm:flex-row gap-4 mb-4 animate-fade-in delay-150">
@@ -196,7 +195,6 @@ const Datasets = () => {
           </div>
         </div>
         
-        {/* Tag filtering */}
         {allTags.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-6 animate-fade-in delay-200">
             <Button
