@@ -1,84 +1,85 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 210 40% 8%;
+    --background: 210 40% 4%;
     --foreground: 210 20% 98%;
 
-    --card: 210 40% 10%;
+    --card: 210 40% 8%;
     --card-foreground: 210 20% 98%;
 
-    --popover: 210 40% 10%;
+    --popover: 210 40% 8%;
     --popover-foreground: 210 20% 98%;
 
-    --primary: 210 90% 50%;
+    --primary: 210 90% 60%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 210 30% 15%;
     --secondary-foreground: 210 20% 98%;
 
     --muted: 210 30% 15%;
-    --muted-foreground: 210 20% 70%;
+    --muted-foreground: 210 20% 80%;
 
-    --accent: 210 30% 15%;
+    --accent: 210 30% 20%;
     --accent-foreground: 210 20% 98%;
 
-    --destructive: 0 62% 50%;
+    --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 210 30% 20%;
-    --input: 210 30% 20%;
-    --ring: 210 70% 50%;
+    --border: 210 30% 25%;
+    --input: 210 30% 25%;
+    --ring: 210 70% 60%;
 
-    --sidebar-background: 210 40% 10%;
+    --sidebar-background: 210 40% 8%;
     --sidebar-foreground: 210 20% 98%;
-    --sidebar-primary: 210 90% 50%;
+    --sidebar-primary: 210 90% 60%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 30% 15%;
+    --sidebar-accent: 210 30% 20%;
     --sidebar-accent-foreground: 210 20% 98%;
-    --sidebar-border: 210 30% 20%;
-    --sidebar-ring: 210 70% 50%;
+    --sidebar-border: 210 30% 25%;
+    --sidebar-ring: 210 70% 60%;
   }
 
   .dark {
-    --background: 210 40% 8%;
+    --background: 210 40% 4%;
     --foreground: 210 20% 98%;
 
-    --card: 210 40% 10%;
+    --card: 210 40% 8%;
     --card-foreground: 210 20% 98%;
 
-    --popover: 210 40% 10%;
+    --popover: 210 40% 8%;
     --popover-foreground: 210 20% 98%;
 
-    --primary: 210 90% 50%;
+    --primary: 210 90% 60%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 210 30% 15%;
     --secondary-foreground: 210 20% 98%;
 
     --muted: 210 30% 15%;
-    --muted-foreground: 210 20% 70%;
+    --muted-foreground: 210 20% 80%;
 
-    --accent: 210 30% 15%;
+    --accent: 210 30% 20%;
     --accent-foreground: 210 20% 98%;
 
-    --destructive: 0 62% 50%;
+    --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 210 30% 20%;
-    --input: 210 30% 20%;
-    --ring: 210 70% 50%;
+    --border: 210 30% 25%;
+    --input: 210 30% 25%;
+    --ring: 210 70% 60%;
 
-    --sidebar-background: 210 40% 10%;
+    --sidebar-background: 210 40% 8%;
     --sidebar-foreground: 210 20% 98%;
-    --sidebar-primary: 210 90% 50%;
+    --sidebar-primary: 210 90% 60%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 30% 15%;
+    --sidebar-accent: 210 30% 20%;
     --sidebar-accent-foreground: 210 20% 98%;
-    --sidebar-border: 210 30% 20%;
-    --sidebar-ring: 210 70% 50%;
+    --sidebar-border: 210 30% 25%;
+    --sidebar-ring: 210 70% 60%;
   }
 }
 
@@ -113,7 +114,7 @@
 
 @layer components {
   .glass-card {
-    @apply bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/50 dark:border-slate-800/50 shadow-sm;
+    @apply bg-white/10 dark:bg-slate-900/40 backdrop-blur-md border border-white/10 dark:border-slate-800/50 shadow-sm;
   }
   
   .hover-card {
@@ -122,6 +123,30 @@
   
   .text-balance {
     text-wrap: balance;
+  }
+
+  .dataset-header {
+    @apply bg-accent/80 backdrop-blur-sm border-b border-border/60 py-4 mt-16;
+  }
+
+  .dataset-card {
+    @apply bg-card/70 backdrop-blur-sm border border-border/60;
+  }
+
+  .image-thumbnail {
+    @apply cursor-pointer relative group rounded-md overflow-hidden border border-border/60 bg-card hover:border-primary/70 transition-colors;
+  }
+
+  .annotation-row {
+    @apply cursor-pointer hover:bg-accent/50 transition-colors;
+  }
+
+  .annotation-actions {
+    @apply flex items-center gap-1;
+  }
+
+  .annotation-action-button {
+    @apply h-8 w-8;
   }
 }
 
@@ -143,3 +168,4 @@
 :root {
   --font-sans: 'SF Pro Display', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 }
+

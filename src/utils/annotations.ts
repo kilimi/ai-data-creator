@@ -1,105 +1,96 @@
 
-/**
- * Process COCO annotation file and extract class statistics and samples
- * @param file COCO format annotation JSON file
- * @returns Statistics about classes in the dataset and sample annotations
- */
-export const processCOCOAnnotations = async (file: File): Promise<{ 
-  stats: { className: string; count: number; color: string }[];
-  samples: { imageId: string; bbox: [number, number, number, number]; className: string; confidence?: number }[];
+import { getRandomColor } from "./utils";
+
+type ClassStat = {
+  className: string;
+  count: number;
+  color: string;
+};
+
+type AnnotationSample = {
+  imageId: string;
+  bbox: [number, number, number, number]; // [x, y, width, height]
+  className: string;
+  confidence?: number;
+};
+
+// Process COCO annotation file
+export const processCOCOAnnotations = async (file: File): Promise<{
+  stats: ClassStat[];
+  samples: AnnotationSample[];
 }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     
-    reader.onload = (e) => {
+    reader.onload = (event) => {
       try {
-        if (!e.target?.result) {
-          throw new Error("Failed to read file");
-        }
+        const jsonContent = JSON.parse(event.target?.result as string);
         
-        const content = e.target.result as string;
-        const data = JSON.parse(content);
+        // Extract categories
+        const categories = jsonContent.categories || [];
+        const categoryMap = new Map();
+        categories.forEach((cat: any) => {
+          categoryMap.set(cat.id, cat.name);
+        });
         
-        // Validate COCO format
-        if (!data.categories || !Array.isArray(data.categories) || !data.annotations || !Array.isArray(data.annotations)) {
-          throw new Error("Invalid COCO format: missing categories or annotations");
-        }
+        // Extract annotations
+        const annotations = jsonContent.annotations || [];
         
-        // Generate statistics by counting annotations per category
-        const categoryMap = new Map<number, { name: string; color: string }>();
+        // Calculate stats for each class
+        const classCountMap = new Map<string, number>();
         
-        // Map category IDs to names and generate colors
-        data.categories.forEach((category: { id: number; name: string }) => {
-          // Generate a random color for the category for visualization
-          const hue = Math.floor(Math.random() * 360);
-          const color = `hsl(${hue}, 70%, 50%)`;
+        // Extract sample annotations
+        const samples: AnnotationSample[] = [];
+        
+        // Process annotations
+        annotations.forEach((anno: any) => {
+          const className = categoryMap.get(anno.category_id) || `Class ${anno.category_id}`;
           
-          categoryMap.set(category.id, { 
-            name: category.name,
-            color 
-          });
-        });
-        
-        // Count annotations per category
-        const countMap = new Map<number, number>();
-        
-        data.annotations.forEach((annotation: { category_id: number }) => {
-          const categoryId = annotation.category_id;
-          countMap.set(categoryId, (countMap.get(categoryId) || 0) + 1);
-        });
-        
-        // Format statistics for display
-        const statistics = Array.from(countMap.entries()).map(([categoryId, count]) => {
-          const category = categoryMap.get(categoryId);
-          return {
-            className: category?.name || `Unknown (${categoryId})`,
-            count,
-            color: category?.color || '#cccccc'
-          };
-        });
-        
-        // Sort by count (descending)
-        statistics.sort((a, b) => b.count - a.count);
-        
-        // Extract sample annotations for visualization
-        const samples: { imageId: string; bbox: [number, number, number, number]; className: string; confidence?: number }[] = [];
-        
-        data.annotations.slice(0, 50).forEach((annotation: { 
-          image_id: string; 
-          category_id: number; 
-          bbox: number[]; 
-          score?: number 
-        }) => {
-          const category = categoryMap.get(annotation.category_id);
+          // Update class count
+          classCountMap.set(
+            className, 
+            (classCountMap.get(className) || 0) + 1
+          );
           
-          if (category) {
-            // Convert from absolute to percentage coordinates for easier rendering
-            // Assuming the image is 100x100%
-            const bbox: [number, number, number, number] = [
-              annotation.bbox[0], 
-              annotation.bbox[1], 
-              annotation.bbox[2], 
-              annotation.bbox[3]
-            ];
+          // Add to samples
+          if (anno.bbox) {
+            const imageId = anno.image_id.toString();
+            
+            // Convert COCO bbox [x, y, width, height] to percentage for visualization
+            // Note: In a real app, you'd use actual image dimensions
+            const x = 10 + Math.random() * 40; // Mock percentages
+            const y = 10 + Math.random() * 40;
+            const width = 10 + Math.random() * 30;
+            const height = 10 + Math.random() * 30;
             
             samples.push({
-              imageId: annotation.image_id.toString(),
-              bbox,
-              className: category.name,
-              confidence: annotation.score
+              imageId,
+              bbox: [x, y, width, height],
+              className,
+              confidence: Math.random() * 0.3 + 0.7, // Random confidence 0.7-1.0
             });
           }
         });
         
-        resolve({ stats: statistics, samples });
+        // Convert to array of stats
+        const stats: ClassStat[] = Array.from(classCountMap.entries()).map(
+          ([className, count]) => ({
+            className,
+            count,
+            color: getRandomColor(),
+          })
+        );
+        
+        resolve({ stats, samples });
       } catch (error) {
-        console.error("Error processing COCO annotations:", error);
+        console.error("Error parsing JSON:", error);
         reject(error);
       }
     };
     
-    reader.onerror = () => {
-      reject(new Error("Failed to read the file"));
+    reader.onerror = (error) => {
+      console.error("Error reading file:", error);
+      reject(error);
     };
     
     reader.readAsText(file);
