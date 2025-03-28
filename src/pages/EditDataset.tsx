@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -8,6 +7,7 @@ import { UploadCard } from "@/components/UploadCard";
 import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
+import { AnnotationImagesDialog } from "@/components/AnnotationImagesDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -88,6 +88,11 @@ const EditDataset = () => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newFilename, setNewFilename] = useState("");
   const [showAnnotationsOnImage, setShowAnnotationsOnImage] = useState<AnnotationSample[]>([]);
+  
+  // New state for annotation images dialog
+  const [showAnnotationsDialog, setShowAnnotationsDialog] = useState(false);
+  const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
+  const [annotationFileNameToShow, setAnnotationFileNameToShow] = useState("");
   
   // New state for tracking image dimensions
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
@@ -285,14 +290,15 @@ const EditDataset = () => {
     });
   };
   
-  // Handle showing annotations on image
+  // Update the handleShowAnnotationsOnImage function to open the dialog instead of switching tabs
   const handleShowAnnotationsOnImage = (annotation: AnnotationFile) => {
     // Here we would normally fetch annotation samples from the API
     // We'll use the mock samples stored with the annotation for demonstration
     if (annotation.samples && annotation.samples.length > 0) {
-      // Only show the first 5 samples
-      setShowAnnotationsOnImage(annotation.samples.slice(0, 5));
-      setActiveTab("images"); // Switch to images tab to show annotations
+      setAnnotationsToShow(annotation.samples);
+      setAnnotationFileNameToShow(annotation.fileName);
+      setShowAnnotationsDialog(true);
+      
       toast({
         title: "Annotations loaded",
         description: `Showing annotations from ${annotation.fileName}`,
@@ -820,6 +826,15 @@ const EditDataset = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Add the new Annotation Images Dialog */}
+      <AnnotationImagesDialog 
+        open={showAnnotationsDialog}
+        onOpenChange={setShowAnnotationsDialog}
+        annotations={annotationsToShow}
+        images={images}
+        annotationFileName={annotationFileNameToShow}
+      />
     </div>
   );
 };
