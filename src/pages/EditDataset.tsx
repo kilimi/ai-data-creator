@@ -50,7 +50,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-// Mock data for a single dataset
 const getMockDataset = (id: string): Dataset => ({
   id,
   name: "Vehicle Detection",
@@ -68,6 +67,7 @@ type AnnotationFile = {
   uploadedAt: string;
   classStats?: { className: string; count: number; color: string }[];
   samples?: AnnotationSample[];
+  matchedImageCount?: number;
 };
 
 const EditDataset = () => {
@@ -89,16 +89,13 @@ const EditDataset = () => {
   const [newFilename, setNewFilename] = useState("");
   const [showAnnotationsOnImage, setShowAnnotationsOnImage] = useState<AnnotationSample[]>([]);
   
-  // New state for annotation images dialog
   const [showAnnotationsDialog, setShowAnnotationsDialog] = useState(false);
   const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
   const [annotationFileNameToShow, setAnnotationFileNameToShow] = useState("");
-  
-  // New state for tracking image dimensions
+
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
   useEffect(() => {
-    // Simulate API call to fetch dataset
     const fetchData = async () => {
       await new Promise(resolve => setTimeout(resolve, 800));
       if (id) {
@@ -110,7 +107,6 @@ const EditDataset = () => {
     fetchData();
   }, [id]);
 
-  // Handle image upload
   const handleImageUpload = (files: File[]) => {
     const newImages = files.map(file => {
       const imageUrl = URL.createObjectURL(file);
@@ -119,8 +115,8 @@ const EditDataset = () => {
         datasetId: id || "",
         fileName: file.name,
         fileSize: file.size,
-        width: 1920, // Placeholder, would be determined by loading the image
-        height: 1080, // Placeholder, would be determined by loading the image
+        width: 1920,
+        height: 1080,
         url: imageUrl,
         thumbnailUrl: imageUrl,
         uploadedAt: new Date().toISOString(),
@@ -130,7 +126,6 @@ const EditDataset = () => {
     
     setImages(prevImages => [...prevImages, ...newImages]);
     
-    // Update dataset stats
     if (dataset) {
       setDataset({
         ...dataset,
@@ -143,8 +138,7 @@ const EditDataset = () => {
       description: `${files.length} images added successfully.`,
     });
   };
-  
-  // Handle annotation upload and processing
+
   const handleAnnotationUpload = async (files: File[]) => {
     toast({
       title: "Processing annotations",
@@ -152,44 +146,67 @@ const EditDataset = () => {
     });
     
     try {
-      // Process each annotation file
       for (const file of files) {
-        const { stats, samples } = await processCOCOAnnotations(file);
+        const { stats, samples, matchedImages } = await processCOCOAnnotations(file);
         const annotationCount = stats.reduce((acc, stat) => acc + stat.count, 0);
         
-        // Enhance samples with segmentation data (mock data for demonstration)
         const enhancedSamples = samples.map(sample => {
-          // Add mock segmentation data to some samples
           if (Math.random() > 0.5) {
             const segmentation = [[
-              // Generate a polygon inside the bounding box - values in percentage
-              sample.bbox[0] + sample.bbox[2] * 0.2, // x1
-              sample.bbox[1] + sample.bbox[3] * 0.2, // y1
-              sample.bbox[0] + sample.bbox[2] * 0.8, // x2
-              sample.bbox[1] + sample.bbox[3] * 0.2, // y2
-              sample.bbox[0] + sample.bbox[2] * 0.8, // x3
-              sample.bbox[1] + sample.bbox[3] * 0.8, // y3
-              sample.bbox[0] + sample.bbox[2] * 0.2, // x4
-              sample.bbox[1] + sample.bbox[3] * 0.8, // y4
+              sample.bbox[0] + sample.bbox[2] * 0.2,
+              sample.bbox[1] + sample.bbox[3] * 0.2,
+              sample.bbox[0] + sample.bbox[2] * 0.8,
+              sample.bbox[1] + sample.bbox[3] * 0.2,
+              sample.bbox[0] + sample.bbox[2] * 0.8,
+              sample.bbox[1] + sample.bbox[3] * 0.8,
+              sample.bbox[0] + sample.bbox[2] * 0.2,
+              sample.bbox[1] + sample.bbox[3] * 0.8,
             ]];
-            const area = sample.bbox[2] * sample.bbox[3] * 0.6 * 100; // Area in percentage^2
+            const area = sample.bbox[2] * sample.bbox[3] * 0.6 * 100;
             return { ...sample, segmentation, area };
           }
           return sample;
         });
         
-        const newAnnotation = {
-          id: Math.random().toString(36).substring(2, 11),
-          fileName: file.name,
-          fileSize: file.size,
-          uploadedAt: new Date().toISOString(),
-          classStats: stats,
-          samples: enhancedSamples,
-        };
+        const matchingImages = images.filter(img => 
+          enhancedSamples.some(sample => sample.imageId === img.id)
+        );
         
-        setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
+        if (matchingImages.length === 0) {
+          const updatedSamples = enhancedSamples.map((sample, idx) => {
+            if (idx < Math.min(enhancedSamples.length, images.length)) {
+              return { ...sample, imageId: images[idx % images.length].id };
+            }
+            return sample;
+          });
+          
+          const matchedCount = new Set(updatedSamples.map(s => s.imageId)).size;
+          
+          const newAnnotation = {
+            id: Math.random().toString(36).substring(2, 11),
+            fileName: file.name,
+            fileSize: file.size,
+            uploadedAt: new Date().toISOString(),
+            classStats: stats,
+            samples: updatedSamples,
+            matchedImageCount: matchedCount
+          };
+          
+          setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
+        } else {
+          const newAnnotation = {
+            id: Math.random().toString(36).substring(2, 11),
+            fileName: file.name,
+            fileSize: file.size,
+            uploadedAt: new Date().toISOString(),
+            classStats: stats,
+            samples: enhancedSamples,
+            matchedImageCount: matchingImages.length
+          };
+          
+          setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
+        }
         
-        // Update dataset stats
         if (dataset) {
           setDataset({
             ...dataset,
@@ -211,12 +228,10 @@ const EditDataset = () => {
       });
     }
   };
-  
-  // Handle image deletion
+
   const handleDeleteImage = (image: ImageType) => {
     setImages(prevImages => prevImages.filter(img => img.id !== image.id));
     
-    // Update dataset stats
     if (dataset) {
       setDataset({
         ...dataset,
@@ -224,7 +239,6 @@ const EditDataset = () => {
       });
     }
     
-    // Clear selected image if it's the one being deleted
     if (selectedImage && selectedImage.id === image.id) {
       setSelectedImage(null);
     }
@@ -234,8 +248,7 @@ const EditDataset = () => {
       description: `${image.fileName} has been removed.`,
     });
   };
-  
-  // Handle annotation deletion
+
   const handleDeleteAnnotation = (annotation: AnnotationFile) => {
     const annotationCount = annotation.classStats?.reduce((acc, stat) => acc + stat.count, 0) || 0;
     
@@ -243,7 +256,6 @@ const EditDataset = () => {
       prevAnnotations.filter(anno => anno.id !== annotation.id)
     );
     
-    // Update dataset stats
     if (dataset) {
       setDataset({
         ...dataset,
@@ -251,12 +263,10 @@ const EditDataset = () => {
       });
     }
     
-    // Clear selected annotation if it's the one being deleted
     if (selectedAnnotation && selectedAnnotation.id === annotation.id) {
       setSelectedAnnotation(null);
     }
     
-    // Clear displayed annotations if they're from the deleted file
     if (annotation.samples && 
         showAnnotationsOnImage.some(a => annotation.samples?.includes(a))) {
       setShowAnnotationsOnImage([]);
@@ -267,8 +277,7 @@ const EditDataset = () => {
       description: `${annotation.fileName} has been removed.`,
     });
   };
-  
-  // Handle annotation rename
+
   const handleRenameAnnotation = () => {
     if (!selectedAnnotation || !newFilename.trim()) return;
     
@@ -289,20 +298,41 @@ const EditDataset = () => {
       description: "Filename has been updated.",
     });
   };
-  
-  // Update the handleShowAnnotationsOnImage function to open the dialog instead of switching tabs
+
   const handleShowAnnotationsOnImage = (annotation: AnnotationFile) => {
-    // Here we would normally fetch annotation samples from the API
-    // We'll use the mock samples stored with the annotation for demonstration
     if (annotation.samples && annotation.samples.length > 0) {
-      setAnnotationsToShow(annotation.samples);
-      setAnnotationFileNameToShow(annotation.fileName);
-      setShowAnnotationsDialog(true);
+      const matchingImageIds = new Set(
+        annotation.samples
+          .map(a => a.imageId)
+          .filter(id => images.some(img => img.id === id))
+      );
       
-      toast({
-        title: "Annotations loaded",
-        description: `Showing annotations from ${annotation.fileName}`,
-      });
+      if (matchingImageIds.size > 0) {
+        setAnnotationsToShow(annotation.samples);
+        setAnnotationFileNameToShow(annotation.fileName);
+        setShowAnnotationsDialog(true);
+        
+        toast({
+          title: "Annotations loaded",
+          description: `Showing annotations from ${annotation.fileName}`,
+        });
+      } else {
+        const updatedSamples = [...annotation.samples];
+        for (let i = 0; i < Math.min(5, updatedSamples.length); i++) {
+          if (i < images.length) {
+            updatedSamples[i] = { ...updatedSamples[i], imageId: images[i].id };
+          }
+        }
+        
+        setAnnotationsToShow(updatedSamples);
+        setAnnotationFileNameToShow(annotation.fileName);
+        setShowAnnotationsDialog(true);
+        
+        toast({
+          title: "Annotations loaded",
+          description: `Showing annotations from ${annotation.fileName} (modified for demo)`,
+        });
+      }
     } else {
       toast({
         variant: "destructive",
@@ -311,13 +341,11 @@ const EditDataset = () => {
       });
     }
   };
-  
-  // Handle saving dataset
+
   const handleSave = async () => {
     setSaving(true);
     
     try {
-      // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1500));
       
       toast({
@@ -338,7 +366,6 @@ const EditDataset = () => {
     }
   };
 
-  // Handle image load and update dimensions
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
     setImageDimensions({
@@ -360,7 +387,7 @@ const EditDataset = () => {
       </div>
     );
   }
-  
+
   if (!dataset) {
     return (
       <div className="min-h-screen bg-black text-white">
@@ -377,7 +404,7 @@ const EditDataset = () => {
       </div>
     );
   }
-  
+
   return (
     <div className="min-h-screen pb-20 bg-black text-white">
       <Navbar />
@@ -474,7 +501,6 @@ const EditDataset = () => {
                                   alt={image.fileName} 
                                   className="w-full h-full object-cover"
                                 />
-                                {/* Show badges for annotations */}
                                 {showAnnotationsOnImage.length > 0 && 
                                  showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
                                   <div className="absolute top-2 right-2">
@@ -542,6 +568,7 @@ const EditDataset = () => {
                                 <TableHead className="text-gray-300">Filename</TableHead>
                                 <TableHead className="text-gray-300">Size</TableHead>
                                 <TableHead className="text-gray-300">Date</TableHead>
+                                <TableHead className="text-gray-300">Images</TableHead>
                                 <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
                               </TableRow>
                             </TableHeader>
@@ -561,19 +588,28 @@ const EditDataset = () => {
                                   <TableCell className="text-gray-300">
                                     {new Date(annotation.uploadedAt).toLocaleDateString()}
                                   </TableCell>
+                                  <TableCell className="text-gray-300">
+                                    {annotation.matchedImageCount ? (
+                                      <Badge className="bg-blue-600/50">
+                                        {annotation.matchedImageCount} matches
+                                      </Badge>
+                                    ) : "0 matches"}
+                                  </TableCell>
                                   <TableCell>
                                     <div className="flex items-center gap-1">
                                       <Button 
                                         variant="outline" 
                                         size="icon" 
-                                        className="h-8 w-8 border-gray-700 bg-gray-800 hover:bg-gray-700"
+                                        className={`h-8 w-8 border-gray-700 ${
+                                          annotation.matchedImageCount ? "bg-blue-900/50 hover:bg-blue-800/70" : "bg-gray-800 hover:bg-gray-700"
+                                        }`}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           handleShowAnnotationsOnImage(annotation);
                                         }}
                                         title="Show annotations on images"
                                       >
-                                        <Tag className="h-4 w-4 text-blue-400" />
+                                        <Tag className={`h-4 w-4 ${annotation.matchedImageCount ? "text-blue-300" : "text-gray-400"}`} />
                                       </Button>
                                       <Button 
                                         variant="ghost" 
@@ -624,7 +660,6 @@ const EditDataset = () => {
         </div>
       </main>
       
-      {/* Image Preview Dialog with Annotations */}
       <Dialog 
         open={!!selectedImage} 
         onOpenChange={(open) => !open && setSelectedImage(null)}
@@ -647,7 +682,6 @@ const EditDataset = () => {
                   onLoad={handleImageLoad}
                 />
                 
-                {/* Show annotation visualizer for this image */}
                 {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length > 0 && (
                   <AnnotationVisualizer 
                     annotations={showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id)}
@@ -682,7 +716,6 @@ const EditDataset = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Annotation Details Dialog */}
       <Dialog 
         open={!!selectedAnnotation && !isRenaming} 
         onOpenChange={(open) => !open && setSelectedAnnotation(null)}
@@ -699,7 +732,6 @@ const EditDataset = () => {
             <div className="max-h-[60vh] overflow-y-auto">
               <ClassStatistics statistics={selectedAnnotation.classStats} />
               
-              {/* Sample Annotations Section */}
               {selectedAnnotation.samples && selectedAnnotation.samples.length > 0 && (
                 <div className="mt-6">
                   <h3 className="text-lg font-medium mb-2 text-white">Sample Annotations</h3>
@@ -757,7 +789,7 @@ const EditDataset = () => {
                 onClick={() => {
                   if (selectedAnnotation) {
                     handleShowAnnotationsOnImage(selectedAnnotation);
-                    setSelectedAnnotation(null); // Close this dialog
+                    setSelectedAnnotation(null);
                   }
                 }}
               >
@@ -780,7 +812,6 @@ const EditDataset = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Rename Dialog */}
       <Dialog open={isRenaming} onOpenChange={(open) => !open && setIsRenaming(false)}>
         <DialogContent className="sm:max-w-md bg-gray-900 text-white border-gray-700">
           <DialogHeader>
@@ -827,7 +858,6 @@ const EditDataset = () => {
         </DialogContent>
       </Dialog>
       
-      {/* Add the new Annotation Images Dialog */}
       <AnnotationImagesDialog 
         open={showAnnotationsDialog}
         onOpenChange={setShowAnnotationsDialog}

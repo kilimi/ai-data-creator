@@ -20,6 +20,7 @@ export type AnnotationSample = {
 export const processCOCOAnnotations = async (file: File): Promise<{
   stats: ClassStat[];
   samples: AnnotationSample[];
+  matchedImages: number;
 }> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -27,6 +28,15 @@ export const processCOCOAnnotations = async (file: File): Promise<{
     reader.onload = (event) => {
       try {
         const jsonContent = JSON.parse(event.target?.result as string);
+        
+        // Extract images from COCO format
+        const cocoImages = jsonContent.images || [];
+        const imageMap = new Map();
+        cocoImages.forEach((img: any) => {
+          // Store mapping from COCO image ID to our dataset image ID
+          // For mock purposes, we're using the COCO ID as our image ID
+          imageMap.set(img.id, img.id.toString());
+        });
         
         // Extract categories
         const categories = jsonContent.categories || [];
@@ -58,12 +68,14 @@ export const processCOCOAnnotations = async (file: File): Promise<{
           if (anno.bbox || anno.segmentation) {
             const imageId = anno.image_id.toString();
             
-            // Convert COCO bbox [x, y, width, height] to percentage for visualization
-            // Note: In a real app, you'd use actual image dimensions
-            const x = anno.bbox ? (10 + Math.random() * 40) : 0; // Mock percentages
-            const y = anno.bbox ? (10 + Math.random() * 40) : 0;
-            const width = anno.bbox ? (10 + Math.random() * 30) : 0;
-            const height = anno.bbox ? (10 + Math.random() * 30) : 0;
+            // In real implementation, use the mapping from COCO image ID to our image ID
+            // const mappedImageId = imageMap.get(anno.image_id) || imageId;
+            
+            // For demo purposes, convert COCO bbox [x, y, width, height] to normalized coordinates
+            const x = anno.bbox ? anno.bbox[0] / 100 : 0; // Normalized by 100 for demo
+            const y = anno.bbox ? anno.bbox[1] / 100 : 0;
+            const width = anno.bbox ? anno.bbox[2] / 100 : 0;
+            const height = anno.bbox ? anno.bbox[3] / 100 : 0;
             
             samples.push({
               imageId,
@@ -85,7 +97,14 @@ export const processCOCOAnnotations = async (file: File): Promise<{
           })
         );
         
-        resolve({ stats, samples });
+        // Count unique image IDs in our samples
+        const uniqueImageCount = new Set(samples.map(s => s.imageId)).size;
+        
+        resolve({ 
+          stats, 
+          samples,
+          matchedImages: uniqueImageCount
+        });
       } catch (error) {
         console.error("Error parsing JSON:", error);
         reject(error);

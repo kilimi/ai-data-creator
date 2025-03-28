@@ -1,7 +1,7 @@
 
 import React, { useState } from "react";
 import { AnnotationSample } from "@/utils/annotations";
-import { ImageType } from "@/types";
+import { Image as ImageType } from "@/types";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 import {
   Dialog,
