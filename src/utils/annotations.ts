@@ -9,10 +9,10 @@ type ClassStat = {
 
 export type AnnotationSample = {
   imageId: string;
-  bbox: [number, number, number, number]; // [x, y, width, height]
+  bbox: [number, number, number, number]; // [x, y, width, height] normalized 0-1
   className: string;
   confidence?: number;
-  segmentation?: number[][]; // COCO format segmentation points [[x1,y1,x2,y2,...], [x1,y1,...]]
+  segmentation?: number[][]; // Normalized segmentation points [[x1,y1,x2,y2,...], [x1,y1,...]]
   area?: number;
 };
 
@@ -71,18 +71,32 @@ export const processCOCOAnnotations = async (file: File): Promise<{
             // In real implementation, use the mapping from COCO image ID to our image ID
             // const mappedImageId = imageMap.get(anno.image_id) || imageId;
             
-            // For demo purposes, convert COCO bbox [x, y, width, height] to normalized coordinates
-            const x = anno.bbox ? anno.bbox[0] / 100 : 0; // Normalized by 100 for demo
-            const y = anno.bbox ? anno.bbox[1] / 100 : 0;
-            const width = anno.bbox ? anno.bbox[2] / 100 : 0;
-            const height = anno.bbox ? anno.bbox[3] / 100 : 0;
+            // Convert COCO bbox [x, y, width, height] to normalized coordinates (0-1)
+            // For demo purposes, we've simplified this normalization
+            // In a real app, this would be based on actual image dimensions
+            let x = 0, y = 0, width = 0, height = 0;
+            
+            if (anno.bbox) {
+              // Assuming the COCO bbox is in absolute pixel values within a 100x100 image
+              // so we normalize by dividing by 100
+              x = anno.bbox[0] / 100;
+              y = anno.bbox[1] / 100;
+              width = anno.bbox[2] / 100;
+              height = anno.bbox[3] / 100;
+            }
+            
+            // Normalize segmentation points if available
+            const normalizedSegmentation = anno.segmentation ? 
+              anno.segmentation.map((polygon: number[]) => {
+                return polygon.map((coord: number) => coord / 100);
+              }) : undefined;
             
             samples.push({
               imageId,
               bbox: [x, y, width, height],
               className,
               confidence: Math.random() * 0.3 + 0.7, // Random confidence 0.7-1.0
-              segmentation: anno.segmentation || undefined,
+              segmentation: normalizedSegmentation,
               area: anno.area || undefined
             });
           }

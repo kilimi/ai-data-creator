@@ -69,8 +69,9 @@ export const AnnotationVisualizer = ({
           
           // Draw polygon
           for (let i = 0; i < segment.length; i += 2) {
-            const x = (segment[i] / 100) * canvas.width;
-            const y = (segment[i + 1] / 100) * canvas.height;
+            // Convert normalized coordinates to actual pixel values
+            const x = segment[i] * canvas.width;
+            const y = segment[i + 1] * canvas.height;
             
             if (i === 0) {
               ctx.moveTo(x, y);
@@ -89,11 +90,11 @@ export const AnnotationVisualizer = ({
       if (annotation.bbox) {
         const [x, y, width, height] = annotation.bbox;
         
-        // Convert percentage to actual pixel coordinates
-        const bboxX = (x / 100) * canvas.width;
-        const bboxY = (y / 100) * canvas.height;
-        const bboxWidth = (width / 100) * canvas.width;
-        const bboxHeight = (height / 100) * canvas.height;
+        // Convert normalized coordinates to actual pixel values
+        const bboxX = x * canvas.width;
+        const bboxY = y * canvas.height;
+        const bboxWidth = width * canvas.width;
+        const bboxHeight = height * canvas.height;
         
         // Draw rectangle
         ctx.strokeStyle = color;
@@ -116,8 +117,9 @@ export const AnnotationVisualizer = ({
         const color = colors[colorIndex];
         
         // Position for the label based on the bbox
-        const labelX = anno.bbox ? anno.bbox[0] : 10;
-        const labelY = anno.bbox ? Math.max(0, anno.bbox[1] - 6) : 10;
+        // Convert normalized coordinates to percentage for CSS positioning
+        const labelX = anno.bbox ? anno.bbox[0] * 100 : 10;
+        const labelY = anno.bbox ? Math.max(0, anno.bbox[1] * 100 - 6) : 10;
         
         return (
           <div
