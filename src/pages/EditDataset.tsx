@@ -5,8 +5,9 @@ import { Navbar } from "@/components/Navbar";
 import { Dataset, Image as ImageType } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import { UploadCard } from "@/components/UploadCard";
-import { processCOCOAnnotations } from "@/utils/annotations";
+import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
+import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -69,13 +70,6 @@ type AnnotationFile = {
   samples?: AnnotationSample[];
 };
 
-type AnnotationSample = {
-  imageId: string;
-  bbox: [number, number, number, number]; // [x, y, width, height]
-  className: string;
-  confidence?: number;
-};
-
 const EditDataset = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -94,6 +88,9 @@ const EditDataset = () => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newFilename, setNewFilename] = useState("");
   const [showAnnotationsOnImage, setShowAnnotationsOnImage] = useState<AnnotationSample[]>([]);
+  
+  // New state for tracking image dimensions
+  const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
   useEffect(() => {
     // Simulate API call to fetch dataset
@@ -155,13 +152,34 @@ const EditDataset = () => {
         const { stats, samples } = await processCOCOAnnotations(file);
         const annotationCount = stats.reduce((acc, stat) => acc + stat.count, 0);
         
+        // Enhance samples with segmentation data (mock data for demonstration)
+        const enhancedSamples = samples.map(sample => {
+          // Add mock segmentation data to some samples
+          if (Math.random() > 0.5) {
+            const segmentation = [[
+              // Generate a polygon inside the bounding box - values in percentage
+              sample.bbox[0] + sample.bbox[2] * 0.2, // x1
+              sample.bbox[1] + sample.bbox[3] * 0.2, // y1
+              sample.bbox[0] + sample.bbox[2] * 0.8, // x2
+              sample.bbox[1] + sample.bbox[3] * 0.2, // y2
+              sample.bbox[0] + sample.bbox[2] * 0.8, // x3
+              sample.bbox[1] + sample.bbox[3] * 0.8, // y3
+              sample.bbox[0] + sample.bbox[2] * 0.2, // x4
+              sample.bbox[1] + sample.bbox[3] * 0.8, // y4
+            ]];
+            const area = sample.bbox[2] * sample.bbox[3] * 0.6 * 100; // Area in percentage^2
+            return { ...sample, segmentation, area };
+          }
+          return sample;
+        });
+        
         const newAnnotation = {
           id: Math.random().toString(36).substring(2, 11),
           fileName: file.name,
           fileSize: file.size,
           uploadedAt: new Date().toISOString(),
           classStats: stats,
-          samples: samples,
+          samples: enhancedSamples,
         };
         
         setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
@@ -231,6 +249,12 @@ const EditDataset = () => {
     // Clear selected annotation if it's the one being deleted
     if (selectedAnnotation && selectedAnnotation.id === annotation.id) {
       setSelectedAnnotation(null);
+    }
+    
+    // Clear displayed annotations if they're from the deleted file
+    if (annotation.samples && 
+        showAnnotationsOnImage.some(a => annotation.samples?.includes(a))) {
+      setShowAnnotationsOnImage([]);
     }
     
     toast({
@@ -308,9 +332,18 @@ const EditDataset = () => {
     }
   };
 
+  // Handle image load and update dimensions
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setImageDimensions({
+      width: img.naturalWidth,
+      height: img.naturalHeight
+    });
+  };
+
   if (loading) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-black text-white">
         <Navbar />
         <div className="container max-w-7xl pt-32 flex justify-center items-center">
           <div className="flex flex-col items-center">
@@ -324,7 +357,7 @@ const EditDataset = () => {
   
   if (!dataset) {
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen bg-black text-white">
         <Navbar />
         <div className="container max-w-7xl pt-32 text-center">
           <h1 className="text-2xl font-bold mb-4">Dataset not found</h1>
@@ -340,28 +373,28 @@ const EditDataset = () => {
   }
   
   return (
-    <div className="min-h-screen pb-20">
+    <div className="min-h-screen pb-20 bg-black text-white">
       <Navbar />
       
-      <div className="bg-muted py-4 border-b mt-16">
+      <div className="bg-gray-900 py-4 border-b border-gray-800 mt-16">
         <div className="container max-w-7xl">
           <div className="flex items-center">
             <Button 
               variant="ghost" 
               asChild 
-              className="mr-2"
+              className="mr-2 text-gray-300 hover:text-white hover:bg-gray-800"
             >
               <Link to={`/datasets/${id}`}>
                 <ArrowLeft className="mr-1 h-4 w-4" /> Back
               </Link>
             </Button>
-            <h1 className="text-xl font-semibold flex-1">
+            <h1 className="text-xl font-semibold flex-1 text-white">
               Edit: {dataset.name}
             </h1>
             <Button 
               onClick={handleSave} 
               disabled={saving}
-              className="ml-2"
+              className="ml-2 bg-blue-600 hover:bg-blue-700"
             >
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
               Save Changes
@@ -372,25 +405,39 @@ const EditDataset = () => {
       
       <main className="container max-w-7xl py-8">
         <div className="flex flex-col gap-6">
-          <Card>
+          <Card className="bg-gray-900 border-gray-800">
             <CardContent className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold">Dataset Content</h2>
-                <div className="text-sm text-muted-foreground">
+                <h2 className="text-xl font-semibold text-white">Dataset Content</h2>
+                <div className="text-sm text-gray-400">
                   {images.length} images • {dataset.annotationCount} annotations
                 </div>
               </div>
               
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="mb-4">
-                  <TabsTrigger value="images">Images</TabsTrigger>
-                  <TabsTrigger value="annotations">Annotations</TabsTrigger>
+              <Tabs 
+                value={activeTab} 
+                onValueChange={setActiveTab}
+                className="text-white"
+              >
+                <TabsList className="mb-4 bg-gray-800">
+                  <TabsTrigger 
+                    value="images"
+                    className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                  >
+                    Images
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="annotations"
+                    className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                  >
+                    Annotations
+                  </TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="images" className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div>
-                      <h3 className="text-lg font-medium mb-4">Upload Images</h3>
+                      <h3 className="text-lg font-medium mb-4 text-white">Upload Images</h3>
                       <UploadCard
                         title="Add Images to Dataset"
                         description="Drag and drop images or click to browse"
@@ -401,9 +448,9 @@ const EditDataset = () => {
                     </div>
                     
                     <div>
-                      <h3 className="text-lg font-medium mb-4">
+                      <h3 className="text-lg font-medium mb-4 text-white">
                         Image Gallery
-                        <span className="ml-2 text-sm font-normal text-muted-foreground">
+                        <span className="ml-2 text-sm font-normal text-gray-400">
                           {images.length} images
                         </span>
                       </h3>
@@ -413,7 +460,7 @@ const EditDataset = () => {
                             <div 
                               key={image.id}
                               onClick={() => setSelectedImage(image)}
-                              className="cursor-pointer relative group rounded-md overflow-hidden border bg-card hover:border-primary/50 transition-colors"
+                              className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
                             >
                               <div className="aspect-square relative">
                                 <img 
@@ -425,7 +472,7 @@ const EditDataset = () => {
                                 {showAnnotationsOnImage.length > 0 && 
                                  showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
                                   <div className="absolute top-2 right-2">
-                                    <Badge variant="secondary" className="bg-primary/70 backdrop-blur-sm">
+                                    <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
                                       <Tag className="h-3 w-3 mr-1" />
                                       {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
                                     </Badge>
@@ -449,10 +496,10 @@ const EditDataset = () => {
                           ))}
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center justify-center bg-muted rounded-lg p-12 text-center">
-                          <FileImage className="h-12 w-12 text-muted-foreground mb-4" />
-                          <h4 className="text-lg font-medium">No images yet</h4>
-                          <p className="text-muted-foreground mt-1 mb-4">
+                        <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center">
+                          <FileImage className="h-12 w-12 text-gray-400 mb-4" />
+                          <h4 className="text-lg font-medium text-white">No images yet</h4>
+                          <p className="text-gray-400 mt-1 mb-4">
                             Upload your first image to get started
                           </p>
                         </div>
@@ -464,7 +511,7 @@ const EditDataset = () => {
                 <TabsContent value="annotations" className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div>
-                      <h3 className="text-lg font-medium mb-4">Upload Annotations</h3>
+                      <h3 className="text-lg font-medium mb-4 text-white">Upload Annotations</h3>
                       <UploadCard
                         title="Add COCO Annotations"
                         description="Upload JSON files in COCO format"
@@ -475,37 +522,37 @@ const EditDataset = () => {
                     </div>
                     
                     <div>
-                      <h3 className="text-lg font-medium mb-4">
+                      <h3 className="text-lg font-medium mb-4 text-white">
                         Annotation Files
-                        <span className="ml-2 text-sm font-normal text-muted-foreground">
+                        <span className="ml-2 text-sm font-normal text-gray-400">
                           {annotations.length} files
                         </span>
                       </h3>
                       {annotations.length > 0 ? (
-                        <div className="border rounded-md max-h-[500px] overflow-y-auto">
+                        <div className="border border-gray-700 rounded-md max-h-[500px] overflow-y-auto">
                           <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Filename</TableHead>
-                                <TableHead>Size</TableHead>
-                                <TableHead>Date</TableHead>
-                                <TableHead className="w-[130px]">Actions</TableHead>
+                            <TableHeader className="bg-gray-800">
+                              <TableRow className="border-b-gray-700">
+                                <TableHead className="text-gray-300">Filename</TableHead>
+                                <TableHead className="text-gray-300">Size</TableHead>
+                                <TableHead className="text-gray-300">Date</TableHead>
+                                <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {annotations.map((annotation) => (
                                 <TableRow 
                                   key={annotation.id}
-                                  className="cursor-pointer"
+                                  className="cursor-pointer border-b-gray-700 hover:bg-gray-800"
                                   onClick={() => setSelectedAnnotation(annotation)}
                                 >
-                                  <TableCell className="font-medium">
+                                  <TableCell className="font-medium text-white">
                                     {annotation.fileName}
                                   </TableCell>
-                                  <TableCell>
+                                  <TableCell className="text-gray-300">
                                     {(annotation.fileSize / 1024).toFixed(1)} KB
                                   </TableCell>
-                                  <TableCell>
+                                  <TableCell className="text-gray-300">
                                     {new Date(annotation.uploadedAt).toLocaleDateString()}
                                   </TableCell>
                                   <TableCell>
@@ -513,19 +560,19 @@ const EditDataset = () => {
                                       <Button 
                                         variant="outline" 
                                         size="icon" 
-                                        className="h-8 w-8"
+                                        className="h-8 w-8 border-gray-700 bg-gray-800 hover:bg-gray-700"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           handleShowAnnotationsOnImage(annotation);
                                         }}
                                         title="Show annotations on images"
                                       >
-                                        <Tag className="h-4 w-4" />
+                                        <Tag className="h-4 w-4 text-blue-400" />
                                       </Button>
                                       <Button 
                                         variant="ghost" 
                                         size="icon" 
-                                        className="h-8 w-8"
+                                        className="h-8 w-8 hover:bg-gray-700"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setSelectedAnnotation(annotation);
@@ -533,12 +580,12 @@ const EditDataset = () => {
                                           setIsRenaming(true);
                                         }}
                                       >
-                                        <Pencil className="h-4 w-4" />
+                                        <Pencil className="h-4 w-4 text-gray-400" />
                                       </Button>
                                       <Button 
                                         variant="ghost" 
                                         size="icon" 
-                                        className="h-8 w-8 text-destructive"
+                                        className="h-8 w-8 text-red-500 hover:bg-gray-700"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           handleDeleteAnnotation(annotation);
@@ -554,10 +601,10 @@ const EditDataset = () => {
                           </Table>
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center justify-center bg-muted rounded-lg p-12 text-center">
-                          <FileJson className="h-12 w-12 text-muted-foreground mb-4" />
-                          <h4 className="text-lg font-medium">No annotations yet</h4>
-                          <p className="text-muted-foreground mt-1 mb-4">
+                        <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center">
+                          <FileJson className="h-12 w-12 text-gray-400 mb-4" />
+                          <h4 className="text-lg font-medium text-white">No annotations yet</h4>
+                          <p className="text-gray-400 mt-1 mb-4">
                             Upload COCO format annotation files
                           </p>
                         </div>
@@ -571,62 +618,49 @@ const EditDataset = () => {
         </div>
       </main>
       
-      {/* Image Preview Dialog */}
+      {/* Image Preview Dialog with Annotations */}
       <Dialog 
         open={!!selectedImage} 
         onOpenChange={(open) => !open && setSelectedImage(null)}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>{selectedImage?.fileName}</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-gray-400">
               {selectedImage?.width}x{selectedImage?.height} • {(selectedImage?.fileSize ? (selectedImage.fileSize / 1024 / 1024).toFixed(2) : 0)} MB
             </DialogDescription>
           </DialogHeader>
           
-          <div className="relative aspect-video bg-muted/30 rounded-md overflow-hidden flex items-center justify-center">
+          <div className="relative aspect-video bg-gray-950 rounded-md overflow-hidden flex items-center justify-center">
             {selectedImage && (
-              <img 
-                src={selectedImage.url} 
-                alt={selectedImage.fileName} 
-                className="max-w-full max-h-full object-contain"
-              />
+              <>
+                <img 
+                  src={selectedImage.url} 
+                  alt={selectedImage.fileName} 
+                  className="max-w-full max-h-full object-contain"
+                  onLoad={handleImageLoad}
+                />
+                
+                {/* Show annotation visualizer for this image */}
+                {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length > 0 && (
+                  <AnnotationVisualizer 
+                    annotations={showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id)}
+                    imageWidth={imageDimensions.width}
+                    imageHeight={imageDimensions.height}
+                    className="absolute inset-0"
+                  />
+                )}
+              </>
             )}
-            
-            {/* Show annotation boxes for this image */}
-            {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).map((anno, index) => (
-              <div 
-                key={`anno-${index}`}
-                className="absolute border-2 border-primary"
-                style={{
-                  left: `${anno.bbox[0]}%`,
-                  top: `${anno.bbox[1]}%`,
-                  width: `${anno.bbox[2]}%`,
-                  height: `${anno.bbox[3]}%`
-                }}
-              >
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Badge 
-                      className="absolute -top-6 -left-1 cursor-pointer bg-primary text-primary-foreground"
-                    >
-                      {anno.className}
-                    </Badge>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-2">
-                    <div className="grid gap-1 text-xs">
-                      <div className="font-semibold">{anno.className}</div>
-                      {anno.confidence && (
-                        <div>Confidence: {Math.round(anno.confidence * 100)}%</div>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
-            ))}
           </div>
           
-          <DialogFooter>
+          <DialogFooter className="flex flex-col sm:flex-row justify-between gap-2">
+            <div className="text-sm text-gray-400">
+              {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length > 0 
+                ? `Showing ${showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length} annotations` 
+                : "No annotations shown"
+              }
+            </div>
             <Button
               variant="destructive"
               onClick={() => {
@@ -647,10 +681,10 @@ const EditDataset = () => {
         open={!!selectedAnnotation && !isRenaming} 
         onOpenChange={(open) => !open && setSelectedAnnotation(null)}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>{selectedAnnotation?.fileName}</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-gray-400">
               {(selectedAnnotation?.fileSize ? (selectedAnnotation.fileSize / 1024).toFixed(1) : 0)} KB • Uploaded {selectedAnnotation?.uploadedAt && new Date(selectedAnnotation.uploadedAt).toLocaleDateString()}
             </DialogDescription>
           </DialogHeader>
@@ -662,21 +696,26 @@ const EditDataset = () => {
               {/* Sample Annotations Section */}
               {selectedAnnotation.samples && selectedAnnotation.samples.length > 0 && (
                 <div className="mt-6">
-                  <h3 className="text-lg font-medium mb-2">Sample Annotations</h3>
-                  <p className="text-sm text-muted-foreground mb-4">
+                  <h3 className="text-lg font-medium mb-2 text-white">Sample Annotations</h3>
+                  <p className="text-sm text-gray-400 mb-4">
                     Showing {Math.min(5, selectedAnnotation.samples.length)} of {selectedAnnotation.samples.length} annotations
                   </p>
                   
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {selectedAnnotation.samples.slice(0, 5).map((sample, idx) => (
-                      <div key={idx} className="rounded-md border p-2 bg-muted/30">
-                        <div className="font-medium">{sample.className}</div>
-                        <div className="text-xs text-muted-foreground">
+                      <div key={idx} className="rounded-md border border-gray-700 p-2 bg-gray-800">
+                        <div className="font-medium text-white">{sample.className}</div>
+                        <div className="text-xs text-gray-400">
                           Image ID: {sample.imageId.substring(0, 6)}...
                         </div>
                         {sample.confidence && (
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-xs text-gray-400">
                             Confidence: {Math.round(sample.confidence * 100)}%
+                          </div>
+                        )}
+                        {sample.segmentation && (
+                          <div className="text-xs text-green-400">
+                            Has segmentation mask
                           </div>
                         )}
                       </div>
@@ -687,7 +726,7 @@ const EditDataset = () => {
             </div>
           ) : (
             <div className="py-8 text-center">
-              <p className="text-muted-foreground">No class statistics available</p>
+              <p className="text-gray-400">No class statistics available</p>
             </div>
           )}
           
@@ -695,6 +734,7 @@ const EditDataset = () => {
             <div className="flex gap-2">
               <Button
                 variant="outline"
+                className="border-gray-700 bg-gray-800 hover:bg-gray-700 text-white"
                 onClick={() => {
                   if (selectedAnnotation) {
                     setNewFilename(selectedAnnotation.fileName);
@@ -707,6 +747,7 @@ const EditDataset = () => {
               </Button>
               <Button
                 variant="outline"
+                className="border-gray-700 bg-gray-800 hover:bg-gray-700 text-white"
                 onClick={() => {
                   if (selectedAnnotation) {
                     handleShowAnnotationsOnImage(selectedAnnotation);
@@ -735,24 +776,24 @@ const EditDataset = () => {
       
       {/* Rename Dialog */}
       <Dialog open={isRenaming} onOpenChange={(open) => !open && setIsRenaming(false)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>Rename File</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-gray-400">
               Enter a new name for this annotation file
             </DialogDescription>
           </DialogHeader>
           
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="filename" className="text-right">
+              <Label htmlFor="filename" className="text-right text-gray-300">
                 Filename
               </Label>
               <Input
                 id="filename"
                 value={newFilename}
                 onChange={(e) => setNewFilename(e.target.value)}
-                className="col-span-3"
+                className="col-span-3 bg-gray-800 border-gray-700 text-white"
                 autoFocus
               />
             </div>
@@ -760,7 +801,11 @@ const EditDataset = () => {
           
           <DialogFooter>
             <DialogClose asChild>
-              <Button type="button" variant="secondary">
+              <Button 
+                type="button" 
+                variant="secondary"
+                className="bg-gray-800 hover:bg-gray-700 text-white"
+              >
                 Cancel
               </Button>
             </DialogClose>
@@ -768,6 +813,7 @@ const EditDataset = () => {
               type="button" 
               disabled={!newFilename.trim()}
               onClick={handleRenameAnnotation}
+              className="bg-blue-600 hover:bg-blue-700"
             >
               Save Changes
             </Button>

@@ -1,6 +1,7 @@
 
 import { ApiConfig, ApiResponse, DatasetResponse, DatasetsResponse, ImagesResponse, AnnotationsResponse, ClassStatisticsResponse } from '@/types/api';
 import { Dataset, Image, Annotation } from '@/types';
+import { AnnotationSample } from '@/utils/annotations';
 
 /**
  * API client for integrating with Laravel or other backend services
@@ -143,11 +144,17 @@ export class ApiClient {
   /**
    * Upload COCO annotations
    */
-  async uploadCOCOAnnotations(datasetId: string, annotationFile: File): Promise<ClassStatisticsResponse> {
+  async uploadCOCOAnnotations(datasetId: string, annotationFile: File): Promise<ApiResponse<{
+    stats: { className: string; count: number; color: string }[];
+    samples: AnnotationSample[];
+  }>> {
     const formData = new FormData();
     formData.append('annotation', annotationFile);
     
-    return this.request<{ className: string; count: number; color: string }[]>(
+    return this.request<{
+      stats: { className: string; count: number; color: string }[];
+      samples: AnnotationSample[];
+    }>(
       `/api/datasets/${datasetId}/annotations/coco`, {
         method: 'POST',
         body: formData,
@@ -159,11 +166,16 @@ export class ApiClient {
   /**
    * Process COCO annotations (client-side fallback)
    */
-  async processCOCOAnnotations(file: File): Promise<{ className: string; count: number; color: string }[]> {
+  async processCOCOAnnotations(file: File): Promise<{
+    stats: { className: string; count: number; color: string }[];
+    samples: AnnotationSample[];
+  }> {
     // Use the existing utility function as a fallback
     try {
-      const { processCOCOAnnotations } = await import('@/utils/annotations');
-      return processCOCOAnnotations(file);
+      const result = await import('@/utils/annotations').then(module => 
+        module.processCOCOAnnotations(file)
+      );
+      return result;
     } catch (error) {
       console.error('Error processing COCO annotations locally:', error);
       throw error;

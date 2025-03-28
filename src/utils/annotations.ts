@@ -7,11 +7,13 @@ type ClassStat = {
   color: string;
 };
 
-type AnnotationSample = {
+export type AnnotationSample = {
   imageId: string;
   bbox: [number, number, number, number]; // [x, y, width, height]
   className: string;
   confidence?: number;
+  segmentation?: number[][]; // COCO format segmentation points [[x1,y1,x2,y2,...], [x1,y1,...]]
+  area?: number;
 };
 
 // Process COCO annotation file
@@ -53,21 +55,23 @@ export const processCOCOAnnotations = async (file: File): Promise<{
           );
           
           // Add to samples
-          if (anno.bbox) {
+          if (anno.bbox || anno.segmentation) {
             const imageId = anno.image_id.toString();
             
             // Convert COCO bbox [x, y, width, height] to percentage for visualization
             // Note: In a real app, you'd use actual image dimensions
-            const x = 10 + Math.random() * 40; // Mock percentages
-            const y = 10 + Math.random() * 40;
-            const width = 10 + Math.random() * 30;
-            const height = 10 + Math.random() * 30;
+            const x = anno.bbox ? (10 + Math.random() * 40) : 0; // Mock percentages
+            const y = anno.bbox ? (10 + Math.random() * 40) : 0;
+            const width = anno.bbox ? (10 + Math.random() * 30) : 0;
+            const height = anno.bbox ? (10 + Math.random() * 30) : 0;
             
             samples.push({
               imageId,
               bbox: [x, y, width, height],
               className,
               confidence: Math.random() * 0.3 + 0.7, // Random confidence 0.7-1.0
+              segmentation: anno.segmentation || undefined,
+              area: anno.area || undefined
             });
           }
         });
