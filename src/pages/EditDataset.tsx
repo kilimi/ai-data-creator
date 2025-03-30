@@ -469,7 +469,7 @@ const EditDataset = () => {
                 </TabsList>
                 
                 <TabsContent value="images" className="space-y-4">
-                  <div className="flex justify-between items-center mb-4">
+                  <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-medium text-white">
                       Image Gallery
                       <span className="ml-2 text-sm font-normal text-gray-400">
@@ -563,6 +563,7 @@ const EditDataset = () => {
                       accept="image/jpeg,image/png,image/webp"
                       onFilesSelected={handleImageUpload}
                       type="images"
+                      multiple={true}
                     />
                   </div>
                 </TabsContent>
