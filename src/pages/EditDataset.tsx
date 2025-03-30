@@ -569,117 +569,143 @@ const EditDataset = () => {
                 </TabsContent>
                 
                 <TabsContent value="annotations" className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div>
-                      <h3 className="text-lg font-medium mb-4 text-white">Upload Annotations</h3>
-                      <UploadCard
-                        title="Add COCO Annotations"
-                        description="Upload JSON files in COCO format"
-                        accept=".json"
-                        onFilesSelected={handleAnnotationUpload}
-                        type="annotations"
-                      />
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-medium text-white">
+                      Annotation Files
+                      <span className="ml-2 text-sm font-normal text-gray-400">
+                        {annotations.length} files
+                      </span>
+                    </h3>
+                    <Button 
+                      onClick={() => document.getElementById('annotation-upload-input')?.click()}
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      <Upload className="h-4 w-4 mr-1" /> Add Annotations
+                    </Button>
+                  </div>
+
+                  <div className="hidden">
+                    <input
+                      id="annotation-upload-input"
+                      type="file"
+                      accept=".json"
+                      multiple
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleAnnotationUpload(Array.from(e.target.files));
+                        }
+                      }}
+                    />
+                  </div>
+                  
+                  {annotations.length > 0 ? (
+                    <div className="border border-gray-700 rounded-md max-h-[500px] overflow-y-auto mb-6">
+                      <Table>
+                        <TableHeader className="bg-gray-800">
+                          <TableRow className="border-b-gray-700">
+                            <TableHead className="text-gray-300">Filename</TableHead>
+                            <TableHead className="text-gray-300">Size</TableHead>
+                            <TableHead className="text-gray-300">Date</TableHead>
+                            <TableHead className="text-gray-300">Images</TableHead>
+                            <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {annotations.map((annotation) => (
+                            <TableRow 
+                              key={annotation.id}
+                              className="cursor-pointer border-b-gray-700 hover:bg-gray-800"
+                              onClick={() => setSelectedAnnotation(annotation)}
+                            >
+                              <TableCell className="font-medium text-white">
+                                {annotation.fileName}
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                {(annotation.fileSize / 1024).toFixed(1)} KB
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                {new Date(annotation.uploadedAt).toLocaleDateString()}
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                {annotation.matchedImageCount ? (
+                                  <Badge className="bg-blue-600/50">
+                                    {annotation.matchedImageCount} matches
+                                  </Badge>
+                                ) : "0 matches"}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-1">
+                                  <Button 
+                                    variant="outline" 
+                                    size="icon" 
+                                    className={`h-8 w-8 border-gray-700 ${
+                                      annotation.matchedImageCount ? "bg-blue-900/50 hover:bg-blue-800/70" : "bg-gray-800 hover:bg-gray-700"
+                                    }`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleShowAnnotationsOnImage(annotation);
+                                    }}
+                                    title="Show annotations on images"
+                                  >
+                                    <Tag className={`h-4 w-4 ${annotation.matchedImageCount ? "text-blue-300" : "text-gray-400"}`} />
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-8 w-8 hover:bg-gray-700"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedAnnotation(annotation);
+                                      setNewFilename(annotation.fileName);
+                                      setIsRenaming(true);
+                                    }}
+                                  >
+                                    <Pencil className="h-4 w-4 text-gray-400" />
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-8 w-8 text-red-500 hover:bg-gray-700"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteAnnotation(annotation);
+                                    }}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     </div>
-                    
-                    <div>
-                      <h3 className="text-lg font-medium mb-4 text-white">
-                        Annotation Files
-                        <span className="ml-2 text-sm font-normal text-gray-400">
-                          {annotations.length} files
-                        </span>
-                      </h3>
-                      {annotations.length > 0 ? (
-                        <div className="border border-gray-700 rounded-md max-h-[500px] overflow-y-auto">
-                          <Table>
-                            <TableHeader className="bg-gray-800">
-                              <TableRow className="border-b-gray-700">
-                                <TableHead className="text-gray-300">Filename</TableHead>
-                                <TableHead className="text-gray-300">Size</TableHead>
-                                <TableHead className="text-gray-300">Date</TableHead>
-                                <TableHead className="text-gray-300">Images</TableHead>
-                                <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {annotations.map((annotation) => (
-                                <TableRow 
-                                  key={annotation.id}
-                                  className="cursor-pointer border-b-gray-700 hover:bg-gray-800"
-                                  onClick={() => setSelectedAnnotation(annotation)}
-                                >
-                                  <TableCell className="font-medium text-white">
-                                    {annotation.fileName}
-                                  </TableCell>
-                                  <TableCell className="text-gray-300">
-                                    {(annotation.fileSize / 1024).toFixed(1)} KB
-                                  </TableCell>
-                                  <TableCell className="text-gray-300">
-                                    {new Date(annotation.uploadedAt).toLocaleDateString()}
-                                  </TableCell>
-                                  <TableCell className="text-gray-300">
-                                    {annotation.matchedImageCount ? (
-                                      <Badge className="bg-blue-600/50">
-                                        {annotation.matchedImageCount} matches
-                                      </Badge>
-                                    ) : "0 matches"}
-                                  </TableCell>
-                                  <TableCell>
-                                    <div className="flex items-center gap-1">
-                                      <Button 
-                                        variant="outline" 
-                                        size="icon" 
-                                        className={`h-8 w-8 border-gray-700 ${
-                                          annotation.matchedImageCount ? "bg-blue-900/50 hover:bg-blue-800/70" : "bg-gray-800 hover:bg-gray-700"
-                                        }`}
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleShowAnnotationsOnImage(annotation);
-                                        }}
-                                        title="Show annotations on images"
-                                      >
-                                        <Tag className={`h-4 w-4 ${annotation.matchedImageCount ? "text-blue-300" : "text-gray-400"}`} />
-                                      </Button>
-                                      <Button 
-                                        variant="ghost" 
-                                        size="icon" 
-                                        className="h-8 w-8 hover:bg-gray-700"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setSelectedAnnotation(annotation);
-                                          setNewFilename(annotation.fileName);
-                                          setIsRenaming(true);
-                                        }}
-                                      >
-                                        <Pencil className="h-4 w-4 text-gray-400" />
-                                      </Button>
-                                      <Button 
-                                        variant="ghost" 
-                                        size="icon" 
-                                        className="h-8 w-8 text-red-500 hover:bg-gray-700"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleDeleteAnnotation(annotation);
-                                        }}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center">
-                          <FileJson className="h-12 w-12 text-gray-400 mb-4" />
-                          <h4 className="text-lg font-medium text-white">No annotations yet</h4>
-                          <p className="text-gray-400 mt-1 mb-4">
-                            Upload COCO format annotation files
-                          </p>
-                        </div>
-                      )}
+                  ) : (
+                    <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center mb-6">
+                      <FileJson className="h-12 w-12 text-gray-400 mb-4" />
+                      <h4 className="text-lg font-medium text-white">No annotations yet</h4>
+                      <p className="text-gray-400 mt-1 mb-4">
+                        Upload COCO format annotation files
+                      </p>
+                      <Button 
+                        onClick={() => document.getElementById('annotation-upload-input')?.click()}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Upload className="h-4 w-4 mr-2" /> Add Annotations
+                      </Button>
                     </div>
+                  )}
+                  
+                  <div>
+                    <h3 className="text-lg font-medium mb-4 text-white">Upload Annotations</h3>
+                    <UploadCard
+                      title="Add COCO Annotations"
+                      description="Upload JSON files in COCO format"
+                      accept=".json"
+                      onFilesSelected={handleAnnotationUpload}
+                      type="annotations"
+                    />
                   </div>
                 </TabsContent>
               </Tabs>
