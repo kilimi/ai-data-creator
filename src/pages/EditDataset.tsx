@@ -8,6 +8,7 @@ import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 import { AnnotationImagesDialog } from "@/components/AnnotationImagesDialog";
+import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -93,6 +94,7 @@ const EditDataset = () => {
   const [showAnnotationsDialog, setShowAnnotationsDialog] = useState(false);
   const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
   const [annotationFileNameToShow, setAnnotationFileNameToShow] = useState("");
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
 
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
@@ -569,7 +571,7 @@ const EditDataset = () => {
                 </TabsContent>
                 
                 <TabsContent value="annotations" className="space-y-4">
-                  <div className="flex justify-between items-center mb-4">
+                  <div className="flex justify-between items-center mb-6">
                     <h3 className="text-lg font-medium text-white">
                       Annotation Files
                       <span className="ml-2 text-sm font-normal text-gray-400">
@@ -577,26 +579,12 @@ const EditDataset = () => {
                       </span>
                     </h3>
                     <Button 
-                      onClick={() => document.getElementById('annotation-upload-input')?.click()}
+                      onClick={() => setShowUploadDialog(true)}
                       size="sm"
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       <Upload className="h-4 w-4 mr-1" /> Add Annotations
                     </Button>
-                  </div>
-
-                  <div className="hidden">
-                    <input
-                      id="annotation-upload-input"
-                      type="file"
-                      accept=".json"
-                      multiple
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files.length > 0) {
-                          handleAnnotationUpload(Array.from(e.target.files));
-                        }
-                      }}
-                    />
                   </div>
                   
                   {annotations.length > 0 ? (
@@ -689,24 +677,13 @@ const EditDataset = () => {
                         Upload COCO format annotation files
                       </p>
                       <Button 
-                        onClick={() => document.getElementById('annotation-upload-input')?.click()}
+                        onClick={() => setShowUploadDialog(true)}
                         className="bg-blue-600 hover:bg-blue-700"
                       >
                         <Upload className="h-4 w-4 mr-2" /> Add Annotations
                       </Button>
                     </div>
                   )}
-                  
-                  <div>
-                    <h3 className="text-lg font-medium mb-4 text-white">Upload Annotations</h3>
-                    <UploadCard
-                      title="Add COCO Annotations"
-                      description="Upload JSON files in COCO format"
-                      accept=".json"
-                      onFilesSelected={handleAnnotationUpload}
-                      type="annotations"
-                    />
-                  </div>
                 </TabsContent>
               </Tabs>
             </CardContent>
@@ -918,6 +895,12 @@ const EditDataset = () => {
         annotations={annotationsToShow}
         images={images}
         annotationFileName={annotationFileNameToShow}
+      />
+
+      <AnnotationsUploadDialog
+        open={showUploadDialog}
+        onOpenChange={setShowUploadDialog}
+        onFilesSelected={handleAnnotationUpload}
       />
     </div>
   );
