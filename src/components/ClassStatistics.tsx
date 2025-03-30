@@ -1,101 +1,81 @@
 
+import React from "react";
 import { Progress } from "@/components/ui/progress";
-import { 
-  Table, 
-  TableBody, 
-  TableCell, 
-  TableHead, 
-  TableHeader, 
-  TableRow 
-} from "@/components/ui/table";
+
+type ClassStat = {
+  className: string;
+  count: number;
+  color: string;
+};
 
 interface ClassStatisticsProps {
-  statistics: {
-    className: string;
-    count: number;
-    color: string;
-  }[];
+  statistics: ClassStat[];
 }
 
-export function ClassStatistics({ statistics }: ClassStatisticsProps) {
-  // Calculate the total count for percentage calculations
-  const totalCount = statistics.reduce((sum, stat) => sum + stat.count, 0);
-  
+export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics }) => {
+  // Calculate total instances for percentage calculation
+  const totalInstances = statistics.reduce(
+    (total, stat) => total + stat.count,
+    0
+  );
+
+  // Sort by count (descending)
+  const sortedStats = [...statistics].sort((a, b) => b.count - a.count);
+
   return (
-    <div className="space-y-6">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-12"></TableHead>
-            <TableHead>Class</TableHead>
-            <TableHead className="text-right">Count</TableHead>
-            <TableHead className="text-right">Percentage</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {statistics.map((stat, index) => {
-            const percentage = totalCount > 0 ? (stat.count / totalCount) * 100 : 0;
-            
-            return (
-              <TableRow key={index}>
-                <TableCell>
-                  <div 
-                    className="w-4 h-4 rounded-full" 
-                    style={{ backgroundColor: stat.color }}
-                  />
-                </TableCell>
-                <TableCell className="font-medium">{stat.className}</TableCell>
-                <TableCell className="text-right">{stat.count.toLocaleString()}</TableCell>
-                <TableCell className="text-right">{percentage.toFixed(1)}%</TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+    <div className="space-y-4">
+      <h3 className="text-base font-medium">Class Distribution</h3>
       
-      <div className="space-y-2">
-        <h3 className="text-sm font-medium mb-2">Distribution</h3>
-        <div className="flex h-4 w-full overflow-hidden rounded-full">
-          {statistics.map((stat, index) => {
-            const width = totalCount > 0 ? (stat.count / totalCount) * 100 : 0;
-            return (
-              <div
-                key={index}
-                className="h-full transition-all"
-                style={{
-                  width: `${width}%`,
-                  backgroundColor: stat.color,
-                  minWidth: width > 0 ? '4px' : '0'
-                }}
-                title={`${stat.className}: ${stat.count} (${width.toFixed(1)}%)`}
-              />
-            );
-          })}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
+        {sortedStats.map((stat) => (
+          <div key={stat.className} className="flex items-center gap-2">
+            <div
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: stat.color }}
+            />
+            <div className="flex-1 text-sm font-medium overflow-hidden">
+              <span className="truncate">{stat.className}</span>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {stat.count} ({Math.round((stat.count / totalInstances) * 100)}%)
+            </div>
+          </div>
+        ))}
+      </div>
+      
+      <div className="pt-2 space-y-3">
+        <div className="h-2 w-full flex rounded-full overflow-hidden">
+          {sortedStats.map((stat) => (
+            <div
+              key={stat.className}
+              style={{
+                backgroundColor: stat.color,
+                width: `${(stat.count / totalInstances) * 100}%`,
+              }}
+            />
+          ))}
         </div>
-        <div className="pt-2">
-          {statistics.map((stat, index) => (
-            <div key={index} className="flex items-center justify-between my-1">
-              <div className="flex items-center">
-                <div 
-                  className="w-3 h-3 rounded-full mr-2" 
-                  style={{ backgroundColor: stat.color }}
-                />
-                <span className="text-sm">{stat.className}</span>
+        
+        <div className="space-y-3">
+          {sortedStats.slice(0, 5).map((stat) => (
+            <div key={stat.className} className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="font-medium">{stat.className}</span>
+                <span className="text-muted-foreground">
+                  {stat.count} instances
+                </span>
               </div>
-              <div className="w-full max-w-[180px]">
-                <Progress 
-                  value={totalCount > 0 ? (stat.count / totalCount) * 100 : 0} 
-                  className="h-2"
-                  indicatorClassName="bg-primary"
-                />
-              </div>
-              <span className="text-sm text-muted-foreground ml-2 w-12 text-right">
-                {totalCount > 0 ? ((stat.count / totalCount) * 100).toFixed(1) : 0}%
-              </span>
+              <Progress
+                value={(stat.count / totalInstances) * 100}
+                className="h-2"
+                style={{
+                  ["--progress-background" as any]: stat.color,
+                }}
+              />
             </div>
           ))}
         </div>
       </div>
     </div>
   );
-}
+};

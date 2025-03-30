@@ -20,7 +20,8 @@ import {
   Save,
   X,
   Pencil,
-  Tag
+  Tag,
+  Upload
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImageLoad } from "@/utils/animations";
@@ -468,75 +469,101 @@ const EditDataset = () => {
                 </TabsList>
                 
                 <TabsContent value="images" className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div>
-                      <h3 className="text-lg font-medium mb-4 text-white">Upload Images</h3>
-                      <UploadCard
-                        title="Add Images to Dataset"
-                        description="Drag and drop images or click to browse"
-                        accept="image/jpeg,image/png,image/webp"
-                        onFilesSelected={handleImageUpload}
-                        type="images"
-                      />
-                    </div>
-                    
-                    <div>
-                      <h3 className="text-lg font-medium mb-4 text-white">
-                        Image Gallery
-                        <span className="ml-2 text-sm font-normal text-gray-400">
-                          {images.length} images
-                        </span>
-                      </h3>
-                      {images.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-2 max-h-[500px] overflow-y-auto p-1">
-                          {images.map((image) => (
-                            <div 
-                              key={image.id}
-                              onClick={() => setSelectedImage(image)}
-                              className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-medium text-white">
+                      Image Gallery
+                      <span className="ml-2 text-sm font-normal text-gray-400">
+                        {images.length} images
+                      </span>
+                    </h3>
+                    <Button 
+                      onClick={() => document.getElementById('image-upload-input')?.click()}
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      <Upload className="h-4 w-4 mr-1" /> Add Images
+                    </Button>
+                  </div>
+
+                  <div className="hidden">
+                    <input
+                      id="image-upload-input"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      multiple
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleImageUpload(Array.from(e.target.files));
+                        }
+                      }}
+                    />
+                  </div>
+                  
+                  {images.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 mt-4 max-h-[600px] overflow-y-auto p-1">
+                      {images.map((image) => (
+                        <div 
+                          key={image.id}
+                          onClick={() => setSelectedImage(image)}
+                          className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                        >
+                          <div className="aspect-square relative">
+                            <img 
+                              src={image.thumbnailUrl} 
+                              alt={image.fileName} 
+                              className="w-full h-full object-cover"
+                            />
+                            {showAnnotationsOnImage.length > 0 && 
+                             showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
+                              <div className="absolute top-2 right-2">
+                                <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
+                                  <Tag className="h-3 w-3 mr-1" />
+                                  {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
+                                </Badge>
+                              </div>
+                            )}
+                          </div>
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                            <Button 
+                              variant="destructive" 
+                              size="icon" 
+                              className="h-8 w-8"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteImage(image);
+                              }}
                             >
-                              <div className="aspect-square relative">
-                                <img 
-                                  src={image.thumbnailUrl} 
-                                  alt={image.fileName} 
-                                  className="w-full h-full object-cover"
-                                />
-                                {showAnnotationsOnImage.length > 0 && 
-                                 showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
-                                  <div className="absolute top-2 right-2">
-                                    <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
-                                      <Tag className="h-3 w-3 mr-1" />
-                                      {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
-                                    </Badge>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                <Button 
-                                  variant="destructive" 
-                                  size="icon" 
-                                  className="h-8 w-8"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteImage(image);
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center">
-                          <FileImage className="h-12 w-12 text-gray-400 mb-4" />
-                          <h4 className="text-lg font-medium text-white">No images yet</h4>
-                          <p className="text-gray-400 mt-1 mb-4">
-                            Upload your first image to get started
-                          </p>
-                        </div>
-                      )}
+                      ))}
                     </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center">
+                      <FileImage className="h-12 w-12 text-gray-400 mb-4" />
+                      <h4 className="text-lg font-medium text-white">No images yet</h4>
+                      <p className="text-gray-400 mt-1 mb-4">
+                        Click the "Add Images" button to get started
+                      </p>
+                      <Button 
+                        onClick={() => document.getElementById('image-upload-input')?.click()}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Upload className="h-4 w-4 mr-2" /> Add Images
+                      </Button>
+                    </div>
+                  )}
+                  
+                  <div className="mt-6">
+                    <h3 className="text-lg font-medium mb-4 text-white">Advanced Upload</h3>
+                    <UploadCard
+                      title="Add Images to Dataset"
+                      description="Drag and drop images or click to browse"
+                      accept="image/jpeg,image/png,image/webp"
+                      onFilesSelected={handleImageUpload}
+                      type="images"
+                    />
                   </div>
                 </TabsContent>
                 
