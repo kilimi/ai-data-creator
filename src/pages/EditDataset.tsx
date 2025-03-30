@@ -9,6 +9,7 @@ import { ClassStatistics } from "@/components/ClassStatistics";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 import { AnnotationImagesDialog } from "@/components/AnnotationImagesDialog";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
+import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -95,6 +96,7 @@ const EditDataset = () => {
   const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
   const [annotationFileNameToShow, setAnnotationFileNameToShow] = useState("");
   const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [showImageUploadDialog, setShowImageUploadDialog] = useState(false);
 
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
@@ -425,7 +427,7 @@ const EditDataset = () => {
               </Link>
             </Button>
             <h1 className="text-xl font-semibold flex-1 text-white">
-              Edit: {dataset.name}
+              Edit: {dataset?.name}
             </h1>
             <Button 
               onClick={handleSave} 
@@ -446,7 +448,7 @@ const EditDataset = () => {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-white">Dataset Content</h2>
                 <div className="text-sm text-gray-400">
-                  {images.length} images • {dataset.annotationCount} annotations
+                  {images.length} images • {dataset?.annotationCount} annotations
                 </div>
               </div>
               
@@ -479,26 +481,12 @@ const EditDataset = () => {
                       </span>
                     </h3>
                     <Button 
-                      onClick={() => document.getElementById('image-upload-input')?.click()}
+                      onClick={() => setShowImageUploadDialog(true)}
                       size="sm"
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       <Upload className="h-4 w-4 mr-1" /> Add Images
                     </Button>
-                  </div>
-
-                  <div className="hidden">
-                    <input
-                      id="image-upload-input"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      multiple
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files.length > 0) {
-                          handleImageUpload(Array.from(e.target.files));
-                        }
-                      }}
-                    />
                   </div>
                   
                   {images.length > 0 ? (
@@ -549,7 +537,7 @@ const EditDataset = () => {
                         Click the "Add Images" button to get started
                       </p>
                       <Button 
-                        onClick={() => document.getElementById('image-upload-input')?.click()}
+                        onClick={() => setShowImageUploadDialog(true)}
                         className="bg-blue-600 hover:bg-blue-700"
                       >
                         <Upload className="h-4 w-4 mr-2" /> Add Images
@@ -901,6 +889,12 @@ const EditDataset = () => {
         open={showUploadDialog}
         onOpenChange={setShowUploadDialog}
         onFilesSelected={handleAnnotationUpload}
+      />
+
+      <ImageUploadDialog
+        open={showImageUploadDialog}
+        onOpenChange={setShowImageUploadDialog}
+        onFilesSelected={handleImageUpload}
       />
     </div>
   );
