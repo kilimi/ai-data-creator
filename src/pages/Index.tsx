@@ -294,6 +294,116 @@ const Index = () => {
               <TabsTrigger value="projects">Projects</TabsTrigger>
               <TabsTrigger value="datasets">Datasets</TabsTrigger>
             </TabsList>
+          
+            <div className="mt-6">
+              {activeTab === "projects" && (
+                <div>
+                  {loading ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {Array(4).fill(0).map((_, i) => (
+                        <ProjectCardSkeleton key={i} />
+                      ))}
+                    </div>
+                  ) : filteredProjects.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {filteredProjects.map(project => (
+                        <ProjectCard key={project.id} project={project} />
+                      ))}
+                      
+                      <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
+                        <Link to="/projects/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
+                          <PlusCircle className="h-12 w-12 mb-4" />
+                          <p className="text-lg font-medium">Create New Project</p>
+                        </Link>
+                      </Card>
+                    </div>
+                  ) : (
+                    <div className="text-center py-16">
+                      <h3 className="text-lg font-medium mb-2">No projects found</h3>
+                      <p className="text-muted-foreground mb-6">
+                        {searchQuery 
+                          ? `No projects matching your search criteria`
+                          : "You haven't created any projects yet."
+                        }
+                      </p>
+                      <Button asChild>
+                        <Link to="/projects/new">
+                          <FolderPlus className="w-4 h-4 mr-2" />
+                          Create your first project
+                        </Link>
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === "datasets" && (
+                <div>
+                  {/* Tag filtering for datasets */}
+                  {allTags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-6">
+                      <Button
+                        variant={selectedTag === null ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setSelectedTag(null)}
+                        className="gap-1"
+                      >
+                        All
+                      </Button>
+                      {allTags.map(tag => (
+                        <Button
+                          key={tag}
+                          variant={selectedTag === tag ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setSelectedTag(tag)}
+                          className="gap-1"
+                        >
+                          <Tag className="w-3 h-3" />
+                          {tag}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {loading ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {Array(6).fill(0).map((_, i) => (
+                        <DatasetCardSkeleton key={i} />
+                      ))}
+                    </div>
+                  ) : filteredDatasets.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {filteredDatasets.map(dataset => (
+                        <DatasetCard key={dataset.id} dataset={dataset} />
+                      ))}
+                      
+                      <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
+                        <Link to="/datasets/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
+                          <PlusCircle className="h-12 w-12 mb-4" />
+                          <p className="text-lg font-medium">Create New Dataset</p>
+                        </Link>
+                      </Card>
+                    </div>
+                  ) : (
+                    <div className="text-center py-16">
+                      <h3 className="text-lg font-medium mb-2">No datasets found</h3>
+                      <p className="text-muted-foreground mb-6">
+                        {searchQuery || selectedTag 
+                          ? `No datasets matching your search criteria`
+                          : "You haven't created any datasets yet."
+                        }
+                      </p>
+                      <Button asChild>
+                        <Link to="/datasets/new">
+                          <FileImage className="w-4 h-4 mr-2" />
+                          Create your first dataset
+                        </Link>
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </Tabs>
           
           <div className="relative flex items-center w-full md:w-auto">
@@ -306,110 +416,6 @@ const Index = () => {
             />
           </div>
         </div>
-        
-        <TabsContent value="projects" className="mt-0">
-          {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {Array(4).fill(0).map((_, i) => (
-                <ProjectCardSkeleton key={i} />
-              ))}
-            </div>
-          ) : filteredProjects.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {filteredProjects.map(project => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-              
-              <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
-                <Link to="/projects/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
-                  <PlusCircle className="h-12 w-12 mb-4" />
-                  <p className="text-lg font-medium">Create New Project</p>
-                </Link>
-              </Card>
-            </div>
-          ) : (
-            <div className="text-center py-16">
-              <h3 className="text-lg font-medium mb-2">No projects found</h3>
-              <p className="text-muted-foreground mb-6">
-                {searchQuery 
-                  ? `No projects matching your search criteria`
-                  : "You haven't created any projects yet."
-                }
-              </p>
-              <Button asChild>
-                <Link to="/projects/new">
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  Create your first project
-                </Link>
-              </Button>
-            </div>
-          )}
-        </TabsContent>
-        
-        <TabsContent value="datasets" className="mt-0">
-          {/* Tag filtering for datasets */}
-          {allTags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-6">
-              <Button
-                variant={selectedTag === null ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedTag(null)}
-                className="gap-1"
-              >
-                All
-              </Button>
-              {allTags.map(tag => (
-                <Button
-                  key={tag}
-                  variant={selectedTag === tag ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedTag(tag)}
-                  className="gap-1"
-                >
-                  <Tag className="w-3 h-3" />
-                  {tag}
-                </Button>
-              ))}
-            </div>
-          )}
-          
-          {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {Array(6).fill(0).map((_, i) => (
-                <DatasetCardSkeleton key={i} />
-              ))}
-            </div>
-          ) : filteredDatasets.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredDatasets.map(dataset => (
-                <DatasetCard key={dataset.id} dataset={dataset} />
-              ))}
-              
-              <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
-                <Link to="/datasets/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
-                  <PlusCircle className="h-12 w-12 mb-4" />
-                  <p className="text-lg font-medium">Create New Dataset</p>
-                </Link>
-              </Card>
-            </div>
-          ) : (
-            <div className="text-center py-16">
-              <h3 className="text-lg font-medium mb-2">No datasets found</h3>
-              <p className="text-muted-foreground mb-6">
-                {searchQuery || selectedTag 
-                  ? `No datasets matching your search criteria`
-                  : "You haven't created any datasets yet."
-                }
-              </p>
-              <Button asChild>
-                <Link to="/datasets/new">
-                  <FileImage className="w-4 h-4 mr-2" />
-                  Create your first dataset
-                </Link>
-              </Button>
-            </div>
-          )}
-        </TabsContent>
       </section>
     </div>
   );
