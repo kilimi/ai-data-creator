@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -74,7 +73,11 @@ type AnnotationFile = {
   matchedImageCount?: number;
 };
 
-const EditDataset = () => {
+interface EditDatasetProps {
+  projectMode?: boolean;
+}
+
+const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -847,48 +850,22 @@ const EditDataset = () => {
           
           <DialogFooter>
             <DialogClose asChild>
-              <Button 
-                type="button" 
+              <Button
                 variant="secondary"
-                className="bg-gray-800 hover:bg-gray-700 text-white"
+                onClick={() => setIsRenaming(false)}
               >
                 Cancel
               </Button>
             </DialogClose>
-            <Button 
-              type="button" 
+            <Button
+              variant="primary"
               onClick={handleRenameAnnotation}
-              className="bg-blue-600 hover:bg-blue-700"
             >
               Save
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      
-      <AnnotationImagesDialog
-        open={showAnnotationsDialog}
-        onOpenChange={setShowAnnotationsDialog}
-        annotations={annotationsToShow}
-        images={images}
-        fileName={annotationFileNameToShow}
-        onApply={(annotationsToApply) => {
-          setShowAnnotationsOnImage(annotationsToApply);
-          setShowAnnotationsDialog(false);
-        }}
-      />
-      
-      <AnnotationsUploadDialog
-        open={showUploadDialog}
-        onOpenChange={setShowUploadDialog}
-        onFilesSelected={handleAnnotationUpload}
-      />
-      
-      <ImageUploadDialog
-        open={showImageUploadDialog}
-        onOpenChange={setShowImageUploadDialog}
-        onFilesSelected={handleImageUpload}
-      />
     </div>
   );
 };

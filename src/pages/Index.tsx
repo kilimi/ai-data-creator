@@ -1,4 +1,3 @@
-
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
@@ -9,6 +8,7 @@ import { useState, useEffect } from "react";
 import { Dataset, Project } from "@/types";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
 
 // Mock data for projects
 const mockProjects: Project[] = [

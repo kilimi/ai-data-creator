@@ -21,6 +21,8 @@ interface AnnotationImagesDialogProps {
   annotations: AnnotationSample[];
   images: ImageType[];
   annotationFileName: string;
+  fileName?: string; // Add this to fix the error
+  onApply?: (annotationsToApply: AnnotationSample[]) => void; // Make this optional
 }
 
 export const AnnotationImagesDialog = ({
@@ -29,6 +31,7 @@ export const AnnotationImagesDialog = ({
   annotations,
   images,
   annotationFileName,
+  onApply,
 }: AnnotationImagesDialogProps) => {
   const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
   
