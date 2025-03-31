@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -849,4 +850,47 @@ const EditDataset = () => {
               <Button 
                 type="button" 
                 variant="secondary"
-                className
+                className="bg-gray-800 hover:bg-gray-700 text-white"
+              >
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button 
+              type="button" 
+              onClick={handleRenameAnnotation}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      <AnnotationImagesDialog
+        open={showAnnotationsDialog}
+        onOpenChange={setShowAnnotationsDialog}
+        annotations={annotationsToShow}
+        images={images}
+        fileName={annotationFileNameToShow}
+        onApply={(annotationsToApply) => {
+          setShowAnnotationsOnImage(annotationsToApply);
+          setShowAnnotationsDialog(false);
+        }}
+      />
+      
+      <AnnotationsUploadDialog
+        open={showUploadDialog}
+        onOpenChange={setShowUploadDialog}
+        onFilesSelected={handleAnnotationUpload}
+      />
+      
+      <ImageUploadDialog
+        open={showImageUploadDialog}
+        onOpenChange={setShowImageUploadDialog}
+        onFilesSelected={handleImageUpload}
+      />
+    </div>
+  );
+};
+
+export default EditDataset;
