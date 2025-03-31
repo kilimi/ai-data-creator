@@ -1,4 +1,3 @@
-
 import { useState, useRef } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -34,9 +33,12 @@ interface DatasetFormProps {
   initialData?: Partial<Dataset>;
   onSubmit: (data: DatasetFormValues, logoFile?: File) => void;
   loading?: boolean;
+  mode?: "create" | "edit";
+  projectMode?: boolean;
+  projectId?: string;
 }
 
-export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetFormProps) {
+export function DatasetForm({ initialData, onSubmit, loading = false, mode = "create", projectMode = false, projectId }: DatasetFormProps) {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | undefined>(initialData?.thumbnailUrl);
   const [tags, setTags] = useState<string[]>(initialData?.tags || []);
@@ -58,19 +60,16 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      // Check if file is an image
       if (!file.type.startsWith('image/')) {
         return;
       }
       
-      // Check file size (max 5MB)
       if (file.size > 5 * 1024 * 1024) {
         return;
       }
       
       setLogoFile(file);
       
-      // Create preview URL
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
@@ -111,7 +110,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
   };
   
   const handleSubmit = (data: DatasetFormValues) => {
-    // Include tags in the submission
     const formData = {
       ...data,
       tags: tags.join(","),
@@ -122,7 +120,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-6">
-        {/* Dataset name field */}
         <FormField
           control={form.control}
           name="name"
@@ -140,7 +137,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
           )}
         />
         
-        {/* Dataset type field */}
         <FormField
           control={form.control}
           name="type"
@@ -181,7 +177,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
           )}
         />
         
-        {/* Dataset description field */}
         <FormField
           control={form.control}
           name="description"
@@ -203,7 +198,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
           )}
         />
         
-        {/* Tags input */}
         <div className="space-y-2">
           <FormLabel>Tags</FormLabel>
           <FormDescription>
@@ -256,7 +250,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
           )}
         </div>
         
-        {/* Logo upload section */}
         <div className="space-y-2">
           <FormLabel>Dataset Logo</FormLabel>
           <FormDescription>
@@ -299,7 +292,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
           )}
         </div>
         
-        {/* Form actions */}
         <div className="flex justify-end space-x-4 pt-4">
           <Button 
             type="button" 
@@ -311,7 +303,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false }: DatasetF
           </Button>
           <Button type="submit" disabled={loading}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Create Dataset
+            {mode === "create" ? "Create Dataset" : "Save Changes"}
           </Button>
         </div>
       </form>

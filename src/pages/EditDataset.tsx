@@ -858,7 +858,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
               </Button>
             </DialogClose>
             <Button
-              variant="primary"
+              variant="default"
               onClick={handleRenameAnnotation}
             >
               Save
