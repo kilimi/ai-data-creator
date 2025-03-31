@@ -19,6 +19,9 @@ export function Navbar() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
   
+  // Check if we're in a project view
+  const isProjectView = location.pathname.startsWith('/projects/') && location.pathname !== '/projects/new';
+  
   const navItems = [
     { 
       name: "Home", 
@@ -75,17 +78,19 @@ export function Navbar() {
         </div>
         
         <div className="flex items-center gap-2">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="hidden sm:flex items-center"
-            asChild
-          >
-            <Link to="/datasets/new">
-              <FolderPlus className="w-4 h-4 mr-2" />
-              New Dataset
-            </Link>
-          </Button>
+          {isProjectView && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="hidden sm:flex items-center"
+              asChild
+            >
+              <Link to="/datasets/new">
+                <FolderPlus className="w-4 h-4 mr-2" />
+                New Dataset
+              </Link>
+            </Button>
+          )}
           
           <Button
             variant="ghost"

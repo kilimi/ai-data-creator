@@ -272,12 +272,6 @@ const Index = () => {
                 Create New Project
               </Link>
             </Button>
-            <Button variant="outline" asChild size="lg" className="gap-2">
-              <Link to="/datasets/new">
-                <FileImage className="w-4 h-4" />
-                Create Dataset
-              </Link>
-            </Button>
           </div>
         </div>
       </section>
@@ -376,13 +370,6 @@ const Index = () => {
                       {filteredDatasets.map(dataset => (
                         <DatasetCard key={dataset.id} dataset={dataset} />
                       ))}
-                      
-                      <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
-                        <Link to="/datasets/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
-                          <PlusCircle className="h-12 w-12 mb-4" />
-                          <p className="text-lg font-medium">Create New Dataset</p>
-                        </Link>
-                      </Card>
                     </div>
                   ) : (
                     <div className="text-center py-16">
@@ -390,15 +377,9 @@ const Index = () => {
                       <p className="text-muted-foreground mb-6">
                         {searchQuery || selectedTag 
                           ? `No datasets matching your search criteria`
-                          : "You haven't created any datasets yet."
+                          : "Datasets can only be created within projects."
                         }
                       </p>
-                      <Button asChild>
-                        <Link to="/datasets/new">
-                          <FileImage className="w-4 h-4 mr-2" />
-                          Create your first dataset
-                        </Link>
-                      </Button>
                     </div>
                   )}
                 </div>
