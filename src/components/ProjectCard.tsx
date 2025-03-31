@@ -1,10 +1,10 @@
 
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Project } from "@/types";
+import { Project, Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Folder, FolderOpen, Database, MoreHorizontal, FileImage } from "lucide-react";
+import { Folder, FolderOpen, Database, MoreHorizontal } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useState } from "react";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 
 interface ProjectCardProps {
   project: Project;
@@ -107,16 +108,8 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
           
           {project.datasets.length > 0 && (
             <div className="flex -space-x-2">
-              {project.datasets.slice(0, 3).map((dataset, index) => (
-                <Avatar key={dataset.id} className="border-2 border-background h-8 w-8">
-                  {dataset.thumbnailUrl ? (
-                    <AvatarImage src={dataset.thumbnailUrl} alt={dataset.name} />
-                  ) : (
-                    <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                      {dataset.name.substring(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  )}
-                </Avatar>
+              {project.datasets.slice(0, 3).map((dataset) => (
+                <DatasetThumbnail key={dataset.id} dataset={dataset} />
               ))}
               {project.datasets.length > 3 && (
                 <Avatar className="border-2 border-background h-8 w-8">
@@ -130,6 +123,54 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
         </div>
       </CardFooter>
     </Card>
+  );
+}
+
+interface DatasetThumbnailProps {
+  dataset: Dataset;
+}
+
+function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
+  return (
+    <HoverCard>
+      <HoverCardTrigger asChild>
+        <Link to={`/datasets/${dataset.id}`}>
+          <Avatar className="border-2 border-background h-8 w-8 cursor-pointer">
+            {dataset.thumbnailUrl ? (
+              <AvatarImage src={dataset.thumbnailUrl} alt={dataset.name} />
+            ) : (
+              <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                {dataset.name.substring(0, 2).toUpperCase()}
+              </AvatarFallback>
+            )}
+          </Avatar>
+        </Link>
+      </HoverCardTrigger>
+      <HoverCardContent className="w-80">
+        <div className="flex space-x-4">
+          <div className="w-16 h-16 rounded overflow-hidden bg-muted">
+            {dataset.thumbnailUrl ? (
+              <img src={dataset.thumbnailUrl} alt={dataset.name} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-primary/10">
+                <span className="text-primary text-lg font-semibold">
+                  {dataset.name.substring(0, 2).toUpperCase()}
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-sm font-semibold">{dataset.name}</h4>
+            <p className="text-xs text-muted-foreground line-clamp-2">{dataset.description}</p>
+            <div className="flex items-center pt-1">
+              <span className="text-xs text-muted-foreground">
+                {dataset.imageCount} images • {dataset.annotationCount} annotations
+              </span>
+            </div>
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 

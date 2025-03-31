@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, FolderPlus, Search, Tag, PlusCircle, FileImage } from "lucide-react";
+import { ArrowRight, Database, FolderPlus, Search, PlusCircle, FileImage } from "lucide-react";
 import { DatasetCard, DatasetCardSkeleton } from "@/components/DatasetCard";
 import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
 import { useState, useEffect } from "react";
@@ -40,7 +40,7 @@ const mockProjects: Project[] = [
         createdAt: "2023-08-17T16:20:00Z",
         imageCount: 527,
         annotationCount: 1432,
-        thumbnailUrl: "https://images.unsplash.com/photo-1508138221679-760a23a2285b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
+        thumbnailUrl: "https://images.unsplash.com/photo-1508138221679-760a23a2285b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
         projectId: "1"
       }
     ]
@@ -71,7 +71,7 @@ const mockProjects: Project[] = [
     name: "Retail Analytics",
     description: "Product recognition and retail analytics datasets",
     createdAt: "2023-07-22T11:30:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1534723328310-e82dad3ee43f?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
+    thumbnailUrl: "https://images.unsplash.com/photo-1534723328310-e82dad3ee43f?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
     datasets: [
       {
         id: "2",
@@ -92,7 +92,7 @@ const mockProjects: Project[] = [
     name: "Natural Environment",
     description: "Nature and wildlife monitoring datasets",
     createdAt: "2023-10-12T09:45:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1557008075-7f2c5efa4cfd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
+    thumbnailUrl: "https://images.unsplash.com/photo-1557008075-7f2c5efa4cfd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
     datasets: [
       {
         id: "5",
@@ -113,7 +113,7 @@ const mockProjects: Project[] = [
     name: "Industrial Applications",
     description: "Datasets for industrial quality control and defect detection",
     createdAt: "2023-07-05T15:30:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
+    thumbnailUrl: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
     datasets: [
       {
         id: "6",

@@ -1,4 +1,3 @@
-
 export interface Dataset {
   id: string;
   name: string;
@@ -52,6 +51,13 @@ export interface Category {
 }
 
 export type StatsTimeframe = 'day' | 'week' | 'month' | 'year';
+
+export interface DatasetFormValues {
+  name: string;
+  description: string;
+  type?: "classification" | "segmentation" | "panomatic";
+  tags?: string[];
+}
 
 export interface DatasetStats {
   imageCount: number;
