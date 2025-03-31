@@ -1,6 +1,5 @@
-
-import { ApiConfig, ApiResponse, DatasetResponse, DatasetsResponse, ImagesResponse, AnnotationsResponse, ClassStatisticsResponse } from '@/types/api';
-import { Dataset, Image, Annotation } from '@/types';
+import { ApiConfig, ApiResponse, DatasetResponse, DatasetsResponse, ImagesResponse, AnnotationsResponse, ClassStatisticsResponse, ProjectResponse, ProjectsResponse } from '@/types/api';
+import { Dataset, Image, Annotation, Project } from '@/types';
 import { AnnotationSample } from '@/utils/annotations';
 
 /**
@@ -43,6 +42,74 @@ export class ApiClient {
         error: error instanceof Error ? error.message : 'Unknown API error' 
       };
     }
+  }
+
+  // Projects endpoints
+  
+  /**
+   * Get all projects
+   */
+  async getProjects(): Promise<ProjectsResponse> {
+    return this.request<Project[]>('/api/projects');
+  }
+
+  /**
+   * Get a single project by ID
+   */
+  async getProject(id: string): Promise<ProjectResponse> {
+    return this.request<Project>(`/api/projects/${id}`);
+  }
+
+  /**
+   * Create a new project
+   */
+  async createProject(project: Partial<Project>, thumbnailFile?: File): Promise<ProjectResponse> {
+    const formData = new FormData();
+    formData.append('data', JSON.stringify(project));
+    
+    if (thumbnailFile) {
+      formData.append('thumbnail', thumbnailFile);
+    }
+    
+    return this.request<Project>('/api/projects', {
+      method: 'POST',
+      body: formData,
+      headers: {} // Let browser set correct content-type for FormData
+    });
+  }
+
+  /**
+   * Update an existing project
+   */
+  async updateProject(id: string, project: Partial<Project>, thumbnailFile?: File): Promise<ProjectResponse> {
+    const formData = new FormData();
+    formData.append('data', JSON.stringify(project));
+    
+    if (thumbnailFile) {
+      formData.append('thumbnail', thumbnailFile);
+    }
+    
+    return this.request<Project>(`/api/projects/${id}`, {
+      method: 'POST',
+      body: formData,
+      headers: {} // Let browser set correct content-type for FormData
+    });
+  }
+
+  /**
+   * Delete a project
+   */
+  async deleteProject(id: string): Promise<ApiResponse<boolean>> {
+    return this.request<boolean>(`/api/projects/${id}`, {
+      method: 'DELETE'
+    });
+  }
+  
+  /**
+   * Get datasets for a specific project
+   */
+  async getProjectDatasets(projectId: string): Promise<DatasetsResponse> {
+    return this.request<Dataset[]>(`/api/projects/${projectId}/datasets`);
   }
 
   // Datasets endpoints
@@ -91,7 +158,7 @@ export class ApiClient {
     }
     
     return this.request<Dataset>(`/api/datasets/${id}`, {
-      method: 'POST', // or 'PUT' depending on Laravel API
+      method: 'POST',
       body: formData,
       headers: {} // Let browser set correct content-type for FormData
     });

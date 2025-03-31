@@ -9,6 +9,16 @@ export interface Dataset {
   imageCount: number;
   annotationCount: number;
   thumbnailUrl?: string;
+  projectId?: string; // Adding projectId to associate with a project
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  datasets: Dataset[];
+  thumbnailUrl?: string;
 }
 
 export interface Image {

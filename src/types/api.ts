@@ -1,5 +1,5 @@
 
-import { Dataset, Image, Annotation, Category } from './index';
+import { Dataset, Image, Annotation, Category, Project } from './index';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -7,6 +7,8 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+export interface ProjectResponse extends ApiResponse<Project> {}
+export interface ProjectsResponse extends ApiResponse<Project[]> {}
 export interface DatasetResponse extends ApiResponse<Dataset> {}
 export interface DatasetsResponse extends ApiResponse<Dataset[]> {}
 export interface ImagesResponse extends ApiResponse<Image[]> {}

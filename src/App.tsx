@@ -26,6 +26,9 @@ const App = () => (
           <Route path="/datasets/new" element={<CreateDataset />} />
           <Route path="/datasets/:id" element={<DatasetDetail />} />
           <Route path="/datasets/:id/edit" element={<EditDataset />} />
+          <Route path="/projects/new" element={<CreateDataset projectMode={true} />} />
+          <Route path="/projects/:id" element={<DatasetDetail projectMode={true} />} />
+          <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
           <Route path="/api-settings" element={<ApiSettings />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
