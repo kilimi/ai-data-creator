@@ -545,17 +545,6 @@ const EditDataset = () => {
                     </div>
                   )}
                   
-                  <div className="mt-6">
-                    <h3 className="text-lg font-medium mb-4 text-white">Advanced Upload</h3>
-                    <UploadCard
-                      title="Add Images to Dataset"
-                      description="Drag and drop images or click to browse"
-                      accept="image/jpeg,image/png,image/webp"
-                      onFilesSelected={handleImageUpload}
-                      type="images"
-                      multiple={true}
-                    />
-                  </div>
                 </TabsContent>
                 
                 <TabsContent value="annotations" className="space-y-4">
@@ -860,44 +849,4 @@ const EditDataset = () => {
               <Button 
                 type="button" 
                 variant="secondary"
-                className="bg-gray-800 hover:bg-gray-700 text-white"
-              >
-                Cancel
-              </Button>
-            </DialogClose>
-            <Button 
-              type="button" 
-              disabled={!newFilename.trim()}
-              onClick={handleRenameAnnotation}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      
-      <AnnotationImagesDialog 
-        open={showAnnotationsDialog}
-        onOpenChange={setShowAnnotationsDialog}
-        annotations={annotationsToShow}
-        images={images}
-        annotationFileName={annotationFileNameToShow}
-      />
-
-      <AnnotationsUploadDialog
-        open={showUploadDialog}
-        onOpenChange={setShowUploadDialog}
-        onFilesSelected={handleAnnotationUpload}
-      />
-
-      <ImageUploadDialog
-        open={showImageUploadDialog}
-        onOpenChange={setShowImageUploadDialog}
-        onFilesSelected={handleImageUpload}
-      />
-    </div>
-  );
-};
-
-export default EditDataset;
+                className
