@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, FolderPlus, Search, PlusCircle } from "lucide-react";
+import { FolderPlus, Search, PlusCircle } from "lucide-react";
 import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
 import { useState, useEffect } from "react";
 import { Project } from "@/types";
@@ -164,14 +164,28 @@ const Index = () => {
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <h2 className="text-2xl font-bold">Projects</h2>
           
-          <div className="relative flex items-center w-full md:w-auto">
-            <Search className="absolute left-3 text-muted-foreground h-4 w-4" />
-            <Input
-              placeholder="Search projects..."
-              className="pl-9 pr-4"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+          <div className="flex items-center gap-3">
+            <Button 
+              variant="default" 
+              size="sm" 
+              asChild
+              className="whitespace-nowrap"
+            >
+              <Link to="/projects/new">
+                <FolderPlus className="w-4 h-4 mr-2" />
+                Create New Project
+              </Link>
+            </Button>
+            
+            <div className="relative flex items-center w-full md:w-auto">
+              <Search className="absolute left-3 text-muted-foreground h-4 w-4" />
+              <Input
+                placeholder="Search projects..."
+                className="pl-9 pr-4"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
           </div>
         </div>
         
@@ -187,13 +201,6 @@ const Index = () => {
               {filteredProjects.map(project => (
                 <ProjectCard key={project.id} project={project} />
               ))}
-              
-              <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
-                <Link to="/projects/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
-                  <PlusCircle className="h-12 w-12 mb-4" />
-                  <p className="text-lg font-medium">Create New Project</p>
-                </Link>
-              </Card>
             </div>
           ) : (
             <div className="text-center py-16">
