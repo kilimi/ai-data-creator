@@ -68,6 +68,9 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
 
     // Simulate API call
     setTimeout(() => {
+      // Create an ID for the new dataset
+      const newDatasetId = Math.random().toString(36).substring(2, 11);
+      
       toast({
         title: projectMode ? "Project created" : "Dataset created",
         description: `${name} has been created successfully.`,
@@ -78,7 +81,8 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       } else if (projectMode) {
         navigate('/');
       } else {
-        navigate('/datasets');
+        // Navigate to the edit page for the new dataset instead of the datasets listing
+        navigate(`/datasets/${newDatasetId}/edit`);
       }
       
       setIsSubmitting(false);
