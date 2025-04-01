@@ -1,13 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, FolderPlus, Search, PlusCircle, FileImage, Tag } from "lucide-react";
-import { DatasetCard, DatasetCardSkeleton } from "@/components/DatasetCard";
+import { ArrowRight, Database, FolderPlus, Search, PlusCircle, Tag } from "lucide-react";
 import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
 import { useState, useEffect } from "react";
-import { Dataset, Project } from "@/types";
+import { Project } from "@/types";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 
 // Mock data for projects
@@ -131,90 +129,16 @@ const mockProjects: Project[] = [
   }
 ];
 
-// Original mock datasets (without projectId for backward compatibility)
-const mockDatasets: Dataset[] = [
-  {
-    id: "1",
-    name: "Vehicle Detection",
-    description: "Urban traffic dataset with annotations for cars, trucks, and pedestrians",
-    type: "classification",
-    tags: ["traffic", "vehicles", "urban"],
-    createdAt: "2023-06-15T10:30:00Z",
-    imageCount: 1250,
-    annotationCount: 4932,
-    thumbnailUrl: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "2",
-    name: "Retail Products",
-    description: "Product recognition dataset with shelf items and packaging",
-    type: "segmentation",
-    tags: ["retail", "products", "packaging"],
-    createdAt: "2023-09-22T14:15:00Z",
-    imageCount: 873,
-    annotationCount: 3218,
-    thumbnailUrl: "https://images.unsplash.com/photo-1534723328310-e82dad3ee43f?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "3",
-    name: "Medical Imagery",
-    description: "X-ray and MRI scans with annotated features for disease detection",
-    type: "panomatic",
-    tags: ["medical", "xray", "healthcare"],
-    createdAt: "2023-11-03T09:45:00Z",
-    imageCount: 615,
-    annotationCount: 1845,
-    thumbnailUrl: "https://images.unsplash.com/photo-1530497610245-94d3c16cda28?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "4",
-    name: "Aerial Photography",
-    description: "Drone imagery for geographic feature detection and mapping",
-    type: "segmentation",
-    tags: ["aerial", "drone", "geography"],
-    createdAt: "2023-08-17T16:20:00Z",
-    imageCount: 527,
-    annotationCount: 1432,
-    thumbnailUrl: "https://images.unsplash.com/photo-1508138221679-760a23a2285b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "5",
-    name: "Wildlife Monitoring",
-    description: "Camera trap imagery of wildlife with species annotations",
-    type: "classification",
-    tags: ["wildlife", "nature", "animals"],
-    createdAt: "2023-10-05T11:40:00Z",
-    imageCount: 942,
-    annotationCount: 2854,
-    thumbnailUrl: "https://images.unsplash.com/photo-1557008075-7f2c5efa4cfd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "6",
-    name: "Industrial Defects",
-    description: "Manufacturing quality control with annotated defect regions",
-    type: "panomatic",
-    tags: ["industrial", "manufacturing", "quality"],
-    createdAt: "2023-07-29T08:50:00Z",
-    imageCount: 318,
-    annotationCount: 563,
-    thumbnailUrl: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-];
-
 const Index = () => {
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("projects");
   
   useEffect(() => {
     // Simulate API call
     const fetchData = async () => {
       await new Promise(resolve => setTimeout(resolve, 1000));
       setProjects(mockProjects);
-      setDatasets(mockDatasets);
       setLoading(false);
     };
     
@@ -231,25 +155,6 @@ const Index = () => {
         dataset.description.toLowerCase().includes(searchQuery.toLowerCase())
       );
   });
-  
-  // Filter datasets based on search query and/or selected tag
-  const filteredDatasets = datasets.filter(dataset => {
-    const matchesSearch = searchQuery === "" || 
-      dataset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      dataset.description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesTag = selectedTag === null || 
-      (dataset.tags && dataset.tags.includes(selectedTag));
-    
-    return matchesSearch && matchesTag;
-  });
-  
-  // Extract all unique tags from datasets
-  const allTags = Array.from(
-    new Set(
-      datasets.flatMap(dataset => dataset.tags || [])
-    )
-  ).sort();
   
   return (
     <div className="min-h-screen pb-16">
@@ -278,124 +183,56 @@ const Index = () => {
       
       <section className="container max-w-6xl py-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-          <Tabs 
-            defaultValue="projects" 
-            value={activeTab} 
-            onValueChange={setActiveTab}
-            className="w-full md:w-auto"
-          >
-            <TabsList className="grid w-full md:w-auto grid-cols-2">
-              <TabsTrigger value="projects">Projects</TabsTrigger>
-              <TabsTrigger value="datasets">Datasets</TabsTrigger>
-            </TabsList>
-          
-            <div className="mt-6">
-              {activeTab === "projects" && (
-                <div>
-                  {loading ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {Array(4).fill(0).map((_, i) => (
-                        <ProjectCardSkeleton key={i} />
-                      ))}
-                    </div>
-                  ) : filteredProjects.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {filteredProjects.map(project => (
-                        <ProjectCard key={project.id} project={project} />
-                      ))}
-                      
-                      <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
-                        <Link to="/projects/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
-                          <PlusCircle className="h-12 w-12 mb-4" />
-                          <p className="text-lg font-medium">Create New Project</p>
-                        </Link>
-                      </Card>
-                    </div>
-                  ) : (
-                    <div className="text-center py-16">
-                      <h3 className="text-lg font-medium mb-2">No projects found</h3>
-                      <p className="text-muted-foreground mb-6">
-                        {searchQuery 
-                          ? `No projects matching your search criteria`
-                          : "You haven't created any projects yet."
-                        }
-                      </p>
-                      <Button asChild>
-                        <Link to="/projects/new">
-                          <FolderPlus className="w-4 h-4 mr-2" />
-                          Create your first project
-                        </Link>
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeTab === "datasets" && (
-                <div>
-                  {/* Tag filtering for datasets */}
-                  {allTags.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mb-6">
-                      <Button
-                        variant={selectedTag === null ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setSelectedTag(null)}
-                        className="gap-1"
-                      >
-                        All
-                      </Button>
-                      {allTags.map(tag => (
-                        <Button
-                          key={tag}
-                          variant={selectedTag === tag ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setSelectedTag(tag)}
-                          className="gap-1"
-                        >
-                          <Tag className="w-3 h-3" />
-                          {tag}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {loading ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {Array(6).fill(0).map((_, i) => (
-                        <DatasetCardSkeleton key={i} />
-                      ))}
-                    </div>
-                  ) : filteredDatasets.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {filteredDatasets.map(dataset => (
-                        <DatasetCard key={dataset.id} dataset={dataset} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-16">
-                      <h3 className="text-lg font-medium mb-2">No datasets found</h3>
-                      <p className="text-muted-foreground mb-6">
-                        {searchQuery || selectedTag 
-                          ? `No datasets matching your search criteria`
-                          : "Datasets can only be created within projects."
-                        }
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </Tabs>
+          <h2 className="text-2xl font-bold">Projects</h2>
           
           <div className="relative flex items-center w-full md:w-auto">
             <Search className="absolute left-3 text-muted-foreground h-4 w-4" />
             <Input
-              placeholder={`Search ${activeTab}...`}
+              placeholder="Search projects..."
               className="pl-9 pr-4"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
+        </div>
+        
+        <div>
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {Array(4).fill(0).map((_, i) => (
+                <ProjectCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : filteredProjects.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {filteredProjects.map(project => (
+                <ProjectCard key={project.id} project={project} />
+              ))}
+              
+              <Card className="overflow-hidden border-dashed border-2 hover:border-primary/50 transition-colors">
+                <Link to="/projects/new" className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground hover:text-primary transition-colors">
+                  <PlusCircle className="h-12 w-12 mb-4" />
+                  <p className="text-lg font-medium">Create New Project</p>
+                </Link>
+              </Card>
+            </div>
+          ) : (
+            <div className="text-center py-16">
+              <h3 className="text-lg font-medium mb-2">No projects found</h3>
+              <p className="text-muted-foreground mb-6">
+                {searchQuery 
+                  ? `No projects matching your search criteria`
+                  : "You haven't created any projects yet."
+                }
+              </p>
+              <Button asChild>
+                <Link to="/projects/new">
+                  <FolderPlus className="w-4 h-4 mr-2" />
+                  Create your first project
+                </Link>
+              </Button>
+            </div>
+          )}
         </div>
       </section>
     </div>
