@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, FolderPlus, Search, PlusCircle, Tag } from "lucide-react";
+import { ArrowRight, Database, FolderPlus, Search, PlusCircle } from "lucide-react";
 import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
 import { useState, useEffect } from "react";
 import { Project } from "@/types";
@@ -160,28 +160,7 @@ const Index = () => {
     <div className="min-h-screen pb-16">
       <Navbar />
       
-      <section className="pt-32 pb-12 px-4 relative">
-        <div className="absolute inset-0 bg-gradient-to-b from-primary/5 to-transparent" />
-        <div className="container relative z-10 max-w-5xl text-center mx-auto animate-fade-in">
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-balance mb-6">
-            Vision AI Dataset Management
-          </h1>
-          <p className="text-xl text-muted-foreground max-w-3xl mx-auto mb-8">
-            Create, curate, and annotate high-quality datasets for computer vision. 
-            Organize your work in projects and manage datasets with ease.
-          </p>
-          <div className="flex flex-wrap gap-4 justify-center">
-            <Button asChild size="lg" className="gap-2">
-              <Link to="/projects/new">
-                <FolderPlus className="w-4 h-4" />
-                Create New Project
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </section>
-      
-      <section className="container max-w-6xl py-6">
+      <section className="container max-w-6xl pt-24 pb-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <h2 className="text-2xl font-bold">Projects</h2>
           
