@@ -21,8 +21,9 @@ interface AnnotationImagesDialogProps {
   annotations: AnnotationSample[];
   images: ImageType[];
   annotationFileName: string;
-  fileName?: string; // Add this to fix the error
-  onApply?: (annotationsToApply: AnnotationSample[]) => void; // Make this optional
+  fileName?: string;
+  onApply?: (annotationsToApply: AnnotationSample[]) => void;
+  onShowOnImage?: (annotations: AnnotationSample[]) => void; // Add the missing prop
 }
 
 export const AnnotationImagesDialog = ({
@@ -32,6 +33,7 @@ export const AnnotationImagesDialog = ({
   images,
   annotationFileName,
   onApply,
+  onShowOnImage,
 }: AnnotationImagesDialogProps) => {
   const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
   
@@ -125,6 +127,17 @@ export const AnnotationImagesDialog = ({
         </div>
         
         <DialogFooter>
+          {onShowOnImage && (
+            <Button
+              onClick={() => {
+                onShowOnImage(annotations);
+                onOpenChange(false);
+              }}
+              className="bg-blue-600 hover:bg-blue-700 text-white mr-2"
+            >
+              Show on Images
+            </Button>
+          )}
           <Button 
             onClick={() => onOpenChange(false)}
             className="bg-gray-800 hover:bg-gray-700 text-white"

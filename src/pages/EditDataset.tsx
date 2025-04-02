@@ -883,7 +883,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         open={showAnnotationsDialog}
         onOpenChange={setShowAnnotationsDialog}
         annotations={annotationsToShow}
-        fileName={annotationFileNameToShow}
+        annotationFileName={annotationFileNameToShow}
         images={images}
         onShowOnImage={(annotations) => {
           setShowAnnotationsOnImage(annotations);
