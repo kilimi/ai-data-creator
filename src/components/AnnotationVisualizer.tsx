@@ -1,5 +1,5 @@
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import { AnnotationSample } from "@/utils/annotations";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui";
@@ -23,6 +23,8 @@ export const AnnotationVisualizer = ({
   className 
 }: AnnotationVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState<{ x: number, y: number }>({ x: 1, y: 1 });
 
   // Colors for segmentation masks
   const colors = [
@@ -36,20 +38,60 @@ export const AnnotationVisualizer = ({
     "#e74c3c", // Red
   ];
 
+  // Calculate scaling factor based on container size vs original image size
+  useEffect(() => {
+    const calculateScale = () => {
+      if (containerRef.current && imageWidth && imageHeight) {
+        const containerWidth = containerRef.current.clientWidth;
+        const containerHeight = containerRef.current.clientHeight;
+        
+        // Calculate the scaling factor to fit the image in the container
+        // while maintaining aspect ratio
+        const widthScale = containerWidth / imageWidth;
+        const heightScale = containerHeight / imageHeight;
+        
+        // Use the smaller scale to ensure the image fits completely
+        const minScale = Math.min(widthScale, heightScale);
+        
+        // Calculate the displayed dimensions
+        const displayWidth = imageWidth * minScale;
+        const displayHeight = imageHeight * minScale;
+        
+        setScale({
+          x: displayWidth / imageWidth,
+          y: displayHeight / imageHeight
+        });
+      }
+    };
+
+    calculateScale();
+    // Add resize listener to recalculate on window resize
+    window.addEventListener('resize', calculateScale);
+    return () => window.removeEventListener('resize', calculateScale);
+  }, [imageWidth, imageHeight]);
+
   // Draw annotations on canvas
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || annotations.length === 0) return;
+    if (!canvas || annotations.length === 0 || !imageWidth || !imageHeight) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Set canvas size to match image dimensions
-    canvas.width = imageWidth;
-    canvas.height = imageHeight;
+    // Set canvas size to match container dimensions
+    if (containerRef.current) {
+      canvas.width = containerRef.current.clientWidth;
+      canvas.height = containerRef.current.clientHeight;
+    }
     
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Calculate the centered position of the image
+    const scaledWidth = imageWidth * scale.x;
+    const scaledHeight = imageHeight * scale.y;
+    const offsetX = (canvas.width - scaledWidth) / 2;
+    const offsetY = (canvas.height - scaledHeight) / 2;
 
     // Draw each annotation
     annotations.forEach((annotation, index) => {
@@ -69,9 +111,9 @@ export const AnnotationVisualizer = ({
           
           // Draw polygon
           for (let i = 0; i < segment.length; i += 2) {
-            // Convert normalized coordinates to actual pixel values
-            const x = segment[i] * canvas.width;
-            const y = segment[i + 1] * canvas.height;
+            // Convert normalized coordinates to actual pixel values with proper scaling
+            const x = offsetX + segment[i] * imageWidth * scale.x;
+            const y = offsetY + segment[i + 1] * imageHeight * scale.y;
             
             if (i === 0) {
               ctx.moveTo(x, y);
@@ -90,11 +132,11 @@ export const AnnotationVisualizer = ({
       if (annotation.bbox) {
         const [x, y, width, height] = annotation.bbox;
         
-        // Convert normalized coordinates to actual pixel values
-        const bboxX = x * canvas.width;
-        const bboxY = y * canvas.height;
-        const bboxWidth = width * canvas.width;
-        const bboxHeight = height * canvas.height;
+        // Convert normalized coordinates to actual pixel values with proper scaling
+        const bboxX = offsetX + x * imageWidth * scale.x;
+        const bboxY = offsetY + y * imageHeight * scale.y;
+        const bboxWidth = width * imageWidth * scale.x;
+        const bboxHeight = height * imageHeight * scale.y;
         
         // Draw rectangle
         ctx.strokeStyle = color;
@@ -102,24 +144,35 @@ export const AnnotationVisualizer = ({
         ctx.strokeRect(bboxX, bboxY, bboxWidth, bboxHeight);
       }
     });
-  }, [annotations, imageWidth, imageHeight]);
+  }, [annotations, imageWidth, imageHeight, scale]);
 
   return (
-    <div className={cn("relative", className)}>
+    <div 
+      ref={containerRef} 
+      className={cn("relative w-full h-full", className)}
+    >
       <canvas 
         ref={canvasRef}
         className="absolute inset-0 z-10 pointer-events-none"
       />
       
-      {/* Display annotation labels */}
+      {/* Display annotation labels with correct scaling */}
       {annotations.map((anno, index) => {
         const colorIndex = index % colors.length;
         const color = colors[colorIndex];
         
-        // Position for the label based on the bbox
+        if (!anno.bbox) return null;
+        
+        // Calculate the centered position of the image
+        const scaledWidth = imageWidth * scale.x;
+        const scaledHeight = imageHeight * scale.y;
+        const offsetX = (containerRef.current ? (containerRef.current.clientWidth - scaledWidth) / 2 : 0) / containerRef.current?.clientWidth || 0;
+        const offsetY = (containerRef.current ? (containerRef.current.clientHeight - scaledHeight) / 2 : 0) / containerRef.current?.clientHeight || 0;
+        
+        // Position for the label based on the bbox with proper scaling
         // Convert normalized coordinates to percentage for CSS positioning
-        const labelX = anno.bbox ? anno.bbox[0] * 100 : 10;
-        const labelY = anno.bbox ? Math.max(0, anno.bbox[1] * 100 - 6) : 10;
+        const labelX = offsetX * 100 + anno.bbox[0] * 100 * (scaledWidth / containerRef.current?.clientWidth || 1);
+        const labelY = offsetY * 100 + Math.max(0, anno.bbox[1] * 100 * (scaledHeight / containerRef.current?.clientHeight || 1) - 6);
         
         return (
           <div
