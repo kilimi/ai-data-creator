@@ -2,7 +2,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Database, FolderPlus, Home, Settings } from "lucide-react";
+import { Database, FolderPlus, Home, Settings, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 
 export function Navbar() {
@@ -27,6 +27,11 @@ export function Navbar() {
       name: "Home", 
       path: "/", 
       icon: <Home className="w-4 h-4 mr-2" /> 
+    },
+    { 
+      name: "Projects", 
+      path: "/", 
+      icon: <FolderOpen className="w-4 h-4 mr-2" /> 
     },
     { 
       name: "Datasets", 
@@ -59,13 +64,13 @@ export function Navbar() {
           <nav className="hidden md:flex items-center gap-1">
             {navItems.map((item) => (
               <Button
-                key={item.path}
-                variant={location.pathname === item.path ? "secondary" : "ghost"}
+                key={item.path + item.name}
+                variant={location.pathname === item.path && item.name !== "Projects" ? "secondary" : "ghost"}
                 size="sm"
                 asChild
                 className={cn(
                   "px-3",
-                  location.pathname === item.path && "bg-secondary/80"
+                  location.pathname === item.path && item.name !== "Projects" && "bg-secondary/80"
                 )}
               >
                 <Link to={item.path} className="flex items-center">
