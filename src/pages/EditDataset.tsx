@@ -866,6 +866,30 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      <AnnotationsUploadDialog 
+        open={showUploadDialog}
+        onOpenChange={setShowUploadDialog}
+        onFilesSelected={handleAnnotationUpload}
+      />
+      
+      <ImageUploadDialog
+        open={showImageUploadDialog}
+        onOpenChange={setShowImageUploadDialog}
+        onFilesSelected={handleImageUpload}
+      />
+      
+      <AnnotationImagesDialog
+        open={showAnnotationsDialog}
+        onOpenChange={setShowAnnotationsDialog}
+        annotations={annotationsToShow}
+        fileName={annotationFileNameToShow}
+        images={images}
+        onShowOnImage={(annotations) => {
+          setShowAnnotationsOnImage(annotations);
+          setShowAnnotationsDialog(false);
+        }}
+      />
     </div>
   );
 };
