@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
@@ -60,7 +61,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
           >
             <Link 
               to="/projects/new/dataset" 
-              state={{ projectId: parseInt(id || '', 10) }}
+              state={{ projectId: id ? parseInt(id, 10) : undefined }}
             >
               <FolderPlus className="w-4 h-4 mr-2" />
               Create New Dataset
@@ -97,7 +98,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             <Button asChild>
               <Link 
                 to="/projects/new/dataset" 
-                state={{ projectId: parseInt(id || '', 10) }}
+                state={{ projectId: id ? parseInt(id, 10) : undefined }}
               >
                 <FolderPlus className="w-4 h-4 mr-2" />
                 Create your first dataset

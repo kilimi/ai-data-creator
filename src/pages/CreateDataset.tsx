@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
@@ -144,11 +145,15 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       if (!projectMode) {
         // Dataset creation mode
         formData.append('type', datasetType);
-        formData.append('project_id', projectId.toString());
+        formData.append('project_id', String(projectId)); // Ensure project_id is always a string
       } else {
         // Project creation mode
         formData.append('type', 'project');
         formData.append('is_project', 'true');
+      }
+
+      if (tags.length > 0) {
+        formData.append('tags', JSON.stringify(tags));
       }
 
       if (logoFile) {
@@ -157,7 +162,11 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
 
       // Use different endpoints based on mode
       const endpoint = projectMode ? 'projects' : 'datasets';
-      const response = await fetch(`http://localhost:8000/${endpoint}/`, {
+      const apiUrl = `${API_CONFIG.baseUrl}/${endpoint}/`;
+      
+      console.log(`Submitting to ${apiUrl} with project_id:`, projectId);
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
