@@ -67,7 +67,7 @@ export function DatasetCard({ dataset, className }: DatasetCardProps) {
           <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <div className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground">
-                {new Date(dataset.createdAt).toLocaleDateString()}
+                {new Date(dataset.created_at).toLocaleDateString()}
               </div>
               
               {/* Dataset type badge */}
@@ -124,11 +124,11 @@ export function DatasetCard({ dataset, className }: DatasetCardProps) {
       <CardFooter className="p-4 pt-0 flex justify-between text-sm text-muted-foreground">
         <div className="flex items-center">
           <FileImage className="h-4 w-4 mr-1.5" />
-          <span>{dataset.imageCount} {dataset.imageCount === 1 ? 'image' : 'images'}</span>
+          <span>{dataset.image_count} {dataset.image_count === 1 ? 'image' : 'images'}</span>
         </div>
         <div className="flex items-center">
           <Layers className="h-4 w-4 mr-1.5" />
-          <span>{dataset.annotationCount} {dataset.annotationCount === 1 ? 'annotation' : 'annotations'}</span>
+          <span>{dataset.annotation_count} {dataset.annotation_count === 1 ? 'annotation' : 'annotations'}</span>
         </div>
       </CardFooter>
     </Card>

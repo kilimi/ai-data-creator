@@ -52,16 +52,7 @@ import {
 } from "@/components/ui";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-const getMockDataset = (id: string): Dataset => ({
-  id,
-  name: "Vehicle Detection",
-  description: "Urban traffic dataset with annotations for cars, trucks, and pedestrians.",
-  createdAt: "2023-06-15T10:30:00Z",
-  imageCount: 0,
-  annotationCount: 0,
-  thumbnailUrl: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-});
+import { getMockDataset } from "@/utils/mockData";
 
 type AnnotationFile = {
   id: string;
@@ -138,7 +129,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (dataset) {
       setDataset({
         ...dataset,
-        imageCount: (dataset.imageCount || 0) + files.length,
+        image_count: (dataset.image_count || 0) + files.length,
       });
     }
     
@@ -219,7 +210,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         if (dataset) {
           setDataset({
             ...dataset,
-            annotationCount: (dataset.annotationCount || 0) + annotationCount,
+            annotation_count: (dataset.annotation_count || 0) + annotationCount,
           });
         }
       }
@@ -244,7 +235,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (dataset) {
       setDataset({
         ...dataset,
-        imageCount: Math.max(0, (dataset.imageCount || 0) - 1),
+        image_count: Math.max(0, (dataset.image_count || 0) - 1),
       });
     }
     
@@ -268,7 +259,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (dataset) {
       setDataset({
         ...dataset,
-        annotationCount: Math.max(0, (dataset.annotationCount || 0) - annotationCount),
+        annotation_count: Math.max(0, (dataset.annotation_count || 0) - annotationCount),
       });
     }
     
@@ -452,7 +443,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-white">Dataset Content</h2>
                 <div className="text-sm text-gray-400">
-                  {images.length} images • {dataset?.annotationCount} annotations
+                  {images.length} images • {dataset?.annotation_count} annotations
                 </div>
               </div>
               

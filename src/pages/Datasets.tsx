@@ -1,3 +1,4 @@
+
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { useState, useEffect } from "react";
@@ -73,9 +74,9 @@ const Datasets = () => {
       case "name":
         return result.sort((a, b) => a.name.localeCompare(b.name));
       case "images":
-        return result.sort((a, b) => b.imageCount - a.imageCount);
+        return result.sort((a, b) => b.image_count - a.image_count);
       case "annotations":
-        return result.sort((a, b) => b.annotationCount - a.annotationCount);
+        return result.sort((a, b) => b.annotation_count - a.annotation_count);
       default:
         return result;
     }

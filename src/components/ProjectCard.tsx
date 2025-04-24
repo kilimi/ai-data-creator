@@ -1,3 +1,4 @@
+
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Project, Dataset } from "@/types";
@@ -163,7 +164,7 @@ function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
             <p className="text-xs text-muted-foreground line-clamp-2">{dataset.description}</p>
             <div className="flex items-center pt-1">
               <span className="text-xs text-muted-foreground">
-                {dataset.imageCount} images • {dataset.annotationCount} annotations
+                {dataset.image_count} images • {dataset.annotation_count} annotations
               </span>
             </div>
           </div>

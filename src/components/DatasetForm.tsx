@@ -1,3 +1,4 @@
+
 import { useState, useRef } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -51,7 +52,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
     defaultValues: {
       name: initialData?.name || "",
       description: initialData?.description || "",
-      type: initialData?.type || "classification",
+      type: (initialData?.type as "classification" | "segmentation" | "panomatic") || "classification",
       tags: "",
     },
   });

@@ -9,6 +9,7 @@ export interface Dataset {
   image_count: number;
   annotation_count: number;
   project_id: number;
+  thumbnailUrl?: string; // Adding this property as optional
 }
 
 export interface Project {
@@ -19,6 +20,8 @@ export interface Project {
   updated_at: string;
   is_project: boolean;
   datasets: Dataset[];
+  thumbnailUrl?: string; // Adding this property as optional
+  logo_url?: string;
 }
 
 export interface Image {
