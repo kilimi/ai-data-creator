@@ -1,11 +1,10 @@
-
 import { useState, useEffect } from 'react';
 import { ApiClient, createApiClient } from '@/utils/api';
 import { ApiConfig } from '@/types/api';
 
-// Default config that can be overridden
+// Force localhost configuration
 const defaultConfig: ApiConfig = {
-  baseUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000'
+  baseUrl: 'http://localhost:8000'
 };
 
 /**
@@ -16,17 +15,16 @@ export const useApi = (config?: Partial<ApiConfig>) => {
   const [isConfigured, setIsConfigured] = useState(false);
 
   useEffect(() => {
-    // Merge the default config with any provided config
+    // Always use localhost in development
     const mergedConfig: ApiConfig = {
       ...defaultConfig,
-      ...config
+      baseUrl: 'http://localhost:8000' // Force localhost
     };
 
-    // Create the API client with the config
     const client = createApiClient(mergedConfig);
     setApiClient(client);
     setIsConfigured(true);
-  }, [config?.baseUrl, config?.apiKey]);
+  }, []);  // Remove config dependencies to prevent override
 
   return {
     api: apiClient,

@@ -80,7 +80,6 @@ const CreateProject = () => {
       const formData = new FormData();
       formData.append('name', name.trim());
       formData.append('description', description.trim());
-      formData.append('is_project', 'true');
       
       if (logoFile) {
         formData.append('logo', logoFile);
@@ -91,14 +90,14 @@ const CreateProject = () => {
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
       const data = await response.json();
       
+      if (!response.ok) {
+        throw new Error(data.detail || `HTTP error! status: ${response.status}`);
+      }
+
       toast({
-        title: "Project created",
+        title: "Success",
         description: `${name} has been created successfully.`,
       });
       
@@ -107,7 +106,7 @@ const CreateProject = () => {
       console.error('Error creating project:', err);
       toast({
         title: "Error",
-        description: "Failed to create project. Please try again.",
+        description: err instanceof Error ? err.message : "Failed to create project. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -216,4 +215,4 @@ const CreateProject = () => {
   );
 };
 
-export default CreateProject; 
+export default CreateProject;
