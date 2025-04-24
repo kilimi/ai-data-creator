@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Tag, X, UploadCloud, Image as ImageIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
+import { API_CONFIG } from '@/config/api';
 
 interface CreateDatasetProps {
   projectMode?: boolean;
@@ -18,9 +19,12 @@ interface CreateDatasetProps {
 const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
   const location = useLocation();
   const projectId = location.state?.projectId;
+  console.log("Current project ID:", projectId);
+  console.log("Location state:", location.state);
 
   // Ensure projectMode is false when navigating to /datasets/new
-  if (location.pathname === '/datasets/new') {
+  const isDatasetCreationMode = location.pathname === '/datasets/new';
+  if (isDatasetCreationMode) {
     projectMode = false;
   }
 
@@ -108,7 +112,8 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       return;
     }
 
-    if (!projectId) {
+    // Check if we have a project ID when in dataset creation mode
+    if (!projectMode && !projectId) {
       toast({
         title: "Error",
         description: "No project selected. Please create a dataset from within a project.",
@@ -123,14 +128,23 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       const formData = new FormData();
       formData.append('name', name.trim());
       formData.append('description', description.trim());
-      formData.append('type', 'dataset');
-      formData.append('project_id', projectId);
+      
+      if (projectMode) {
+        // Creating a project
+        formData.append('type', 'project');
+      } else {
+        // Creating a dataset within a project
+        formData.append('type', 'dataset');
+        formData.append('project_id', projectId);
+      }
 
       if (logoFile) {
         formData.append('logo', logoFile);
       }
 
-      const response = await fetch('http://localhost:8000/datasets/', {
+      // Use API_CONFIG for the baseUrl
+      const endpoint = projectMode ? 'projects' : 'datasets';
+      const response = await fetch(`${API_CONFIG.baseUrl}/${endpoint}/`, {
         method: 'POST',
         body: formData,
       });
@@ -146,13 +160,17 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
         description: `${name} has been created successfully.`,
       });
 
-      // Navigate back to the project's detail page
-      navigate(`/projects/${projectId}`);
+      // Navigate back to the appropriate page
+      if (projectMode) {
+        navigate('/'); // Back to projects list
+      } else {
+        navigate(`/projects/${projectId}`); // Back to project detail
+      }
     } catch (err) {
-      console.error('Error creating dataset:', err);
+      console.error('Error creating dataset/project:', err);
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Failed to create dataset. Please try again.",
+        description: err instanceof Error ? err.message : "Failed to create. Please try again.",
         variant: "destructive",
       });
     } finally {

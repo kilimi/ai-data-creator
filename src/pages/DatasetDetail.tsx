@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
@@ -54,7 +53,10 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             asChild
             className="whitespace-nowrap"
           >
-            <Link to="/datasets/new" state={{ projectId: id }}>
+            <Link 
+              to="/datasets/new" 
+              state={{ projectId: id }}
+            >
               <FolderPlus className="w-4 h-4 mr-2" />
               Create New Dataset
             </Link>
@@ -88,7 +90,10 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
               This project doesn't have any datasets yet.
             </p>
             <Button asChild>
-              <Link to="/datasets/new" state={{ projectId: id }}>
+              <Link 
+                to="/datasets/new" 
+                state={{ projectId: id }}
+              >
                 <FolderPlus className="w-4 h-4 mr-2" />
                 Create your first dataset
               </Link>
