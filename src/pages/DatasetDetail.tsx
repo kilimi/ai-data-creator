@@ -15,6 +15,11 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const { id } = useParams<{ id: string }>();
   const { project, loading, error } = useProject(id || '');
 
+  // Debug logging to track project ID
+  console.log("Project Detail - Current Project ID:", id);
+  console.log("Project Detail - Project Data:", project);
+  console.log("Project Detail - Mode:", projectMode);
+
   if (!projectMode) {
     return (
       <div>
@@ -54,8 +59,8 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             className="whitespace-nowrap"
           >
             <Link 
-              to="/datasets/new" 
-              state={{ projectId: id }}
+              to="/projects/new/dataset" 
+              state={{ projectId: parseInt(id || '', 10) }}
             >
               <FolderPlus className="w-4 h-4 mr-2" />
               Create New Dataset
@@ -77,7 +82,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
           <Card className="p-6 text-center">
             <p>Project not found</p>
           </Card>
-        ) : project.datasets.length > 0 ? (
+        ) : project.datasets && project.datasets.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {project.datasets.map(dataset => (
               <DatasetCard key={dataset.id} dataset={dataset} />
@@ -91,8 +96,8 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             </p>
             <Button asChild>
               <Link 
-                to="/datasets/new" 
-                state={{ projectId: id }}
+                to="/projects/new/dataset" 
+                state={{ projectId: parseInt(id || '', 10) }}
               >
                 <FolderPlus className="w-4 h-4 mr-2" />
                 Create your first dataset

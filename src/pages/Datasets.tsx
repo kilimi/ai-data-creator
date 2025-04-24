@@ -1,4 +1,3 @@
-
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { useState, useEffect } from "react";
@@ -18,6 +17,7 @@ import {
 const Datasets = () => {
   const [loading, setLoading] = useState(true);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [project, setProject] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
@@ -25,14 +25,25 @@ const Datasets = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch('http://localhost:8000/datasets/');
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        // Fetch projects first
+        const projectsResponse = await fetch('http://localhost:8000/projects/');
+        if (projectsResponse.ok) {
+          const projectsData = await projectsResponse.json();
+          // Get the first project
+          if (projectsData.length > 0) {
+            setProject(projectsData[0]);
+          }
         }
-        const data = await response.json();
+
+        // Then fetch datasets
+        const datasetsResponse = await fetch('http://localhost:8000/datasets/');
+        if (!datasetsResponse.ok) {
+          throw new Error(`HTTP error! status: ${datasetsResponse.status}`);
+        }
+        const data = await datasetsResponse.json();
         setDatasets(data);
       } catch (err) {
-        console.error('Error fetching datasets:', err);
+        console.error('Error fetching data:', err);
       } finally {
         setLoading(false);
       }
@@ -100,7 +111,11 @@ const Datasets = () => {
               </Link>
             </Button>
             <Button asChild>
-              <Link to="/datasets/new" className="flex items-center gap-2">
+              <Link 
+                to="/projects/new/dataset" 
+                state={{ projectId: project?.id || null }}
+                className="flex items-center gap-2"
+              >
                 <FolderPlus className="w-4 h-4" />
                 New Dataset
               </Link>
@@ -170,7 +185,9 @@ const Datasets = () => {
         ) : filteredAndSortedDatasets().length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-300">
             {filteredAndSortedDatasets().map(dataset => (
-              <DatasetCard key={dataset.id} dataset={dataset} />
+              <div key={dataset.id}>
+                <DatasetCard dataset={dataset} />
+              </div>
             ))}
           </div>
         ) : (
@@ -179,13 +196,18 @@ const Datasets = () => {
             <p className="text-muted-foreground mb-6">
               {searchQuery || selectedTag
                 ? `No datasets matching your search criteria`
-                : "You haven't created any datasets yet."
+                : project 
+                  ? "You haven't created any datasets yet."
+                  : "Please create a project first before adding datasets."
               }
             </p>
             <Button asChild>
-              <Link to="/datasets/new">
+              <Link 
+                to={project ? "/projects/new/dataset" : "/projects/new"}
+                state={project ? { projectId: project.id } : undefined}
+              >
                 <FolderPlus className="w-4 h-4 mr-2" />
-                Create your first dataset
+                {project ? "Create your first dataset" : "Create your first project"}
               </Link>
             </Button>
           </div>

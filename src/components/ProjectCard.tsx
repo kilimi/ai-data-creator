@@ -1,4 +1,3 @@
-
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Project, Dataset } from "@/types";
@@ -86,7 +85,7 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
       
       <CardContent className="p-4">
         <div className="space-y-2">
-          <Link to={`/datasets?projectId=${project.id}`} className="block">
+          <Link to={`/projects/${project.id}`} className="block">
             <h3 className="font-medium line-clamp-1 hover:text-primary transition-colors text-lg">
               {project.name}
             </h3>

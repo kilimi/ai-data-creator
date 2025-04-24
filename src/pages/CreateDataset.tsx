@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { DatasetFormValues } from '@/types';
@@ -18,20 +18,18 @@ interface CreateDatasetProps {
 
 const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
   const location = useLocation();
-  const projectId = location.state?.projectId;
-  console.log("Current project ID:", projectId);
-  console.log("Location state:", location.state);
-
-  // Ensure projectMode is false when navigating to /datasets/new
-  const isDatasetCreationMode = location.pathname === '/datasets/new';
-  if (isDatasetCreationMode) {
-    projectMode = false;
-  }
-
   const navigate = useNavigate();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // Get projectId from location state
+  const projectId = location.state?.projectId;
+  
+  // Debug logging
+  console.log("Create Dataset - Location state:", location.state);
+  console.log("Create Dataset - Project ID:", projectId);
+  console.log("Create Dataset - Project mode:", projectMode);
+
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [currentTag, setCurrentTag] = useState('');
@@ -39,6 +37,21 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [datasetType, setDatasetType] = useState('classification');
+
+  // Only redirect if we're in dataset mode (not project mode) and there's no project ID
+  useEffect(() => {
+    if (!projectMode && !projectId) {
+      console.log("Create Dataset - No project ID found, redirecting to projects list...");
+      toast({
+        title: "Error",
+        description: "Please select a project first",
+        variant: "destructive",
+      });
+      navigate('/');
+      return;
+    }
+  }, [projectMode, projectId, navigate, toast]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -112,7 +125,6 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       return;
     }
 
-    // Check if we have a project ID when in dataset creation mode
     if (!projectMode && !projectId) {
       toast({
         title: "Error",
@@ -129,22 +141,23 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       formData.append('name', name.trim());
       formData.append('description', description.trim());
       
-      if (projectMode) {
-        // Creating a project
-        formData.append('type', 'project');
+      if (!projectMode) {
+        // Dataset creation mode
+        formData.append('type', datasetType);
+        formData.append('project_id', projectId.toString());
       } else {
-        // Creating a dataset within a project
-        formData.append('type', 'dataset');
-        formData.append('project_id', projectId);
+        // Project creation mode
+        formData.append('type', 'project');
+        formData.append('is_project', 'true');
       }
 
       if (logoFile) {
         formData.append('logo', logoFile);
       }
 
-      // Use API_CONFIG for the baseUrl
+      // Use different endpoints based on mode
       const endpoint = projectMode ? 'projects' : 'datasets';
-      const response = await fetch(`${API_CONFIG.baseUrl}/${endpoint}/`, {
+      const response = await fetch(`http://localhost:8000/${endpoint}/`, {
         method: 'POST',
         body: formData,
       });
@@ -160,14 +173,14 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
         description: `${name} has been created successfully.`,
       });
 
-      // Navigate back to the appropriate page
+      // Navigate based on the mode
       if (projectMode) {
-        navigate('/'); // Back to projects list
+        navigate('/'); // Go to projects list after creating a project
       } else {
-        navigate(`/projects/${projectId}`); // Back to project detail
+        navigate(`/projects/${projectId}`); // Go back to project detail after creating a dataset
       }
     } catch (err) {
-      console.error('Error creating dataset/project:', err);
+      console.error('Error creating:', err);
       toast({
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to create. Please try again.",
@@ -220,8 +233,49 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
                 />
               </div>
 
+              {!projectMode && (
+                <div className="space-y-2">
+                  <Label>Dataset Type</Label>
+                  <div className="flex flex-col space-y-2">
+                    <label className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        name="datasetType"
+                        value="classification"
+                        checked={datasetType === 'classification'}
+                        onChange={(e) => setDatasetType(e.target.value)}
+                        className="rounded-full"
+                      />
+                      <span>Classification</span>
+                    </label>
+                    <label className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        name="datasetType"
+                        value="segmentation"
+                        checked={datasetType === 'segmentation'}
+                        onChange={(e) => setDatasetType(e.target.value)}
+                        className="rounded-full"
+                      />
+                      <span>Segmentation</span>
+                    </label>
+                    <label className="flex items-center space-x-2">
+                      <input
+                        type="radio"
+                        name="datasetType"
+                        value="panomatic"
+                        checked={datasetType === 'panomatic'}
+                        onChange={(e) => setDatasetType(e.target.value)}
+                        className="rounded-full"
+                      />
+                      <span>Panomatic</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2">
-                <Label>Project Logo</Label>
+                <Label>Logo</Label>
                 <div className="space-y-4">
                   {!logoPreview ? (
                     <div 
@@ -265,7 +319,7 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
               <Button 
                 variant="outline" 
                 type="button" 
-                onClick={() => navigate(projectMode ? '/' : '/datasets')}
+                onClick={() => navigate(projectMode ? '/' : `/projects/${projectId}`)}
                 disabled={isSubmitting}
               >
                 Cancel

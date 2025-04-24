@@ -1,4 +1,4 @@
-
+import * as React from "react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
@@ -15,12 +15,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-interface DatasetCardProps {
+interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
   dataset: Dataset;
   className?: string;
 }
 
-export function DatasetCard({ dataset, className }: DatasetCardProps) {
+export function DatasetCard({ dataset, className, ...props }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
   
   // Function to get dataset type badge color
@@ -111,8 +111,12 @@ export function DatasetCard({ dataset, className }: DatasetCardProps) {
           {dataset.tags && dataset.tags.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-2">
               {dataset.tags.map(tag => (
-                <Badge key={tag} variant="secondary" className="text-xs">
-                  <Tag className="h-3 w-3 mr-1" />
+                <Badge 
+                  key={tag} 
+                  variant="secondary" 
+                  className="flex items-center gap-1 text-xs"
+                >
+                  <Tag className="h-3 w-3" />
                   {tag}
                 </Badge>
               ))}

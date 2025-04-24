@@ -24,11 +24,6 @@ export function Navbar() {
       path: "/", 
       icon: <Home className="w-4 h-4 mr-2" /> 
     },
-    { 
-      name: "Projects", 
-      path: "/", 
-      icon: <FolderOpen className="w-4 h-4 mr-2" /> 
-    }
   ];
 
   return (
