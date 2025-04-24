@@ -47,6 +47,14 @@ export class ApiClient {
     return this.request<Project>(`/projects/${id}`);
   }
 
+  async createProject(formData: FormData): Promise<ApiResponse<Project>> {
+    return this.request<Project>('/projects/', {
+      method: 'POST',
+      body: formData,
+      // Don't set Content-Type header here, it will be automatically set with boundary for FormData
+    });
+  }
+
   // Datasets endpoints
   
   async getDatasets(): Promise<ApiResponse<Dataset[]>> {
@@ -55,6 +63,13 @@ export class ApiClient {
 
   async getDataset(id: string): Promise<ApiResponse<Dataset>> {
     return this.request<Dataset>(`/datasets/${id}`);
+  }
+
+  async createDataset(formData: FormData): Promise<ApiResponse<Dataset>> {
+    return this.request<Dataset>('/datasets/', {
+      method: 'POST',
+      body: formData,
+    });
   }
 }
 

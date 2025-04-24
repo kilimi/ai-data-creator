@@ -8,8 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { API_CONFIG } from "@/config/api";
+import { useToast } from "@/components/ui/use-toast";
 
 const ApiSettings = () => {
+  const { toast } = useToast();
   const [apiUrl, setApiUrl] = useState(API_CONFIG.baseUrl);
   const [testResult, setTestResult] = useState<string | null>(null);
 
@@ -18,12 +20,40 @@ const ApiSettings = () => {
       const response = await fetch(`${apiUrl}/projects/`);
       if (response.ok) {
         setTestResult("Connection successful!");
+        toast({
+          title: "Connection successful",
+          description: "Your FastAPI connection is working correctly",
+        });
       } else {
         setTestResult(`Connection failed: ${response.status} ${response.statusText}`);
+        toast({
+          title: "Connection failed",
+          description: `${response.status} ${response.statusText}`,
+          variant: "destructive",
+        });
       }
     } catch (error) {
-      setTestResult(`Connection error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setTestResult(`Connection error: ${errorMessage}`);
+      toast({
+        title: "Connection error",
+        description: errorMessage,
+        variant: "destructive",
+      });
     }
+  };
+
+  const saveSettings = () => {
+    // In a real app, you would save this to localStorage or another persistent storage
+    localStorage.setItem("apiBaseUrl", apiUrl);
+    
+    // Force a page reload to apply the new API URL
+    window.location.href = "/";
+    
+    toast({
+      title: "Settings saved",
+      description: "API URL has been updated",
+    });
   };
 
   return (
@@ -66,9 +96,14 @@ const ApiSettings = () => {
               </p>
             </div>
             
-            <Button onClick={handleTestConnection}>
-              Test Connection
-            </Button>
+            <div className="flex space-x-2">
+              <Button onClick={handleTestConnection}>
+                Test Connection
+              </Button>
+              <Button variant="outline" onClick={saveSettings}>
+                Save Settings
+              </Button>
+            </div>
             
             {testResult && (
               <div className={`p-3 mt-4 rounded-md ${testResult.includes("successful") ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
