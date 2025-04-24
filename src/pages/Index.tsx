@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, Settings } from "lucide-react";
@@ -7,6 +8,7 @@ import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
 import { Project } from "@/types";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
+import { useToast } from "@/components/ui/use-toast";
 import {
   Select,
   SelectContent,
@@ -14,10 +16,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { API_CONFIG } from "@/config/api";
+import { useApi } from "@/hooks/use-api";
 
 export default function Index() {
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const { api, isConfigured } = useApi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,30 +30,47 @@ export default function Index() {
 
   useEffect(() => {
     const fetchProjects = async () => {
+      if (!isConfigured || !api) {
+        setLoading(false);
+        return;
+      }
+
       try {
-        const response = await fetch(`${API_CONFIG.baseUrl}/projects/`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        const response = await api.getProjects();
+        
+        if (response.success && response.data) {
+          console.log('Received projects:', response.data);
+          
+          const transformedProjects = response.data.map((project: any) => ({
+            ...project,
+            // Make sure datasets property exists
+            datasets: project.datasets || []
+          }));
+          
+          setProjects(transformedProjects);
+        } else {
+          setError(response.error || 'Failed to fetch projects');
+          toast({
+            title: "Error fetching projects",
+            description: response.error || "Check your API connection settings",
+            variant: "destructive",
+          });
         }
-        const data = await response.json();
-        console.log('Received data:', data);
-        
-        const transformedProjects = data.map((project: any) => ({
-          ...project,
-          is_project: true
-        }));
-        
-        setProjects(transformedProjects);
       } catch (err) {
         console.error('Error fetching projects:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch projects');
+        toast({
+          title: "Error fetching projects",
+          description: "Check your API connection settings",
+          variant: "destructive",
+        });
       } finally {
         setLoading(false);
       }
     };
 
     fetchProjects();
-  }, []);
+  }, [api, isConfigured, toast]);
 
   const filteredAndSortedProjects = () => {
     let result = [...projects];
