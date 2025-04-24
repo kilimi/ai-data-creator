@@ -2,11 +2,7 @@
 import { useState, useEffect } from 'react';
 import { ApiClient, createApiClient } from '@/utils/api';
 import { ApiConfig } from '@/types/api';
-
-// Default config that can be overridden
-const defaultConfig: ApiConfig = {
-  baseUrl: import.meta.env.VITE_API_URL || 'http://localhost:8000'
-};
+import { API_CONFIG } from '@/config/api';
 
 /**
  * Hook to use the API client throughout the application
@@ -18,7 +14,7 @@ export const useApi = (config?: Partial<ApiConfig>) => {
   useEffect(() => {
     // Merge the default config with any provided config
     const mergedConfig: ApiConfig = {
-      ...defaultConfig,
+      ...API_CONFIG,
       ...config
     };
 
@@ -26,7 +22,7 @@ export const useApi = (config?: Partial<ApiConfig>) => {
     const client = createApiClient(mergedConfig);
     setApiClient(client);
     setIsConfigured(true);
-  }, [config?.baseUrl, config?.apiKey]);
+  }, [config?.baseUrl]);
 
   return {
     api: apiClient,

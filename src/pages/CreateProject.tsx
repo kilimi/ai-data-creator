@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { X, UploadCloud } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
+import { API_CONFIG } from '@/config/api';
 
 const CreateProject = () => {
   const navigate = useNavigate();
@@ -86,7 +87,10 @@ const CreateProject = () => {
         formData.append('logo', logoFile);
       }
 
-      const response = await fetch('http://localhost:8000/projects/', {
+      const apiUrl = `${API_CONFIG.baseUrl}/projects/`;
+      console.log(`Submitting to ${apiUrl}`);
+      
+      const response = await fetch(apiUrl, {
         method: 'POST',
         body: formData,
       });
@@ -216,4 +220,4 @@ const CreateProject = () => {
   );
 };
 
-export default CreateProject; 
+export default CreateProject;

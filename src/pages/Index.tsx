@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { API_CONFIG } from "@/config/api";
 
 export default function Index() {
   const navigate = useNavigate();
@@ -26,7 +27,7 @@ export default function Index() {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const response = await fetch('http://localhost:8000/projects/');
+        const response = await fetch(`${API_CONFIG.baseUrl}/projects/`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
