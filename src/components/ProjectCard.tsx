@@ -1,4 +1,3 @@
-
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Project, Dataset } from "@/types";
@@ -63,7 +62,7 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
           
           <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
             <div className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground">
-              {new Date(project.createdAt).toLocaleDateString()}
+              {new Date(project.created_at).toLocaleDateString()}
             </div>
             
             <DropdownMenu>
@@ -86,7 +85,7 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
       
       <CardContent className="p-4">
         <div className="space-y-2">
-          <Link to={`/projects/${project.id}`} className="block">
+          <Link to={`/datasets?projectId=${project.id}`} className="block">
             <h3 className="font-medium line-clamp-1 hover:text-primary transition-colors text-lg">
               {project.name}
             </h3>

@@ -14,75 +14,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const mockDatasets: Dataset[] = [
-  {
-    id: "1",
-    name: "Vehicle Detection",
-    description: "Urban traffic dataset with annotations for cars, trucks, and pedestrians",
-    type: "classification",
-    tags: ["traffic", "vehicles", "urban"],
-    createdAt: "2023-06-15T10:30:00Z",
-    imageCount: 1250,
-    annotationCount: 4932,
-    thumbnailUrl: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "2",
-    name: "Retail Products",
-    description: "Product recognition dataset with shelf items and packaging",
-    type: "segmentation",
-    tags: ["retail", "products", "packaging"],
-    createdAt: "2023-09-22T14:15:00Z",
-    imageCount: 873,
-    annotationCount: 3218,
-    thumbnailUrl: "https://images.unsplash.com/photo-1534723328310-e82dad3ee43f?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "3",
-    name: "Medical Imagery",
-    description: "X-ray and MRI scans with annotated features for disease detection",
-    type: "panomatic",
-    tags: ["medical", "xray", "healthcare"],
-    createdAt: "2023-11-03T09:45:00Z",
-    imageCount: 615,
-    annotationCount: 1845,
-    thumbnailUrl: "https://images.unsplash.com/photo-1530497610245-94d3c16cda28?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "4",
-    name: "Aerial Photography",
-    description: "Drone imagery for geographic feature detection and mapping",
-    type: "segmentation",
-    tags: ["aerial", "drone", "geography"],
-    createdAt: "2023-08-17T16:20:00Z",
-    imageCount: 527,
-    annotationCount: 1432,
-    thumbnailUrl: "https://images.unsplash.com/photo-1508138221679-760a23a2285b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "5",
-    name: "Wildlife Monitoring",
-    description: "Camera trap imagery of wildlife with species annotations",
-    type: "classification",
-    tags: ["wildlife", "nature", "animals"],
-    createdAt: "2023-10-05T11:40:00Z",
-    imageCount: 942,
-    annotationCount: 2854,
-    thumbnailUrl: "https://images.unsplash.com/photo-1557008075-7f2c5efa4cfd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-  {
-    id: "6",
-    name: "Industrial Defects",
-    description: "Manufacturing quality control with annotated defect regions",
-    type: "panomatic",
-    tags: ["industrial", "manufacturing", "quality"],
-    createdAt: "2023-07-29T08:50:00Z",
-    imageCount: 318,
-    annotationCount: 563,
-    thumbnailUrl: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-  },
-];
-
 const Datasets = () => {
   const [loading, setLoading] = useState(true);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -92,9 +23,18 @@ const Datasets = () => {
   
   useEffect(() => {
     const fetchData = async () => {
-      await new Promise(resolve => setTimeout(resolve, 1200));
-      setDatasets(mockDatasets);
-      setLoading(false);
+      try {
+        const response = await fetch('http://localhost:8000/datasets/');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        setDatasets(data);
+      } catch (err) {
+        console.error('Error fetching datasets:', err);
+      } finally {
+        setLoading(false);
+      }
     };
     
     fetchData();
@@ -127,9 +67,9 @@ const Datasets = () => {
     
     switch (sortOrder) {
       case "newest":
-        return result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        return result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       case "oldest":
-        return result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        return result.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
       case "name":
         return result.sort((a, b) => a.name.localeCompare(b.name));
       case "images":

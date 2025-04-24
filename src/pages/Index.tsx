@@ -1,228 +1,168 @@
+import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { Plus, Search, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
+import { Project } from "@/types";
 import { Navbar } from "@/components/Navbar";
 import { Link } from "react-router-dom";
-import { FolderPlus, Search, PlusCircle } from "lucide-react";
-import { ProjectCard, ProjectCardSkeleton } from "@/components/ProjectCard";
-import { useState, useEffect } from "react";
-import { Project } from "@/types";
-import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-// Mock data for projects
-const mockProjects: Project[] = [
-  {
-    id: "1",
-    name: "Autonomous Vehicles",
-    description: "Computer vision datasets for self-driving cars and other autonomous vehicles",
-    createdAt: "2023-05-10T08:20:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-    datasets: [
-      {
-        id: "1",
-        name: "Vehicle Detection",
-        description: "Urban traffic dataset with annotations for cars, trucks, and pedestrians",
-        type: "classification",
-        tags: ["traffic", "vehicles", "urban"],
-        createdAt: "2023-06-15T10:30:00Z",
-        imageCount: 1250,
-        annotationCount: 4932,
-        thumbnailUrl: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-        projectId: "1"
-      },
-      {
-        id: "4",
-        name: "Aerial Photography",
-        description: "Drone imagery for geographic feature detection and mapping",
-        type: "segmentation",
-        tags: ["aerial", "drone", "geography"],
-        createdAt: "2023-08-17T16:20:00Z",
-        imageCount: 527,
-        annotationCount: 1432,
-        thumbnailUrl: "https://images.unsplash.com/photo-1508138221679-760a23a2285b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-        projectId: "1"
-      }
-    ]
-  },
-  {
-    id: "2",
-    name: "Healthcare Imagery",
-    description: "Medical imaging datasets for disease detection and diagnosis",
-    createdAt: "2023-09-05T14:15:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1530497610245-94d3c16cda28?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-    datasets: [
-      {
-        id: "3",
-        name: "Medical Imagery",
-        description: "X-ray and MRI scans with annotated features for disease detection",
-        type: "panomatic",
-        tags: ["medical", "xray", "healthcare"],
-        createdAt: "2023-11-03T09:45:00Z",
-        imageCount: 615,
-        annotationCount: 1845,
-        thumbnailUrl: "https://images.unsplash.com/photo-1530497610245-94d3c16cda28?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-        projectId: "2"
-      }
-    ]
-  },
-  {
-    id: "3",
-    name: "Retail Analytics",
-    description: "Product recognition and retail analytics datasets",
-    createdAt: "2023-07-22T11:30:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1534723328310-e82dad3ee43f?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-    datasets: [
-      {
-        id: "2",
-        name: "Retail Products",
-        description: "Product recognition dataset with shelf items and packaging",
-        type: "segmentation",
-        tags: ["retail", "products", "packaging"],
-        createdAt: "2023-09-22T14:15:00Z",
-        imageCount: 873,
-        annotationCount: 3218,
-        thumbnailUrl: "https://images.unsplash.com/photo-1534723328310-e82dad3ee43f?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-        projectId: "3"
-      }
-    ]
-  },
-  {
-    id: "4",
-    name: "Natural Environment",
-    description: "Nature and wildlife monitoring datasets",
-    createdAt: "2023-10-12T09:45:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1557008075-7f2c5efa4cfd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-    datasets: [
-      {
-        id: "5",
-        name: "Wildlife Monitoring",
-        description: "Camera trap imagery of wildlife with species annotations",
-        type: "classification",
-        tags: ["wildlife", "nature", "animals"],
-        createdAt: "2023-10-05T11:40:00Z",
-        imageCount: 942,
-        annotationCount: 2854,
-        thumbnailUrl: "https://images.unsplash.com/photo-1557008075-7f2c5efa4cfd?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-        projectId: "4"
-      }
-    ]
-  },
-  {
-    id: "5",
-    name: "Industrial Applications",
-    description: "Datasets for industrial quality control and defect detection",
-    createdAt: "2023-07-05T15:30:00Z",
-    thumbnailUrl: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-    datasets: [
-      {
-        id: "6",
-        name: "Industrial Defects",
-        description: "Manufacturing quality control with annotated defect regions",
-        type: "panomatic",
-        tags: ["industrial", "manufacturing", "quality"],
-        createdAt: "2023-07-29T08:50:00Z",
-        imageCount: 318,
-        annotationCount: 563,
-        thumbnailUrl: "https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1000&q=80",
-        projectId: "5"
-      }
-    ]
-  }
-];
-
-const Index = () => {
-  const [loading, setLoading] = useState(true);
+export default function Index() {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
+
   useEffect(() => {
-    // Simulate API call
-    const fetchData = async () => {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setProjects(mockProjects);
-      setLoading(false);
+    const fetchProjects = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/projects/');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        console.log('Received data:', data);
+        
+        const transformedProjects = data.map((project: any) => ({
+          ...project,
+          is_project: true
+        }));
+        
+        setProjects(transformedProjects);
+      } catch (err) {
+        console.error('Error fetching projects:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch projects');
+      } finally {
+        setLoading(false);
+      }
     };
-    
-    fetchData();
+
+    fetchProjects();
   }, []);
-  
-  // Filter projects based on search query
-  const filteredProjects = projects.filter(project => {
-    return searchQuery === "" || 
-      project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      project.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      project.datasets.some(dataset => 
-        dataset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        dataset.description.toLowerCase().includes(searchQuery.toLowerCase())
+
+  const filteredAndSortedProjects = () => {
+    let result = [...projects];
+    
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(
+        project => 
+          project.name.toLowerCase().includes(query) || 
+          project.description.toLowerCase().includes(query)
       );
-  });
-  
+    }
+    
+    switch (sortOrder) {
+      case "newest":
+        return result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      case "oldest":
+        return result.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      case "name":
+        return result.sort((a, b) => a.name.localeCompare(b.name));
+      default:
+        return result;
+    }
+  };
+
   return (
     <div className="min-h-screen pb-16">
       <Navbar />
       
-      <section className="container max-w-6xl pt-24 pb-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-          <h2 className="text-2xl font-bold">Projects</h2>
+      <main className="container max-w-7xl pt-32">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 animate-fade-in">
+          <div>
+            <h1 className="text-3xl font-bold">Projects</h1>
+            <p className="text-muted-foreground">Create and manage your AI projects</p>
+          </div>
           
-          <div className="flex items-center gap-3">
-            <Button 
-              variant="default" 
-              size="sm" 
-              asChild
-              className="whitespace-nowrap"
-            >
-              <Link to="/projects/new">
-                <FolderPlus className="w-4 h-4 mr-2" />
-                Create New Project
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="icon" className="h-10 w-10">
+              <Link to="/api-settings" title="API Settings">
+                <Settings className="h-4 w-4" />
               </Link>
             </Button>
-            
-            <div className="relative flex items-center w-full md:w-auto">
-              <Search className="absolute left-3 text-muted-foreground h-4 w-4" />
-              <Input
-                placeholder="Search projects..."
-                className="pl-9 pr-4"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+            <Button asChild>
+              <Link to="/projects/new" className="flex items-center gap-2">
+                <Plus className="w-4 h-4" />
+                New Project
+              </Link>
+            </Button>
           </div>
         </div>
         
-        <div>
-          {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {Array(4).fill(0).map((_, i) => (
-                <ProjectCardSkeleton key={i} />
-              ))}
+        <div className="flex flex-col sm:flex-row gap-4 mb-4 animate-fade-in delay-150">
+          <div className="flex items-center gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search projects..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
             </div>
-          ) : filteredProjects.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {filteredProjects.map(project => (
-                <ProjectCard key={project.id} project={project} />
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-16">
-              <h3 className="text-lg font-medium mb-2">No projects found</h3>
-              <p className="text-muted-foreground mb-6">
-                {searchQuery 
-                  ? `No projects matching your search criteria`
-                  : "You haven't created any projects yet."
-                }
-              </p>
-              <Button asChild>
-                <Link to="/projects/new">
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  Create your first project
-                </Link>
-              </Button>
-            </div>
-          )}
+            <Button onClick={() => navigate('/projects/new')}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Project
+            </Button>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as any)}>
+              <SelectTrigger className="min-w-[180px]">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+                <SelectItem value="name">Name (A-Z)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-      </section>
+        
+        {loading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {Array(6).fill(0).map((_, i) => (
+              <ProjectCardSkeleton key={i} />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="text-center text-red-500">{error}</div>
+        ) : filteredAndSortedProjects().length === 0 ? (
+          <div className="text-center py-16 animate-fade-in">
+            <h3 className="text-lg font-medium mb-2">No projects found</h3>
+            <p className="text-muted-foreground mb-6">
+              {searchQuery
+                ? `No projects matching your search criteria`
+                : "You haven't created any projects yet."
+              }
+            </p>
+            <Button asChild>
+              <Link to="/projects/new">
+                <Plus className="w-4 h-4 mr-2" />
+                Create your first project
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-300">
+            {filteredAndSortedProjects().map(project => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        )}
+      </main>
     </div>
   );
-};
-
-export default Index;
+}

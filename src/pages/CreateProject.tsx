@@ -1,37 +1,21 @@
 import React, { useState, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
-import { DatasetFormValues } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-import { Tag, X, UploadCloud, Image as ImageIcon } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { X, UploadCloud } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
 
-interface CreateDatasetProps {
-  projectMode?: boolean;
-}
-
-const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
-  const location = useLocation();
-  const projectId = location.state?.projectId;
-
-  // Ensure projectMode is false when navigating to /datasets/new
-  if (location.pathname === '/datasets/new') {
-    projectMode = false;
-  }
-
+const CreateProject = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [currentTag, setCurrentTag] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -78,27 +62,9 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
     }
   };
 
-  const addTag = () => {
-    if (currentTag.trim() && !tags.includes(currentTag.trim())) {
-      setTags([...tags, currentTag.trim()]);
-      setCurrentTag('');
-    }
-  };
-
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter(tag => tag !== tagToRemove));
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      addTag();
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
+    
     if (!name.trim()) {
       toast({
         title: "Error",
@@ -107,52 +73,41 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       });
       return;
     }
-
-    if (!projectId) {
-      toast({
-        title: "Error",
-        description: "No project selected. Please create a dataset from within a project.",
-        variant: "destructive",
-      });
-      return;
-    }
-
+    
     setIsSubmitting(true);
-
+    
     try {
       const formData = new FormData();
       formData.append('name', name.trim());
       formData.append('description', description.trim());
-      formData.append('type', 'dataset');
-      formData.append('project_id', projectId);
-
+      formData.append('is_project', 'true');
+      
       if (logoFile) {
         formData.append('logo', logoFile);
       }
 
-      const response = await fetch('http://localhost:8000/datasets/', {
+      const response = await fetch('http://localhost:8000/projects/', {
         method: 'POST',
         body: formData,
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.detail || `HTTP error! status: ${response.status}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
+      const data = await response.json();
+      
       toast({
-        title: "Success",
+        title: "Project created",
         description: `${name} has been created successfully.`,
       });
-
-      // Navigate back to the project's detail page
-      navigate(`/projects/${projectId}`);
+      
+      navigate('/');
     } catch (err) {
-      console.error('Error creating dataset:', err);
+      console.error('Error creating project:', err);
       toast({
         title: "Error",
-        description: err instanceof Error ? err.message : "Failed to create dataset. Please try again.",
+        description: "Failed to create project. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -167,14 +122,9 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       <div className="container max-w-3xl pt-32 pb-12 px-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">
-              {projectMode ? "Create New Project" : "Create New Dataset"}
-            </CardTitle>
+            <CardTitle className="text-2xl">Create New Project</CardTitle>
             <CardDescription>
-              {projectMode 
-                ? "Create a new project to organize related datasets" 
-                : "Create a new dataset to manage your data"
-              }
+              Create a new project to organize related datasets
             </CardDescription>
           </CardHeader>
           
@@ -247,7 +197,7 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
               <Button 
                 variant="outline" 
                 type="button" 
-                onClick={() => navigate(projectMode ? '/' : '/datasets')}
+                onClick={() => navigate('/')}
                 disabled={isSubmitting}
               >
                 Cancel
@@ -266,4 +216,4 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
   );
 };
 
-export default CreateDataset;
+export default CreateProject; 

@@ -1,23 +1,24 @@
 export interface Dataset {
-  id: string;
+  id: number;
   name: string;
   description: string;
-  type?: "classification" | "segmentation" | "panomatic";
-  tags?: string[];
-  createdAt: string;
-  imageCount: number;
-  annotationCount: number;
-  thumbnailUrl?: string;
-  projectId?: string; // Adding projectId to associate with a project
+  type: string;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+  image_count: number;
+  annotation_count: number;
+  project_id: number;
 }
 
 export interface Project {
-  id: string;
+  id: number;
   name: string;
   description: string;
-  createdAt: string;
+  created_at: string;
+  updated_at: string;
+  is_project: boolean;
   datasets: Dataset[];
-  thumbnailUrl?: string;
 }
 
 export interface Image {

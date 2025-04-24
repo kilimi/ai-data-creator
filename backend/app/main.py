@@ -1,0 +1,129 @@
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from typing import List, Optional
+import json
+import os
+import base64
+
+from . import models, schemas
+from .database import engine, get_db
+
+models.Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
+
+# Get allowed origins from environment variable or use default
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000"
+).split(",")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600  # Cache preflight requests for 1 hour
+)
+
+# Project endpoints
+@app.post("/projects/")
+async def create_project(
+    name: str = Form(...),
+    description: str = Form(...),
+    logo: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Create project with basic info
+        project_data = {
+            "name": name,
+            "description": description
+        }
+
+        db_project = models.Project(**project_data)
+
+        # Handle logo if provided
+        if logo:
+            logo_data = await logo.read()
+            db_project.logo = logo_data
+
+        db.add(db_project)
+        db.commit()
+        db.refresh(db_project)
+
+        return JSONResponse(
+            status_code=201,
+            content={
+                "id": db_project.id,
+                "name": db_project.name,
+                "description": db_project.description,
+                "created_at": db_project.created_at.isoformat(),
+                "updated_at": db_project.updated_at.isoformat()
+            }
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/projects/", response_model=List[schemas.Project])
+def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    projects = db.query(models.Project).offset(skip).limit(limit).all()
+    return projects
+
+@app.get("/projects/{project_id}", response_model=schemas.Project)
+def read_project(project_id: int, db: Session = Depends(get_db)):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+# Dataset endpoints
+@app.post("/datasets/", response_model=schemas.Dataset)
+async def create_dataset(
+    name: str = Form(...),
+    description: str = Form(...),
+    type: str = Form(...),
+    project_id: int = Form(...),
+    logo: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    try:
+        dataset_data = {
+            "name": name,
+            "description": description,
+            "type": type,
+            "project_id": project_id,
+            "tags": []  # Initialize with empty tags
+        }
+        
+        db_dataset = models.Dataset(**dataset_data)
+        
+        if logo:
+            logo_data = await logo.read()
+            db_dataset.logo = logo_data
+            
+        db.add(db_dataset)
+        db.commit()
+        db.refresh(db_dataset)
+        return db_dataset
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+
+@app.get("/datasets/", response_model=List[schemas.Dataset])
+def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    datasets = db.query(models.Dataset).offset(skip).limit(limit).all()
+    return datasets
+
+@app.get("/datasets/{dataset_id}", response_model=schemas.Dataset)
+def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return dataset
