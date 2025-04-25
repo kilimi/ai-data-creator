@@ -1,11 +1,13 @@
-
 // Get API URL from localStorage if available, otherwise use default
 const getApiBaseUrl = () => {
   // Check localStorage first
   const savedUrl = localStorage.getItem("apiBaseUrl");
   
-  // Fallback to environment variable or default
-  return savedUrl || import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  // Use environment variable if available
+  const envUrl = import.meta.env.VITE_API_URL;
+  
+  // Return the first available URL in order of priority
+  return savedUrl || envUrl || 'http://localhost:8000';
 };
 
 // Check if a URL is accessible

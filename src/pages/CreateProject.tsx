@@ -219,8 +219,5 @@ const CreateProject = () => {
   );
 };
 
-<<<<<<< HEAD
+
 export default CreateProject;
-=======
-export default CreateProject;
->>>>>>> 4b9d6a7755a0af7a22b6fe994bd48525a5971df0

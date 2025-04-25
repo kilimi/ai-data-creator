@@ -1,4 +1,3 @@
-
 import { ApiConfig, ApiResponse } from '@/types/api';
 import { Dataset, Project } from '@/types';
 
@@ -23,14 +22,13 @@ export class ApiClient {
       // Set default headers if not provided
       if (!options.headers) {
         options.headers = {
-          'Content-Type': 'application/json',
           'Accept': 'application/json',
         };
       }
       
       // Don't set Content-Type header for FormData
-      if (options.body instanceof FormData) {
-        delete (options.headers as any)['Content-Type'];
+      if (!(options.body instanceof FormData)) {
+        (options.headers as Record<string, string>)['Content-Type'] = 'application/json';
       }
 
       const controller = new AbortController();
@@ -43,30 +41,30 @@ export class ApiClient {
       
       clearTimeout(timeoutId);
 
-      // Handle common HTTP status codes
-      if (!response.ok) {
-        let errorMessage = `API Error: ${response.status} ${response.statusText}`;
-        
-        try {
-          // Try to get a more detailed error message from the response
-          const errorData = await response.json();
-          if (errorData.detail) {
-            errorMessage = errorData.detail;
-          }
-        } catch (e) {
-          // If we can't parse the error response, just use the status text
-        }
-        
-        throw new Error(errorMessage);
+      let data;
+      try {
+        data = await response.json();
+      } catch (e) {
+        throw new Error(`Failed to parse response: ${e instanceof Error ? e.message : 'Unknown error'}`);
       }
 
-      const data = await response.json();
-      return { success: true, data };
+      if (!response.ok) {
+        const errorMessage = data.detail || `${response.status} ${response.statusText}`;
+        return {
+          success: false,
+          error: errorMessage
+        };
+      }
+
+      return { 
+        success: true, 
+        data: data 
+      };
     } catch (error) {
       console.error('API Request Error:', error);
       return { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Unknown API error' 
+        error: error instanceof Error ? error.message : 'Unknown API error'
       };
     }
   }

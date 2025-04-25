@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Tag, X, UploadCloud, Image as ImageIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
-import { API_CONFIG } from '@/config/api';
+import { useApi } from '@/hooks/use-api';
 
 interface CreateDatasetProps {
   projectMode?: boolean;
@@ -20,6 +20,7 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { api, isConfigured } = useApi();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Get projectId from location state
@@ -134,23 +135,24 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       return;
     }
 
+    if (!api || !isConfigured) {
+      toast({
+        title: "Error",
+        description: "API client is not configured",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
       const formData = new FormData();
       formData.append('name', name.trim());
       formData.append('description', description.trim());
+      formData.append('type', datasetType);
+      formData.append('project_id', String(projectId));
       
-      if (!projectMode) {
-        // Dataset creation mode
-        formData.append('type', datasetType);
-        formData.append('project_id', String(projectId)); // Ensure project_id is always a string
-      } else {
-        // Project creation mode
-        formData.append('type', 'project');
-        formData.append('is_project', 'true');
-      }
-
       if (tags.length > 0) {
         formData.append('tags', JSON.stringify(tags));
       }
@@ -159,21 +161,10 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
         formData.append('logo', logoFile);
       }
 
-      // Use different endpoints based on mode
-      const endpoint = projectMode ? 'projects' : 'datasets';
-      const apiUrl = `${API_CONFIG.baseUrl}/${endpoint}/`;
-      
-      console.log(`Submitting to ${apiUrl} with project_id:`, projectId);
-      
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        body: formData,
-      });
+      const response = await api.createDataset(formData);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || `HTTP error! status: ${response.status}`);
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to create dataset');
       }
 
       toast({
@@ -182,11 +173,7 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       });
 
       // Navigate based on the mode
-      if (projectMode) {
-        navigate('/'); // Go to projects list after creating a project
-      } else {
-        navigate(`/projects/${projectId}`); // Go back to project detail after creating a dataset
-      }
+      navigate(`/projects/${projectId}`); // Go back to project detail after creating a dataset
     } catch (err) {
       console.error('Error creating:', err);
       toast({

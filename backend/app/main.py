@@ -15,21 +15,20 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 # Get allowed origins from environment variable or use default
-allowed_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000"
-).split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173").split(",")
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],  # Allow all origins temporarily for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=3600  # Cache preflight requests for 1 hour
 )
+
+@app.get("/health-check")
+async def health_check():
+    return {"status": "ok"}
 
 # Project endpoints
 @app.post("/projects/")
@@ -73,8 +72,12 @@ async def create_project(
 
 @app.get("/projects/", response_model=List[schemas.Project])
 def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    projects = db.query(models.Project).offset(skip).limit(limit).all()
-    return projects
+    try:
+        projects = db.query(models.Project).offset(skip).limit(limit).all()
+        return projects
+    except Exception as e:
+        print(f"Error in read_projects: {str(e)}")  # For debugging
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/projects/{project_id}", response_model=schemas.Project)
 def read_project(project_id: int, db: Session = Depends(get_db)):
@@ -90,16 +93,20 @@ async def create_dataset(
     description: str = Form(...),
     type: str = Form(...),
     project_id: int = Form(...),
+    tags: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
     try:
+        # Parse tags if provided, otherwise use empty list
+        parsed_tags = json.loads(tags) if tags else []
+        
         dataset_data = {
             "name": name,
             "description": description,
             "type": type,
             "project_id": project_id,
-            "tags": []  # Initialize with empty tags
+            "tags": json.dumps(parsed_tags)  # Store tags as JSON string
         }
         
         db_dataset = models.Dataset(**dataset_data)

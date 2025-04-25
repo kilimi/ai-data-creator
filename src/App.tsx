@@ -10,6 +10,7 @@ import NotFound from "./pages/NotFound";
 import CreateDataset from "./pages/CreateDataset";
 import EditDataset from "./pages/EditDataset";
 import ApiSettings from "./pages/ApiSettings";
+import CreateProject from "./pages/CreateProject";
 
 const queryClient = new QueryClient();
 
@@ -21,7 +22,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          <Route path="/projects/new" element={<CreateDataset projectMode={true} />} />
+          <Route path="/projects/new" element={<CreateProject />} />
           <Route path="/projects/new/dataset" element={<CreateDataset />} />
           <Route path="/projects/:id" element={<DatasetDetail projectMode={true} />} />
           <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
