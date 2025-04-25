@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, Settings } from "lucide-react";
@@ -98,7 +99,7 @@ export default function Index() {
     <div className="min-h-screen pb-16">
       <Navbar />
       
-      <main className="container max-w-7xl mx-auto px-4 pt-28">
+      <main className="container max-w-7xl mx-auto px-4 pt-32">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 animate-fade-in">
           <div>
             <h1 className="text-3xl font-bold">Projects</h1>
