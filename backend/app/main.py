@@ -112,6 +112,23 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
+@app.delete("/projects/{project_id}")
+async def delete_project(project_id: int, db: Session = Depends(get_db)):
+    try:
+        # First delete all datasets belonging to this project
+        db.query(models.Dataset).filter(models.Dataset.project_id == project_id).delete()
+        
+        # Then delete the project
+        result = db.query(models.Project).filter(models.Project.id == project_id).delete()
+        if result == 0:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        db.commit()
+        return {"success": True, "message": "Project and all its datasets have been deleted"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Dataset endpoints
 @app.post("/datasets/", response_model=schemas.Dataset)
 async def create_dataset(
