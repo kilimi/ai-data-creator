@@ -8,7 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { X, UploadCloud } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
+import { createApiClient } from '@/utils/api';
 import { API_CONFIG } from '@/config/api';
+import { toast } from 'sonner';
 
 const CreateProject = () => {
   const navigate = useNavigate();
@@ -20,6 +22,8 @@ const CreateProject = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+
+  const apiClient = createApiClient(API_CONFIG);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -86,18 +90,10 @@ const CreateProject = () => {
         formData.append('logo', logoFile);
       }
 
-      const apiUrl = `${API_CONFIG.baseUrl}/projects/`;
-      console.log(`Submitting to ${apiUrl}`);
+      const result = await apiClient.createProject(formData);
       
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.detail || `HTTP error! status: ${response.status}`);
+      if (!result.success) {
+        throw new Error(result.error || "Failed to create project");
       }
 
       toast({
@@ -218,6 +214,5 @@ const CreateProject = () => {
     </div>
   );
 };
-
 
 export default CreateProject;

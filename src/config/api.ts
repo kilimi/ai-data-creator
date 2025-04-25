@@ -1,3 +1,4 @@
+
 // Get API URL from localStorage if available, otherwise use default
 const getApiBaseUrl = () => {
   // Check localStorage first
@@ -7,7 +8,9 @@ const getApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
   
   // Return the first available URL in order of priority
-  return savedUrl || envUrl || 'http://localhost:8000';
+  const url = savedUrl || envUrl || 'http://localhost:8000';
+  console.log("Using API URL:", url);
+  return url;
 };
 
 // Check if a URL is accessible
@@ -18,7 +21,7 @@ const isUrlAccessible = async (url: string): Promise<boolean> => {
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     
     const response = await fetch(`${url}/health-check`, {
-      method: 'HEAD',
+      method: 'GET',
       signal: controller.signal,
     });
     

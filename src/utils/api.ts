@@ -1,3 +1,4 @@
+
 import { ApiConfig, ApiResponse } from '@/types/api';
 import { Dataset, Project } from '@/types';
 
@@ -50,6 +51,7 @@ export class ApiClient {
 
       if (!response.ok) {
         const errorMessage = data.detail || `${response.status} ${response.statusText}`;
+        console.error("API error:", data);
         return {
           success: false,
           error: errorMessage
@@ -110,6 +112,12 @@ export class ApiClient {
   }
 
   async createProject(formData: FormData): Promise<ApiResponse<Project>> {
+    console.log("Creating project with FormData:", formData);
+    // Log formData contents for debugging
+    for (const pair of formData.entries()) {
+      console.log(`${pair[0]}: ${pair[1] instanceof File ? `File: ${pair[1].name}` : pair[1]}`);
+    }
+    
     return this.request<Project>('/projects/', {
       method: 'POST',
       body: formData,
