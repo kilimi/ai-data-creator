@@ -27,12 +27,15 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
   
   return (
     <Card 
-      className={cn("overflow-hidden transition-all", className)}
+      className={cn(
+        "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card",
+        className
+      )}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       <CardHeader className="p-0">
-        <div className="relative h-40 w-full overflow-hidden">
+        <div className="relative h-44 w-full overflow-hidden">
           {project.thumbnailUrl ? (
             <>
               {!imageLoaded && (
@@ -49,19 +52,19 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
               />
             </>
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/10 to-secondary/10">
+            <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
               {isHovered ? (
-                <FolderOpen className="h-16 w-16 text-primary/40" />
+                <FolderOpen className="h-16 w-16 text-primary/30" />
               ) : (
-                <Folder className="h-16 w-16 text-muted-foreground/30" />
+                <Folder className="h-16 w-16 text-muted-foreground/20" />
               )}
             </div>
           )}
           
-          <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-background/90 to-transparent" />
           
           <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
-            <div className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground">
+            <div className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
               {new Date(project.created_at).toLocaleDateString()}
             </div>
             
@@ -71,7 +74,7 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-40">
                 <DropdownMenuItem>Rename</DropdownMenuItem>
                 <DropdownMenuItem>Duplicate</DropdownMenuItem>
                 <DropdownMenuItem className="text-destructive">
@@ -85,8 +88,8 @@ export function ProjectCard({ project, className }: ProjectCardProps) {
       
       <CardContent className="p-4">
         <div className="space-y-2">
-          <Link to={`/projects/${project.id}`} className="block">
-            <h3 className="font-medium line-clamp-1 hover:text-primary transition-colors text-lg">
+          <Link to={`/projects/${project.id}`}>
+            <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
               {project.name}
             </h3>
           </Link>

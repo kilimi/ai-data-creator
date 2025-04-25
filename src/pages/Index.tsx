@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, Settings } from "lucide-react";
@@ -43,7 +42,6 @@ export default function Index() {
           
           const transformedProjects = response.data.map((project: any) => ({
             ...project,
-            // Make sure datasets property exists
             datasets: project.datasets || []
           }));
           
@@ -100,7 +98,7 @@ export default function Index() {
     <div className="min-h-screen pb-16">
       <Navbar />
       
-      <main className="container max-w-7xl pt-32">
+      <main className="container max-w-7xl mx-auto px-4 pt-28">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 animate-fade-in">
           <div>
             <h1 className="text-3xl font-bold">Projects</h1>
@@ -108,7 +106,7 @@ export default function Index() {
           </div>
           
           <div className="flex gap-2">
-            <Button asChild variant="outline" size="icon" className="h-10 w-10">
+            <Button variant="outline" size="icon" className="h-10 w-10" asChild>
               <Link to="/api-settings" title="API Settings">
                 <Settings className="h-4 w-4" />
               </Link>
@@ -122,9 +120,9 @@ export default function Index() {
           </div>
         </div>
         
-        <div className="flex flex-col sm:flex-row gap-4 mb-4 animate-fade-in delay-150">
-          <div className="flex items-center gap-4">
-            <div className="relative flex-1">
+        <div className="flex flex-col sm:flex-row gap-4 mb-6 animate-fade-in delay-150">
+          <div className="flex-1 flex items-center gap-4">
+            <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search projects..."
@@ -133,15 +131,8 @@ export default function Index() {
                 className="pl-9"
               />
             </div>
-            <Button onClick={() => navigate('/projects/new')}>
-              <Plus className="mr-2 h-4 w-4" />
-              New Project
-            </Button>
-          </div>
-          
-          <div className="flex items-center gap-2">
             <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as any)}>
-              <SelectTrigger className="min-w-[180px]">
+              <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
               <SelectContent>
@@ -160,13 +151,13 @@ export default function Index() {
             ))}
           </div>
         ) : error ? (
-          <div className="text-center text-red-500">{error}</div>
+          <div className="text-center py-16 text-destructive">{error}</div>
         ) : filteredAndSortedProjects().length === 0 ? (
           <div className="text-center py-16 animate-fade-in">
             <h3 className="text-lg font-medium mb-2">No projects found</h3>
             <p className="text-muted-foreground mb-6">
               {searchQuery
-                ? `No projects matching your search criteria`
+                ? "No projects matching your search criteria"
                 : "You haven't created any projects yet."
               }
             </p>
