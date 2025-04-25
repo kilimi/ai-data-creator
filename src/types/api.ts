@@ -16,4 +16,5 @@ export interface AnnotationsResponse extends ApiResponse<Annotation[]> {}
 
 export interface ApiConfig {
   baseUrl: string;
+  isAccessible?: () => Promise<boolean>;
 }
