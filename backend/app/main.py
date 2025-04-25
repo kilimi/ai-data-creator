@@ -58,21 +58,26 @@ async def create_project(
         if logo:
             logo_data = await logo.read()
             db_project.logo = logo_data
+            # Create a data URL for the logo
+            mime_type = logo.content_type or "image/png"
+            logo_base64 = base64.b64encode(logo_data).decode()
+            db_project.logo_url = f"data:{mime_type};base64,{logo_base64}"
 
         db.add(db_project)
         db.commit()
         db.refresh(db_project)
 
-        return JSONResponse(
-            status_code=201,
-            content={
+        return {
+            "success": True,
+            "data": {
                 "id": db_project.id,
                 "name": db_project.name,
                 "description": db_project.description,
                 "created_at": db_project.created_at.isoformat(),
-                "updated_at": db_project.updated_at.isoformat()
+                "updated_at": db_project.updated_at.isoformat(),
+                "logo_url": db_project.logo_url
             }
-        )
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -81,7 +86,7 @@ async def create_project(
 def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     try:
         projects = db.query(models.Project).offset(skip).limit(limit).all()
-        # Convert projects to dict and ensure datasets is initialized
+        # Convert projects to dict and ensure datasets and logo_url are included
         return [
             {
                 "id": p.id,
@@ -91,7 +96,8 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                 "updated_at": p.updated_at,
                 "is_project": p.is_project,
                 "datasets": p.datasets or [],
-                "logo_url": p.logo_url
+                "logo_url": p.logo_url,
+                "thumbnailUrl": p.logo_url  # Include for backward compatibility
             }
             for p in projects
         ]

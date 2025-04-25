@@ -13,12 +13,10 @@ class DatasetBase(BaseModel):
     def validate_tags(cls, v):
         if isinstance(v, str):
             try:
-                return [str(tag) for tag in json.loads(v)]
+                return json.loads(v)
             except:
                 return []
-        elif isinstance(v, list):
-            return [str(tag) for tag in v]
-        return []
+        return v or []
 
 class DatasetCreate(DatasetBase):
     project_id: int
@@ -30,6 +28,7 @@ class Dataset(DatasetBase):
     image_count: int = 0
     annotation_count: int = 0
     project_id: int
+    thumbnailUrl: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -51,6 +50,7 @@ class Project(ProjectBase):
     updated_at: datetime
     datasets: List[Dataset] = []
     logo_url: Optional[str] = None
+    thumbnailUrl: Optional[str] = None  # Added for backward compatibility
 
     class Config:
         from_attributes = True
