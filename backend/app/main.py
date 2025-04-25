@@ -175,6 +175,59 @@ async def delete_project(project_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/projects/{project_id}/duplicate")
+async def duplicate_project(project_id: int, db: Session = Depends(get_db)):
+    try:
+        # Get the original project
+        original_project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if original_project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Create a new project with the same data
+        new_project = models.Project(
+            name=f"{original_project.name} (Copy)",
+            description=original_project.description,
+            tags=original_project.tags,
+            logo=original_project.logo,
+            logo_url=original_project.logo_url
+        )
+        
+        db.add(new_project)
+        db.flush()  # Flush to get the new project ID
+        
+        # Copy all datasets
+        for dataset in original_project.datasets:
+            new_dataset = models.Dataset(
+                name=dataset.name,
+                description=dataset.description,
+                type=dataset.type,
+                tags=dataset.tags,
+                project_id=new_project.id,
+                image_count=dataset.image_count,
+                annotation_count=dataset.annotation_count
+            )
+            db.add(new_dataset)
+        
+        db.commit()
+        db.refresh(new_project)
+        
+        return {
+            "success": True,
+            "data": {
+                "id": new_project.id,
+                "name": new_project.name,
+                "description": new_project.description,
+                "tags": new_project.tags,
+                "created_at": new_project.created_at.isoformat(),
+                "updated_at": new_project.updated_at.isoformat(),
+                "datasets": new_project.datasets,
+                "logo_url": new_project.logo_url
+            }
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Dataset endpoints
 @app.post("/datasets/", response_model=schemas.Dataset)
 async def create_dataset(
