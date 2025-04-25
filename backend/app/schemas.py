@@ -1,12 +1,24 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import List, Optional
 from datetime import datetime
+import json
 
 class DatasetBase(BaseModel):
     name: str
     description: str
     type: str
-    tags: List[str]
+    tags: List[str] = []
+
+    @validator('tags', pre=True)
+    def validate_tags(cls, v):
+        if isinstance(v, str):
+            try:
+                return [str(tag) for tag in json.loads(v)]
+            except:
+                return []
+        elif isinstance(v, list):
+            return [str(tag) for tag in v]
+        return []
 
 class DatasetCreate(DatasetBase):
     project_id: int
@@ -15,12 +27,15 @@ class Dataset(DatasetBase):
     id: int
     created_at: datetime
     updated_at: datetime
-    image_count: int
-    annotation_count: int
+    image_count: int = 0
+    annotation_count: int = 0
     project_id: int
 
     class Config:
         from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 class ProjectBase(BaseModel):
     name: str
@@ -38,4 +53,7 @@ class Project(ProjectBase):
     logo_url: Optional[str] = None
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }

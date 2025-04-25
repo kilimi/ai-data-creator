@@ -15,15 +15,22 @@ models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 # Get allowed origins from environment variable or use default
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173").split(",")
+allowed_origins = os.getenv(
+    "ALLOWED_ORIGINS", 
+    "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://localhost:5173,http://localhost:8080"
+).split(",")
+
+print(f"Configured CORS allowed origins: {allowed_origins}")  # Debug print
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins temporarily for development
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 @app.get("/health-check")
@@ -74,7 +81,20 @@ async def create_project(
 def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     try:
         projects = db.query(models.Project).offset(skip).limit(limit).all()
-        return projects
+        # Convert projects to dict and ensure datasets is initialized
+        return [
+            {
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "created_at": p.created_at,
+                "updated_at": p.updated_at,
+                "is_project": p.is_project,
+                "datasets": p.datasets or [],
+                "logo_url": p.logo_url
+            }
+            for p in projects
+        ]
     except Exception as e:
         print(f"Error in read_projects: {str(e)}")  # For debugging
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

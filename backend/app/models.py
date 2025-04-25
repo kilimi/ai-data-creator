@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, LargeBinary
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, LargeBinary, JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import json
 from .database import Base
 
 class Project(Base):
@@ -24,11 +25,31 @@ class Dataset(Base):
     name = Column(String, index=True)
     description = Column(Text)
     type = Column(String)
-    tags = Column(String)  # Store as JSON string
+    _tags = Column('tags', JSON, default=list)  # Renamed to _tags
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     image_count = Column(Integer, default=0)
     annotation_count = Column(Integer, default=0)
     project_id = Column(Integer, ForeignKey("projects.id"))
 
-    project = relationship("Project", back_populates="datasets") 
+    project = relationship("Project", back_populates="datasets")
+
+    @property
+    def tags(self):
+        """Get the tags as a list"""
+        if isinstance(self._tags, str):
+            try:
+                return json.loads(self._tags)
+            except json.JSONDecodeError:
+                return []
+        return self._tags or []
+
+    @tags.setter
+    def tags(self, value):
+        """Set the tags, ensuring they're stored as JSON"""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = []
+        self._tags = value
