@@ -20,16 +20,80 @@ export class ApiClient {
       const url = `${this.config.baseUrl}${endpoint}`;
       console.log(`Making request to: ${url}`);
       
-      const response = await fetch(url, options);
+      // Set default headers if not provided
+      if (!options.headers) {
+        options.headers = {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        };
+      }
+      
+      // Don't set Content-Type header for FormData
+      if (options.body instanceof FormData) {
+        delete (options.headers as any)['Content-Type'];
+      }
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+
+      // Handle common HTTP status codes
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+        let errorMessage = `API Error: ${response.status} ${response.statusText}`;
+        
+        try {
+          // Try to get a more detailed error message from the response
+          const errorData = await response.json();
+          if (errorData.detail) {
+            errorMessage = errorData.detail;
+          }
+        } catch (e) {
+          // If we can't parse the error response, just use the status text
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
       return { success: true, data };
     } catch (error) {
       console.error('API Request Error:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown API error' 
+      };
+    }
+  }
+
+  // Test connection to the API
+  async testConnection(): Promise<ApiResponse<{ status: string }>> {
+    try {
+      const url = `${this.config.baseUrl}/health-check`;
+      console.log(`Testing connection to: ${url}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        return { success: true, data: { status: 'connected' } };
+      } else {
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('API Connection Test Error:', error);
       return { 
         success: false, 
         error: error instanceof Error ? error.message : 'Unknown API error' 
@@ -51,7 +115,6 @@ export class ApiClient {
     return this.request<Project>('/projects/', {
       method: 'POST',
       body: formData,
-      // Don't set Content-Type header here, it will be automatically set with boundary for FormData
     });
   }
 

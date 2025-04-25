@@ -1,15 +1,9 @@
+
 import { useState, useEffect } from 'react';
 import { ApiClient, createApiClient } from '@/utils/api';
 import { ApiConfig } from '@/types/api';
-<<<<<<< HEAD
-
-// Force localhost configuration
-const defaultConfig: ApiConfig = {
-  baseUrl: 'http://localhost:8000'
-};
-=======
 import { API_CONFIG } from '@/config/api';
->>>>>>> 4b9d6a7755a0af7a22b6fe994bd48525a5971df0
+import { useToast } from '@/components/ui/use-toast';
 
 /**
  * Hook to use the API client throughout the application
@@ -17,30 +11,47 @@ import { API_CONFIG } from '@/config/api';
 export const useApi = (config?: Partial<ApiConfig>) => {
   const [apiClient, setApiClient] = useState<ApiClient | null>(null);
   const [isConfigured, setIsConfigured] = useState(false);
+  const [isConnected, setIsConnected] = useState<boolean | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
-    // Always use localhost in development
+    // Merge the default config with any provided config
     const mergedConfig: ApiConfig = {
-<<<<<<< HEAD
-      ...defaultConfig,
-      baseUrl: 'http://localhost:8000' // Force localhost
-=======
       ...API_CONFIG,
       ...config
->>>>>>> 4b9d6a7755a0af7a22b6fe994bd48525a5971df0
     };
 
+    // Create the API client with the config
     const client = createApiClient(mergedConfig);
     setApiClient(client);
     setIsConfigured(true);
-<<<<<<< HEAD
-  }, []);  // Remove config dependencies to prevent override
-=======
-  }, [config?.baseUrl]);
->>>>>>> 4b9d6a7755a0af7a22b6fe994bd48525a5971df0
+
+    // Test connection
+    const checkConnection = async () => {
+      try {
+        const result = await client.testConnection();
+        setIsConnected(result.success);
+        
+        if (!result.success) {
+          console.warn('API connection failed:', result.error);
+          toast({
+            title: "API Connection Issue",
+            description: "Could not connect to the FastAPI server. Check API settings.",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error('Error checking API connection:', error);
+        setIsConnected(false);
+      }
+    };
+    
+    checkConnection();
+  }, [config?.baseUrl, toast]);
 
   return {
     api: apiClient,
-    isConfigured
+    isConfigured,
+    isConnected
   };
 };
