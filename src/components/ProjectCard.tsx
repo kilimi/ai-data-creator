@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Project, Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -13,118 +13,216 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useState } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { createApiClient } from "@/utils/api";
+import { API_CONFIG } from "@/config/api";
+import { useToast } from "@/hooks/use-toast";
+import { EditProjectDialog } from "./EditProjectDialog";
 
 interface ProjectCardProps {
   project: Project;
   className?: string;
+  onDelete?: () => void;
+  onUpdate?: (project: Project) => void;
 }
 
-export function ProjectCard({ project, className }: ProjectCardProps) {
-  const imageLoaded = useImageLoad(project.thumbnailUrl);
+export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectCardProps) {
+  const imageLoaded = useImageLoad(project.logo_url);
   const [isHovered, setIsHovered] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const { toast } = useToast();
+  const navigate = useNavigate();
   
+  const handleDelete = async () => {
+    try {
+      const apiClient = createApiClient(API_CONFIG);
+      const response = await apiClient.deleteProject(project.id);
+      
+      if (!response.success) {
+        throw new Error(response.error || "Failed to delete project");
+      }
+
+      toast({
+        title: "Success",
+        description: "Project has been deleted successfully.",
+      });
+
+      if (onDelete) {
+        onDelete();
+      } else {
+        // If no onDelete handler provided, refresh the page
+        navigate(0);
+      }
+    } catch (err) {
+      console.error('Error deleting project:', err);
+      toast({
+        title: "Error",
+        description: "Failed to delete project. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setShowDeleteDialog(false);
+    }
+  };
+
+  const handleProjectUpdate = (updatedProject: Project) => {
+    if (onUpdate) {
+      onUpdate(updatedProject);
+    } else {
+      // If no onUpdate handler provided, refresh the page
+      navigate(0);
+    }
+  };
+
   return (
-    <Card 
-      className={cn(
-        "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card",
-        className
-      )}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-    >
-      <CardHeader className="p-0">
-        <div className="relative h-44 w-full overflow-hidden">
-          {project.thumbnailUrl ? (
-            <>
-              {!imageLoaded && (
-                <div className="absolute inset-0 bg-muted animate-pulse" />
-              )}
-              <img
-                src={project.thumbnailUrl}
-                alt={project.name}
-                className={cn(
-                  "h-full w-full object-cover transition-all duration-500",
-                  !imageLoaded && "opacity-0",
-                  imageLoaded && "opacity-100"
+    <>
+      <Card 
+        className={cn(
+          "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card",
+          className
+        )}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        <CardHeader className="p-0">
+          <div className="relative h-44 w-full overflow-hidden">
+            {project.logo_url ? (
+              <>
+                {!imageLoaded && (
+                  <div className="absolute inset-0 bg-muted animate-pulse" />
                 )}
-              />
-            </>
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
-              {isHovered ? (
-                <FolderOpen className="h-16 w-16 text-primary/30" />
-              ) : (
-                <Folder className="h-16 w-16 text-muted-foreground/20" />
-              )}
+                <img
+                  src={project.logo_url}
+                  alt={project.name}
+                  className={cn(
+                    "h-full w-full object-cover transition-all duration-500",
+                    !imageLoaded && "opacity-0",
+                    imageLoaded && "opacity-100"
+                  )}
+                />
+              </>
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
+                {isHovered ? (
+                  <FolderOpen className="h-16 w-16 text-primary/30" />
+                ) : (
+                  <Folder className="h-16 w-16 text-muted-foreground/20" />
+                )}
+              </div>
+            )}
+            
+            <div className="absolute inset-0 bg-gradient-to-t from-background/90 to-transparent" />
+            
+            <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
+              <div className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                {new Date(project.created_at).toLocaleDateString()}
+              </div>
+              
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="secondary" size="icon" className="h-7 w-7">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40">
+                  <DropdownMenuItem onClick={() => setShowEditDialog(true)}>
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem>Duplicate</DropdownMenuItem>
+                  <DropdownMenuItem 
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => setShowDeleteDialog(true)}
+                  >
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
-          )}
-          
-          <div className="absolute inset-0 bg-gradient-to-t from-background/90 to-transparent" />
-          
-          <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
-            <div className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-              {new Date(project.created_at).toLocaleDateString()}
+          </div>
+        </CardHeader>
+        
+        <CardContent className="p-4">
+          <div className="space-y-2">
+            <Link to={`/projects/${project.id}`}>
+              <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
+                {project.name}
+              </h3>
+            </Link>
+            <p className="text-sm text-muted-foreground line-clamp-2">
+              {project.description || "No description provided"}
+            </p>
+          </div>
+        </CardContent>
+        
+        <CardFooter className="p-4 pt-0">
+          <div className="flex justify-between items-center w-full">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                {project.datasets.length} {project.datasets.length === 1 ? 'dataset' : 'datasets'}
+              </span>
             </div>
             
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="icon" className="h-7 w-7">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem>Rename</DropdownMenuItem>
-                <DropdownMenuItem>Duplicate</DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive">
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {project.datasets.length > 0 && (
+              <div className="flex -space-x-2">
+                {project.datasets.slice(0, 3).map((dataset) => (
+                  <DatasetThumbnail key={dataset.id} dataset={dataset} />
+                ))}
+                {project.datasets.length > 3 && (
+                  <Avatar className="border-2 border-background h-8 w-8">
+                    <AvatarFallback className="bg-muted text-muted-foreground text-xs">
+                      +{project.datasets.length - 3}
+                    </AvatarFallback>
+                  </Avatar>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      </CardHeader>
-      
-      <CardContent className="p-4">
-        <div className="space-y-2">
-          <Link to={`/projects/${project.id}`}>
-            <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
-              {project.name}
-            </h3>
-          </Link>
-          <p className="text-sm text-muted-foreground line-clamp-2">
-            {project.description || "No description provided"}
-          </p>
-        </div>
-      </CardContent>
-      
-      <CardFooter className="p-4 pt-0">
-        <div className="flex justify-between items-center w-full">
-          <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">
-              {project.datasets.length} {project.datasets.length === 1 ? 'dataset' : 'datasets'}
-            </span>
-          </div>
-          
-          {project.datasets.length > 0 && (
-            <div className="flex -space-x-2">
-              {project.datasets.slice(0, 3).map((dataset) => (
-                <DatasetThumbnail key={dataset.id} dataset={dataset} />
-              ))}
-              {project.datasets.length > 3 && (
-                <Avatar className="border-2 border-background h-8 w-8">
-                  <AvatarFallback className="bg-muted text-muted-foreground text-xs">
-                    +{project.datasets.length - 3}
-                  </AvatarFallback>
-                </Avatar>
-              )}
-            </div>
-          )}
-        </div>
-      </CardFooter>
-    </Card>
+        </CardFooter>
+      </Card>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {project.datasets.length > 0 
+                ? `This will delete the project "${project.name}" and all ${project.datasets.length} datasets inside it. This action cannot be undone.`
+                : `This will delete the project "${project.name}". This action cannot be undone.`
+              }
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDelete}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <EditProjectDialog
+        project={project}
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+        onProjectUpdated={handleProjectUpdate}
+      />
+    </>
   );
 }
 

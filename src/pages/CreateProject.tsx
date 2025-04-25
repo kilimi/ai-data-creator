@@ -10,7 +10,6 @@ import { X, UploadCloud } from 'lucide-react';
 import { Navbar } from '@/components/Navbar';
 import { createApiClient } from '@/utils/api';
 import { API_CONFIG } from '@/config/api';
-import { toast } from 'sonner';
 
 const CreateProject = () => {
   const navigate = useNavigate();
@@ -22,8 +21,6 @@ const CreateProject = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
-
-  const apiClient = createApiClient(API_CONFIG);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -84,12 +81,13 @@ const CreateProject = () => {
     try {
       const formData = new FormData();
       formData.append('name', name.trim());
-      formData.append('description', description.trim());
+      formData.append('description', description.trim()); // Send description as is, backend will handle empty string
       
       if (logoFile) {
         formData.append('logo', logoFile);
       }
 
+      const apiClient = createApiClient(API_CONFIG);
       const result = await apiClient.createProject(formData);
       
       if (!result.success) {

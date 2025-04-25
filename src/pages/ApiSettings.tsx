@@ -1,4 +1,3 @@
-
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
@@ -10,6 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { API_CONFIG } from "@/config/api";
 import { useToast } from "@/components/ui/use-toast";
 import { ApiClient } from "@/utils/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dataset } from "@/types";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
 
 const ApiSettings = () => {
   const { toast } = useToast();
@@ -17,6 +20,9 @@ const ApiSettings = () => {
   const [testResult, setTestResult] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [showDatasetsDialog, setShowDatasetsDialog] = useState(false);
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [isLoadingDatasets, setIsLoadingDatasets] = useState(false);
 
   useEffect(() => {
     // Check connection on component mount
@@ -75,6 +81,30 @@ const ApiSettings = () => {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGetAllDatasets = async () => {
+    setIsLoadingDatasets(true);
+    try {
+      const apiClient = new ApiClient({ ...API_CONFIG, baseUrl: apiUrl });
+      const response = await apiClient.getDatasets();
+      
+      if (response.success && response.data) {
+        setDatasets(response.data);
+        setShowDatasetsDialog(true);
+      } else {
+        throw new Error(response.error || "Failed to fetch datasets");
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast({
+        title: "Error fetching datasets",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingDatasets(false);
     }
   };
 
@@ -152,6 +182,13 @@ const ApiSettings = () => {
                 {isLoading ? "Testing..." : "Test Connection"}
               </Button>
               <Button 
+                variant="secondary"
+                onClick={handleGetAllDatasets}
+                disabled={isLoadingDatasets || !isConnected}
+              >
+                {isLoadingDatasets ? "Loading..." : "Get All Datasets"}
+              </Button>
+              <Button 
                 variant="outline" 
                 onClick={saveSettings}
                 disabled={isLoading}
@@ -188,6 +225,42 @@ const ApiSettings = () => {
           </p>
         </div>
       </main>
+
+      <Dialog open={showDatasetsDialog} onOpenChange={setShowDatasetsDialog}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>All Datasets</DialogTitle>
+            <DialogDescription>
+              Showing all datasets across all projects
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="flex-1 mt-4">
+            <div className="space-y-4 pr-4">
+              {datasets.map((dataset) => (
+                <div key={dataset.id} className="p-4 rounded-lg border bg-card">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <h3 className="font-medium">{dataset.name}</h3>
+                      <p className="text-sm text-muted-foreground line-clamp-2">{dataset.description}</p>
+                    </div>
+                    <Badge variant="secondary">{dataset.type}</Badge>
+                  </div>
+                  <div className="flex gap-4 text-sm text-muted-foreground">
+                    <span>{dataset.image_count} images</span>
+                    <span>{dataset.annotation_count} annotations</span>
+                    <span>Created {new Date(dataset.created_at).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))}
+              {datasets.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  No datasets found
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

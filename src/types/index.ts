@@ -22,6 +22,7 @@ export interface Project {
   datasets: Dataset[];
   thumbnailUrl?: string; // Adding this property as optional
   logo_url?: string;
+  tags?: string[];
 }
 
 export interface Image {

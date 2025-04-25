@@ -41,7 +41,7 @@ async def health_check():
 @app.post("/projects/")
 async def create_project(
     name: str = Form(...),
-    description: str = Form(...),
+    description: str = Form(""),  # Make description optional with empty default
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
@@ -111,6 +111,40 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+@app.put("/projects/{project_id}", response_model=schemas.Project)
+async def update_project(
+    project_id: int,
+    name: str = Form(...),
+    description: str = Form(""),  # Make description optional with empty default
+    logo: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    try:
+        project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # Update basic info
+        project.name = name
+        project.description = description
+
+        # Handle logo if provided
+        if logo:
+            logo_data = await logo.read()
+            project.logo = logo_data
+            # Create a data URL for the logo
+            mime_type = logo.content_type or "image/png"
+            logo_base64 = base64.b64encode(logo_data).decode()
+            project.logo_url = f"data:{mime_type};base64,{logo_base64}"
+
+        db.commit()
+        db.refresh(project)
+        return project
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/projects/{project_id}")
 async def delete_project(project_id: int, db: Session = Depends(get_db)):

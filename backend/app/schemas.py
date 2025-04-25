@@ -38,7 +38,7 @@ class Dataset(DatasetBase):
 
 class ProjectBase(BaseModel):
     name: str
-    description: str
+    description: str | None = None  # Make description optional with None default
     is_project: bool = True
 
 class ProjectCreate(ProjectBase):

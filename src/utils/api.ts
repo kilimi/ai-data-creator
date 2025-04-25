@@ -1,4 +1,3 @@
-
 import { ApiConfig, ApiResponse } from '@/types/api';
 import { Dataset, Project } from '@/types';
 
@@ -121,6 +120,25 @@ export class ApiClient {
     return this.request<Project>('/projects/', {
       method: 'POST',
       body: formData,
+    });
+  }
+
+  async updateProject(id: string | number, formData: FormData): Promise<ApiResponse<Project>> {
+    console.log(`Updating project ${id} with FormData:`, formData);
+    // Log formData contents for debugging
+    for (const pair of formData.entries()) {
+      console.log(`${pair[0]}: ${pair[1] instanceof File ? `File: ${pair[1].name}` : pair[1]}`);
+    }
+    
+    return this.request<Project>(`/projects/${id}`, {
+      method: 'PUT',
+      body: formData,
+    });
+  }
+
+  async deleteProject(id: number | string): Promise<ApiResponse<{success: boolean; message: string}>> {
+    return this.request(`/projects/${id}`, {
+      method: 'DELETE'
     });
   }
 

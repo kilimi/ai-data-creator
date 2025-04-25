@@ -149,7 +149,7 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
     try {
       const formData = new FormData();
       formData.append('name', name.trim());
-      formData.append('description', description.trim());
+      formData.append('description', description.trim() || " ");
       formData.append('type', datasetType);
       formData.append('project_id', String(projectId));
       
