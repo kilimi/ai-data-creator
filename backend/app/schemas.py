@@ -40,6 +40,16 @@ class ProjectBase(BaseModel):
     name: str
     description: str | None = None  # Make description optional with None default
     is_project: bool = True
+    tags: List[str] = []
+
+    @validator('tags', pre=True)
+    def validate_tags(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except:
+                return []
+        return v or []
 
 class ProjectCreate(ProjectBase):
     logo: Optional[bytes] = None

@@ -10,6 +10,7 @@ class Project(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     description = Column(Text, nullable=True)  # Make description nullable
+    _tags = Column('tags', JSON, default=list)  # Add tags support
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_project = Column(Boolean, default=True)
@@ -17,6 +18,26 @@ class Project(Base):
     logo_url = Column(String, nullable=True)
 
     datasets = relationship("Dataset", back_populates="project")
+
+    @property
+    def tags(self):
+        """Get the tags as a list"""
+        if isinstance(self._tags, str):
+            try:
+                return json.loads(self._tags)
+            except json.JSONDecodeError:
+                return []
+        return self._tags or []
+
+    @tags.setter
+    def tags(self, value):
+        """Set the tags, ensuring they're stored as JSON"""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = []
+        self._tags = value
 
 class Dataset(Base):
     __tablename__ = "datasets"

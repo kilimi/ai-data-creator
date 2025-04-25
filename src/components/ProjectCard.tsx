@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { Project, Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Folder, FolderOpen, Database, MoreHorizontal } from "lucide-react";
+import { Folder, FolderOpen, Database, MoreHorizontal, Tag } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -29,6 +29,7 @@ import { createApiClient } from "@/utils/api";
 import { API_CONFIG } from "@/config/api";
 import { useToast } from "@/hooks/use-toast";
 import { EditProjectDialog } from "./EditProjectDialog";
+import { Badge } from "@/components/ui/badge";
 
 interface ProjectCardProps {
   project: Project;
@@ -163,6 +164,22 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
             <p className="text-sm text-muted-foreground line-clamp-2">
               {project.description || "No description provided"}
             </p>
+            
+            {/* Display project tags */}
+            {project.tags && project.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {project.tags.map(tag => (
+                  <Badge 
+                    key={tag} 
+                    variant="secondary" 
+                    className="flex items-center gap-1 text-xs"
+                  >
+                    <Tag className="h-3 w-3" />
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
         </CardContent>
         

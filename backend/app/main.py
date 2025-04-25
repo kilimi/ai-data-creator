@@ -42,14 +42,19 @@ async def health_check():
 async def create_project(
     name: str = Form(...),
     description: str = Form(""),  # Make description optional with empty default
+    tags: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
     try:
+        # Parse tags if provided, otherwise use empty list
+        parsed_tags = json.loads(tags) if tags else []
+        
         # Create project with basic info
         project_data = {
             "name": name,
-            "description": description
+            "description": description,
+            "tags": json.dumps(parsed_tags)  # Store tags as JSON string
         }
 
         db_project = models.Project(**project_data)
@@ -73,6 +78,7 @@ async def create_project(
                 "id": db_project.id,
                 "name": db_project.name,
                 "description": db_project.description,
+                "tags": db_project.tags,
                 "created_at": db_project.created_at.isoformat(),
                 "updated_at": db_project.updated_at.isoformat(),
                 "logo_url": db_project.logo_url
@@ -86,7 +92,7 @@ async def create_project(
 def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     try:
         projects = db.query(models.Project).offset(skip).limit(limit).all()
-        # Convert projects to dict and ensure datasets and logo_url are included
+        # Convert projects to dict and ensure datasets, tags, and logo_url are included
         return [
             {
                 "id": p.id,
@@ -97,7 +103,8 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                 "is_project": p.is_project,
                 "datasets": p.datasets or [],
                 "logo_url": p.logo_url,
-                "thumbnailUrl": p.logo_url  # Include for backward compatibility
+                "thumbnailUrl": p.logo_url,  # Include for backward compatibility
+                "tags": p.tags  # Add tags to the response
             }
             for p in projects
         ]
@@ -117,6 +124,7 @@ async def update_project(
     project_id: int,
     name: str = Form(...),
     description: str = Form(""),  # Make description optional with empty default
+    tags: Optional[str] = Form(None),  # Add tags parameter
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
@@ -125,6 +133,10 @@ async def update_project(
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        # Parse tags if provided
+        if tags:
+            project.tags = json.loads(tags)
+        
         # Update basic info
         project.name = name
         project.description = description
@@ -211,3 +223,26 @@ def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return dataset
+
+@app.get("/test-project-tags")
+async def test_project_tags(db: Session = Depends(get_db)):
+    # Create a test project with tags
+    project = models.Project(
+        name="Test Project with Tags",
+        description="Testing tags functionality",
+        tags=["test", "tags", "feature"]
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    
+    # Return the created project to verify tags are working
+    return {
+        "success": True,
+        "data": {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "tags": project.tags
+        }
+    }
