@@ -406,6 +406,11 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     });
   };
 
+  const handleAnnotate = () => {
+    if (!id) return;
+    window.open(`/datasets/${id}/annotate`, '_blank');
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white">
@@ -522,7 +527,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                       size="sm"
                       className="bg-blue-600 hover:bg-blue-700"
                     >
-                      <Upload className="h-4 w-4 mr-1" /> Add Images
+                      <Upload className="h-4 w-4 mr-2" /> Add Images
                     </Button>
                   </div>
                   
@@ -585,20 +590,25 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                 </TabsContent>
                 
                 <TabsContent value="annotations" className="space-y-4">
-                  <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-lg font-medium text-white">
-                      Annotation Files
-                      <span className="ml-2 text-sm font-normal text-gray-400">
-                        {annotations.length} files
-                      </span>
-                    </h3>
-                    <Button 
-                      onClick={() => setShowUploadDialog(true)}
-                      size="sm"
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      <Upload className="h-4 w-4 mr-1" /> Add Annotations
-                    </Button>
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-xl font-semibold">Annotations</h2>
+                    <div className="flex gap-2">
+                      <Button 
+                        onClick={handleAnnotate}
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Pencil className="h-4 w-4 mr-1" />
+                        Annotate
+                      </Button>
+                      <Button 
+                        onClick={() => setShowUploadDialog(true)}
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Upload className="h-4 w-4 mr-1" /> Add Annotations
+                      </Button>
+                    </div>
                   </div>
                   
                   {annotations.length > 0 ? (
