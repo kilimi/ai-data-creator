@@ -11,6 +11,7 @@ import CreateDataset from "./pages/CreateDataset";
 import EditDataset from "./pages/EditDataset";
 import ApiSettings from "./pages/ApiSettings";
 import CreateProject from "./pages/CreateProject";
+import Dataset from "@/pages/Dataset";
 
 const queryClient = new QueryClient();
 
@@ -29,6 +30,7 @@ const App = () => (
           <Route path="/datasets/:id" element={<DatasetDetail />} />
           <Route path="/datasets/:id/edit" element={<EditDataset />} />
           <Route path="/api-settings" element={<ApiSettings />} />
+          <Route path="/dataset/:id" element={<Dataset />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

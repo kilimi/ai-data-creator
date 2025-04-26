@@ -522,6 +522,76 @@ def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
     db.commit()
     return new_dataset
 
+@app.post("/datasets/{dataset_id}/images")
+async def upload_images(
+    dataset_id: int,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Verify dataset exists
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Create images directory if it doesn't exist
+        dataset_dir = Path("data/images") / str(dataset_id)
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        uploaded_images = []
+        for file in files:
+            if not file.content_type.startswith('image/'):
+                continue
+
+            # Save the file
+            file_path = dataset_dir / file.filename
+            try:
+                contents = await file.read()
+                with open(file_path, 'wb') as f:
+                    f.write(contents)
+            except Exception as e:
+                print(f"Error saving file {file.filename}: {str(e)}")
+                continue
+
+            # Create image record in database
+            db_image = models.Image(
+                dataset_id=dataset_id,
+                file_name=file.filename,
+                file_size=len(contents),
+                width=0,  # We'll add image dimension detection later
+                height=0,
+                url=f"/data/images/{dataset_id}/{file.filename}",
+                thumbnail_url=f"/data/images/{dataset_id}/{file.filename}",  # For now, same as url
+                annotations_count=0
+            )
+            db.add(db_image)
+            uploaded_images.append(db_image)
+
+        # Update dataset image count
+        current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
+        dataset.image_count = current_image_count + len(uploaded_images)
+        
+        db.commit()
+
+        return {
+            "success": True,
+            "data": {
+                "uploaded": len(uploaded_images),
+                "images": [
+                    {
+                        "id": img.id,
+                        "file_name": img.file_name,
+                        "url": img.url,
+                        "thumbnail_url": img.thumbnail_url
+                    } for img in uploaded_images
+                ]
+            }
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/test-project-tags")
 async def test_project_tags(db: Session = Depends(get_db)):
     # Create a test project with tags

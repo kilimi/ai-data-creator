@@ -283,7 +283,7 @@ function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
   return (
     <HoverCard>
       <HoverCardTrigger asChild>
-        <Link to={`/datasets/${dataset.id}`}>
+        <Link to={`/dataset/${dataset.id}`}>
           <Avatar className="border-2 border-background h-8 w-8 cursor-pointer">
             {dataset.thumbnailUrl ? (
               <AvatarImage src={dataset.thumbnailUrl} alt={dataset.name} />

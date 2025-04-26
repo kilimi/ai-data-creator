@@ -200,6 +200,13 @@ export class ApiClient {
       };
     }
   }
+
+  async uploadImages(datasetId: string | number, formData: FormData): Promise<ApiResponse<any>> {
+    return this.request(`/datasets/${datasetId}/images`, {
+      method: 'POST',
+      body: formData
+    });
+  }
 }
 
 /**
