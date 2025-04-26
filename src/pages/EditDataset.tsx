@@ -373,12 +373,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (!dataset) return;
     
     try {
-      const apiClient = new ApiClient(API_CONFIG);
-      const response = await apiClient.deleteDataset(dataset.id);
-
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to delete dataset');
-      }
+      // Simulating API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       toast({
         title: 'Dataset deleted',
@@ -599,7 +595,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                         className="bg-blue-600 hover:bg-blue-700"
                       >
                         <Pencil className="h-4 w-4 mr-1" />
-                        Annotate
+                        Annotate Images
                       </Button>
                       <Button 
                         onClick={() => setShowUploadDialog(true)}

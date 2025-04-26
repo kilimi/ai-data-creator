@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -111,7 +111,7 @@ const ImageAnnotation = () => {
         <div className="flex items-center justify-between mb-8">
           <Button
             variant="ghost"
-            onClick={() => window.close()}
+            onClick={() => window.history.back()}
             className="text-gray-300 hover:text-white"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
