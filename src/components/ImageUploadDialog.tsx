@@ -1,7 +1,8 @@
+
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Upload, X } from "lucide-react";
+import { Upload, X, Image, Trash2 } from "lucide-react";
 
 interface ImageUploadDialogProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface ImageUploadDialogProps {
 export function ImageUploadDialog({ open, onOpenChange, onUpload }: ImageUploadDialogProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [previews, setPreviews] = useState<string[]>([]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -31,7 +33,7 @@ export function ImageUploadDialog({ open, onOpenChange, onUpload }: ImageUploadD
       file.type.startsWith('image/')
     );
     
-    setSelectedFiles(prev => [...prev, ...files]);
+    addFiles(files);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -39,16 +41,27 @@ export function ImageUploadDialog({ open, onOpenChange, onUpload }: ImageUploadD
       const files = Array.from(e.target.files).filter(file => 
         file.type.startsWith('image/')
       );
-      setSelectedFiles(prev => [...prev, ...files]);
+      addFiles(files);
     }
   };
 
+  const addFiles = (files: File[]) => {
+    const newPreviews = files.map(file => URL.createObjectURL(file));
+    setPreviews(prev => [...prev, ...newPreviews]);
+    setSelectedFiles(prev => [...prev, ...files]);
+  };
+
   const removeFile = (index: number) => {
+    URL.revokeObjectURL(previews[index]);
+    setPreviews(prev => prev.filter((_, i) => i !== index));
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = () => {
     onUpload(selectedFiles);
+    // Clean up URLs
+    previews.forEach(url => URL.revokeObjectURL(url));
+    setPreviews([]);
     setSelectedFiles([]);
   };
 
@@ -88,22 +101,28 @@ export function ImageUploadDialog({ open, onOpenChange, onUpload }: ImageUploadD
 
         {selectedFiles.length > 0 && (
           <div className="mt-4">
-            <h4 className="font-medium mb-2">Selected Files ({selectedFiles.length})</h4>
-            <div className="max-h-[200px] overflow-y-auto space-y-2">
-              {selectedFiles.map((file, index) => (
+            <h4 className="font-medium mb-2">Selected Images ({selectedFiles.length})</h4>
+            <div className="grid grid-cols-3 gap-4 max-h-[300px] overflow-y-auto p-2">
+              {previews.map((preview, index) => (
                 <div
                   key={index}
-                  className="flex items-center justify-between p-2 bg-muted rounded-md"
+                  className="relative group aspect-square border rounded-md overflow-hidden bg-muted"
                 >
-                  <span className="text-sm truncate">{file.name}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => removeFile(index)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+                  <img
+                    src={preview}
+                    alt={`Preview ${index + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <Button
+                      variant="destructive"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => removeFile(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -114,6 +133,8 @@ export function ImageUploadDialog({ open, onOpenChange, onUpload }: ImageUploadD
           <Button
             variant="outline"
             onClick={() => {
+              previews.forEach(url => URL.revokeObjectURL(url));
+              setPreviews([]);
               setSelectedFiles([]);
               onOpenChange(false);
             }}
