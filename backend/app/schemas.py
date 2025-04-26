@@ -74,3 +74,21 @@ class Project(ProjectBase):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+
+class Image(BaseModel):
+    id: int
+    dataset_id: int
+    file_name: str
+    file_size: int
+    width: int
+    height: int
+    url: str
+    thumbnail_url: str
+    uploaded_at: datetime
+    annotations_count: int = 0
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }

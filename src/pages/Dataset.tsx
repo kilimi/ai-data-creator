@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
-import { Dataset as DatasetType } from "@/types";
+import { Dataset as DatasetType, Image } from "@/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { Card } from "@/components/ui/card";
@@ -17,6 +17,8 @@ export default function Dataset() {
   const [dataset, setDataset] = useState<DatasetType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [images, setImages] = useState<Image[]>([]);
+  const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const fetchDataset = async () => {
@@ -27,6 +29,11 @@ export default function Dataset() {
         const response = await api.getDataset(id);
         if (response.success && response.data) {
           setDataset(response.data);
+          // Fetch images for this dataset
+          const imagesResponse = await api.getImages(id);
+          if (imagesResponse.success && imagesResponse.data) {
+            setImages(imagesResponse.data);
+          }
         } else {
           toast({
             title: "Error",
@@ -65,10 +72,14 @@ export default function Dataset() {
           title: "Success",
           description: `Successfully uploaded ${files.length} images`,
         });
-        // Refresh dataset data
+        // Refresh dataset data and images
         const datasetResponse = await api.getDataset(id);
         if (datasetResponse.success && datasetResponse.data) {
           setDataset(datasetResponse.data);
+        }
+        const imagesResponse = await api.getImages(id);
+        if (imagesResponse.success && imagesResponse.data) {
+          setImages(imagesResponse.data);
         }
       } else {
         throw new Error(response.error || 'Upload failed');
@@ -128,8 +139,29 @@ export default function Dataset() {
                 </Button>
               </Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {/* Image grid will be implemented here */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                {images.map((image) => (
+                  <div 
+                    key={image.id}
+                    className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                  >
+                    <div className="aspect-square relative">
+                      {imageLoadErrors[image.id] ? (
+                        <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                          <p className="text-xs text-center px-2">Failed to load image</p>
+                        </div>
+                      ) : (
+                        <img 
+                          src={image.url} // Using direct url instead of thumbnailUrl
+                          alt={image.fileName} 
+                          className="w-full h-full object-cover"
+                          onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
+                          loading="lazy"
+                        />
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </TabsContent>

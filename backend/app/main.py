@@ -1,6 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import json
@@ -15,6 +16,13 @@ from .database import engine, get_db
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+# Mount static files directory
+app.mount("/data", StaticFiles(directory="data"), name="data")
+
+# Function to get base URL
+def get_base_url(request: Request) -> str:
+    return str(request.base_url).rstrip('/')
 
 # Get allowed origins from environment variable or use default
 allowed_origins = os.getenv(
@@ -524,6 +532,7 @@ def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
 
 @app.post("/datasets/{dataset_id}/images")
 async def upload_images(
+    request: Request,
     dataset_id: int,
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db)
@@ -534,6 +543,9 @@ async def upload_images(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
+        # Get base URL
+        base_url = get_base_url(request)
+        
         # Create images directory if it doesn't exist
         dataset_dir = Path("data/images") / str(dataset_id)
         dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -553,15 +565,15 @@ async def upload_images(
                 print(f"Error saving file {file.filename}: {str(e)}")
                 continue
 
-            # Create image record in database
+            # Create image record in database with full URLs
             db_image = models.Image(
                 dataset_id=dataset_id,
                 file_name=file.filename,
                 file_size=len(contents),
-                width=0,  # We'll add image dimension detection later
+                width=0,
                 height=0,
-                url=f"/data/images/{dataset_id}/{file.filename}",
-                thumbnail_url=f"/data/images/{dataset_id}/{file.filename}",  # For now, same as url
+                url=f"{base_url}/data/images/{dataset_id}/{file.filename}",
+                thumbnail_url=f"{base_url}/data/images/{dataset_id}/{file.filename}",
                 annotations_count=0
             )
             db.add(db_image)
@@ -590,6 +602,32 @@ async def upload_images(
 
     except Exception as e:
         db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/datasets/{dataset_id}/images", response_model=List[schemas.Image])
+def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(get_db)):
+    try:
+        # Verify dataset exists
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Get base URL
+        base_url = get_base_url(request)
+        
+        # Get all images for this dataset
+        images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
+        
+        # Update URLs with base URL if they're relative
+        for image in images:
+            if image.url.startswith('/'):
+                image.url = f"{base_url}{image.url}"
+            if image.thumbnail_url.startswith('/'):
+                image.thumbnail_url = f"{base_url}{image.thumbnail_url}"
+        
+        return images
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/test-project-tags")

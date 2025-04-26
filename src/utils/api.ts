@@ -1,5 +1,5 @@
 import { ApiConfig, ApiResponse } from '@/types/api';
-import { Dataset, Project } from '@/types';
+import { Dataset, Project, Image } from '@/types';
 
 /**
  * Simple API client for interacting with FastAPI backend
@@ -206,6 +206,10 @@ export class ApiClient {
       method: 'POST',
       body: formData
     });
+  }
+
+  async getImages(datasetId: string | number): Promise<ApiResponse<Image[]>> {
+    return this.request<Image[]>(`/datasets/${datasetId}/images`);
   }
 }
 
