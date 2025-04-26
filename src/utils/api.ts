@@ -142,6 +142,12 @@ export class ApiClient {
     });
   }
 
+  async duplicateProject(id: string | number): Promise<ApiResponse<Project>> {
+    return this.request<Project>(`/projects/${id}/duplicate`, {
+      method: 'POST'
+    });
+  }
+
   // Datasets endpoints
   
   async getDatasets(): Promise<ApiResponse<Dataset[]>> {
@@ -157,6 +163,42 @@ export class ApiClient {
       method: 'POST',
       body: formData,
     });
+  }
+
+  async updateDataset(id: string | number, formData: FormData): Promise<ApiResponse<Dataset>> {
+    return this.request<Dataset>(`/datasets/${id}`, {
+      method: 'PUT',
+      body: formData,
+    });
+  }
+
+  async deleteDataset(id: number | string): Promise<ApiResponse<{success: boolean; message: string}>> {
+    return this.request(`/datasets/${id}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async duplicateDataset(datasetId: number): Promise<ApiResponse<Dataset>> {
+    try {
+      const response = await fetch(`${this.config.baseUrl}/datasets/${datasetId}/duplicate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return { success: true, data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to duplicate dataset',
+      };
+    }
   }
 }
 

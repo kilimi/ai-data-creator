@@ -6,6 +6,8 @@ import { DatasetCard, DatasetCardSkeleton } from "@/components/DatasetCard";
 import { FolderPlus, Search, Settings, SlidersHorizontal, Tag } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
+import { useApi } from "@/hooks/use-api";
+import { useToast } from "@/hooks/use-toast";
 import {
   Select,
   SelectContent,
@@ -21,6 +23,8 @@ const Datasets = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
+  const { api } = useApi();
+  const { toast } = useToast();
   
   useEffect(() => {
     const fetchData = async () => {
@@ -90,6 +94,30 @@ const Datasets = () => {
         return result.sort((a, b) => b.annotation_count - a.annotation_count);
       default:
         return result;
+    }
+  };
+
+  const handleDeleteDataset = async (dataset: Dataset) => {
+    try {
+      const response = await api?.deleteDataset(dataset.id);
+      
+      if (!response?.success) {
+        throw new Error(response?.error || 'Failed to delete dataset');
+      }
+
+      setDatasets(prevDatasets => prevDatasets.filter(d => d.id !== dataset.id));
+      
+      toast({
+        title: "Dataset deleted",
+        description: `${dataset.name} has been deleted successfully.`,
+      });
+    } catch (err) {
+      console.error('Error deleting:', err);
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to delete. Please try again.",
+        variant: "destructive",
+      });
     }
   };
   
@@ -186,7 +214,7 @@ const Datasets = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-300">
             {filteredAndSortedDatasets().map(dataset => (
               <div key={dataset.id}>
-                <DatasetCard dataset={dataset} />
+                <DatasetCard dataset={dataset} onDelete={handleDeleteDataset} />
               </div>
             ))}
           </div>

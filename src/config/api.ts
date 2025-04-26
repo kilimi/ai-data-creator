@@ -1,4 +1,3 @@
-
 // Get API URL from localStorage if available, otherwise use default
 const getApiBaseUrl = () => {
   // Check localStorage first
@@ -38,4 +37,14 @@ export const API_CONFIG = {
   isAccessible: async (): Promise<boolean> => {
     return await isUrlAccessible(getApiBaseUrl());
   }
+};
+
+export const duplicateDataset = async (datasetId: number): Promise<ApiResponse<Dataset>> => {
+  const response = await fetch(`${API_URL}/datasets/${datasetId}/duplicate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+  return handleResponse(response);
 };

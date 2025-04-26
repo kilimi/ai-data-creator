@@ -5,7 +5,7 @@ import json
 
 class DatasetBase(BaseModel):
     name: str
-    description: str
+    description: str | None = None  # Make description optional with None default
     type: str
     tags: List[str] = []
 
@@ -30,6 +30,13 @@ class Dataset(DatasetBase):
     project_id: int
     thumbnailUrl: Optional[str] = None
 
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class DatasetResponse(Dataset):
     class Config:
         from_attributes = True
         json_encoders = {

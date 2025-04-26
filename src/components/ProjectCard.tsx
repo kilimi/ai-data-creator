@@ -78,6 +78,36 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
     }
   };
 
+  const handleDuplicate = async () => {
+    try {
+      const apiClient = createApiClient(API_CONFIG);
+      const response = await apiClient.duplicateProject(project.id);
+      
+      if (!response.success) {
+        throw new Error(response.error || "Failed to duplicate project");
+      }
+
+      toast({
+        title: "Success",
+        description: "Project has been duplicated successfully.",
+      });
+
+      // If onUpdate handler provided, use it, otherwise refresh the page
+      if (onUpdate && response.data) {
+        onUpdate(response.data);
+      } else {
+        navigate(0);
+      }
+    } catch (err) {
+      console.error('Error duplicating project:', err);
+      toast({
+        title: "Error",
+        description: "Failed to duplicate project. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleProjectUpdate = (updatedProject: Project) => {
     if (onUpdate) {
       onUpdate(updatedProject);
@@ -141,7 +171,9 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                   <DropdownMenuItem onClick={() => setShowEditDialog(true)}>
                     Edit
                   </DropdownMenuItem>
-                  <DropdownMenuItem>Duplicate</DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleDuplicate}>
+                    Duplicate
+                  </DropdownMenuItem>
                   <DropdownMenuItem 
                     className="text-destructive focus:text-destructive"
                     onClick={() => setShowDeleteDialog(true)}

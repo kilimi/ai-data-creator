@@ -1,4 +1,3 @@
-
 import { useState, useRef } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
@@ -25,7 +24,7 @@ const datasetSchema = z.object({
   type: z.enum(["classification", "segmentation", "panomatic"], {
     required_error: "Please select a dataset type",
   }),
-  tags: z.string().optional(),
+  tags: z.array(z.string()).optional(),
 });
 
 type DatasetFormValues = z.infer<typeof datasetSchema>;
@@ -53,7 +52,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
       name: initialData?.name || "",
       description: initialData?.description || "",
       type: (initialData?.type as "classification" | "segmentation" | "panomatic") || "classification",
-      tags: "",
+      tags: initialData?.tags || [],
     },
   });
   
@@ -91,7 +90,9 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
   
   const addTag = () => {
     if (tagInput.trim() && !tags.includes(tagInput.trim())) {
-      setTags([...tags, tagInput.trim()]);
+      const newTags = [...tags, tagInput.trim()];
+      setTags(newTags);
+      form.setValue('tags', newTags);
       setTagInput("");
       if (tagInputRef.current) {
         tagInputRef.current.focus();
@@ -100,7 +101,9 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
   };
   
   const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter(tag => tag !== tagToRemove));
+    const newTags = tags.filter(tag => tag !== tagToRemove);
+    setTags(newTags);
+    form.setValue('tags', newTags);
   };
   
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -111,11 +114,8 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
   };
   
   const handleSubmit = (data: DatasetFormValues) => {
-    const formData = {
-      ...data,
-      tags: tags.join(","),
-    };
-    onSubmit(formData, logoFile || undefined);
+    // Include tags in the form data
+    onSubmit({ ...data, tags }, logoFile);
   };
   
   return (
@@ -236,11 +236,13 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
                   key={index}
                   className="flex items-center bg-secondary text-secondary-foreground px-3 py-1 rounded-full text-sm"
                 >
+                  <Tag className="h-3 w-3 mr-1.5" />
                   <span>{tag}</span>
                   <Button
                     type="button"
                     variant="ghost"
-                    className="h-4 w-4 p-0 ml-2 text-secondary-foreground"
+                    size="icon"
+                    className="h-4 w-4 p-0 ml-2 text-secondary-foreground hover:bg-transparent"
                     onClick={() => removeTag(tag)}
                   >
                     <X className="h-3 w-3" />
@@ -274,7 +276,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
               />
             </div>
           ) : (
-            <div className="relative rounded-md overflow-hidden border h-48 flex items-center justify-center">
+            <div className="relative rounded-md overflow-hidden border border-border h-48 flex items-center justify-center">
               <img 
                 src={logoPreview} 
                 alt="Logo preview" 

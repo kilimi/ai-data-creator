@@ -25,6 +25,7 @@ const CreateProject = () => {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [nameError, setNameError] = useState('');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -93,6 +94,7 @@ const CreateProject = () => {
     e.preventDefault();
     
     if (!name.trim()) {
+      setNameError('Please enter a name');
       toast({
         title: "Error",
         description: "Please enter a name",
@@ -100,6 +102,7 @@ const CreateProject = () => {
       });
       return;
     }
+    setNameError('');
     
     setIsSubmitting(true);
     
@@ -161,10 +164,17 @@ const CreateProject = () => {
                 <Input 
                   id="name"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (e.target.value.trim()) setNameError('');
+                  }}
                   placeholder="Enter a name"
                   required
+                  aria-invalid={!!nameError}
                 />
+                {nameError && (
+                  <p className="text-sm text-destructive">{nameError}</p>
+                )}
               </div>
               
               <div className="space-y-2">
@@ -228,7 +238,7 @@ const CreateProject = () => {
               </div>
 
               <div className="space-y-2">
-                <Label>Project Logo</Label>
+                <Label htmlFor="project-logo">Project Logo</Label>
                 <div className="space-y-4">
                   {!logoPreview ? (
                     <div 
@@ -239,6 +249,7 @@ const CreateProject = () => {
                       <p className="text-muted-foreground">Click to upload a logo</p>
                       <p className="text-xs text-muted-foreground">SVG, PNG, JPG (max 5MB)</p>
                       <input
+                        id="project-logo"
                         ref={fileInputRef}
                         type="file"
                         accept="image/*"

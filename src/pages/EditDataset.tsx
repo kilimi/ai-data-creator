@@ -95,6 +95,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
 
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   useEffect(() => {
     const fetchData = async () => {
       await new Promise(resolve => setTimeout(resolve, 800));
@@ -353,7 +355,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         description: "All changes have been saved successfully.",
       });
       
-      navigate(`/datasets/${id}`);
+      // Refresh the page by navigating to the same URL
+      window.location.reload();
     } catch (error) {
       console.error("Error saving dataset:", error);
       toast({
@@ -364,6 +367,35 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDeleteDataset = async () => {
+    if (!dataset) return;
+    
+    try {
+      const apiClient = new ApiClient(API_CONFIG);
+      const response = await apiClient.deleteDataset(dataset.id);
+
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to delete dataset');
+      }
+
+      toast({
+        title: 'Dataset deleted',
+        description: 'Dataset and all associated data have been removed.',
+      });
+
+      // Navigate back to datasets page
+      navigate('/datasets');
+    } catch (error) {
+      console.error('Error deleting dataset:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Delete failed',
+        description: error instanceof Error ? error.message : 'There was an error deleting the dataset.',
+      });
+    }
+    setShowDeleteConfirm(false);
   };
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -424,14 +456,24 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             <h1 className="text-xl font-semibold flex-1 text-white">
               Edit: {dataset?.name}
             </h1>
-            <Button 
-              onClick={handleSave} 
-              disabled={saving}
-              className="ml-2 bg-blue-600 hover:bg-blue-700"
-            >
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Save Changes
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="destructive"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={saving}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete Dataset
+              </Button>
+              <Button 
+                onClick={handleSave} 
+                disabled={saving}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                Save Changes
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -881,6 +923,33 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           setShowAnnotationsDialog(false);
         }}
       />
+
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="bg-gray-900 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Delete Dataset</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              This will permanently delete this dataset and all its associated images and annotations.
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setShowDeleteConfirm(false)}
+              className="bg-gray-800 hover:bg-gray-700"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteDataset}
+            >
+              Delete Dataset
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

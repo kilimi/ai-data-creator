@@ -18,9 +18,10 @@ import {
 interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
   dataset: Dataset;
   className?: string;
+  onDelete?: (dataset: Dataset) => Promise<void>;
 }
 
-export function DatasetCard({ dataset, className, ...props }: DatasetCardProps) {
+export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
   
   // Function to get dataset type badge color
@@ -87,7 +88,10 @@ export function DatasetCard({ dataset, className, ...props }: DatasetCardProps) 
               <DropdownMenuContent align="end">
                 <DropdownMenuItem>Rename</DropdownMenuItem>
                 <DropdownMenuItem>Duplicate</DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive">
+                <DropdownMenuItem 
+                  className="text-destructive"
+                  onClick={() => onDelete && onDelete(dataset)}
+                >
                   Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -98,7 +102,7 @@ export function DatasetCard({ dataset, className, ...props }: DatasetCardProps) 
       
       <CardContent className="p-4">
         <div className="space-y-1">
-          <Link to={`/datasets/${dataset.id}`} className="block">
+          <Link to={`/dataset/${dataset.id}`} className="block">
             <h3 className="font-medium line-clamp-1 hover:text-primary transition-colors">
               {dataset.name}
             </h3>
