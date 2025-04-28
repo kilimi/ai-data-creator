@@ -23,7 +23,9 @@ import {
   X,
   Pencil,
   Tag,
-  Upload
+  Upload,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImageLoad } from "@/utils/animations";
@@ -96,6 +98,15 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const imagesPerPage = 20;
+  
+  // Calculate pagination
+  const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
+  const paginatedImages = images.slice(
+    (currentPage - 1) * imagesPerPage,
+    currentPage * imagesPerPage
+  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -528,44 +539,70 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                   </div>
                   
                   {images.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 mt-4 max-h-[600px] overflow-y-auto p-1">
-                      {images.map((image) => (
-                        <div 
-                          key={image.id}
-                          onClick={() => setSelectedImage(image)}
-                          className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 mt-4 max-h-[600px] overflow-y-auto p-1">
+                        {paginatedImages.map((image) => (
+                          <div 
+                            key={image.id}
+                            onClick={() => setSelectedImage(image)}
+                            className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                          >
+                            <div className="aspect-square relative">
+                              <img 
+                                src={image.thumbnailUrl} 
+                                alt={image.fileName} 
+                                className="w-full h-full object-cover"
+                              />
+                              {showAnnotationsOnImage.length > 0 && 
+                               showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
+                                <div className="absolute top-2 right-2">
+                                  <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
+                                    <Tag className="h-3 w-3 mr-1" />
+                                    {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
+                                  </Badge>
+                                </div>
+                              )}
+                            </div>
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                              <Button 
+                                variant="destructive" 
+                                size="icon" 
+                                className="h-8 w-8"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteImage(image);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <div className="flex justify-between items-center mt-4">
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          className="text-white hover:text-white hover:bg-gray-800"
+                          disabled={currentPage === 1}
+                          onClick={() => setCurrentPage(currentPage - 1)}
                         >
-                          <div className="aspect-square relative">
-                            <img 
-                              src={image.thumbnailUrl} 
-                              alt={image.fileName} 
-                              className="w-full h-full object-cover"
-                            />
-                            {showAnnotationsOnImage.length > 0 && 
-                             showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
-                              <div className="absolute top-2 right-2">
-                                <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
-                                  <Tag className="h-3 w-3 mr-1" />
-                                  {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
-                                </Badge>
-                              </div>
-                            )}
-                          </div>
-                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                            <Button 
-                              variant="destructive" 
-                              size="icon" 
-                              className="h-8 w-8"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteImage(image);
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
+                          <ChevronLeft className="h-5 w-5" />
+                        </Button>
+                        <span className="text-sm text-gray-400">
+                          Page {currentPage} of {totalPages}
+                        </span>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          className="text-white hover:text-white hover:bg-gray-800"
+                          disabled={currentPage === totalPages}
+                          onClick={() => setCurrentPage(currentPage + 1)}
+                        >
+                          <ChevronRight className="h-5 w-5" />
+                        </Button>
+                      </div>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center bg-gray-800 rounded-lg p-12 text-center">
