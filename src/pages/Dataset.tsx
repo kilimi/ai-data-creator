@@ -5,11 +5,11 @@ import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
 import { Dataset as DatasetType, Image } from "@/types";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
-import { Card } from "@/components/ui/card";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { ImagesTabContent } from "@/components/ImagesTabContent";
+import { AnnotationsContent } from "@/components/AnnotationsContent";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -136,40 +136,37 @@ export default function Dataset() {
           name={dataset?.name} 
         />
 
-        <Tabs defaultValue="images" className="w-full">
-          <TabsList className="mb-4">
-            <TabsTrigger value="images">Images</TabsTrigger>
-            <TabsTrigger value="annotations">Annotations</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="images">
-            <ImagesTabContent
-              id={id || ''}
-              images={images}
-              currentPage={currentPage}
-              imagesPerPage={imagesPerPage}
-              imageSize={imageSize}
-              onImagesPerPageChange={setImagesPerPage}
-              onImageSizeChange={(value) => setImageSize(value[0])}
-              onPageChange={setCurrentPage}
-              onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-              onDeleteImage={handleDeleteImage}
-              paginatedImages={paginatedImages}
-              totalPages={totalPages}
-            />
-          </TabsContent>
-
-          <TabsContent value="annotations" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Annotations</h2>
+        <ResizablePanelGroup
+          direction="vertical"
+          className="min-h-[600px] border rounded-lg"
+        >
+          <ResizablePanel defaultSize={30} minSize={20}>
+            <div className="p-4">
+              <AnnotationsContent id={id || ''} />
             </div>
-            <Card className="p-6">
-              <p className="text-muted-foreground text-center">
-                Annotation functionality will be implemented here
-              </p>
-            </Card>
-          </TabsContent>
-        </Tabs>
+          </ResizablePanel>
+          
+          <ResizableHandle withHandle />
+          
+          <ResizablePanel defaultSize={70}>
+            <div className="p-4">
+              <ImagesTabContent
+                id={id || ''}
+                images={images}
+                currentPage={currentPage}
+                imagesPerPage={imagesPerPage}
+                imageSize={imageSize}
+                onImagesPerPageChange={setImagesPerPage}
+                onImageSizeChange={(value) => setImageSize(value[0])}
+                onPageChange={setCurrentPage}
+                onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+                onDeleteImage={handleDeleteImage}
+                paginatedImages={paginatedImages}
+                totalPages={totalPages}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
 
         <ImageUploadDialog 
           open={isUploadDialogOpen}
