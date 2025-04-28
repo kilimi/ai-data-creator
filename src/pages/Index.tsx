@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, Settings } from "lucide-react";
@@ -102,7 +101,7 @@ export default function Index() {
       <main className="container max-w-7xl mx-auto px-4 pt-32">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 animate-fade-in">
           <div>
-            <h1 className="text-3xl font-bold">Projects</h1>
+            <h1 className="text-3xl font-bold">Nine pixels</h1>
             <p className="text-muted-foreground">Create and manage your AI projects</p>
           </div>
           

@@ -151,9 +151,9 @@ const CreateProject = () => {
       <div className="container max-w-3xl pt-32 pb-12 px-4">
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Create New Project</CardTitle>
+            <CardTitle className="text-2xl">New Nine pixels Project</CardTitle>
             <CardDescription>
-              Create a new project to organize related datasets
+              Create a new project to organize your datasets and annotations
             </CardDescription>
           </CardHeader>
           

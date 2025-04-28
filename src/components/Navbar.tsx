@@ -1,4 +1,3 @@
-
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -34,7 +33,7 @@ export function Navbar() {
             <div className="flex items-center justify-center rounded-lg bg-primary/10 text-primary p-2">
               <FolderOpen className="h-5 w-5" />
             </div>
-            <span>DataVision</span>
+            <span>Nine pixels</span>
           </Link>
         </div>
         

@@ -1,10 +1,10 @@
-
 import { useState } from "react";
 import { Image } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Upload } from "lucide-react";
 import { ImageDetailModal } from "./ImageDetailModal";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface ImagesGridProps {
   images: Image[];
@@ -46,34 +46,72 @@ export function ImagesGrid({ images, imageSize, onOpenUploadDialog, onDeleteImag
     );
   }
 
+  // Calculate the number of columns based on container width and image size
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: `repeat(auto-fill, minmax(${imageSize}px, 1fr))`,
+    gap: '1rem',
+    padding: '1rem'
+  };
+
   return (
     <>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
-        {images.map((image) => (
-          <div 
-            key={image.id}
-            className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
-            style={{ width: imageSize, height: imageSize }}
-            onClick={() => handleImageClick(image)}
-          >
-            <div className="aspect-square relative">
-              {imageLoadErrors[image.id] ? (
-                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                  <p className="text-xs text-center px-2">Failed to load image</p>
+      <ScrollArea className="h-[600px] w-full rounded-md border border-border/50">
+        <div style={gridStyle}>
+          {images.map((image) => (
+            <div 
+              key={image.id}
+              className="cursor-pointer relative group rounded-md overflow-hidden border border-border/50 bg-card hover:border-primary/50 transition-colors"
+              onClick={() => handleImageClick(image)}
+            >
+              <div className="aspect-square relative">
+                {imageLoadErrors[image.id] ? (
+                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                    <span className="text-sm">Failed to load image</span>
+                  </div>
+                ) : (
+                  <img
+                    src={image.thumbnailUrl || image.url}
+                    alt={image.fileName}
+                    className="w-full h-full object-cover"
+                    onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
+                  />
+                )}
+              </div>
+              {onDeleteImage && (
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteImage(image.id);
+                    }}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                      <line x1="10" y1="11" x2="10" y2="17" />
+                      <line x1="14" y1="11" x2="14" y2="17" />
+                    </svg>
+                  </Button>
                 </div>
-              ) : (
-                <img 
-                  src={image.url}
-                  alt={image.fileName} 
-                  className="w-full h-full object-cover"
-                  onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
-                  loading="lazy"
-                />
               )}
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </ScrollArea>
 
       <ImageDetailModal 
         image={selectedImage}
