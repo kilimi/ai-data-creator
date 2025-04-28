@@ -4,15 +4,35 @@ import { Image } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Upload } from "lucide-react";
+import { ImageDetailModal } from "./ImageDetailModal";
 
 interface ImagesGridProps {
   images: Image[];
   imageSize: number;
   onOpenUploadDialog: () => void;
+  onDeleteImage?: (imageId: string) => Promise<void>;
 }
 
-export function ImagesGrid({ images, imageSize, onOpenUploadDialog }: ImagesGridProps) {
+export function ImagesGrid({ images, imageSize, onOpenUploadDialog, onDeleteImage }: ImagesGridProps) {
   const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
+  const [selectedImage, setSelectedImage] = useState<Image | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleImageClick = (image: Image) => {
+    setSelectedImage(image);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedImage(null);
+  };
+
+  const handleDeleteImage = async (imageId: string) => {
+    if (onDeleteImage) {
+      await onDeleteImage(imageId);
+    }
+  };
 
   if (images.length === 0) {
     return (
@@ -27,30 +47,40 @@ export function ImagesGrid({ images, imageSize, onOpenUploadDialog }: ImagesGrid
   }
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
-      {images.map((image) => (
-        <div 
-          key={image.id}
-          className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
-          style={{ width: imageSize, height: imageSize }}
-        >
-          <div className="aspect-square relative">
-            {imageLoadErrors[image.id] ? (
-              <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                <p className="text-xs text-center px-2">Failed to load image</p>
-              </div>
-            ) : (
-              <img 
-                src={image.url}
-                alt={image.fileName} 
-                className="w-full h-full object-cover"
-                onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
-                loading="lazy"
-              />
-            )}
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
+        {images.map((image) => (
+          <div 
+            key={image.id}
+            className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+            style={{ width: imageSize, height: imageSize }}
+            onClick={() => handleImageClick(image)}
+          >
+            <div className="aspect-square relative">
+              {imageLoadErrors[image.id] ? (
+                <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+                  <p className="text-xs text-center px-2">Failed to load image</p>
+                </div>
+              ) : (
+                <img 
+                  src={image.url}
+                  alt={image.fileName} 
+                  className="w-full h-full object-cover"
+                  onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
+                  loading="lazy"
+                />
+              )}
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+
+      <ImageDetailModal 
+        image={selectedImage}
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onDelete={handleDeleteImage}
+      />
+    </>
   );
 }

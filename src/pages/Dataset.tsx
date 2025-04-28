@@ -4,7 +4,7 @@ import { useParams } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
-import { Dataset as DatasetType } from "@/types";
+import { Dataset as DatasetType, Image } from "@/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { Card } from "@/components/ui/card";
@@ -29,38 +29,38 @@ export default function Dataset() {
     currentPage * imagesPerPage
   );
 
-  useEffect(() => {
-    const fetchDataset = async () => {
-      if (!id || !api) return;
+  const fetchDataset = async () => {
+    if (!id || !api) return;
 
-      try {
-        setIsLoading(true);
-        const response = await api.getDataset(id);
-        if (response.success && response.data) {
-          setDataset(response.data);
-          const imagesResponse = await api.getImages(id);
-          if (imagesResponse.success && imagesResponse.data) {
-            setImages(imagesResponse.data);
-          }
-        } else {
-          toast({
-            title: "Error",
-            description: "Failed to load dataset",
-            variant: "destructive",
-          });
+    try {
+      setIsLoading(true);
+      const response = await api.getDataset(id);
+      if (response.success && response.data) {
+        setDataset(response.data);
+        const imagesResponse = await api.getImages(id);
+        if (imagesResponse.success && imagesResponse.data) {
+          setImages(imagesResponse.data);
         }
-      } catch (error) {
-        console.error('Error fetching dataset:', error);
+      } else {
         toast({
           title: "Error",
           description: "Failed to load dataset",
           variant: "destructive",
         });
-      } finally {
-        setIsLoading(false);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching dataset:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load dataset",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchDataset();
   }, [id, api, toast]);
 
@@ -80,14 +80,7 @@ export default function Dataset() {
           title: "Success",
           description: `Successfully uploaded ${files.length} images`,
         });
-        const datasetResponse = await api.getDataset(id);
-        if (datasetResponse.success && datasetResponse.data) {
-          setDataset(datasetResponse.data);
-        }
-        const imagesResponse = await api.getImages(id);
-        if (imagesResponse.success && imagesResponse.data) {
-          setImages(imagesResponse.data);
-        }
+        fetchDataset();
       } else {
         throw new Error(response.error || 'Upload failed');
       }
@@ -100,6 +93,38 @@ export default function Dataset() {
       });
     }
     setIsUploadDialogOpen(false);
+  };
+
+  const handleDeleteImage = async (imageId: string) => {
+    if (!api || !id) return;
+    
+    try {
+      const response = await api.deleteImage(id, imageId);
+      
+      if (response.success) {
+        toast({
+          title: "Success",
+          description: "Image deleted successfully",
+        });
+        
+        // Update the images state
+        setImages(prevImages => prevImages.filter(image => image.id !== imageId));
+        
+        // Adjust current page if needed after deletion
+        if (paginatedImages.length === 1 && currentPage > 1) {
+          setCurrentPage(currentPage - 1);
+        }
+      } else {
+        throw new Error(response.error || 'Delete failed');
+      }
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete image",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -128,6 +153,7 @@ export default function Dataset() {
               onImageSizeChange={(value) => setImageSize(value[0])}
               onPageChange={setCurrentPage}
               onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+              onDeleteImage={handleDeleteImage}
               paginatedImages={paginatedImages}
               totalPages={totalPages}
             />

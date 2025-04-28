@@ -17,6 +17,7 @@ interface ImagesTabContentProps {
   onImageSizeChange: (value: number[]) => void;
   onPageChange: (page: number) => void;
   onOpenUploadDialog: () => void;
+  onDeleteImage: (imageId: string) => Promise<void>;
   paginatedImages: Image[];
   totalPages: number;
 }
@@ -31,6 +32,7 @@ export function ImagesTabContent({
   onImageSizeChange,
   onPageChange,
   onOpenUploadDialog,
+  onDeleteImage,
   paginatedImages,
   totalPages,
 }: ImagesTabContentProps) {
@@ -63,6 +65,7 @@ export function ImagesTabContent({
         images={paginatedImages}
         imageSize={imageSize}
         onOpenUploadDialog={onOpenUploadDialog}
+        onDeleteImage={onDeleteImage}
       />
 
       <PaginationControls

@@ -211,6 +211,12 @@ export class ApiClient {
   async getImages(datasetId: string | number): Promise<ApiResponse<Image[]>> {
     return this.request<Image[]>(`/datasets/${datasetId}/images`);
   }
+
+  async deleteImage(datasetId: string | number, imageId: string): Promise<ApiResponse<any>> {
+    return this.request(`/datasets/${datasetId}/images/${imageId}`, {
+      method: 'DELETE'
+    });
+  }
 }
 
 /**
