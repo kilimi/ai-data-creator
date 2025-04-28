@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Upload } from "lucide-react";
+import { ArrowLeft, Upload, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
@@ -19,6 +19,15 @@ export default function Dataset() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const imagesPerPage = 20;
+  
+  // Calculate pagination
+  const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
+  const paginatedImages = images.slice(
+    (currentPage - 1) * imagesPerPage,
+    currentPage * imagesPerPage
+  );
 
   useEffect(() => {
     const fetchDataset = async () => {
@@ -124,10 +133,18 @@ export default function Dataset() {
           <TabsContent value="images" className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-semibold">Images</h2>
-              <Button onClick={() => setIsUploadDialogOpen(true)}>
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Images
-              </Button>
+              <div className="flex gap-2">
+                <Button asChild>
+                  <Link to={`/datasets/${id}/annotate`}>
+                    <Pencil className="w-4 h-4 mr-2" />
+                    Annotate
+                  </Link>
+                </Button>
+                <Button onClick={() => setIsUploadDialogOpen(true)}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Upload Images
+                </Button>
+              </div>
             </div>
 
             {dataset?.image_count === 0 ? (
@@ -140,7 +157,7 @@ export default function Dataset() {
               </Card>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                {images.map((image) => (
+                {paginatedImages.map((image) => (
                   <div 
                     key={image.id}
                     className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
@@ -164,11 +181,39 @@ export default function Dataset() {
                 ))}
               </div>
             )}
+
+            <div className="flex justify-between items-center mt-4">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(currentPage - 1)}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+              <span className="text-sm">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(currentPage + 1)}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
+            </div>
           </TabsContent>
 
           <TabsContent value="annotations" className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-semibold">Annotations</h2>
+              <Button asChild>
+                <Link to={`/datasets/${id}/annotate`}>
+                  <Pencil className="w-4 h-4 mr-2" />
+                  Annotate Images
+                </Link>
+              </Button>
             </div>
             <Card className="p-6">
               <p className="text-muted-foreground text-center">
@@ -181,7 +226,7 @@ export default function Dataset() {
         <ImageUploadDialog 
           open={isUploadDialogOpen}
           onOpenChange={setIsUploadDialogOpen}
-          onUpload={handleUploadImages}
+          onFilesSelected={handleUploadImages}
         />
       </main>
     </div>

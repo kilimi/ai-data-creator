@@ -154,6 +154,12 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                 </Card>
 
                 <div className="flex gap-3">
+                  <Button asChild variant="default">
+                    <Link to={`/datasets/${datasets[0].id}/annotate`}>
+                      <Pencil className="w-4 h-4 mr-2" />
+                      Annotate Images
+                    </Link>
+                  </Button>
                   <Button variant="outline" onClick={handleDuplicate} disabled={isLoading}>
                     <Copy className="w-4 h-4 mr-2" />
                     Duplicate Dataset
