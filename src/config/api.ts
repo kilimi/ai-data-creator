@@ -38,13 +38,3 @@ export const API_CONFIG = {
     return await isUrlAccessible(getApiBaseUrl());
   }
 };
-
-export const duplicateDataset = async (datasetId: number): Promise<ApiResponse<Dataset>> => {
-  const response = await fetch(`${API_URL}/datasets/${datasetId}/duplicate`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-  return handleResponse(response);
-};

@@ -1,15 +1,15 @@
+
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Upload, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useParams } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
-import { Dataset as DatasetType, Image } from "@/types";
+import { Dataset as DatasetType } from "@/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { Card } from "@/components/ui/card";
-import { ImageDisplayControls } from "@/components/ImageDisplayControls";
+import { DatasetHeader } from "@/components/DatasetHeader";
+import { ImagesTabContent } from "@/components/ImagesTabContent";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -19,7 +19,6 @@ export default function Dataset() {
   const [isLoading, setIsLoading] = useState(true);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
-  const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [imagesPerPage, setImagesPerPage] = useState(20);
   const [imageSize, setImageSize] = useState(160);
@@ -107,21 +106,10 @@ export default function Dataset() {
     <div className="min-h-screen pb-16">
       <Navbar />
       <main className="container max-w-7xl mx-auto px-4 pt-24">
-        <div className="flex items-center gap-2 mb-6">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            asChild
-            className="h-9 w-9"
-          >
-            <Link to="/datasets">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-          <h1 className="text-2xl font-bold">
-            {isLoading ? 'Loading...' : dataset?.name}
-          </h1>
-        </div>
+        <DatasetHeader 
+          isLoading={isLoading} 
+          name={dataset?.name} 
+        />
 
         <Tabs defaultValue="images" className="w-full">
           <TabsList className="mb-4">
@@ -129,98 +117,25 @@ export default function Dataset() {
             <TabsTrigger value="annotations">Annotations</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="images" className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Images</h2>
-              <div className="flex gap-2">
-                <Button asChild>
-                  <Link to={`/datasets/${id}/annotate`}>
-                    <Pencil className="w-4 h-4 mr-2" />
-                    Annotate
-                  </Link>
-                </Button>
-                <Button onClick={() => setIsUploadDialogOpen(true)}>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload Images
-                </Button>
-              </div>
-            </div>
-
-            <ImageDisplayControls
+          <TabsContent value="images">
+            <ImagesTabContent
+              id={id || ''}
+              images={images}
+              currentPage={currentPage}
               imagesPerPage={imagesPerPage}
-              onImagesPerPageChange={setImagesPerPage}
               imageSize={imageSize}
+              onImagesPerPageChange={setImagesPerPage}
               onImageSizeChange={(value) => setImageSize(value[0])}
+              onPageChange={setCurrentPage}
+              onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+              paginatedImages={paginatedImages}
+              totalPages={totalPages}
             />
-
-            {dataset?.image_count === 0 ? (
-              <Card className="p-6 text-center">
-                <p className="text-muted-foreground mb-4">No images uploaded yet</p>
-                <Button onClick={() => setIsUploadDialogOpen(true)}>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload Images
-                </Button>
-              </Card>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3">
-                {paginatedImages.map((image) => (
-                  <div 
-                    key={image.id}
-                    className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
-                    style={{ width: imageSize, height: imageSize }}
-                  >
-                    <div className="aspect-square relative">
-                      {imageLoadErrors[image.id] ? (
-                        <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                          <p className="text-xs text-center px-2">Failed to load image</p>
-                        </div>
-                      ) : (
-                        <img 
-                          src={image.url}
-                          alt={image.fileName} 
-                          className="w-full h-full object-cover"
-                          onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
-                          loading="lazy"
-                        />
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex justify-between items-center mt-4">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage(currentPage - 1)}
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-              <span className="text-sm">
-                Page {currentPage} of {totalPages}
-              </span>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage(currentPage + 1)}
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
-            </div>
           </TabsContent>
 
           <TabsContent value="annotations" className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-semibold">Annotations</h2>
-              <Button asChild>
-                <Link to={`/datasets/${id}/annotate`}>
-                  <Pencil className="w-4 h-4 mr-2" />
-                  Annotate Images
-                </Link>
-              </Button>
             </div>
             <Card className="p-6">
               <p className="text-muted-foreground text-center">
