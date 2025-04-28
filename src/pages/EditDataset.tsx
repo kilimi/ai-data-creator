@@ -540,44 +540,46 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                   
                   {images.length > 0 ? (
                     <div className="space-y-4">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 mt-4 max-h-[600px] overflow-y-auto p-1">
-                        {paginatedImages.map((image) => (
-                          <div 
-                            key={image.id}
-                            onClick={() => setSelectedImage(image)}
-                            className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
-                          >
-                            <div className="aspect-square relative">
-                              <img 
-                                src={image.thumbnailUrl} 
-                                alt={image.fileName} 
-                                className="w-full h-full object-cover"
-                              />
-                              {showAnnotationsOnImage.length > 0 && 
-                               showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
-                                <div className="absolute top-2 right-2">
-                                  <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
-                                    <Tag className="h-3 w-3 mr-1" />
-                                    {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
-                                  </Badge>
-                                </div>
-                              )}
+                      <div className="h-[65vh] overflow-y-auto rounded-lg border border-gray-700 bg-gray-800/50">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-3 p-3">
+                          {paginatedImages.map((image) => (
+                            <div 
+                              key={image.id}
+                              onClick={() => setSelectedImage(image)}
+                              className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                            >
+                              <div className="aspect-square relative">
+                                <img 
+                                  src={image.thumbnailUrl} 
+                                  alt={image.fileName} 
+                                  className="w-full h-full object-cover"
+                                />
+                                {showAnnotationsOnImage.length > 0 && 
+                                 showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
+                                  <div className="absolute top-2 right-2">
+                                    <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
+                                      <Tag className="h-3 w-3 mr-1" />
+                                      {showAnnotationsOnImage.filter(anno => anno.imageId === image.id).length}
+                                    </Badge>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                <Button 
+                                  variant="destructive" 
+                                  size="icon" 
+                                  className="h-8 w-8"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteImage(image);
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                              <Button 
-                                variant="destructive" 
-                                size="icon" 
-                                className="h-8 w-8"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteImage(image);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                       
                       <div className="flex justify-between items-center mt-4">

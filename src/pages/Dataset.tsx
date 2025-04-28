@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -43,8 +42,8 @@ export default function Dataset() {
         
         // If dataset has project_id, fetch the project name
         if (response.data.project_id) {
-          setProjectId(response.data.project_id);
-          const projectResponse = await api.getProject(response.data.project_id);
+          setProjectId(response.data.project_id.toString());
+          const projectResponse = await api.getProject(response.data.project_id.toString());
           if (projectResponse.success && projectResponse.data) {
             setProjectName(projectResponse.data.name);
           }
@@ -158,9 +157,9 @@ export default function Dataset() {
 
         <ResizablePanelGroup
           direction="vertical"
-          className="min-h-[600px] border rounded-lg"
+          className="min-h-[80vh] border rounded-lg"
         >
-          <ResizablePanel defaultSize={30} minSize={20}>
+          <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
             <div className="p-4">
               <AnnotationsContent id={id || ''} />
             </div>
@@ -168,7 +167,7 @@ export default function Dataset() {
           
           <ResizableHandle withHandle />
           
-          <ResizablePanel defaultSize={70}>
+          <ResizablePanel defaultSize={80}>
             <div className="p-4">
               <ImagesTabContent
                 id={id || ''}
