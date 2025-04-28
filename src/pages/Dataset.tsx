@@ -9,6 +9,7 @@ import { Dataset as DatasetType, Image } from "@/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { Card } from "@/components/ui/card";
+import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -20,9 +21,9 @@ export default function Dataset() {
   const [images, setImages] = useState<Image[]>([]);
   const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
   const [currentPage, setCurrentPage] = useState(1);
-  const imagesPerPage = 20;
+  const [imagesPerPage, setImagesPerPage] = useState(20);
+  const [imageSize, setImageSize] = useState(160);
   
-  // Calculate pagination
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
   const paginatedImages = images.slice(
     (currentPage - 1) * imagesPerPage,
@@ -38,7 +39,6 @@ export default function Dataset() {
         const response = await api.getDataset(id);
         if (response.success && response.data) {
           setDataset(response.data);
-          // Fetch images for this dataset
           const imagesResponse = await api.getImages(id);
           if (imagesResponse.success && imagesResponse.data) {
             setImages(imagesResponse.data);
@@ -81,7 +81,6 @@ export default function Dataset() {
           title: "Success",
           description: `Successfully uploaded ${files.length} images`,
         });
-        // Refresh dataset data and images
         const datasetResponse = await api.getDataset(id);
         if (datasetResponse.success && datasetResponse.data) {
           setDataset(datasetResponse.data);
@@ -147,6 +146,13 @@ export default function Dataset() {
               </div>
             </div>
 
+            <ImageDisplayControls
+              imagesPerPage={imagesPerPage}
+              onImagesPerPageChange={setImagesPerPage}
+              imageSize={imageSize}
+              onImageSizeChange={(value) => setImageSize(value[0])}
+            />
+
             {dataset?.image_count === 0 ? (
               <Card className="p-6 text-center">
                 <p className="text-muted-foreground mb-4">No images uploaded yet</p>
@@ -161,6 +167,7 @@ export default function Dataset() {
                   <div 
                     key={image.id}
                     className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
+                    style={{ width: imageSize, height: imageSize }}
                   >
                     <div className="aspect-square relative">
                       {imageLoadErrors[image.id] ? (
@@ -169,7 +176,7 @@ export default function Dataset() {
                         </div>
                       ) : (
                         <img 
-                          src={image.url} // Using direct url instead of thumbnailUrl
+                          src={image.url}
                           alt={image.fileName} 
                           className="w-full h-full object-cover"
                           onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}

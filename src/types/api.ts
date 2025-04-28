@@ -11,5 +11,6 @@ export interface ApiResponse<T> {
 
 export interface Api {
   getImages: (datasetId: string) => Promise<ApiResponse<any[]>>;
+  getDataset: (id: string) => Promise<ApiResponse<any>>;
+  uploadImages: (id: string, formData: FormData) => Promise<ApiResponse<any>>;
 }
-
