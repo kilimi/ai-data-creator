@@ -10,6 +10,7 @@ import { DatasetHeader } from "@/components/DatasetHeader";
 import { ImagesTabContent } from "@/components/ImagesTabContent";
 import { AnnotationsContent } from "@/components/AnnotationsContent";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
+import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -22,6 +23,8 @@ export default function Dataset() {
   const [currentPage, setCurrentPage] = useState(1);
   const [imagesPerPage, setImagesPerPage] = useState(20);
   const [imageSize, setImageSize] = useState(160);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
   
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
   const paginatedImages = images.slice(
@@ -37,6 +40,16 @@ export default function Dataset() {
       const response = await api.getDataset(id);
       if (response.success && response.data) {
         setDataset(response.data);
+        
+        // If dataset has project_id, fetch the project name
+        if (response.data.project_id) {
+          setProjectId(response.data.project_id);
+          const projectResponse = await api.getProject(response.data.project_id);
+          if (projectResponse.success && projectResponse.data) {
+            setProjectName(projectResponse.data.name);
+          }
+        }
+        
         const imagesResponse = await api.getImages(id);
         if (imagesResponse.success && imagesResponse.data) {
           setImages(imagesResponse.data);
@@ -131,6 +144,13 @@ export default function Dataset() {
     <div className="min-h-screen pb-16">
       <Navbar />
       <main className="container max-w-7xl mx-auto px-4 pt-24">
+        <DatasetBreadcrumb 
+          projectId={projectId} 
+          projectName={projectName} 
+          datasetName={dataset?.name}
+          isLoading={isLoading}
+        />
+        
         <DatasetHeader 
           isLoading={isLoading} 
           name={dataset?.name} 
