@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Image } from "@/types";
 import { Card } from "@/components/ui/card";
@@ -11,9 +12,18 @@ interface ImagesGridProps {
   imageSize: number;
   onOpenUploadDialog: () => void;
   onDeleteImage?: (imageId: string) => Promise<void>;
+  className?: string;
+  maxHeight?: string;
 }
 
-export function ImagesGrid({ images, imageSize, onOpenUploadDialog, onDeleteImage }: ImagesGridProps) {
+export function ImagesGrid({ 
+  images, 
+  imageSize, 
+  onOpenUploadDialog, 
+  onDeleteImage,
+  className = "",
+  maxHeight = "600px" 
+}: ImagesGridProps) {
   const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
   const [selectedImage, setSelectedImage] = useState<Image | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -57,7 +67,7 @@ export function ImagesGrid({ images, imageSize, onOpenUploadDialog, onDeleteImag
 
   return (
     <>
-      <ScrollArea className="h-[600px] w-full rounded-md border border-gray-700/50 bg-gray-900/20">
+      <ScrollArea className={`h-[${maxHeight}] w-full rounded-md border border-gray-700/50 bg-gray-900/20 ${className}`}>
         <div style={gridStyle}>
           {images.map((image) => (
             <div 

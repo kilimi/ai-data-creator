@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,9 +12,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 
 interface AnnotationsContentProps {
   id: string;
+  className?: string;
+  maxHeight?: string;
 }
 
-export function AnnotationsContent({ id }: AnnotationsContentProps) {
+export function AnnotationsContent({ id, className = "", maxHeight = "300px" }: AnnotationsContentProps) {
   const [isDistributionOpen, setIsDistributionOpen] = useState(true);
   const [isActivityOpen, setIsActivityOpen] = useState(true);
 
@@ -42,7 +45,7 @@ export function AnnotationsContent({ id }: AnnotationsContentProps) {
   const totalAnnotations = mockAnnotations.reduce((acc, curr) => acc + curr.count, 0);
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${className}`}>
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
@@ -62,7 +65,7 @@ export function AnnotationsContent({ id }: AnnotationsContentProps) {
         </div>
       </div>
 
-      <div className="grid gap-6 grid-cols-1 md:grid-cols-2">
+      <div className={`grid gap-6 grid-cols-1 md:grid-cols-2`} style={{ maxHeight }}>
         <Collapsible open={isDistributionOpen} onOpenChange={setIsDistributionOpen}>
           <Card className="bg-gray-900/50 border-gray-700">
             <CollapsibleTrigger asChild>

@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -10,13 +11,6 @@ import { ImagesTabContent } from "@/components/ImagesTabContent";
 import { AnnotationsContent } from "@/components/AnnotationsContent";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
-import { Button } from "@/components/ui/button";
-import { Maximize2, Minimize2, PanelTopClose, PanelRightClose, PanelBottomClose, PanelLeftClose } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Card } from "@/components/ui/card";
-
-type PanelPosition = "top" | "right" | "bottom" | "left";
-type PanelLayout = "horizontal" | "vertical";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -32,10 +26,8 @@ export default function Dataset() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   
-  // Panel state
-  const [annotationsDetached, setAnnotationsDetached] = useState(false);
-  const [annotationsPosition, setAnnotationsPosition] = useState<PanelPosition>("left");
-  const [panelLayout, setPanelLayout] = useState<PanelLayout>("horizontal");
+  // Default direction is vertical (annotations on top, images on bottom)
+  const [direction, setDirection] = useState<"vertical" | "horizontal">("vertical");
   
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
   const paginatedImages = images.slice(
@@ -151,137 +143,9 @@ export default function Dataset() {
     }
   };
 
-  const handlePositionChange = (position: PanelPosition) => {
-    setAnnotationsPosition(position);
-    setPanelLayout(position === "left" || position === "right" ? "horizontal" : "vertical");
-  };
-
-  const renderPositionControls = () => (
-    <div className="flex items-center gap-2 mb-4">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setAnnotationsDetached(!annotationsDetached)}
-        className="gap-2"
-      >
-        {annotationsDetached ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-        {annotationsDetached ? "Attach" : "Detach"}
-      </Button>
-      
-      {annotationsDetached && (
-        <div className="flex items-center gap-1 border rounded-md p-1">
-          <Button
-            variant={annotationsPosition === "top" ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => handlePositionChange("top")}
-            className="h-8 w-8 p-0"
-          >
-            <PanelTopClose className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={annotationsPosition === "right" ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => handlePositionChange("right")}
-            className="h-8 w-8 p-0"
-          >
-            <PanelRightClose className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={annotationsPosition === "bottom" ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => handlePositionChange("bottom")}
-            className="h-8 w-8 p-0"
-          >
-            <PanelBottomClose className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={annotationsPosition === "left" ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => handlePositionChange("left")}
-            className="h-8 w-8 p-0"
-          >
-            <PanelLeftClose className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-
-  const renderContent = () => {
-    if (annotationsDetached) {
-      return (
-        <div className={cn(
-          "flex gap-4",
-          panelLayout === "horizontal" ? "flex-row" : "flex-col"
-        )}>
-          {/* Annotations Panel */}
-          {(annotationsPosition === "left" || annotationsPosition === "top") && (
-            <Card className="p-4 w-full max-w-md">
-              <AnnotationsContent id={id || ''} />
-            </Card>
-          )}
-          
-          {/* Main Content */}
-          <div className="flex-1">
-            <ImagesTabContent
-              id={id || ''}
-              images={images}
-              currentPage={currentPage}
-              imagesPerPage={imagesPerPage}
-              imageSize={imageSize}
-              onImagesPerPageChange={setImagesPerPage}
-              onImageSizeChange={(value) => setImageSize(value[0])}
-              onPageChange={setCurrentPage}
-              onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-              onDeleteImage={handleDeleteImage}
-              paginatedImages={paginatedImages}
-              totalPages={totalPages}
-            />
-          </div>
-          
-          {/* Annotations Panel */}
-          {(annotationsPosition === "right" || annotationsPosition === "bottom") && (
-            <Card className="p-4 w-full max-w-md">
-              <AnnotationsContent id={id || ''} />
-            </Card>
-          )}
-        </div>
-      );
-    }
-
-    return (
-      <ResizablePanelGroup
-        direction={panelLayout}
-        className="min-h-[80vh] border rounded-lg"
-      >
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
-          <div className="p-4">
-            <AnnotationsContent id={id || ''} />
-          </div>
-        </ResizablePanel>
-        
-        <ResizableHandle withHandle />
-        
-        <ResizablePanel defaultSize={80}>
-          <div className="p-4">
-            <ImagesTabContent
-              id={id || ''}
-              images={images}
-              currentPage={currentPage}
-              imagesPerPage={imagesPerPage}
-              imageSize={imageSize}
-              onImagesPerPageChange={setImagesPerPage}
-              onImageSizeChange={(value) => setImageSize(value[0])}
-              onPageChange={setCurrentPage}
-              onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-              onDeleteImage={handleDeleteImage}
-              paginatedImages={paginatedImages}
-              totalPages={totalPages}
-            />
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    );
+  // Toggle layout direction (vertical/horizontal)
+  const toggleDirection = () => {
+    setDirection(prev => prev === "vertical" ? "horizontal" : "vertical");
   };
 
   return (
@@ -299,9 +163,64 @@ export default function Dataset() {
           isLoading={isLoading} 
           name={dataset?.name} 
         />
+        
+        <div className="mb-4 flex items-center gap-4">
+          <button
+            onClick={toggleDirection}
+            className="flex items-center justify-center p-2 bg-gray-800 rounded-md hover:bg-gray-700 transition-colors text-sm"
+            title={direction === "vertical" ? "Switch to horizontal layout" : "Switch to vertical layout"}
+          >
+            {direction === "vertical" ? (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="18" height="8" rx="1" stroke="currentColor" strokeWidth="2" />
+                <rect x="3" y="13" width="18" height="8" rx="1" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            ) : (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="8" height="18" rx="1" stroke="currentColor" strokeWidth="2" />
+                <rect x="13" y="3" width="8" height="18" rx="1" stroke="currentColor" strokeWidth="2" />
+              </svg>
+            )}
+          </button>
+          <span className="text-sm text-muted-foreground">
+            Drag the handle between panels to resize • Click the icon to change layout orientation
+          </span>
+        </div>
 
-        {renderPositionControls()}
-        {renderContent()}
+        <ResizablePanelGroup
+          direction={direction}
+          className="min-h-[80vh] border rounded-lg bg-gray-950/20"
+        >
+          {/* Annotations panel */}
+          <ResizablePanel defaultSize={40} minSize={20}>
+            <div className="p-4 h-full">
+              <AnnotationsContent id={id || ''} />
+            </div>
+          </ResizablePanel>
+          
+          {/* Resizable handle with visual indicator */}
+          <ResizableHandle withHandle />
+          
+          {/* Images panel */}
+          <ResizablePanel defaultSize={60}>
+            <div className="p-4 h-full">
+              <ImagesTabContent
+                id={id || ''}
+                images={images}
+                currentPage={currentPage}
+                imagesPerPage={imagesPerPage}
+                imageSize={imageSize}
+                onImagesPerPageChange={setImagesPerPage}
+                onImageSizeChange={(value) => setImageSize(value[0])}
+                onPageChange={setCurrentPage}
+                onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+                onDeleteImage={handleDeleteImage}
+                paginatedImages={paginatedImages}
+                totalPages={totalPages}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
 
         <ImageUploadDialog 
           open={isUploadDialogOpen}
