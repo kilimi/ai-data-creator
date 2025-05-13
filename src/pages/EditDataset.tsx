@@ -160,7 +160,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     
     try {
       for (const file of files) {
-        const { stats, samples, matchedImages } = await processCOCOAnnotations(file);
+        // Pass the dataset ID to the processing function
+        const { stats, samples, matchedImages, totalImageCount, matchedImageCount } = await processCOCOAnnotations(file, id);
         const annotationCount = stats.reduce((acc, stat) => acc + stat.count, 0);
         
         const enhancedSamples = samples.map(sample => {
@@ -202,7 +203,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             uploadedAt: new Date().toISOString(),
             classStats: stats,
             samples: updatedSamples,
-            matchedImageCount: matchedCount
+            matchedImageCount: matchedCount,
+            datasetId: id || "" // Add the dataset ID to link the annotation
           };
           
           setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
@@ -214,7 +216,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             uploadedAt: new Date().toISOString(),
             classStats: stats,
             samples: enhancedSamples,
-            matchedImageCount: matchingImages.length
+            matchedImageCount: matchingImages.length,
+            datasetId: id || "" // Add the dataset ID to link the annotation
           };
           
           setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);

@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import {
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
+import { AnnotationSample } from "@/utils/annotations";
 
 interface AnnotationFile {
   id: string;
@@ -25,6 +26,7 @@ interface AnnotationFile {
   classCount: number;
   imageCount: number; // Total images referenced in annotation
   matchedImageCount: number; // Images that exist in the dataset
+  datasetId: string; // Add datasetId to link annotations with dataset
 }
 
 interface AnnotationsContentProps {
@@ -40,37 +42,49 @@ export function AnnotationsContent({
 }: AnnotationsContentProps) {
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
+  const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
 
-  // Mock data for annotation files with image counts
-  const mockAnnotationFiles = [
-    {
-      id: "ann-001",
-      name: "coco_annotations_v1.json",
-      date: "2025-05-10",
-      format: "COCO",
-      classCount: 3,
-      imageCount: 24,
-      matchedImageCount: 18 // 18 of 24 images are uploaded
-    },
-    {
-      id: "ann-002",
-      name: "yolo_dataset.yaml",
-      date: "2025-05-12",
-      format: "YOLO",
-      classCount: 5,
-      imageCount: 42,
-      matchedImageCount: 12 // 12 of 42 images are uploaded
-    },
-    {
-      id: "ann-003",
-      name: "pascal_voc_annotations.xml",
-      date: "2025-05-13",
-      format: "VOC",
-      classCount: 2,
-      imageCount: 16,
-      matchedImageCount: 8 // 8 of 16 images are uploaded
-    }
-  ];
+  // Fetch annotations for this specific dataset on component mount
+  useEffect(() => {
+    // In a real application, this would be an API call to fetch annotations for this dataset
+    // For now, we'll use mock data filtered by dataset ID
+    const mockAnnotationFiles = [
+      {
+        id: "ann-001",
+        name: "coco_annotations_v1.json",
+        date: "2025-05-10",
+        format: "COCO",
+        classCount: 3,
+        imageCount: 24,
+        matchedImageCount: 18, // 18 of 24 images are uploaded
+        datasetId: "1" // This matches our dataset ID
+      },
+      {
+        id: "ann-002",
+        name: "yolo_dataset.yaml",
+        date: "2025-05-12",
+        format: "YOLO",
+        classCount: 5,
+        imageCount: 42,
+        matchedImageCount: 12, // 12 of 42 images are uploaded
+        datasetId: "2" // This is for dataset 2
+      },
+      {
+        id: "ann-003",
+        name: "pascal_voc_annotations.xml",
+        date: "2025-05-13",
+        format: "VOC",
+        classCount: 2,
+        imageCount: 16,
+        matchedImageCount: 8, // 8 of 16 images are uploaded
+        datasetId: "1" // This matches our dataset ID
+      }
+    ];
+    
+    // Filter annotations to only show those for this dataset
+    const datasetAnnotations = mockAnnotationFiles.filter(file => file.datasetId === id);
+    setAnnotationFiles(datasetAnnotations);
+  }, [id]);
 
   // Mock data for class statistics
   const mockClassStats = [
@@ -145,7 +159,7 @@ export function AnnotationsContent({
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
           <p className="text-sm text-muted-foreground">
-            {mockAnnotationFiles.length} annotation files
+            {annotationFiles.length} annotation files
           </p>
         </div>
         <div className="flex gap-2">
@@ -190,7 +204,7 @@ export function AnnotationsContent({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockAnnotationFiles.map((file) => (
+                  {annotationFiles.map((file) => (
                     <TableRow 
                       key={file.id}
                       className={`cursor-pointer ${selectedAnnotation === file.id ? 'bg-gray-800' : ''}`}

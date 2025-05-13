@@ -1,7 +1,9 @@
 
+
 export interface AnnotationSample {
   id?: string;
   imageId: string;
+  datasetId?: string;  // Add datasetId field
   className: string;
   bbox: [number, number, number, number]; // [x, y, width, height] normalized 0-1
   segmentation?: number[][];  // Optional polygon points
@@ -11,7 +13,7 @@ export interface AnnotationSample {
 }
 
 // Process COCO annotations
-export async function processCOCOAnnotations(file: File): Promise<{
+export async function processCOCOAnnotations(file: File, datasetId?: string): Promise<{
   stats: { className: string; count: number; color: string }[];
   samples: AnnotationSample[];
   matchedImages: string[];
@@ -57,6 +59,7 @@ export async function processCOCOAnnotations(file: File): Promise<{
 
           return {
             imageId: anno.image_id.toString(),
+            datasetId: datasetId, // Add datasetId to each annotation
             className: className,
             bbox: bbox as [number, number, number, number],
             segmentation: segmentation,
