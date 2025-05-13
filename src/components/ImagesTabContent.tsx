@@ -6,6 +6,7 @@ import { Image } from "@/types";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
+import { AnnotationSample } from "@/utils/annotations";
 
 interface ImagesTabContentProps {
   id: string;
@@ -20,6 +21,7 @@ interface ImagesTabContentProps {
   onDeleteImage: (imageId: string) => Promise<void>;
   paginatedImages: Image[];
   totalPages: number;
+  annotations?: AnnotationSample[]; // Added annotations prop
 }
 
 export function ImagesTabContent({
@@ -35,6 +37,7 @@ export function ImagesTabContent({
   onDeleteImage,
   paginatedImages,
   totalPages,
+  annotations = [],
 }: ImagesTabContentProps) {
   return (
     <div className="space-y-4">
@@ -47,7 +50,7 @@ export function ImagesTabContent({
               Annotate
             </Link>
           </Button>
-          <Button onClick={onOpenUploadDialog}>
+          <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
             <Upload className="w-4 h-4 mr-2" />
             Upload Images
           </Button>
@@ -66,6 +69,8 @@ export function ImagesTabContent({
         imageSize={imageSize}
         onOpenUploadDialog={onOpenUploadDialog}
         onDeleteImage={onDeleteImage}
+        maxHeight="600px"
+        annotations={annotations}
       />
 
       <PaginationControls

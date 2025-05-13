@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
@@ -9,8 +8,10 @@ import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { ImagesTabContent } from "@/components/ImagesTabContent";
 import { AnnotationsContent } from "@/components/AnnotationsContent";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FileImage, Layers } from "lucide-react";
+import { AnnotationSample } from "@/utils/annotations";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -25,9 +26,12 @@ export default function Dataset() {
   const [imageSize, setImageSize] = useState(160);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("images");
   
-  // Default direction is vertical (annotations on top, images on bottom)
-  const [direction, setDirection] = useState<"vertical" | "horizontal">("vertical");
+  // Add state for annotations visibility
+  const [showAnnotations, setShowAnnotations] = useState(false);
+  const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
+  const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
   
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
   const paginatedImages = images.slice(
@@ -143,9 +147,47 @@ export default function Dataset() {
     }
   };
 
-  // Toggle layout direction (vertical/horizontal)
-  const toggleDirection = () => {
-    setDirection(prev => prev === "vertical" ? "horizontal" : "vertical");
+  // Add function to handle annotation visibility changes
+  const handleShowAnnotationsChange = (show: boolean, annotationId: string | null) => {
+    setShowAnnotations(show);
+    setActiveAnnotationId(annotationId);
+    
+    if (show && annotationId) {
+      // Create some mock annotation samples for demonstration
+      const mockAnnotations: AnnotationSample[] = [];
+      
+      // Generate annotations for the currently visible images
+      for (let image of paginatedImages) {
+        // Add 1-3 random annotations per image
+        const annotationCount = Math.floor(Math.random() * 3) + 1;
+        
+        for (let i = 0; i < annotationCount; i++) {
+          const classes = ["Car", "Person", "Traffic Light", "Bicycle", "Stop Sign"];
+          const colors = ["#3498db", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6"];
+          const classIndex = Math.floor(Math.random() * classes.length);
+          
+          // Create annotation with random position and size
+          mockAnnotations.push({
+            id: `${image.id}-anno-${i}`,
+            imageId: image.id,
+            className: classes[classIndex],
+            confidence: Math.random() * 0.5 + 0.5,
+            bbox: [
+              Math.random() * 0.6, // x
+              Math.random() * 0.6, // y
+              Math.random() * 0.3 + 0.1, // width
+              Math.random() * 0.3 + 0.1  // height
+            ],
+            color: colors[classIndex]
+          });
+        }
+      }
+      
+      setVisibleAnnotations(mockAnnotations);
+    } else {
+      // Clear annotations when turned off
+      setVisibleAnnotations([]);
+    }
   };
 
   return (
@@ -164,46 +206,30 @@ export default function Dataset() {
           name={dataset?.name} 
         />
         
-        <div className="mb-4 flex items-center gap-4">
-          <button
-            onClick={toggleDirection}
-            className="flex items-center justify-center p-2 bg-gray-800 rounded-md hover:bg-gray-700 transition-colors text-sm"
-            title={direction === "vertical" ? "Switch to horizontal layout" : "Switch to vertical layout"}
-          >
-            {direction === "vertical" ? (
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="3" y="3" width="18" height="8" rx="1" stroke="currentColor" strokeWidth="2" />
-                <rect x="3" y="13" width="18" height="8" rx="1" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            ) : (
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect x="3" y="3" width="8" height="18" rx="1" stroke="currentColor" strokeWidth="2" />
-                <rect x="13" y="3" width="8" height="18" rx="1" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            )}
-          </button>
-          <span className="text-sm text-muted-foreground">
-            Drag the handle between panels to resize • Click the icon to change layout orientation
-          </span>
-        </div>
-
-        <ResizablePanelGroup
-          direction={direction}
-          className="min-h-[80vh] border rounded-lg bg-gray-950/20"
+        <Tabs 
+          value={activeTab} 
+          onValueChange={setActiveTab}
+          className="space-y-4"
         >
-          {/* Annotations panel */}
-          <ResizablePanel defaultSize={40} minSize={20}>
-            <div className="p-4 h-full">
-              <AnnotationsContent id={id || ''} />
-            </div>
-          </ResizablePanel>
+          <TabsList className="border-b w-full justify-start rounded-none bg-transparent p-0">
+            <TabsTrigger 
+              value="images" 
+              className="relative rounded-none border-b-2 border-b-transparent bg-transparent px-4 pb-3 pt-2 font-medium text-muted-foreground shadow-none transition-none data-[state=active]:border-b-primary data-[state=active]:text-foreground"
+            >
+              <FileImage className="mr-2 h-4 w-4" />
+              Images
+            </TabsTrigger>
+            <TabsTrigger 
+              value="annotations" 
+              className="relative rounded-none border-b-2 border-b-transparent bg-transparent px-4 pb-3 pt-2 font-medium text-muted-foreground shadow-none transition-none data-[state=active]:border-b-primary data-[state=active]:text-foreground"
+            >
+              <Layers className="mr-2 h-4 w-4" />
+              Annotations
+            </TabsTrigger>
+          </TabsList>
           
-          {/* Resizable handle with visual indicator */}
-          <ResizableHandle withHandle />
-          
-          {/* Images panel */}
-          <ResizablePanel defaultSize={60}>
-            <div className="p-4 h-full">
+          <TabsContent value="images" className="mt-0 bg-transparent p-0">
+            <div className="rounded-lg border bg-card p-6">
               <ImagesTabContent
                 id={id || ''}
                 images={images}
@@ -217,10 +243,20 @@ export default function Dataset() {
                 onDeleteImage={handleDeleteImage}
                 paginatedImages={paginatedImages}
                 totalPages={totalPages}
+                annotations={showAnnotations ? visibleAnnotations : []}
               />
             </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
+          </TabsContent>
+          
+          <TabsContent value="annotations" className="mt-0 bg-transparent p-0">
+            <div className="rounded-lg border bg-card p-6">
+              <AnnotationsContent 
+                id={id || ''} 
+                onShowAnnotationsChange={handleShowAnnotationsChange}
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
 
         <ImageUploadDialog 
           open={isUploadDialogOpen}

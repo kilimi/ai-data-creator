@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Upload } from "lucide-react";
 import { ImageDetailModal } from "./ImageDetailModal";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AnnotationSample } from "@/utils/annotations";
+import { Badge } from "@/components/ui/badge";
 
 interface ImagesGridProps {
   images: Image[];
@@ -14,6 +16,7 @@ interface ImagesGridProps {
   onDeleteImage?: (imageId: string) => Promise<void>;
   className?: string;
   maxHeight?: string;
+  annotations?: AnnotationSample[]; // Add annotations prop
 }
 
 export function ImagesGrid({ 
@@ -22,7 +25,8 @@ export function ImagesGrid({
   onOpenUploadDialog, 
   onDeleteImage,
   className = "",
-  maxHeight = "600px" 
+  maxHeight = "600px",
+  annotations = []
 }: ImagesGridProps) {
   const [imageLoadErrors, setImageLoadErrors] = useState<Record<string, boolean>>({});
   const [selectedImage, setSelectedImage] = useState<Image | null>(null);
@@ -43,6 +47,16 @@ export function ImagesGrid({
     if (onDeleteImage) {
       await onDeleteImage(imageId);
     }
+  };
+  
+  // Get annotations count per image
+  const getImageAnnotationCount = (imageId: string): number => {
+    return annotations.filter(anno => anno.imageId === imageId).length;
+  };
+  
+  // Get annotations for a specific image
+  const getImageAnnotations = (imageId: string): AnnotationSample[] => {
+    return annotations.filter(anno => anno.imageId === imageId);
   };
 
   if (images.length === 0) {
@@ -69,73 +83,113 @@ export function ImagesGrid({
     <>
       <ScrollArea className={`h-[${maxHeight}] w-full rounded-md border border-gray-700/50 bg-gray-900/20 ${className}`}>
         <div style={gridStyle}>
-          {images.map((image) => (
-            <div 
-              key={image.id}
-              className="group relative aspect-square cursor-pointer rounded-md overflow-hidden bg-gray-800"
-              onClick={() => handleImageClick(image)}
-              onMouseEnter={() => setHoveredImage(image.id)}
-              onMouseLeave={() => setHoveredImage(null)}
-            >
-              <div className="absolute inset-0 p-1">
-                <div className="h-full w-full rounded-sm overflow-hidden bg-gray-900/50 ring-1 ring-gray-700/50">
-                  {imageLoadErrors[image.id] ? (
-                    <div className="absolute inset-0 flex items-center justify-center text-muted-foreground bg-gray-900/90">
-                      <span className="text-sm">Failed to load image</span>
-                    </div>
-                  ) : (
-                    <img
-                      src={image.thumbnailUrl || image.url}
-                      alt={image.fileName}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
-                    />
-                  )}
-                </div>
-              </div>
-              
-              <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200`}>
-                <div className="absolute bottom-0 left-0 right-0 p-2">
-                  <div className="mb-2 px-2">
-                    <p className="text-sm text-white truncate">{image.fileName}</p>
-                    <p className="text-xs text-gray-300">
-                      {image.width}×{image.height} • {(image.fileSize / (1024 * 1024)).toFixed(1)} MB
-                    </p>
+          {images.map((image) => {
+            const annotationsForImage = getImageAnnotations(image.id);
+            const hasAnnotations = annotationsForImage.length > 0;
+            
+            return (
+              <div 
+                key={image.id}
+                className="group relative aspect-square cursor-pointer rounded-md overflow-hidden bg-gray-800"
+                onClick={() => handleImageClick(image)}
+                onMouseEnter={() => setHoveredImage(image.id)}
+                onMouseLeave={() => setHoveredImage(null)}
+              >
+                <div className="absolute inset-0 p-1">
+                  <div className="h-full w-full rounded-sm overflow-hidden bg-gray-900/50 ring-1 ring-gray-700/50">
+                    {imageLoadErrors[image.id] ? (
+                      <div className="absolute inset-0 flex items-center justify-center text-muted-foreground bg-gray-900/90">
+                        <span className="text-sm">Failed to load image</span>
+                      </div>
+                    ) : (
+                      <img
+                        src={image.thumbnailUrl || image.url}
+                        alt={image.fileName}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        onError={() => setImageLoadErrors(prev => ({ ...prev, [image.id]: true }))}
+                      />
+                    )}
+                    
+                    {hasAnnotations && (
+                      <div className="absolute inset-0 pointer-events-none">
+                        {annotationsForImage.map((annotation, idx) => {
+                          const [x, y, width, height] = annotation.bbox;
+                          return (
+                            <div
+                              key={`annotation-${image.id}-${idx}`}
+                              style={{
+                                position: 'absolute',
+                                left: `${x * 100}%`,
+                                top: `${y * 100}%`,
+                                width: `${width * 100}%`,
+                                height: `${height * 100}%`,
+                                border: `2px solid ${annotation.color || '#3498db'}`,
+                                boxSizing: 'border-box',
+                                pointerEvents: 'none',
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  {onDeleteImage && (
-                    <div className="flex justify-end px-1">
-                      <Button
-                        variant="destructive"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteImage(image.id);
-                        }}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          className="h-4 w-4"
-                        >
-                          <path d="M3 6h18" />
-                          <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                          <line x1="10" y1="11" x2="10" y2="17" />
-                          <line x1="14" y1="11" x2="14" y2="17" />
-                        </svg>
-                      </Button>
+                </div>
+                
+                {/* Badge for annotations count */}
+                {hasAnnotations && (
+                  <div className="absolute top-2 right-2 z-10">
+                    <Badge 
+                      variant="outline" 
+                      className="bg-blue-600/70 text-white backdrop-blur-sm border-blue-500"
+                    >
+                      {annotationsForImage.length}
+                    </Badge>
+                  </div>
+                )}
+                
+                <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200`}>
+                  <div className="absolute bottom-0 left-0 right-0 p-2">
+                    <div className="mb-2 px-2">
+                      <p className="text-sm text-white truncate">{image.fileName}</p>
+                      <p className="text-xs text-gray-300">
+                        {image.width}×{image.height} • {(image.fileSize / (1024 * 1024)).toFixed(1)} MB
+                      </p>
                     </div>
-                  )}
+                    {onDeleteImage && (
+                      <div className="flex justify-end px-1">
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteImage(image.id);
+                          }}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="h-4 w-4"
+                          >
+                            <path d="M3 6h18" />
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            <line x1="10" y1="11" x2="10" y2="17" />
+                            <line x1="14" y1="11" x2="14" y2="17" />
+                          </svg>
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </ScrollArea>
 
@@ -144,6 +198,7 @@ export function ImagesGrid({
         isOpen={isModalOpen}
         onClose={handleCloseModal}
         onDelete={handleDeleteImage}
+        annotations={selectedImage ? getImageAnnotations(selectedImage.id) : []}
       />
     </>
   );

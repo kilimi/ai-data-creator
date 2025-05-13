@@ -1,135 +1,93 @@
-
-import { getRandomColor } from "./utils";
-
-type ClassStat = {
-  className: string;
-  count: number;
-  color: string;
-};
-
-export type AnnotationSample = {
+export interface AnnotationSample {
+  id?: string;
   imageId: string;
-  bbox: [number, number, number, number]; // [x, y, width, height] normalized 0-1
   className: string;
-  confidence?: number;
-  segmentation?: number[][]; // Normalized segmentation points [[x1,y1,x2,y2,...], [x1,y1,...]]
-  area?: number;
-};
+  bbox: [number, number, number, number]; // [x, y, width, height] normalized 0-1
+  segmentation?: number[][];  // Optional polygon points
+  area?: number;              // Optional area
+  confidence?: number;        // Optional confidence score
+  color?: string;             // Optional color for display
+}
 
-// Process COCO annotation file
-export const processCOCOAnnotations = async (file: File): Promise<{
-  stats: ClassStat[];
+// Process COCO annotations
+export async function processCOCOAnnotations(file: File): Promise<{
+  stats: { className: string; count: number; color: string }[];
   samples: AnnotationSample[];
-  matchedImages: number;
-}> => {
+  matchedImages: string[];
+}> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    
-    reader.onload = (event) => {
+
+    reader.onload = async (event) => {
       try {
-        const jsonContent = JSON.parse(event.target?.result as string);
-        
-        // Extract images from COCO format
-        const cocoImages = jsonContent.images || [];
-        const imageMap = new Map();
-        cocoImages.forEach((img: any) => {
-          // Store mapping from COCO image ID to our dataset image ID
-          // For mock purposes, we're using the COCO ID as our image ID
-          imageMap.set(img.id, img.id.toString());
+        const jsonString = event.target?.result as string;
+        const coco = JSON.parse(jsonString);
+
+        const categoryColors: { [key: string]: string } = {};
+        const categories = coco.categories.map((cat: any, index: number) => {
+          const color = `#${((index + 1) * 5592405).toString(16).slice(0, 6)}`; // Generate distinct colors
+          categoryColors[cat.id] = color;
+          return { id: cat.id, name: cat.name, color: color };
         });
-        
-        // Extract categories
-        const categories = jsonContent.categories || [];
-        const categoryMap = new Map();
-        categories.forEach((cat: any) => {
-          categoryMap.set(cat.id, cat.name);
+
+        const imageMap: { [key: number]: string } = {};
+        coco.images.forEach((img: any) => {
+          imageMap[img.id] = img.file_name;
         });
-        
-        // Extract annotations
-        const annotations = jsonContent.annotations || [];
-        
-        // Calculate stats for each class
-        const classCountMap = new Map<string, number>();
-        
-        // Extract sample annotations
-        const samples: AnnotationSample[] = [];
-        
-        // Process annotations
-        annotations.forEach((anno: any) => {
-          const className = categoryMap.get(anno.category_id) || `Class ${anno.category_id}`;
-          
-          // Update class count
-          classCountMap.set(
-            className, 
-            (classCountMap.get(className) || 0) + 1
-          );
-          
-          // Add to samples
-          if (anno.bbox || anno.segmentation) {
-            const imageId = anno.image_id.toString();
-            
-            // In real implementation, use the mapping from COCO image ID to our image ID
-            // const mappedImageId = imageMap.get(anno.image_id) || imageId;
-            
-            // Convert COCO bbox [x, y, width, height] to normalized coordinates (0-1)
-            // For demo purposes, we've simplified this normalization
-            // In a real app, this would be based on actual image dimensions
-            let x = 0, y = 0, width = 0, height = 0;
-            
-            if (anno.bbox) {
-              // Assuming the COCO bbox is in absolute pixel values within a 100x100 image
-              // so we normalize by dividing by 100
-              x = anno.bbox[0] / 100;
-              y = anno.bbox[1] / 100;
-              width = anno.bbox[2] / 100;
-              height = anno.bbox[3] / 100;
-            }
-            
-            // Normalize segmentation points if available
-            const normalizedSegmentation = anno.segmentation ? 
-              anno.segmentation.map((polygon: number[]) => {
-                return polygon.map((coord: number) => coord / 100);
-              }) : undefined;
-            
-            samples.push({
-              imageId,
-              bbox: [x, y, width, height],
-              className,
-              confidence: Math.random() * 0.3 + 0.7, // Random confidence 0.7-1.0
-              segmentation: normalizedSegmentation,
-              area: anno.area || undefined
-            });
-          }
+
+        const classCounts: { [key: string]: number } = {};
+        const annotationSamples: AnnotationSample[] = coco.annotations.map((anno: any) => {
+          const category = categories.find(cat => cat.id === anno.category_id);
+          const className = category ? category.name : 'unknown';
+          const color = category ? category.color : '#808080'; // Default color
+
+          classCounts[className] = (classCounts[className] || 0) + 1;
+
+          const bbox = anno.bbox ? [
+            anno.bbox[0] / coco.images[0].width,
+            anno.bbox[1] / coco.images[0].height,
+            anno.bbox[2] / coco.images[0].width,
+            anno.bbox[3] / coco.images[0].height
+          ] : [0, 0, 0, 0];
+
+          const segmentation = anno.segmentation ? [anno.segmentation] : undefined;
+
+          return {
+            imageId: anno.image_id.toString(),
+            className: className,
+            bbox: bbox as [number, number, number, number],
+            segmentation: segmentation,
+            area: anno.area,
+            color: color
+          };
         });
-        
-        // Convert to array of stats
-        const stats: ClassStat[] = Array.from(classCountMap.entries()).map(
-          ([className, count]) => ({
-            className,
-            count,
-            color: getRandomColor(),
-          })
-        );
-        
-        // Count unique image IDs in our samples
-        const uniqueImageCount = new Set(samples.map(s => s.imageId)).size;
-        
-        resolve({ 
-          stats, 
-          samples,
-          matchedImages: uniqueImageCount
+
+        const stats = Object.keys(classCounts).map(className => {
+          const category = categories.find(cat => cat.name === className);
+          return {
+            className: className,
+            count: classCounts[className],
+            color: category ? category.color : '#808080' // Default color
+          };
         });
+
+        const matchedImages = Array.from(new Set(annotationSamples.map(anno => anno.imageId)));
+
+        resolve({
+          stats: stats,
+          samples: annotationSamples,
+          matchedImages: matchedImages
+        });
+
       } catch (error) {
-        console.error("Error parsing JSON:", error);
         reject(error);
       }
     };
-    
-    reader.onerror = (error) => {
-      console.error("Error reading file:", error);
-      reject(error);
+
+    reader.onerror = () => {
+      reject(new Error('Failed to read the file'));
     };
-    
+
     reader.readAsText(file);
   });
-};
+}
