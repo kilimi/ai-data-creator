@@ -506,17 +506,19 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                 onValueChange={setActiveTab}
                 className="text-white"
               >
-                <TabsList className="mb-4 bg-gray-800">
+                <TabsList className="w-full justify-start gap-1 bg-gray-800/50 p-2 border-b border-gray-700">
                   <TabsTrigger 
                     value="images"
-                    className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                    className="data-[state=active]:bg-blue-600 data-[state=active]:text-white px-6 py-2.5 text-base"
                   >
+                    <FileImage className="h-4 w-4 mr-2" />
                     Images
                   </TabsTrigger>
                   <TabsTrigger 
                     value="annotations"
-                    className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                    className="data-[state=active]:bg-blue-600 data-[state=active]:text-white px-6 py-2.5 text-base"
                   >
+                    <FileJson className="h-4 w-4 mr-2" />
                     Annotations
                   </TabsTrigger>
                 </TabsList>
