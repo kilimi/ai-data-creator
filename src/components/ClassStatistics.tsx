@@ -24,8 +24,6 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics }) 
 
   return (
     <div className="space-y-4">
-      <h3 className="text-base font-medium">Class Distribution</h3>
-      
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
         {sortedStats.map((stat) => (
           <div key={stat.className} className="flex items-center gap-2">
@@ -57,7 +55,7 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics }) 
         </div>
         
         <div className="space-y-3">
-          {sortedStats.slice(0, 5).map((stat) => (
+          {sortedStats.map((stat) => (
             <div key={stat.className} className="space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="font-medium">{stat.className}</span>

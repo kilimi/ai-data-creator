@@ -4,11 +4,24 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Upload, Tag, AlertCircle, ChevronDown } from "lucide-react";
-import { AnnotationSample } from "@/utils/annotations";
-import { Progress } from "@/components/ui/progress";
-import { cn } from "@/lib/utils";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Upload, Tag, Edit, Trash2 } from "lucide-react";
+import { 
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ClassStatistics } from "@/components/ClassStatistics";
+
+interface AnnotationFile {
+  id: string;
+  name: string;
+  date: string;
+  format: string;
+  classCount: number;
+}
 
 interface AnnotationsContentProps {
   id: string;
@@ -17,32 +30,77 @@ interface AnnotationsContentProps {
 }
 
 export function AnnotationsContent({ id, className = "", maxHeight = "300px" }: AnnotationsContentProps) {
-  const [isDistributionOpen, setIsDistributionOpen] = useState(true);
-  const [isActivityOpen, setIsActivityOpen] = useState(true);
+  const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
 
-  // Mock data (unchanged)
-  const mockAnnotations = [
+  // Mock data for annotation files
+  const mockAnnotationFiles = [
+    {
+      id: "ann-001",
+      name: "coco_annotations_v1.json",
+      date: "2025-05-10",
+      format: "COCO",
+      classCount: 3
+    },
+    {
+      id: "ann-002",
+      name: "yolo_dataset.yaml",
+      date: "2025-05-12",
+      format: "YOLO",
+      classCount: 5
+    },
+    {
+      id: "ann-003",
+      name: "pascal_voc_annotations.xml",
+      date: "2025-05-13",
+      format: "VOC",
+      classCount: 2
+    }
+  ];
+
+  // Mock data for class statistics
+  const mockClassStats = [
     {
       className: "Car",
       count: 245,
-      confidence: 0.92,
       color: "#3498db"
     },
     {
       className: "Person",
       count: 189,
-      confidence: 0.88,
       color: "#e74c3c"
     },
     {
       className: "Traffic Light",
       count: 67,
-      confidence: 0.85,
       color: "#2ecc71"
+    },
+    {
+      className: "Bicycle",
+      count: 45,
+      color: "#f39c12"
+    },
+    {
+      className: "Stop Sign",
+      count: 32,
+      color: "#9b59b6"
     }
   ];
 
-  const totalAnnotations = mockAnnotations.reduce((acc, curr) => acc + curr.count, 0);
+  const handleAnnotationClick = (id: string) => {
+    setSelectedAnnotation(id === selectedAnnotation ? null : id);
+  };
+
+  const handleDeleteAnnotation = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log(`Delete annotation: ${id}`);
+    // Implement actual delete functionality here
+  };
+
+  const handleEditAnnotation = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log(`Edit annotation: ${id}`);
+    // Implement actual edit functionality here
+  };
 
   return (
     <div className={`space-y-6 ${className}`}>
@@ -50,7 +108,7 @@ export function AnnotationsContent({ id, className = "", maxHeight = "300px" }: 
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
           <p className="text-sm text-muted-foreground">
-            {totalAnnotations} annotations across {mockAnnotations.length} classes
+            {mockAnnotationFiles.length} annotation files
           </p>
         </div>
         <div className="flex gap-2">
@@ -60,111 +118,92 @@ export function AnnotationsContent({ id, className = "", maxHeight = "300px" }: 
           </Button>
           <Button variant="outline" className="border-gray-700 bg-gray-800 hover:bg-gray-700">
             <Upload className="w-4 h-4 mr-2" />
-            Import COCO
+            Import Annotations
           </Button>
         </div>
       </div>
 
-      <div className={`grid gap-6 grid-cols-1 md:grid-cols-2`} style={{ maxHeight }}>
-        <Collapsible open={isDistributionOpen} onOpenChange={setIsDistributionOpen}>
-          <Card className="bg-gray-900/50 border-gray-700">
-            <CollapsibleTrigger asChild>
-              <Button 
-                variant="ghost" 
-                className="w-full flex items-center justify-between p-6 cursor-pointer hover:bg-gray-800/50 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-medium">Classes Distribution</h3>
-                  <Badge variant="outline" className="bg-gray-800 border-gray-700">
-                    {mockAnnotations.length} classes
-                  </Badge>
-                </div>
-                <ChevronDown className={cn(
-                  "h-5 w-5 shrink-0 text-gray-400 transition-transform duration-200",
-                  isDistributionOpen ? "transform rotate-180" : ""
-                )} />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="px-6 pb-6">
-                <ScrollArea className="h-[300px] pr-4">
-                  <div className="space-y-4">
-                    {mockAnnotations.map((annotation, index) => (
-                      <div key={index} className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-3 h-3 rounded-full"
-                              style={{ backgroundColor: annotation.color }}
-                            />
-                            <span className="font-medium">{annotation.className}</span>
-                          </div>
-                          <Badge
-                            variant="outline"
-                            className="bg-gray-800 border-gray-700"
-                          >
-                            {annotation.count}
-                          </Badge>
-                        </div>
-                        <Progress
-                          value={(annotation.count / totalAnnotations) * 100}
-                          className={cn(
-                            "h-2 [&[role=progressbar]]:bg-gray-800",
-                            "[&>div]:transition-all [&>div]:duration-500"
-                          )}
-                        >
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${(annotation.count / totalAnnotations) * 100}%`, backgroundColor: annotation.color }}
-                          />
-                        </Progress>
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>{((annotation.count / totalAnnotations) * 100).toFixed(1)}% of total</span>
-                          <span>Avg. confidence: {(annotation.confidence * 100).toFixed(1)}%</span>
-                        </div>
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2" style={{ maxHeight }}>
+        <Card className="bg-gray-900/50 border-gray-700 overflow-hidden">
+          <div className="p-4 border-b border-gray-700">
+            <h3 className="font-medium">Annotation Files</h3>
+          </div>
+          <ScrollArea className="h-[340px]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Format</TableHead>
+                  <TableHead>Classes</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mockAnnotationFiles.map((file) => (
+                  <TableRow 
+                    key={file.id}
+                    className={`cursor-pointer ${selectedAnnotation === file.id ? 'bg-gray-800' : ''}`}
+                    onClick={() => handleAnnotationClick(file.id)}
+                  >
+                    <TableCell className="font-medium">
+                      {file.name}
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {new Date(file.date).toLocaleDateString()}
                       </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </div>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="bg-gray-800 border-gray-700">
+                        {file.format}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{file.classCount}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-2 justify-end">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={(e) => handleEditAnnotation(file.id, e)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={(e) => handleDeleteAnnotation(file.id, e)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        </Card>
 
-        <Collapsible open={isActivityOpen} onOpenChange={setIsActivityOpen}>
-          <Card className="bg-gray-900/50 border-gray-700">
-            <CollapsibleTrigger asChild>
-              <Button 
-                variant="ghost" 
-                className="w-full flex items-center justify-between p-6 cursor-pointer hover:bg-gray-800/50 transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg font-medium">Recent Activity</h3>
-                  <Badge variant="outline" className="bg-gray-800 border-gray-700">
-                    Upcoming
-                  </Badge>
+        <Card className="bg-gray-900/50 border-gray-700 overflow-hidden">
+          <div className="p-4 border-b border-gray-700">
+            <h3 className="font-medium">Class Distribution</h3>
+          </div>
+          <div className="p-6">
+            {selectedAnnotation ? (
+              <ClassStatistics statistics={mockClassStats} />
+            ) : (
+              <div className="h-[300px] flex flex-col items-center justify-center text-center p-4">
+                <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
+                  <Tag className="h-6 w-6 text-blue-400" />
                 </div>
-                <ChevronDown className={cn(
-                  "h-5 w-5 shrink-0 text-gray-400 transition-transform duration-200",
-                  isActivityOpen ? "transform rotate-180" : ""
-                )} />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="px-6 pb-6">
-                <div className="flex items-center justify-center h-[300px] text-center">
-                  <div className="text-muted-foreground">
-                    <AlertCircle className="w-12 h-12 mx-auto mb-4 text-blue-500/50" />
-                    <p className="mb-2">Annotation tracking will be available soon</p>
-                    <p className="text-sm">
-                      Track your annotation progress and review recent changes in real-time
-                    </p>
-                  </div>
-                </div>
+                <h3 className="text-lg font-medium mb-2">Select an annotation file</h3>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                  Click on an annotation file to view its class distribution and statistics
+                </p>
               </div>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   );
