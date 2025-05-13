@@ -23,7 +23,8 @@ interface AnnotationFile {
   date: string;
   format: string;
   classCount: number;
-  imageCount: number; // Added image count property
+  imageCount: number; // Total images referenced in annotation
+  matchedImageCount: number; // Images that exist in the dataset
 }
 
 interface AnnotationsContentProps {
@@ -40,7 +41,7 @@ export function AnnotationsContent({
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
 
-  // Mock data for annotation files
+  // Mock data for annotation files with image counts
   const mockAnnotationFiles = [
     {
       id: "ann-001",
@@ -48,7 +49,8 @@ export function AnnotationsContent({
       date: "2025-05-10",
       format: "COCO",
       classCount: 3,
-      imageCount: 24
+      imageCount: 24,
+      matchedImageCount: 18 // 18 of 24 images are uploaded
     },
     {
       id: "ann-002",
@@ -56,7 +58,8 @@ export function AnnotationsContent({
       date: "2025-05-12",
       format: "YOLO",
       classCount: 5,
-      imageCount: 12
+      imageCount: 42,
+      matchedImageCount: 12 // 12 of 42 images are uploaded
     },
     {
       id: "ann-003",
@@ -64,7 +67,8 @@ export function AnnotationsContent({
       date: "2025-05-13",
       format: "VOC",
       classCount: 2,
-      imageCount: 8
+      imageCount: 16,
+      matchedImageCount: 8 // 8 of 16 images are uploaded
     }
   ];
 
@@ -204,12 +208,24 @@ export function AnnotationsContent({
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge 
-                          variant="outline" 
-                          className={`${file.imageCount > 0 ? 'bg-blue-600/30 text-blue-300 border-blue-700' : 'bg-gray-800 border-gray-700'}`}
-                        >
-                          {file.imageCount} images
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge 
+                            variant="outline" 
+                            className={`${file.matchedImageCount > 0 ? 'bg-blue-600/30 text-blue-300 border-blue-700' : 'bg-gray-800 border-gray-700'}`}
+                          >
+                            {file.matchedImageCount} uploaded
+                          </Badge>
+                          <div className="text-xs text-muted-foreground">
+                            of {file.imageCount} total
+                          </div>
+                          {file.matchedImageCount < file.imageCount && (
+                            <div className="mt-1">
+                              <Badge variant="outline" className="bg-amber-600/30 text-amber-300 border-amber-700 text-xs">
+                                {file.imageCount - file.matchedImageCount} missing
+                              </Badge>
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">

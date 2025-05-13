@@ -1,3 +1,4 @@
+
 export interface AnnotationSample {
   id?: string;
   imageId: string;
@@ -14,6 +15,8 @@ export async function processCOCOAnnotations(file: File): Promise<{
   stats: { className: string; count: number; color: string }[];
   samples: AnnotationSample[];
   matchedImages: string[];
+  totalImageCount: number;   // Added field for total images in annotation file
+  matchedImageCount: number; // Added field for matched images
 }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -72,11 +75,14 @@ export async function processCOCOAnnotations(file: File): Promise<{
         });
 
         const matchedImages = Array.from(new Set(annotationSamples.map(anno => anno.imageId)));
+        const totalImageCount = coco.images.length;
 
         resolve({
           stats: stats,
           samples: annotationSamples,
-          matchedImages: matchedImages
+          matchedImages: matchedImages,
+          totalImageCount: totalImageCount,
+          matchedImageCount: matchedImages.length
         });
 
       } catch (error) {
