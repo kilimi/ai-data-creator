@@ -1,4 +1,3 @@
-
 import React from "react";
 import { Trash2, Upload, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +6,7 @@ import { Image } from "@/types";
 import { useImageLoad } from "@/utils/animations";
 import { AnnotationSample } from "@/utils/annotations";
 import { Card } from "@/components/ui/card";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface ImagesGridProps {
   images: Image[];
@@ -27,8 +27,6 @@ export function ImagesGrid({
   onImageClick,
   annotations = [],
 }: ImagesGridProps) {
-  const { getImageFadeProps } = useImageLoad();
-
   // Filter annotations to get only those for the current images
   const getAnnotationsForImage = (imageId: string) => {
     return annotations.filter(anno => anno.imageId === imageId);
@@ -62,46 +60,60 @@ export function ImagesGrid({
       className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 overflow-y-auto p-1"
       style={{ maxHeight }}
     >
-      {images.map((image) => {
-        const imageAnnotations = getAnnotationsForImage(image.id);
-        return (
-          <Card
-            key={image.id}
-            className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50"
-          >
-            <div
-              className="aspect-square overflow-hidden relative cursor-pointer"
-              onClick={() => onImageClick && onImageClick(image)}
-              style={{ height: imageSize, width: imageSize }}
+      <AnimatePresence>
+        {images.map((image) => {
+          const { isLoaded, getImageFadeProps } = useImageLoad(image.thumbnailUrl);
+          const imageAnnotations = getAnnotationsForImage(image.id);
+          
+          return (
+            <motion.div
+              key={image.id}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.2 }}
             >
-              <img
-                src={image.thumbnailUrl}
-                alt={image.fileName}
-                className="object-cover w-full h-full"
-                {...getImageFadeProps()}
-              />
-              {imageAnnotations.length > 0 && (
-                <div className="absolute top-2 right-2">
-                  <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
-                    <Tag className="h-3 w-3 mr-1" />
-                    {imageAnnotations.length}
-                  </Badge>
-                </div>
-              )}
-            </div>
-            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-              <Button
-                variant="destructive"
-                size="icon"
-                className="h-9 w-9"
-                onClick={() => onDeleteImage(image.id)}
+              <Card
+                className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50"
               >
-                <Trash2 className="h-5 w-5" />
-              </Button>
-            </div>
-          </Card>
-        );
-      })}
+                <motion.div
+                  className="aspect-square overflow-hidden relative cursor-pointer"
+                  onClick={() => onImageClick && onImageClick(image)}
+                  style={{ height: imageSize, width: imageSize }}
+                  {...getImageFadeProps()}
+                >
+                  <img
+                    src={image.thumbnailUrl}
+                    alt={image.fileName}
+                    className="object-cover w-full h-full"
+                  />
+                  {imageAnnotations.length > 0 && (
+                    <div className="absolute top-2 right-2">
+                      <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
+                        <Tag className="h-3 w-3 mr-1" />
+                        {imageAnnotations.length}
+                      </Badge>
+                    </div>
+                  )}
+                </motion.div>
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    className="h-9 w-9"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteImage(image.id);
+                    }}
+                  >
+                    <Trash2 className="h-5 w-5" />
+                  </Button>
+                </div>
+              </Card>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
     </div>
   );
 }

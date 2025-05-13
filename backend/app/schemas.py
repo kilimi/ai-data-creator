@@ -87,6 +87,21 @@ class Image(BaseModel):
     uploaded_at: datetime
     annotations_count: int = 0
 
+    # Helper function to convert to frontend format
+    def to_frontend_format(self, dataset_id: str) -> dict:
+        return {
+            "id": str(self.id),
+            "datasetId": str(dataset_id),
+            "fileName": self.file_name,
+            "fileSize": self.file_size,
+            "width": self.width,
+            "height": self.height,
+            "url": self.url,
+            "thumbnailUrl": self.thumbnail_url,
+            "uploadedAt": self.uploaded_at.isoformat(),
+            "annotationsCount": self.annotations_count
+        }
+
     class Config:
         from_attributes = True
         json_encoders = {

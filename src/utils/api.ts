@@ -37,6 +37,7 @@ export class ApiClient {
       const response = await fetch(url, {
         ...options,
         signal: controller.signal,
+        credentials: 'include', // Add this to handle cookies if needed
       });
       
       clearTimeout(timeoutId);
@@ -57,12 +58,24 @@ export class ApiClient {
         };
       }
 
+      // If the response has a success field, use it directly
+      if (typeof data.success === 'boolean') {
+        return data as ApiResponse<T>;
+      }
+
+      // Otherwise wrap the data in a success response
       return { 
         success: true, 
         data: data 
       };
     } catch (error) {
       console.error('API Request Error:', error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        return {
+          success: false,
+          error: 'Request timed out. Please check your connection and try again.'
+        };
+      }
       return { 
         success: false, 
         error: error instanceof Error ? error.message : 'Unknown API error'
@@ -93,6 +106,12 @@ export class ApiClient {
       }
     } catch (error) {
       console.error('API Connection Test Error:', error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        return {
+          success: false,
+          error: 'Connection test timed out. Please check your server and try again.'
+        };
+      }
       return { 
         success: false, 
         error: error instanceof Error ? error.message : 'Unknown API error' 

@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 
 export const fadeIn = {
@@ -106,5 +105,14 @@ export function useImageLoad(src?: string) {
     };
   }, [src]);
   
-  return isLoaded;
+  const getImageFadeProps = () => ({
+    initial: { opacity: 0 },
+    animate: isLoaded ? { opacity: 1 } : { opacity: 0 },
+    transition: { duration: 0.2 }
+  });
+
+  return {
+    isLoaded,
+    getImageFadeProps
+  };
 }

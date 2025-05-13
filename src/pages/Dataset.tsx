@@ -96,11 +96,15 @@ export default function Dataset() {
       const response = await api.uploadImages(id, formData);
       
       if (response.success) {
+        // Update images state with the newly uploaded images
+        if (response.data?.images) {
+          setImages(prevImages => [...prevImages, ...response.data.images]);
+        }
+        
         toast({
           title: "Success",
           description: `Successfully uploaded ${files.length} images`,
         });
-        fetchDataset();
       } else {
         throw new Error(response.error || 'Upload failed');
       }

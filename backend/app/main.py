@@ -561,23 +561,25 @@ async def upload_images(
                 contents = await file.read()
                 with open(file_path, 'wb') as f:
                     f.write(contents)
+
+                # Create relative URLs that will be made absolute when retrieved
+                relative_url = f"/data/images/{dataset_id}/{file.filename}"
+                db_image = models.Image(
+                    dataset_id=dataset_id,
+                    file_name=file.filename,
+                    file_size=len(contents),
+                    width=0,  # We'll update this when we load the image
+                    height=0, # We'll update this when we load the image
+                    url=relative_url,
+                    thumbnail_url=relative_url,
+                    annotations_count=0
+                )
+                db.add(db_image)
+                uploaded_images.append(db_image)
+
             except Exception as e:
                 print(f"Error saving file {file.filename}: {str(e)}")
                 continue
-
-            # Create image record in database with full URLs
-            db_image = models.Image(
-                dataset_id=dataset_id,
-                file_name=file.filename,
-                file_size=len(contents),
-                width=0,
-                height=0,
-                url=f"{base_url}/data/images/{dataset_id}/{file.filename}",
-                thumbnail_url=f"{base_url}/data/images/{dataset_id}/{file.filename}",
-                annotations_count=0
-            )
-            db.add(db_image)
-            uploaded_images.append(db_image)
 
         # Update dataset image count
         current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
@@ -585,26 +587,40 @@ async def upload_images(
         
         db.commit()
 
+        # Format the response to match the frontend Image interface
+        response_images = []
+        for img in uploaded_images:
+            # Make URLs absolute for the response
+            url = f"{base_url}{img.url}" if img.url.startswith('/') else img.url
+            thumbnail_url = f"{base_url}{img.thumbnail_url}" if img.thumbnail_url.startswith('/') else img.thumbnail_url
+            
+            response_images.append({
+                "id": str(img.id),
+                "datasetId": str(dataset_id),
+                "fileName": img.file_name,
+                "fileSize": img.file_size,
+                "width": img.width,
+                "height": img.height,
+                "url": url,
+                "thumbnailUrl": thumbnail_url,
+                "uploadedAt": img.uploaded_at.isoformat(),
+                "annotationsCount": img.annotations_count
+            })
+
         return {
             "success": True,
             "data": {
                 "uploaded": len(uploaded_images),
-                "images": [
-                    {
-                        "id": img.id,
-                        "file_name": img.file_name,
-                        "url": img.url,
-                        "thumbnail_url": img.thumbnail_url
-                    } for img in uploaded_images
-                ]
+                "images": response_images
             }
         }
 
     except Exception as e:
         db.rollback()
+        print(f"Error in upload_images: {str(e)}")  # Add logging
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/datasets/{dataset_id}/images", response_model=List[schemas.Image])
+@app.get("/datasets/{dataset_id}/images")
 def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(get_db)):
     try:
         # Verify dataset exists
@@ -618,16 +634,39 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
         # Get all images for this dataset
         images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
         
-        # Update URLs with base URL if they're relative
-        for image in images:
-            if image.url.startswith('/'):
-                image.url = f"{base_url}{image.url}"
-            if image.thumbnail_url.startswith('/'):
-                image.thumbnail_url = f"{base_url}{image.thumbnail_url}"
+        # Format response to match frontend Image interface
+        response_images = []
+        for img in images:
+            # Handle URL paths consistently
+            url = img.url
+            thumbnail_url = img.thumbnail_url
+            
+            # If URL is relative, make it absolute
+            if url and url.startswith('/'):
+                url = f"{base_url}{url}"
+            if thumbnail_url and thumbnail_url.startswith('/'):
+                thumbnail_url = f"{base_url}{thumbnail_url}"
+            
+            response_images.append({
+                "id": str(img.id),
+                "datasetId": str(dataset_id),
+                "fileName": img.file_name,
+                "fileSize": img.file_size,
+                "width": img.width,
+                "height": img.height,
+                "url": url,
+                "thumbnailUrl": thumbnail_url,
+                "uploadedAt": img.uploaded_at.isoformat(),
+                "annotationsCount": img.annotations_count
+            })
         
-        return images
+        return {
+            "success": True,
+            "data": response_images
+        }
 
     except Exception as e:
+        print(f"Error in get_dataset_images: {str(e)}")  # Add logging
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/test-project-tags")
