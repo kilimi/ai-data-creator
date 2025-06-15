@@ -277,6 +277,7 @@ async def create_dataset(
         db.add(db_dataset)
         db.commit()
         db.refresh(db_dataset)
+        # Guarantee no annotations attached
         return db_dataset
     except Exception as e:
         db.rollback()
@@ -354,63 +355,8 @@ async def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/datasets/{dataset_id}/duplicate", response_model=schemas.DatasetResponse)
-def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
-    # Get the original dataset
-    original_dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
-    if not original_dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    # Create new dataset with copied attributes
-    new_dataset = models.Dataset(
-        name=f"{original_dataset.name} (Copy)",
-        description=original_dataset.description,
-        logo_path=original_dataset.logo_path,
-        project_id=original_dataset.project_id
-    )
-    db.add(new_dataset)
-    db.flush()  # Flush to get the new dataset ID
-
-    # Copy images
-    images_dir = os.path.join("data", "images", str(dataset_id))
-    new_images_dir = os.path.join("data", "images", str(new_dataset.id))
-    if os.path.exists(images_dir):
-        shutil.copytree(images_dir, new_images_dir, dirs_exist_ok=True)
-
-    # Copy annotations
-    annotations_dir = os.path.join("data", "annotations", str(dataset_id))
-    new_annotations_dir = os.path.join("data", "annotations", str(new_dataset.id))
-    if os.path.exists(annotations_dir):
-        shutil.copytree(annotations_dir, new_annotations_dir, dirs_exist_ok=True)
-
-    # Copy database records for images and annotations
-    original_images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
-    for image in original_images:
-        new_image = models.Image(
-            dataset_id=new_dataset.id,
-            filename=image.filename,
-            path=image.path.replace(str(dataset_id), str(new_dataset.id))
-        )
-        db.add(new_image)
-        db.flush()
-
-        # Copy annotations for this image
-        annotations = db.query(models.Annotation).filter(models.Annotation.image_id == image.id).all()
-        for annotation in annotations:
-            new_annotation = models.Annotation(
-                image_id=new_image.id,
-                type=annotation.type,
-                data=annotation.data,
-                label=annotation.label
-            )
-            db.add(new_annotation)
-
-    db.commit()
-    return schemas.DatasetResponse(
-        success=True,
-        data=new_dataset
-    )
-
+# Clean up duplicate or legacy dataset duplication endpoints,
+# keep only one well-implemented async duplication endpoint
 @app.post("/datasets/{dataset_id}/duplicate")
 async def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
     try:
@@ -419,7 +365,7 @@ async def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
         if original_dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        # Create a new dataset with the same data
+        # Create a new dataset with the same data, but do not copy images or annotations by default
         new_dataset = models.Dataset(
             name=f"{original_dataset.name} (Copy)",
             description=original_dataset.description,
@@ -432,39 +378,6 @@ async def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
         )
         
         db.add(new_dataset)
-        db.flush()  # Flush to get the new dataset ID
-
-        # Copy all images
-        for image in original_dataset.images:
-            new_image = models.Image(
-                dataset_id=new_dataset.id,
-                file_name=image.file_name,
-                file_size=image.file_size,
-                width=image.width,
-                height=image.height,
-                url=image.url,
-                thumbnail_url=image.thumbnail_url,
-                annotations_count=image.annotations_count
-            )
-            db.add(new_image)
-            db.flush()
-
-            # Copy all annotations for this image
-            for annotation in image.annotations:
-                new_annotation = models.Annotation(
-                    image_id=new_image.id,
-                    dataset_id=new_dataset.id,
-                    category=annotation.category,
-                    bbox=annotation.bbox,
-                    segmentation=annotation.segmentation,
-                    area=annotation.area
-                )
-                db.add(new_annotation)
-
-        # Update counts
-        new_dataset.image_count = original_dataset.image_count
-        new_dataset.annotation_count = original_dataset.annotation_count
-
         db.commit()
         db.refresh(new_dataset)
         return new_dataset
@@ -472,63 +385,6 @@ async def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/datasets/{dataset_id}/duplicate", response_model=schemas.Dataset)
-def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
-    # Get the original dataset
-    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-
-    # Create a new dataset with copied attributes
-    new_dataset = models.Dataset(
-        name=f"{dataset.name} (Copy)",
-        description=dataset.description,
-        project_id=dataset.project_id,
-        created_at=datetime.datetime.now(),
-        updated_at=datetime.datetime.now()
-    )
-    db.add(new_dataset)
-    db.flush()  # Flush to get the new dataset ID
-
-    # Copy images
-    images_dir = os.path.join("data", "images", str(dataset_id))
-    new_images_dir = os.path.join("data", "images", str(new_dataset.id))
-    if os.path.exists(images_dir):
-        shutil.copytree(images_dir, new_images_dir)
-
-    # Copy annotations
-    annotations_dir = os.path.join("data", "annotations", str(dataset_id))
-    new_annotations_dir = os.path.join("data", "annotations", str(new_dataset.id))
-    if os.path.exists(annotations_dir):
-        shutil.copytree(annotations_dir, new_annotations_dir)
-
-    # Copy image records and annotations from database
-    original_images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
-    for img in original_images:
-        new_image = models.Image(
-            dataset_id=new_dataset.id,
-            filename=img.filename,
-            path=img.path.replace(str(dataset_id), str(new_dataset.id)),
-            created_at=datetime.datetime.now()
-        )
-        db.add(new_image)
-        db.flush()
-
-        # Copy annotations for this image
-        annotations = db.query(models.Annotation).filter(models.Annotation.image_id == img.id).all()
-        for ann in annotations:
-            new_annotation = models.Annotation(
-                image_id=new_image.id,
-                data=ann.data,
-                filename=ann.filename,
-                path=ann.path.replace(str(dataset_id), str(new_dataset.id)),
-                created_at=datetime.datetime.now()
-            )
-            db.add(new_annotation)
-
-    db.commit()
-    return new_dataset
 
 @app.post("/datasets/{dataset_id}/images")
 async def upload_images(
