@@ -236,6 +236,15 @@ export class ApiClient {
       method: 'DELETE'
     });
   }
+
+  async importAnnotations(datasetId: string | number, file: File): Promise<ApiResponse<any>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request(`/datasets/${datasetId}/import-annotations`, {
+      method: 'POST',
+      body: formData
+    });
+  }
 }
 
 /**

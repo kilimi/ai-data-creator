@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -238,3 +237,83 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/datasets/{dataset_id}/import-annotations")
+async def import_annotations(
+    dataset_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Import COCO-format annotations for a dataset.
+    - Links annotations to dataset and corresponding image by file_name.
+    - Only images present in both the DB and the annotation file will get annotations imported.
+    """
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Read the file and parse COCO
+        content = await file.read()
+        coco = json.loads(content.decode('utf-8'))
+
+        images_in_db = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
+        file_name_to_image = {img.file_name: img for img in images_in_db}
+        image_id_to_dbid = {}
+
+        # Build mapping from COCO image id to database image id
+        for coco_image in coco.get("images", []):
+            file_name = coco_image.get("file_name")
+            db_img = file_name_to_image.get(file_name)
+            if db_img:
+                image_id_to_dbid[coco_image["id"]] = db_img.id
+
+        imported_count = 0
+        skipped_count = 0
+
+        for anno in coco.get("annotations", []):
+            coco_image_id = anno["image_id"]
+            db_image_id = image_id_to_dbid.get(coco_image_id)
+            if db_image_id is None:
+                skipped_count += 1
+                continue
+
+            bbox = anno.get("bbox")    # [x, y, width, height]
+            segmentation = anno.get("segmentation")
+            area = anno.get("area")
+            category = None
+
+            # Category name
+            if "category_id" in anno and "categories" in coco:
+                category_obj = next((c for c in coco["categories"] if c["id"] == anno["category_id"]), None)
+                if category_obj:
+                    category = category_obj.get("name")
+            if not category:
+                category = str(anno.get("category_id", "unknown"))
+
+            db_anno = models.Annotation(
+                image_id=db_image_id,
+                dataset_id=dataset_id,
+                category=category,
+                bbox=bbox,
+                segmentation=segmentation if isinstance(segmentation, list) else None,
+                area=area,
+            )
+            db.add(db_anno)
+            imported_count += 1
+
+        db.commit()
+        # Optionally update annotation_count on dataset/images
+        dataset.annotation_count += imported_count
+        db.commit()
+        return {
+            "success": True,
+            "imported": imported_count,
+            "skipped": skipped_count,
+            "message": f"Imported {imported_count} annotations. Skipped {skipped_count} (images not found)."
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to import annotations: {str(e)}")
