@@ -32,18 +32,20 @@ function ImagesGridImage({ image, imageSize, onDeleteImage, onImageClick, annota
       transition={{ duration: 0.2, layout: { duration: 0.3 } }}
     >
       <Card
-        className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50 cursor-pointer"
+        className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50 cursor-pointer flex items-center justify-center p-2"
         onClick={() => onImageClick && onImageClick(image)}
+        style={{ minHeight: 0, minWidth: 0, background: 'transparent' }}
       >
         <motion.div
-          className="aspect-square overflow-hidden relative"
-          style={{ height: imageSize, width: imageSize }}
+          className="aspect-square w-full h-full flex items-center justify-center overflow-hidden relative"
+          style={{ maxWidth: imageSize, maxHeight: imageSize }}
           {...getImageFadeProps()}
         >
           <img
             src={image.thumbnailUrl}
             alt={image.fileName}
-            className="object-cover w-full h-full"
+            className="object-contain w-full h-full"
+            style={{ display: 'block', borderRadius: 8 }}
           />
           {imageAnnotations.length > 0 && (
             <div className="absolute top-2 right-2">
