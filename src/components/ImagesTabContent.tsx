@@ -1,4 +1,3 @@
-
 import { Link } from "react-router-dom";
 import { Pencil, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,6 +21,7 @@ interface ImagesTabContentProps {
   onPageChange: (page: number) => void;
   onOpenUploadDialog: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
+  onImageClick?: (image: Image) => void;
   paginatedImages: Image[];
   totalPages: number;
   annotations?: AnnotationSample[];

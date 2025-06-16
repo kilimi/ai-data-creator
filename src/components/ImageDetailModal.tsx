@@ -1,4 +1,3 @@
-
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -36,15 +35,15 @@ export function ImageDetailModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="max-w-4xl bg-gray-900 text-white border-gray-700">
         <DialogTitle>{image.fileName}</DialogTitle>
         
         <div className="flex flex-col space-y-2">
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-gray-400">
             {image.width} × {image.height} • {(image.fileSize / (1024 * 1024)).toFixed(2)} MB
           </div>
           
-          <div className="relative aspect-video bg-gray-950 rounded overflow-hidden flex items-center justify-center">
+          <div className="relative aspect-video bg-gray-950 rounded-lg overflow-hidden flex items-center justify-center">
             <img
               src={image.url}
               alt={image.fileName}
@@ -63,7 +62,7 @@ export function ImageDetailModal({
           </div>
           
           <div className="flex justify-between items-center pt-2">
-            <div className="text-sm text-muted-foreground">
+            <div className="text-sm text-gray-400">
               {annotations && annotations.length > 0 
                 ? `${annotations.length} annotations displayed` 
                 : "No annotations to display"}

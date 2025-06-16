@@ -1,4 +1,3 @@
-
 import React from "react";
 import { Trash2, Upload, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,12 +27,10 @@ export function ImagesGrid({
   onImageClick,
   annotations = [],
 }: ImagesGridProps) {
-  // Filter annotations to get only those for the current images
   const getAnnotationsForImage = (imageId: string) => {
     return annotations.filter(anno => anno.imageId === imageId);
   };
 
-  // Calculate grid columns based on image size to maintain aspect ratio
   const getGridColumns = (size: number) => {
     if (size <= 120) return "grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16";
     if (size <= 160) return "grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12";
@@ -70,7 +67,7 @@ export function ImagesGrid({
       className={`grid ${getGridColumns(imageSize)} gap-4 overflow-y-auto p-1`}
       style={{ maxHeight }}
     >
-      <AnimatePresence>
+      <AnimatePresence mode="wait">
         {images.map((image) => {
           const { isLoaded, getImageFadeProps } = useImageLoad(image.thumbnailUrl);
           const imageAnnotations = getAnnotationsForImage(image.id);
@@ -78,17 +75,18 @@ export function ImagesGrid({
           return (
             <motion.div
               key={image.id}
+              layout
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.2 }}
+              transition={{ duration: 0.2, layout: { duration: 0.3 } }}
             >
               <Card
                 className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50 cursor-pointer"
               >
                 <motion.div
                   className="aspect-square overflow-hidden relative"
-                  onClick={() => onImageClick && onImageClick(image)}
+                  onClick={() => onImageClick?.(image)}
                   style={{ height: imageSize, width: imageSize }}
                   {...getImageFadeProps()}
                 >
