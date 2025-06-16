@@ -56,17 +56,18 @@ function ImagesGridImage({ image, imageSize, onDeleteImage, onImageClick, annota
             </div>
           )}
         </motion.div>
-        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+        {/* Delete button moved to bottom right, smaller, only on hover */}
+        <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
           <Button
-            variant="destructive"
+            variant="ghost"
             size="icon"
-            className="h-9 w-9"
+            className="h-7 w-7 bg-black/60 hover:bg-red-600/80 border border-gray-700 shadow-md"
             onClick={(e) => {
               e.stopPropagation();
               onDeleteImage(image.id);
             }}
           >
-            <Trash2 className="h-5 w-5" />
+            <Trash2 className="h-4 w-4 text-white" />
           </Button>
         </div>
       </Card>
@@ -84,12 +85,16 @@ export function ImagesGrid({
   annotations = [],
 }: ImagesGridProps) {
   const getGridColumns = (size: number) => {
+    if (size >= 400) return "grid-cols-1"; // Only one column, no responsive classes
     if (size <= 120) return "grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16";
     if (size <= 160) return "grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12";
     if (size <= 200) return "grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10";
     if (size <= 240) return "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8";
     return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6";
   };
+
+  // Only use grid-cols-1 if imageSize >= 400, otherwise use getGridColumns
+  const gridColumns = imageSize >= 400 ? "grid-cols-1" : getGridColumns(imageSize);
 
   if (!images.length) {
     return (
@@ -116,7 +121,7 @@ export function ImagesGrid({
 
   return (
     <div
-      className={`grid ${getGridColumns(imageSize)} gap-4 overflow-y-auto p-1`}
+      className={`grid ${gridColumns} gap-4 overflow-y-auto p-1`}
       style={{ maxHeight }}
     >
       <AnimatePresence mode="wait">
