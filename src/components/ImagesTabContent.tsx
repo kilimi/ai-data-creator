@@ -8,7 +8,8 @@ import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
 import { AnnotationSample } from "@/utils/annotations";
 import { AnnotationsContent } from "@/components/AnnotationsContent";
-import { useEffect } from "react";
+import { ImageDetailModal } from "@/components/ImageDetailModal";
+import { useEffect, useState } from "react";
 
 interface ImagesTabContentProps {
   id: string;
@@ -43,6 +44,9 @@ export function ImagesTabContent({
   annotations = [],
   onImportAnnotations,
 }: ImagesTabContentProps) {
+  const [selectedImage, setSelectedImage] = useState<Image | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
   // Reset to page 1 if current page is beyond total pages when imagesPerPage changes
   useEffect(() => {
     if (currentPage > totalPages && totalPages > 0) {
@@ -61,6 +65,26 @@ export function ImagesTabContent({
     
     onImagesPerPageChange(value);
   };
+
+  const handleImageClick = (image: Image) => {
+    setSelectedImage(image);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedImage(null);
+  };
+
+  const handleDeleteFromModal = async (imageId: string) => {
+    await onDeleteImage(imageId);
+    handleCloseModal();
+  };
+
+  // Get annotations for the selected image
+  const selectedImageAnnotations = selectedImage 
+    ? annotations.filter(anno => anno.imageId === selectedImage.id)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -94,6 +118,7 @@ export function ImagesTabContent({
           imageSize={imageSize}
           onOpenUploadDialog={onOpenUploadDialog}
           onDeleteImage={onDeleteImage}
+          onImageClick={handleImageClick}
           maxHeight="400px"
           annotations={annotations}
         />
@@ -113,6 +138,15 @@ export function ImagesTabContent({
           className="min-h-[500px]"
         />
       </div>
+
+      {/* Image Detail Modal */}
+      <ImageDetailModal
+        image={selectedImage}
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        onDelete={handleDeleteFromModal}
+        annotations={selectedImageAnnotations}
+      />
     </div>
   );
 }
