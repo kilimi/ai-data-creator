@@ -27,13 +27,22 @@ export default function Dataset() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("images");
-  
-  // Add state for annotations visibility
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
   
+  // Calculate pagination values
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
+  
+  // Update currentPage when imagesPerPage changes
+  useEffect(() => {
+    const newTotalPages = Math.ceil(images.length / imagesPerPage);
+    if (currentPage > newTotalPages) {
+      setCurrentPage(1);
+    }
+  }, [imagesPerPage, images.length, currentPage]);
+
+  // Calculate paginated images after state updates
   const paginatedImages = images.slice(
     (currentPage - 1) * imagesPerPage,
     currentPage * imagesPerPage
