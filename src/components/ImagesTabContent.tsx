@@ -8,6 +8,7 @@ import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
 import { AnnotationSample } from "@/utils/annotations";
 import { AnnotationsContent } from "@/components/AnnotationsContent";
+import { useEffect } from "react";
 
 interface ImagesTabContentProps {
   id: string;
@@ -42,6 +43,25 @@ export function ImagesTabContent({
   annotations = [],
   onImportAnnotations,
 }: ImagesTabContentProps) {
+  // Reset to page 1 if current page is beyond total pages when imagesPerPage changes
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      onPageChange(1);
+    }
+  }, [currentPage, totalPages, onPageChange]);
+
+  const handleImagesPerPageChange = (value: number) => {
+    // Calculate what the new total pages would be
+    const newTotalPages = Math.ceil(images.length / value);
+    
+    // If current page would be beyond the new total pages, reset to page 1
+    if (currentPage > newTotalPages && newTotalPages > 0) {
+      onPageChange(1);
+    }
+    
+    onImagesPerPageChange(value);
+  };
+
   return (
     <div className="space-y-6">
       {/* Images Section */}
@@ -64,7 +84,7 @@ export function ImagesTabContent({
 
         <ImageDisplayControls
           imagesPerPage={imagesPerPage}
-          onImagesPerPageChange={onImagesPerPageChange}
+          onImagesPerPageChange={handleImagesPerPageChange}
           imageSize={imageSize}
           onImageSizeChange={onImageSizeChange}
         />
