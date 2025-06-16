@@ -1,3 +1,4 @@
+
 import React from "react";
 import { Trash2, Upload, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,13 @@ export function ImagesGrid({
     if (size <= 200) return "grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10";
     if (size <= 240) return "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8";
     return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6";
+  };
+
+  const handleImageClick = (image: Image) => {
+    console.log('Image clicked:', image.fileName, 'onImageClick handler:', !!onImageClick);
+    if (onImageClick) {
+      onImageClick(image);
+    }
   };
 
   if (!images.length) {
@@ -83,10 +91,10 @@ export function ImagesGrid({
             >
               <Card
                 className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50 cursor-pointer"
+                onClick={() => handleImageClick(image)}
               >
                 <motion.div
                   className="aspect-square overflow-hidden relative"
-                  onClick={() => onImageClick?.(image)}
                   style={{ height: imageSize, width: imageSize }}
                   {...getImageFadeProps()}
                 >

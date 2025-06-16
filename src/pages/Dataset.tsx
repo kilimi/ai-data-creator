@@ -12,7 +12,6 @@ import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileImage, Layers } from "lucide-react";
 import { AnnotationSample } from "@/utils/annotations";
-import { ImageDetailModal } from "@/components/ImageDetailModal";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -28,9 +27,6 @@ export default function Dataset() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("images");
-  // Add state for selected image and modal visibility
-  const [selectedImage, setSelectedImage] = useState<Image | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   
   // Add state for annotations visibility
   const [showAnnotations, setShowAnnotations] = useState(false);
@@ -154,28 +150,6 @@ export default function Dataset() {
       });
     }
   };
-
-  // Add handler for image clicks
-  const handleImageClick = (image: Image) => {
-    setSelectedImage(image);
-    setIsModalOpen(true);
-  };
-
-  const handleCloseModal = () => {
-    setIsModalOpen(false);
-    setSelectedImage(null);
-  };
-
-  // Add handler for deleting images from modal
-  const handleDeleteFromModal = async (imageId: string) => {
-    await handleDeleteImage(imageId);
-    handleCloseModal();
-  };
-
-  // Get annotations for the selected image
-  const selectedImageAnnotations = selectedImage 
-    ? visibleAnnotations.filter(anno => anno.imageId === selectedImage.id)
-    : [];
 
   // Add function to handle annotation visibility changes
   const handleShowAnnotationsChange = (show: boolean, annotationId: string | null) => {
