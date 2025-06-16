@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,6 +16,7 @@ import { ClassStatistics } from "@/components/ClassStatistics";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample } from "@/utils/annotations";
+import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 
 interface AnnotationFile {
   id: string;
@@ -33,16 +33,19 @@ interface AnnotationsContentProps {
   id: string;
   className?: string;
   onShowAnnotationsChange?: (show: boolean, annotationId: string | null) => void;
+  onImportAnnotations?: (files: File[]) => void;
 }
 
 export function AnnotationsContent({ 
   id, 
   className = "", 
-  onShowAnnotationsChange 
+  onShowAnnotationsChange,
+  onImportAnnotations 
 }: AnnotationsContentProps) {
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
 
   // Fetch annotations for this specific dataset on component mount
   useEffect(() => {
@@ -153,6 +156,17 @@ export function AnnotationsContent({
     }
   };
 
+  const handleImportClick = () => {
+    setShowUploadDialog(true);
+  };
+
+  const handleFilesSelected = (files: File[]) => {
+    if (onImportAnnotations) {
+      onImportAnnotations(files);
+    }
+    setShowUploadDialog(false);
+  };
+
   return (
     <div className={`h-full ${className}`}>
       <div className="flex justify-between items-center mb-4">
@@ -167,7 +181,11 @@ export function AnnotationsContent({
             <Tag className="w-4 h-4 mr-2" />
             Start Annotating
           </Button>
-          <Button variant="outline" className="border-gray-700 bg-gray-800 hover:bg-gray-700">
+          <Button 
+            variant="outline" 
+            className="border-gray-700 bg-gray-800 hover:bg-gray-700"
+            onClick={handleImportClick}
+          >
             <Upload className="w-4 h-4 mr-2" />
             Import Annotations
           </Button>
@@ -294,6 +312,12 @@ export function AnnotationsContent({
           </Card>
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      <AnnotationsUploadDialog
+        open={showUploadDialog}
+        onOpenChange={setShowUploadDialog}
+        onFilesSelected={handleFilesSelected}
+      />
     </div>
   );
 }

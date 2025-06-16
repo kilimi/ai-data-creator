@@ -153,94 +153,64 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   };
 
   const handleAnnotationUpload = async (files: File[]) => {
+    if (!id) return;
+
     toast({
-      title: "Processing annotations",
-      description: "Analyzing COCO annotation files...",
+      title: "Importing annotations",
+      description: "Processing COCO annotation files...",
     });
     
     try {
+      // Use the actual API to import annotations
+      const { useApi } = await import('@/hooks/use-api');
+      const { api } = useApi();
+      
+      if (!api) {
+        throw new Error('API client not available');
+      }
+
       for (const file of files) {
-        // Pass the dataset ID to the processing function
-        const { stats, samples, matchedImages, totalImageCount, matchedImageCount } = await processCOCOAnnotations(file, id);
-        const annotationCount = stats.reduce((acc, stat) => acc + stat.count, 0);
+        console.log(`Importing annotation file: ${file.name}`);
+        const result = await api.importAnnotations(id, file);
         
-        const enhancedSamples = samples.map(sample => {
-          if (Math.random() > 0.5) {
-            const segmentation = [[
-              sample.bbox[0] + sample.bbox[2] * 0.2,
-              sample.bbox[1] + sample.bbox[3] * 0.2,
-              sample.bbox[0] + sample.bbox[2] * 0.8,
-              sample.bbox[1] + sample.bbox[3] * 0.2,
-              sample.bbox[0] + sample.bbox[2] * 0.8,
-              sample.bbox[1] + sample.bbox[3] * 0.8,
-              sample.bbox[0] + sample.bbox[2] * 0.2,
-              sample.bbox[1] + sample.bbox[3] * 0.8,
-            ]];
-            const area = sample.bbox[2] * sample.bbox[3] * 0.6 * 100;
-            return { ...sample, segmentation, area };
+        if (result.success && result.data) {
+          const { imported, skipped, message } = result.data;
+          
+          // Create annotation file record for UI
+          const annotationFile = {
+            id: Math.random().toString(36).substring(2, 11),
+            fileName: file.name,
+            fileSize: file.size,
+            uploadedAt: new Date().toISOString(),
+            classStats: [], // Will be populated from actual data
+            samples: [], // Will be populated from actual data
+            matchedImageCount: imported,
+            datasetId: id
+          };
+          
+          setAnnotations(prevAnnotations => [...prevAnnotations, annotationFile]);
+          
+          if (dataset) {
+            setDataset({
+              ...dataset,
+              annotation_count: (dataset.annotation_count || 0) + imported,
+            });
           }
-          return sample;
-        });
-        
-        const matchingImages = images.filter(img => 
-          enhancedSamples.some(sample => sample.imageId === img.id)
-        );
-        
-        if (matchingImages.length === 0) {
-          const updatedSamples = enhancedSamples.map((sample, idx) => {
-            if (idx < Math.min(enhancedSamples.length, images.length)) {
-              return { ...sample, imageId: images[idx % images.length].id };
-            }
-            return sample;
+          
+          toast({
+            title: "Annotations imported",
+            description: message || `Imported ${imported} annotations, skipped ${skipped}`,
           });
-          
-          const matchedCount = new Set(updatedSamples.map(s => s.imageId)).size;
-          
-          const newAnnotation = {
-            id: Math.random().toString(36).substring(2, 11),
-            fileName: file.name,
-            fileSize: file.size,
-            uploadedAt: new Date().toISOString(),
-            classStats: stats,
-            samples: updatedSamples,
-            matchedImageCount: matchedCount,
-            datasetId: id || "" // Add the dataset ID to link the annotation
-          };
-          
-          setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
         } else {
-          const newAnnotation = {
-            id: Math.random().toString(36).substring(2, 11),
-            fileName: file.name,
-            fileSize: file.size,
-            uploadedAt: new Date().toISOString(),
-            classStats: stats,
-            samples: enhancedSamples,
-            matchedImageCount: matchingImages.length,
-            datasetId: id || "" // Add the dataset ID to link the annotation
-          };
-          
-          setAnnotations(prevAnnotations => [...prevAnnotations, newAnnotation]);
-        }
-        
-        if (dataset) {
-          setDataset({
-            ...dataset,
-            annotation_count: (dataset.annotation_count || 0) + annotationCount,
-          });
+          throw new Error(result.error || 'Failed to import annotations');
         }
       }
-      
-      toast({
-        title: "Annotations processed",
-        description: `${files.length} annotation files processed successfully.`,
-      });
     } catch (error) {
-      console.error("Error processing annotations:", error);
+      console.error("Error importing annotations:", error);
       toast({
         variant: "destructive",
-        title: "Processing failed",
-        description: "There was an error processing the annotation files.",
+        title: "Import failed",
+        description: error instanceof Error ? error.message : "There was an error importing the annotation files.",
       });
     }
   };
