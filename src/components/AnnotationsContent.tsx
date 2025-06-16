@@ -177,10 +177,6 @@ export function AnnotationsContent({
           </p>
         </div>
         <div className="flex gap-2">
-          <Button className="bg-blue-600 hover:bg-blue-700">
-            <Tag className="w-4 h-4 mr-2" />
-            Start Annotating
-          </Button>
           <Button 
             variant="outline" 
             className="border-gray-700 bg-gray-800 hover:bg-gray-700"

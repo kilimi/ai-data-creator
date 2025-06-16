@@ -8,7 +8,6 @@ import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
 import { AnnotationSample } from "@/utils/annotations";
 import { AnnotationsContent } from "@/components/AnnotationsContent";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface ImagesTabContentProps {
   id: string;
@@ -44,60 +43,56 @@ export function ImagesTabContent({
   onImportAnnotations,
 }: ImagesTabContentProps) {
   return (
-    <div className="space-y-4">
-      <Tabs defaultValue="images" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="images">Images</TabsTrigger>
-          <TabsTrigger value="annotations">Annotations</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="images" className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-semibold">Images</h2>
-            <div className="flex gap-2">
-              <Button asChild>
-                <Link to={`/datasets/${id}/annotate`}>
-                  <Pencil className="w-4 h-4 mr-2" />
-                  Annotate
-                </Link>
-              </Button>
-              <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Images
-              </Button>
-            </div>
+    <div className="space-y-6">
+      {/* Images Section */}
+      <div className="space-y-4">
+        <div className="flex justify-between items-center">
+          <h2 className="text-xl font-semibold">Images</h2>
+          <div className="flex gap-2">
+            <Button asChild>
+              <Link to={`/datasets/${id}/annotate`}>
+                <Pencil className="w-4 h-4 mr-2" />
+                Annotate
+              </Link>
+            </Button>
+            <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
+              <Upload className="w-4 h-4 mr-2" />
+              Upload Images
+            </Button>
           </div>
+        </div>
 
-          <ImageDisplayControls
-            imagesPerPage={imagesPerPage}
-            onImagesPerPageChange={onImagesPerPageChange}
-            imageSize={imageSize}
-            onImageSizeChange={onImageSizeChange}
-          />
+        <ImageDisplayControls
+          imagesPerPage={imagesPerPage}
+          onImagesPerPageChange={onImagesPerPageChange}
+          imageSize={imageSize}
+          onImageSizeChange={onImageSizeChange}
+        />
 
-          <ImagesGrid
-            images={paginatedImages}
-            imageSize={imageSize}
-            onOpenUploadDialog={onOpenUploadDialog}
-            onDeleteImage={onDeleteImage}
-            maxHeight="600px"
-            annotations={annotations}
-          />
+        <ImagesGrid
+          images={paginatedImages}
+          imageSize={imageSize}
+          onOpenUploadDialog={onOpenUploadDialog}
+          onDeleteImage={onDeleteImage}
+          maxHeight="400px"
+          annotations={annotations}
+        />
 
-          <PaginationControls
-            currentPage={currentPage}
-            totalPages={totalPages}
-            onPageChange={onPageChange}
-          />
-        </TabsContent>
-        
-        <TabsContent value="annotations" className="space-y-4">
-          <AnnotationsContent
-            id={id}
-            onImportAnnotations={onImportAnnotations}
-          />
-        </TabsContent>
-      </Tabs>
+        <PaginationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={onPageChange}
+        />
+      </div>
+
+      {/* Annotations Section */}
+      <div className="border-t border-gray-800 pt-6">
+        <AnnotationsContent
+          id={id}
+          onImportAnnotations={onImportAnnotations}
+          className="min-h-[500px]"
+        />
+      </div>
     </div>
   );
 }
