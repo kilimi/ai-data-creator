@@ -44,7 +44,8 @@ export function ImagesTabContent({
   annotations = [],
   onImportAnnotations,
 }: ImagesTabContentProps) {
-  const [selectedImage, setSelectedImage] = useState<Image | null>(null);
+  // Use index for navigation
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Reset to page 1 if current page is beyond total pages when imagesPerPage changes
@@ -66,14 +67,18 @@ export function ImagesTabContent({
     onImagesPerPageChange(value);
   };
 
+  // Open modal at clicked image index
   const handleImageClick = (image: Image) => {
-    setSelectedImage(image);
-    setIsModalOpen(true);
+    const idx = paginatedImages.findIndex(img => img.id === image.id);
+    if (idx !== -1) {
+      setSelectedImageIndex(idx);
+      setIsModalOpen(true);
+    }
   };
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
-    setSelectedImage(null);
+    setSelectedImageIndex(null);
   };
 
   const handleDeleteFromModal = async (imageId: string) => {
@@ -81,7 +86,18 @@ export function ImagesTabContent({
     handleCloseModal();
   };
 
-  // Get annotations for the selected image
+  // Navigation handlers
+  const hasPrev = selectedImageIndex !== null && selectedImageIndex > 0;
+  const hasNext = selectedImageIndex !== null && selectedImageIndex < paginatedImages.length - 1;
+  const handlePrev = () => {
+    if (hasPrev && selectedImageIndex !== null) setSelectedImageIndex(selectedImageIndex - 1);
+  };
+  const handleNext = () => {
+    if (hasNext && selectedImageIndex !== null) setSelectedImageIndex(selectedImageIndex + 1);
+  };
+
+  // Get current image and annotations
+  const selectedImage = selectedImageIndex !== null ? paginatedImages[selectedImageIndex] : null;
   const selectedImageAnnotations = selectedImage 
     ? annotations.filter(anno => anno.imageId === selectedImage.id)
     : [];
@@ -146,6 +162,12 @@ export function ImagesTabContent({
         onClose={handleCloseModal}
         onDelete={handleDeleteFromModal}
         annotations={selectedImageAnnotations}
+        onPrev={handlePrev}
+        onNext={handleNext}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+        imageIndex={selectedImageIndex !== null ? selectedImageIndex + 1 : null}
+        imageCount={paginatedImages.length}
       />
     </div>
   );
