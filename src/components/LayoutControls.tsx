@@ -7,7 +7,7 @@ import {
   LayoutGrid, 
   LayoutPanelLeft, 
   LayoutPanelTop, 
-  LayoutPanelBottom 
+  PanelBottom 
 } from 'lucide-react';
 
 export type LayoutType = 'horizontal' | 'vertical' | 'images-only' | 'annotations-only';
@@ -39,7 +39,7 @@ export function LayoutControls({ currentLayout, onLayoutChange }: LayoutControls
     },
     {
       type: 'annotations-only' as LayoutType,
-      icon: LayoutPanelBottom,
+      icon: PanelBottom,
       label: 'Annotations Only',
       description: 'Show only annotations'
     }
