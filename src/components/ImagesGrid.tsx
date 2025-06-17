@@ -1,3 +1,4 @@
+
 import React from "react";
 import { Trash2, Upload, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -85,16 +86,22 @@ export function ImagesGrid({
   annotations = [],
 }: ImagesGridProps) {
   const getGridColumns = (size: number) => {
-    if (size >= 400) return "grid-cols-1"; // Only one column, no responsive classes
+    // For very large sizes (500+), show only 1 column
+    if (size >= 500) return "grid-cols-1";
+    // For large sizes (400-499), show 1-2 columns
+    if (size >= 400) return "grid-cols-1 sm:grid-cols-2";
+    // For medium-large sizes (300-399), show 2-3 columns
+    if (size >= 300) return "grid-cols-2 sm:grid-cols-3";
+    // For medium sizes (240-299), show 3-4 columns
+    if (size >= 240) return "grid-cols-3 sm:grid-cols-4 md:grid-cols-5";
+    // For smaller sizes, use existing logic
     if (size <= 120) return "grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16";
     if (size <= 160) return "grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12";
     if (size <= 200) return "grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10";
-    if (size <= 240) return "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8";
-    return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6";
+    return "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8";
   };
 
-  // Only use grid-cols-1 if imageSize >= 400, otherwise use getGridColumns
-  const gridColumns = imageSize >= 400 ? "grid-cols-1" : getGridColumns(imageSize);
+  const gridColumns = getGridColumns(imageSize);
 
   if (!images.length) {
     return (

@@ -41,7 +41,7 @@ export function ImageDisplayControls({
         <Slider
           id="imageSize"
           min={100}
-          max={300}
+          max={600}
           step={20}
           value={[imageSize]}
           onValueChange={onImageSizeChange}
