@@ -1,3 +1,4 @@
+
 import { Link } from "react-router-dom";
 import { Pencil, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -103,55 +104,52 @@ export function ImagesTabContent({
     : [];
 
   return (
-    <div className="space-y-6">
-      {/* Images Section */}
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <h2 className="text-xl font-semibold">Images</h2>
-          <div className="flex gap-2">
-            <Button asChild>
-              <Link to={`/datasets/${id}/annotate`}>
-                <Pencil className="w-4 h-4 mr-2" />
-                Annotate
-              </Link>
-            </Button>
-            <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
-              <Upload className="w-4 h-4 mr-2" />
-              Upload Images
-            </Button>
-          </div>
+    <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-semibold">Images</h2>
+        <div className="flex gap-2">
+          <Button asChild>
+            <Link to={`/datasets/${id}/annotate`}>
+              <Pencil className="w-4 h-4 mr-2" />
+              Annotate
+            </Link>
+          </Button>
+          <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
+            <Upload className="w-4 h-4 mr-2" />
+            Upload Images
+          </Button>
         </div>
+      </div>
 
+      {/* Controls */}
+      <div className="mb-4">
         <ImageDisplayControls
           imagesPerPage={imagesPerPage}
           onImagesPerPageChange={handleImagesPerPageChange}
           imageSize={imageSize}
           onImageSizeChange={onImageSizeChange}
         />
+      </div>
 
+      {/* Images Grid - takes remaining space */}
+      <div className="flex-1 mb-4">
         <ImagesGrid
           images={paginatedImages}
           imageSize={imageSize}
           onOpenUploadDialog={onOpenUploadDialog}
           onDeleteImage={onDeleteImage}
           onImageClick={handleImageClick}
-          maxHeight="400px"
           annotations={annotations}
         />
+      </div>
 
+      {/* Pagination */}
+      <div className="mt-auto">
         <PaginationControls
           currentPage={currentPage}
           totalPages={totalPages}
           onPageChange={onPageChange}
-        />
-      </div>
-
-      {/* Annotations Section */}
-      <div className="border-t border-gray-800 pt-6">
-        <AnnotationsContent
-          id={id}
-          onImportAnnotations={onImportAnnotations}
-          className="min-h-[500px]"
         />
       </div>
 
