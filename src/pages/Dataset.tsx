@@ -6,12 +6,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Dataset as DatasetType, Image } from "@/types";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
-import { ImagesTabContent } from "@/components/ImagesTabContent";
-import { AnnotationsContent } from "@/components/AnnotationsContent";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileImage, Layers } from "lucide-react";
 import { AnnotationSample } from "@/utils/annotations";
+import { LayoutControls, LayoutType } from "@/components/LayoutControls";
+import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -26,10 +24,10 @@ export default function Dataset() {
   const [imageSize, setImageSize] = useState(160);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("images");
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
+  const [currentLayout, setCurrentLayout] = useState<LayoutType>('horizontal');
   
   // Calculate pagination values
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
@@ -219,57 +217,29 @@ export default function Dataset() {
           name={dataset?.name} 
         />
         
-        <Tabs 
-          value={activeTab} 
-          onValueChange={setActiveTab}
-          className="space-y-4"
-        >
-          <TabsList className="border-b w-full justify-start rounded-none bg-transparent p-0">
-            <TabsTrigger 
-              value="images" 
-              className="relative rounded-none border-b-2 border-b-transparent bg-transparent px-4 pb-3 pt-2 font-medium text-muted-foreground shadow-none transition-none data-[state=active]:border-b-primary data-[state=active]:text-foreground"
-            >
-              <FileImage className="mr-2 h-4 w-4" />
-              Images
-            </TabsTrigger>
-            <TabsTrigger 
-              value="annotations" 
-              className="relative rounded-none border-b-2 border-b-transparent bg-transparent px-4 pb-3 pt-2 font-medium text-muted-foreground shadow-none transition-none data-[state=active]:border-b-primary data-[state=active]:text-foreground"
-            >
-              <Layers className="mr-2 h-4 w-4" />
-              Annotations
-            </TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="images" className="mt-0 bg-transparent p-0">
-            <div className="rounded-lg border bg-card p-6">
-              <ImagesTabContent
-                id={id || ''}
-                images={images}
-                currentPage={currentPage}
-                imagesPerPage={imagesPerPage}
-                imageSize={imageSize}
-                onImagesPerPageChange={setImagesPerPage}
-                onImageSizeChange={(value) => setImageSize(value[0])}
-                onPageChange={setCurrentPage}
-                onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-                onDeleteImage={handleDeleteImage}
-                paginatedImages={paginatedImages}
-                totalPages={totalPages}
-                annotations={showAnnotations ? visibleAnnotations : []}
-              />
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="annotations" className="mt-0 bg-transparent p-0">
-            <div className="rounded-lg border bg-card p-6">
-              <AnnotationsContent 
-                id={id || ''} 
-                onShowAnnotationsChange={handleShowAnnotationsChange}
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
+        <LayoutControls 
+          currentLayout={currentLayout}
+          onLayoutChange={setCurrentLayout}
+        />
+        
+        <ResizableDatasetLayout
+          layout={currentLayout}
+          id={id || ''}
+          images={images}
+          currentPage={currentPage}
+          imagesPerPage={imagesPerPage}
+          imageSize={imageSize}
+          onImagesPerPageChange={setImagesPerPage}
+          onImageSizeChange={(value) => setImageSize(value[0])}
+          onPageChange={setCurrentPage}
+          onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+          onDeleteImage={handleDeleteImage}
+          paginatedImages={paginatedImages}
+          totalPages={totalPages}
+          annotations={showAnnotations ? visibleAnnotations : []}
+          onImportAnnotations={handleUploadImages}
+          onShowAnnotationsChange={handleShowAnnotationsChange}
+        />
 
         <ImageUploadDialog 
           open={isUploadDialogOpen}
