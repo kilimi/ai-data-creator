@@ -6,7 +6,6 @@ import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
 import { AnnotationSample } from "@/utils/annotations";
-import { AnnotationsContent } from "@/components/AnnotationsContent";
 import { ImageDetailModal } from "@/components/ImageDetailModal";
 import { useEffect, useState } from "react";
 
@@ -143,15 +142,6 @@ export function ImagesTabContent({
           currentPage={currentPage}
           totalPages={totalPages}
           onPageChange={onPageChange}
-        />
-      </div>
-
-      {/* Annotations Section */}
-      <div className="border-t border-gray-800 pt-6">
-        <AnnotationsContent
-          id={id}
-          onImportAnnotations={onImportAnnotations}
-          className="min-h-[500px]"
         />
       </div>
 
