@@ -113,9 +113,9 @@ export function ResizableDatasetLayout({
     );
   }
 
-  // Default horizontal layout
+  // Default horizontal layout - increased min-height for better height utilization
   return (
-    <ResizablePanelGroup direction="horizontal" className="min-h-[800px] rounded-lg border">
+    <ResizablePanelGroup direction="horizontal" className="min-h-[calc(100vh-200px)] h-[calc(100vh-200px)] rounded-lg border">
       <ResizablePanel defaultSize={60} minSize={30}>
         <div className="bg-card p-6 h-full">
           {renderImagesSection()}
