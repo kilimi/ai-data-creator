@@ -6,12 +6,14 @@ interface DatasetSettings {
   imagesPerPage: number;
   imageSize: number;
   layout: LayoutType;
+  sliderPosition: number; // Add slider position (0-100)
 }
 
 const DEFAULT_SETTINGS: DatasetSettings = {
   imagesPerPage: 20,
   imageSize: 160,
-  layout: 'horizontal'
+  layout: 'horizontal',
+  sliderPosition: 50 // Default 50/50 split
 };
 
 export function useDatasetSettings(datasetId: string) {
@@ -45,6 +47,7 @@ export function useDatasetSettings(datasetId: string) {
     settings,
     updateImagesPerPage: (value: number) => updateSettings({ imagesPerPage: value }),
     updateImageSize: (value: number) => updateSettings({ imageSize: value }),
-    updateLayout: (value: LayoutType) => updateSettings({ layout: value })
+    updateLayout: (value: LayoutType) => updateSettings({ layout: value }),
+    updateSliderPosition: (value: number) => updateSettings({ sliderPosition: value })
   };
 }

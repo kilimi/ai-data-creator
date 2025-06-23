@@ -14,8 +14,10 @@ interface ResizableDatasetLayoutProps {
   currentPage: number;
   imagesPerPage: number;
   imageSize: number;
+  sliderPosition: number;
   onImagesPerPageChange: (value: number) => void;
   onImageSizeChange: (value: number[]) => void;
+  onSliderPositionChange: (value: number) => void;
   onPageChange: (page: number) => void;
   onOpenUploadDialog: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
@@ -33,8 +35,10 @@ export function ResizableDatasetLayout({
   currentPage,
   imagesPerPage,
   imageSize,
+  sliderPosition,
   onImagesPerPageChange,
   onImageSizeChange,
+  onSliderPositionChange,
   onPageChange,
   onOpenUploadDialog,
   onDeleteImage,
@@ -95,8 +99,17 @@ export function ResizableDatasetLayout({
 
   if (layout === 'vertical') {
     return (
-      <ResizablePanelGroup direction="vertical" className="min-h-[800px] rounded-lg border">
-        <ResizablePanel defaultSize={50} minSize={20}>
+      <ResizablePanelGroup 
+        direction="vertical" 
+        className="min-h-[800px] rounded-lg border"
+        onLayout={(sizes) => {
+          // Save the first panel size as slider position
+          if (sizes[0] !== undefined) {
+            onSliderPositionChange(sizes[0]);
+          }
+        }}
+      >
+        <ResizablePanel defaultSize={sliderPosition} minSize={20}>
           <div className="bg-card p-6 h-full">
             {renderImagesSection()}
           </div>
@@ -104,7 +117,7 @@ export function ResizableDatasetLayout({
         
         <ResizableHandle withHandle />
         
-        <ResizablePanel defaultSize={50} minSize={20}>
+        <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
           <div className="bg-card p-6 h-full">
             {renderAnnotationsSection()}
           </div>
@@ -113,10 +126,19 @@ export function ResizableDatasetLayout({
     );
   }
 
-  // Default horizontal layout - increased min-height for better height utilization
+  // Default horizontal layout
   return (
-    <ResizablePanelGroup direction="horizontal" className="min-h-[calc(100vh-200px)] h-[calc(100vh-200px)] rounded-lg border">
-      <ResizablePanel defaultSize={60} minSize={30}>
+    <ResizablePanelGroup 
+      direction="horizontal" 
+      className="min-h-[calc(100vh-200px)] h-[calc(100vh-200px)] rounded-lg border"
+      onLayout={(sizes) => {
+        // Save the first panel size as slider position
+        if (sizes[0] !== undefined) {
+          onSliderPositionChange(sizes[0]);
+        }
+      }}
+    >
+      <ResizablePanel defaultSize={sliderPosition} minSize={30}>
         <div className="bg-card p-6 h-full">
           {renderImagesSection()}
         </div>
@@ -124,7 +146,7 @@ export function ResizableDatasetLayout({
       
       <ResizableHandle withHandle />
       
-      <ResizablePanel defaultSize={40} minSize={20}>
+      <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
         <div className="bg-card p-6 h-full">
           {renderAnnotationsSection()}
         </div>

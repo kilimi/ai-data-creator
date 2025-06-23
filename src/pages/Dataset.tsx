@@ -28,7 +28,7 @@ export default function Dataset() {
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
   
   // Use persistent settings hook
-  const { settings, updateImagesPerPage, updateImageSize, updateLayout } = useDatasetSettings(id || '');
+  const { settings, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(id || '');
   
   // Calculate pagination values using persistent settings
   const totalPages = Math.ceil((images?.length || 0) / settings.imagesPerPage);
@@ -230,8 +230,10 @@ export default function Dataset() {
           currentPage={currentPage}
           imagesPerPage={settings.imagesPerPage}
           imageSize={settings.imageSize}
+          sliderPosition={settings.sliderPosition}
           onImagesPerPageChange={updateImagesPerPage}
           onImageSizeChange={(value) => updateImageSize(value[0])}
+          onSliderPositionChange={updateSliderPosition}
           onPageChange={setCurrentPage}
           onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
           onDeleteImage={handleDeleteImage}
