@@ -27,8 +27,11 @@ export default function Dataset() {
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
   
-  // Use persistent settings hook
-  const { settings, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(id || '');
+  // Use persistent settings hook with better ID handling
+  const datasetId = id || '';
+  const { settings, isLoaded: settingsLoaded, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(datasetId);
+  
+  console.log('Dataset component render - ID:', id, 'Settings loaded:', settingsLoaded, 'Current settings:', settings);
   
   // Calculate pagination values using persistent settings
   const totalPages = Math.ceil((images?.length || 0) / settings.imagesPerPage);
