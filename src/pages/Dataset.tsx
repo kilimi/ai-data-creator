@@ -232,7 +232,7 @@ export default function Dataset() {
           imageSize={settings.imageSize}
           sliderPosition={settings.sliderPosition}
           onImagesPerPageChange={updateImagesPerPage}
-          onImageSizeChange={(value) => updateImageSize(value[0])}
+          onImageSizeChange={(value) => updateImageSize(Array.isArray(value) ? value[0] : value)}
           onSliderPositionChange={updateSliderPosition}
           onPageChange={setCurrentPage}
           onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
