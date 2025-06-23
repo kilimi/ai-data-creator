@@ -229,6 +229,11 @@ export default function Dataset() {
     updateImageSize(value[0]);
   };
 
+  if (!settingsLoaded) {
+    // Optionally show a loading spinner or nothing
+    return null;
+  }
+
   return (
     <div className="min-h-screen pb-16">
       <Navbar />
