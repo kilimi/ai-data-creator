@@ -10,6 +10,7 @@ import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 import { AnnotationSample } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
+import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
@@ -20,30 +21,30 @@ export default function Dataset() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
-  const [imagesPerPage, setImagesPerPage] = useState(20);
-  const [imageSize, setImageSize] = useState(160);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
-  const [currentLayout, setCurrentLayout] = useState<LayoutType>('horizontal');
   
-  // Calculate pagination values
-  const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
+  // Use persistent settings hook
+  const { settings, updateImagesPerPage, updateImageSize, updateLayout } = useDatasetSettings(id || '');
+  
+  // Calculate pagination values using persistent settings
+  const totalPages = Math.ceil((images?.length || 0) / settings.imagesPerPage);
   
   // Update currentPage when imagesPerPage changes
   useEffect(() => {
-    const newTotalPages = Math.ceil(images.length / imagesPerPage);
-    if (currentPage > newTotalPages) {
+    const newTotalPages = Math.ceil(images.length / settings.imagesPerPage);
+    if (currentPage > newTotalPages && newTotalPages > 0) {
       setCurrentPage(1);
     }
-  }, [imagesPerPage, images.length, currentPage]);
+  }, [settings.imagesPerPage, images.length, currentPage]);
 
-  // Calculate paginated images after state updates
+  // Calculate paginated images using persistent settings
   const paginatedImages = images.slice(
-    (currentPage - 1) * imagesPerPage,
-    currentPage * imagesPerPage
+    (currentPage - 1) * settings.imagesPerPage,
+    currentPage * settings.imagesPerPage
   );
 
   const fetchDataset = async () => {
@@ -218,19 +219,19 @@ export default function Dataset() {
         />
         
         <LayoutControls 
-          currentLayout={currentLayout}
-          onLayoutChange={setCurrentLayout}
+          currentLayout={settings.layout}
+          onLayoutChange={updateLayout}
         />
         
         <ResizableDatasetLayout
-          layout={currentLayout}
+          layout={settings.layout}
           id={id || ''}
           images={images}
           currentPage={currentPage}
-          imagesPerPage={imagesPerPage}
-          imageSize={imageSize}
-          onImagesPerPageChange={setImagesPerPage}
-          onImageSizeChange={(value) => setImageSize(value[0])}
+          imagesPerPage={settings.imagesPerPage}
+          imageSize={settings.imageSize}
+          onImagesPerPageChange={updateImagesPerPage}
+          onImageSizeChange={(value) => updateImageSize(value[0])}
           onPageChange={setCurrentPage}
           onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
           onDeleteImage={handleDeleteImage}
