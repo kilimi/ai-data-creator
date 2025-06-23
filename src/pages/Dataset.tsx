@@ -221,6 +221,11 @@ export default function Dataset() {
     }
   }, [selectedImageIndex]);
 
+  // Fix the image size change handler to properly handle the array format
+  const handleImageSizeChange = (value: number[]) => {
+    updateImageSize(value[0]);
+  };
+
   return (
     <div className="min-h-screen pb-16">
       <Navbar />
@@ -251,7 +256,7 @@ export default function Dataset() {
           imageSize={settings.imageSize}
           sliderPosition={settings.sliderPosition}
           onImagesPerPageChange={updateImagesPerPage}
-          onImageSizeChange={(value) => updateImageSize(Array.isArray(value) ? value[0] : value)}
+          onImageSizeChange={handleImageSizeChange}
           onSliderPositionChange={updateSliderPosition}
           onPageChange={setCurrentPage}
           onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
