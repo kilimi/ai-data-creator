@@ -1,4 +1,3 @@
-
 import { Link } from "react-router-dom";
 import { Pencil, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +7,7 @@ import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
 import { AnnotationSample } from "@/utils/annotations";
 import { ImageDetailModal } from "@/components/ImageDetailModal";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 interface ImagesTabContentProps {
   id: string;
@@ -26,6 +25,8 @@ interface ImagesTabContentProps {
   totalPages: number;
   annotations?: AnnotationSample[];
   onImportAnnotations?: (files: File[]) => void;
+  selectedImageIndex: number | null;
+  setSelectedImageIndex: (idx: number | null) => void;
 }
 
 export function ImagesTabContent({
@@ -43,33 +44,14 @@ export function ImagesTabContent({
   totalPages,
   annotations = [],
   onImportAnnotations,
+  selectedImageIndex,
+  setSelectedImageIndex,
 }: ImagesTabContentProps) {
-  // Use index for navigation
-  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-
-  // Reset to page 1 if current page is beyond total pages when imagesPerPage changes
-  useEffect(() => {
-    if (currentPage > totalPages && totalPages > 0) {
-      onPageChange(1);
-    }
-  }, [currentPage, totalPages, onPageChange]);
-
-  const handleImagesPerPageChange = (value: number) => {
-    // Calculate what the new total pages would be
-    const newTotalPages = Math.ceil(images.length / value);
-    
-    // If current page would be beyond the new total pages, reset to page 1
-    if (currentPage > newTotalPages && newTotalPages > 0) {
-      onPageChange(1);
-    }
-    
-    onImagesPerPageChange(value);
-  };
 
   // Open modal at clicked image index
   const handleImageClick = (image: Image) => {
-    const idx = paginatedImages.findIndex(img => img.id === image.id);
+    const idx = paginatedImages.findIndex((img) => img.id === image.id);
     if (idx !== -1) {
       setSelectedImageIndex(idx);
       setIsModalOpen(true);
@@ -98,8 +80,8 @@ export function ImagesTabContent({
 
   // Get current image and annotations
   const selectedImage = selectedImageIndex !== null ? paginatedImages[selectedImageIndex] : null;
-  const selectedImageAnnotations = selectedImage 
-    ? annotations.filter(anno => anno.imageId === selectedImage.id)
+  const selectedImageAnnotations = selectedImage
+    ? annotations.filter((anno) => anno.imageId === selectedImage.id)
     : [];
 
   return (
@@ -125,7 +107,7 @@ export function ImagesTabContent({
       <div className="mb-4">
         <ImageDisplayControls
           imagesPerPage={imagesPerPage}
-          onImagesPerPageChange={handleImagesPerPageChange}
+          onImagesPerPageChange={onImagesPerPageChange}
           imageSize={imageSize}
           onImageSizeChange={onImageSizeChange}
         />

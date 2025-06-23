@@ -202,6 +202,25 @@ export default function Dataset() {
     }
   };
 
+  // Add state and persistence for selected image index (annotation position)
+  const LS_ANNOTATION_POSITION_KEY = "imagesTab_selectedImageIndex";
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(() => {
+    const saved = localStorage.getItem(LS_ANNOTATION_POSITION_KEY);
+    if (saved !== null) {
+      const parsed = parseInt(saved, 10);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (selectedImageIndex !== null) {
+      localStorage.setItem(LS_ANNOTATION_POSITION_KEY, selectedImageIndex.toString());
+    } else {
+      localStorage.removeItem(LS_ANNOTATION_POSITION_KEY);
+    }
+  }, [selectedImageIndex]);
+
   return (
     <div className="min-h-screen pb-16">
       <Navbar />
@@ -242,6 +261,8 @@ export default function Dataset() {
           annotations={showAnnotations ? visibleAnnotations : []}
           onImportAnnotations={handleUploadImages}
           onShowAnnotationsChange={handleShowAnnotationsChange}
+          selectedImageIndex={selectedImageIndex}
+          setSelectedImageIndex={setSelectedImageIndex}
         />
 
         <ImageUploadDialog 

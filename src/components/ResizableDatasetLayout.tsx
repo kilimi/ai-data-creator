@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
@@ -26,6 +25,8 @@ interface ResizableDatasetLayoutProps {
   annotations?: AnnotationSample[];
   onImportAnnotations?: (files: File[]) => void;
   onShowAnnotationsChange?: (show: boolean, annotationId: string | null) => void;
+  selectedImageIndex: number | null;
+  setSelectedImageIndex: (idx: number | null) => void;
 }
 
 export function ResizableDatasetLayout({
@@ -47,6 +48,8 @@ export function ResizableDatasetLayout({
   annotations = [],
   onImportAnnotations,
   onShowAnnotationsChange,
+  selectedImageIndex,
+  setSelectedImageIndex,
 }: ResizableDatasetLayoutProps) {
   
   const renderImagesSection = () => (
@@ -66,6 +69,8 @@ export function ResizableDatasetLayout({
         totalPages={totalPages}
         annotations={annotations}
         onImportAnnotations={onImportAnnotations}
+        selectedImageIndex={selectedImageIndex}
+        setSelectedImageIndex={setSelectedImageIndex}
       />
     </div>
   );
