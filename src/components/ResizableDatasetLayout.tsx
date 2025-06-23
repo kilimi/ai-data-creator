@@ -106,7 +106,7 @@ export function ResizableDatasetLayout({
     return (
       <ResizablePanelGroup 
         direction="vertical" 
-        className="min-h-[800px] rounded-lg border"
+        className="rounded-lg border min-h-[80vh]"
         onLayout={(sizes) => {
           // Save the first panel size as slider position
           if (sizes[0] !== undefined) {
@@ -114,8 +114,8 @@ export function ResizableDatasetLayout({
           }
         }}
       >
-        <ResizablePanel defaultSize={sliderPosition} minSize={20}>
-          <div className="bg-card p-6 h-full">
+        <ResizablePanel defaultSize={sliderPosition} minSize={30}>
+          <div className="bg-card p-6 overflow-y-auto">
             {renderImagesSection()}
           </div>
         </ResizablePanel>
@@ -123,7 +123,7 @@ export function ResizableDatasetLayout({
         <ResizableHandle withHandle />
         
         <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-          <div className="bg-card p-6 h-full">
+          <div className="bg-card p-6 overflow-y-auto">
             {renderAnnotationsSection()}
           </div>
         </ResizablePanel>
@@ -135,7 +135,7 @@ export function ResizableDatasetLayout({
   return (
     <ResizablePanelGroup 
       direction="horizontal" 
-      className="min-h-[calc(100vh-200px)] h-[calc(100vh-200px)] rounded-lg border"
+      className="rounded-lg border min-h-[80vh]"
       onLayout={(sizes) => {
         // Save the first panel size as slider position
         if (sizes[0] !== undefined) {
@@ -143,8 +143,8 @@ export function ResizableDatasetLayout({
         }
       }}
     >
-      <ResizablePanel defaultSize={sliderPosition} minSize={30}>
-        <div className="bg-card p-6 h-full">
+      <ResizablePanel defaultSize={sliderPosition} minSize={20}>
+        <div className="bg-card p-6 overflow-y-auto">
           {renderImagesSection()}
         </div>
       </ResizablePanel>
@@ -152,7 +152,7 @@ export function ResizableDatasetLayout({
       <ResizableHandle withHandle />
       
       <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-        <div className="bg-card p-6 h-full">
+        <div className="bg-card p-6 overflow-y-auto">
           {renderAnnotationsSection()}
         </div>
       </ResizablePanel>

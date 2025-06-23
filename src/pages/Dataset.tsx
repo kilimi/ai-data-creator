@@ -235,49 +235,47 @@ export default function Dataset() {
   }
 
   return (
-    <div className="min-h-screen pb-16">
+    <div className="pb-16">
       <Navbar />
-      <main className="container max-w-7xl mx-auto px-4 pt-24">
+      <main className="container max-w-7xl mx-auto px-4 pt-24 flex flex-col min-h-screen">
         <DatasetBreadcrumb 
           projectId={projectId} 
           projectName={projectName} 
           datasetName={dataset?.name}
           isLoading={isLoading}
         />
-        
         <DatasetHeader 
           isLoading={isLoading} 
           name={dataset?.name} 
         />
-        
         <LayoutControls 
           currentLayout={settings.layout}
           onLayoutChange={updateLayout}
         />
-        
-        <ResizableDatasetLayout
-          layout={settings.layout}
-          id={id || ''}
-          images={images}
-          currentPage={currentPage}
-          imagesPerPage={settings.imagesPerPage}
-          imageSize={settings.imageSize}
-          sliderPosition={settings.sliderPosition}
-          onImagesPerPageChange={updateImagesPerPage}
-          onImageSizeChange={handleImageSizeChange}
-          onSliderPositionChange={updateSliderPosition}
-          onPageChange={setCurrentPage}
-          onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-          onDeleteImage={handleDeleteImage}
-          paginatedImages={paginatedImages}
-          totalPages={totalPages}
-          annotations={showAnnotations ? visibleAnnotations : []}
-          onImportAnnotations={handleUploadImages}
-          onShowAnnotationsChange={handleShowAnnotationsChange}
-          selectedImageIndex={selectedImageIndex}
-          setSelectedImageIndex={setSelectedImageIndex}
-        />
-
+        <div className="flex-1 flex flex-col">
+          <ResizableDatasetLayout
+            layout={settings.layout}
+            id={id || ''}
+            images={images}
+            currentPage={currentPage}
+            imagesPerPage={settings.imagesPerPage}
+            imageSize={settings.imageSize}
+            sliderPosition={settings.sliderPosition}
+            onImagesPerPageChange={updateImagesPerPage}
+            onImageSizeChange={handleImageSizeChange}
+            onSliderPositionChange={updateSliderPosition}
+            onPageChange={setCurrentPage}
+            onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+            onDeleteImage={handleDeleteImage}
+            paginatedImages={paginatedImages}
+            totalPages={totalPages}
+            annotations={showAnnotations ? visibleAnnotations : []}
+            onImportAnnotations={handleUploadImages}
+            onShowAnnotationsChange={handleShowAnnotationsChange}
+            selectedImageIndex={selectedImageIndex}
+            setSelectedImageIndex={setSelectedImageIndex}
+          />
+        </div>
         <ImageUploadDialog 
           open={isUploadDialogOpen}
           onOpenChange={setIsUploadDialogOpen}
