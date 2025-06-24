@@ -237,22 +237,24 @@ export default function Dataset() {
   return (
     <div className="pb-16">
       <Navbar />
-      <main className="container max-w-7xl mx-auto px-4 pt-24 flex flex-col min-h-screen">
-        <DatasetBreadcrumb 
-          projectId={projectId} 
-          projectName={projectName} 
-          datasetName={dataset?.name}
-          isLoading={isLoading}
-        />
-        <DatasetHeader 
-          isLoading={isLoading} 
-          name={dataset?.name} 
-        />
-        <LayoutControls 
-          currentLayout={settings.layout}
-          onLayoutChange={updateLayout}
-        />
-        <div className="flex-1 flex flex-col">
+      <main className="container max-w-full mx-auto px-6 pt-24 flex flex-col min-h-screen">
+        <div className="max-w-7xl mx-auto w-full">
+          <DatasetBreadcrumb 
+            projectId={projectId} 
+            projectName={projectName} 
+            datasetName={dataset?.name}
+            isLoading={isLoading}
+          />
+          <DatasetHeader 
+            isLoading={isLoading} 
+            name={dataset?.name} 
+          />
+          <LayoutControls 
+            currentLayout={settings.layout}
+            onLayoutChange={updateLayout}
+          />
+        </div>
+        <div className="flex-1 flex flex-col w-full">
           <ResizableDatasetLayout
             layout={settings.layout}
             id={id || ''}

@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
@@ -5,6 +6,7 @@ import { AnnotationsContent } from '@/components/AnnotationsContent';
 import { Image } from '@/types';
 import { AnnotationSample } from '@/utils/annotations';
 import { LayoutType } from './LayoutControls';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ResizableDatasetLayoutProps {
   layout: LayoutType;
@@ -53,42 +55,46 @@ export function ResizableDatasetLayout({
 }: ResizableDatasetLayoutProps) {
   
   const renderImagesSection = () => (
-    <div className="h-full">
-      <ImagesTabContent
-        id={id}
-        images={images}
-        currentPage={currentPage}
-        imagesPerPage={imagesPerPage}
-        imageSize={imageSize}
-        onImagesPerPageChange={onImagesPerPageChange}
-        onImageSizeChange={onImageSizeChange}
-        onPageChange={onPageChange}
-        onOpenUploadDialog={onOpenUploadDialog}
-        onDeleteImage={onDeleteImage}
-        paginatedImages={paginatedImages}
-        totalPages={totalPages}
-        annotations={annotations}
-        onImportAnnotations={onImportAnnotations}
-        selectedImageIndex={selectedImageIndex}
-        setSelectedImageIndex={setSelectedImageIndex}
-      />
-    </div>
+    <ScrollArea className="h-full">
+      <div className="p-6">
+        <ImagesTabContent
+          id={id}
+          images={images}
+          currentPage={currentPage}
+          imagesPerPage={imagesPerPage}
+          imageSize={imageSize}
+          onImagesPerPageChange={onImagesPerPageChange}
+          onImageSizeChange={onImageSizeChange}
+          onPageChange={onPageChange}
+          onOpenUploadDialog={onOpenUploadDialog}
+          onDeleteImage={onDeleteImage}
+          paginatedImages={paginatedImages}
+          totalPages={totalPages}
+          annotations={annotations}
+          onImportAnnotations={onImportAnnotations}
+          selectedImageIndex={selectedImageIndex}
+          setSelectedImageIndex={setSelectedImageIndex}
+        />
+      </div>
+    </ScrollArea>
   );
 
   const renderAnnotationsSection = () => (
-    <div className="h-full">
-      <AnnotationsContent
-        id={id}
-        onShowAnnotationsChange={onShowAnnotationsChange}
-        onImportAnnotations={onImportAnnotations}
-        className="h-full"
-      />
-    </div>
+    <ScrollArea className="h-full">
+      <div className="p-6">
+        <AnnotationsContent
+          id={id}
+          onShowAnnotationsChange={onShowAnnotationsChange}
+          onImportAnnotations={onImportAnnotations}
+          className="h-full"
+        />
+      </div>
+    </ScrollArea>
   );
 
   if (layout === 'images-only') {
     return (
-      <div className="rounded-lg border bg-card p-6 h-full">
+      <div className="rounded-lg border bg-card h-full w-full">
         {renderImagesSection()}
       </div>
     );
@@ -96,7 +102,7 @@ export function ResizableDatasetLayout({
 
   if (layout === 'annotations-only') {
     return (
-      <div className="rounded-lg border bg-card p-6 h-full">
+      <div className="rounded-lg border bg-card h-full w-full">
         {renderAnnotationsSection()}
       </div>
     );
@@ -106,7 +112,7 @@ export function ResizableDatasetLayout({
     return (
       <ResizablePanelGroup 
         direction="vertical" 
-        className="rounded-lg border min-h-[80vh]"
+        className="rounded-lg border min-h-[85vh] w-full"
         onLayout={(sizes) => {
           // Save the first panel size as slider position
           if (sizes[0] !== undefined) {
@@ -115,7 +121,7 @@ export function ResizableDatasetLayout({
         }}
       >
         <ResizablePanel defaultSize={sliderPosition} minSize={30}>
-          <div className="bg-card p-6 overflow-y-auto">
+          <div className="bg-card h-full">
             {renderImagesSection()}
           </div>
         </ResizablePanel>
@@ -123,7 +129,7 @@ export function ResizableDatasetLayout({
         <ResizableHandle withHandle />
         
         <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-          <div className="bg-card p-6 overflow-y-auto">
+          <div className="bg-card h-full">
             {renderAnnotationsSection()}
           </div>
         </ResizablePanel>
@@ -135,7 +141,7 @@ export function ResizableDatasetLayout({
   return (
     <ResizablePanelGroup 
       direction="horizontal" 
-      className="rounded-lg border min-h-[80vh]"
+      className="rounded-lg border min-h-[85vh] w-full"
       onLayout={(sizes) => {
         // Save the first panel size as slider position
         if (sizes[0] !== undefined) {
@@ -144,7 +150,7 @@ export function ResizableDatasetLayout({
       }}
     >
       <ResizablePanel defaultSize={sliderPosition} minSize={20}>
-        <div className="bg-card p-6 overflow-y-auto">
+        <div className="bg-card h-full">
           {renderImagesSection()}
         </div>
       </ResizablePanel>
@@ -152,7 +158,7 @@ export function ResizableDatasetLayout({
       <ResizableHandle withHandle />
       
       <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-        <div className="bg-card p-6 overflow-y-auto">
+        <div className="bg-card h-full">
           {renderAnnotationsSection()}
         </div>
       </ResizablePanel>
