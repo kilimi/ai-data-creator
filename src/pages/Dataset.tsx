@@ -26,6 +26,7 @@ export default function Dataset() {
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
+  const [importedAnnotations, setImportedAnnotations] = useState<AnnotationSample[]>([]);
   
   // Use persistent settings hook with better ID handling
   const datasetId = id || '';
@@ -162,45 +163,94 @@ export default function Dataset() {
     }
   };
 
-  // Add function to handle annotation visibility changes
+  // Updated function to handle annotation imports
+  const handleImportAnnotations = async (files: File[]) => {
+    if (!api || !id) return;
+
+    try {
+      const allImportedAnnotations: AnnotationSample[] = [];
+      
+      for (const file of files) {
+        console.log(`Importing annotation file: ${file.name}`);
+        
+        // Process the COCO file to get annotation data
+        const { processCOCOAnnotations } = await import('@/utils/annotations');
+        const result = await processCOCOAnnotations(file, id);
+        
+        // Add to local state for immediate display
+        allImportedAnnotations.push(...result.samples);
+        
+        // Also try to import via API
+        const apiResult = await api.importAnnotations(id, file);
+        
+        if (apiResult.success && apiResult.data) {
+          const { imported, skipped, message } = apiResult.data;
+          
+          toast({
+            title: "Annotations imported",
+            description: message || `Imported ${imported} annotations, skipped ${skipped}`,
+          });
+        } else {
+          throw new Error(apiResult.error || 'Failed to import annotations');
+        }
+      }
+      
+      // Update local state with imported annotations
+      setImportedAnnotations(prev => [...prev, ...allImportedAnnotations]);
+      
+    } catch (error) {
+      console.error("Error importing annotations:", error);
+      toast({
+        variant: "destructive",
+        title: "Import failed",
+        description: error instanceof Error ? error.message : "There was an error importing the annotation files.",
+      });
+    }
+  };
+
+  // Updated function to handle annotation visibility changes
   const handleShowAnnotationsChange = (show: boolean, annotationId: string | null) => {
     setShowAnnotations(show);
     setActiveAnnotationId(annotationId);
     
     if (show && annotationId) {
-      // Create some mock annotation samples for demonstration
-      const mockAnnotations: AnnotationSample[] = [];
-      
-      // Generate annotations for the currently visible images
-      for (let image of paginatedImages) {
-        // Add 1-3 random annotations per image
-        const annotationCount = Math.floor(Math.random() * 3) + 1;
+      // Use imported annotations if available, otherwise generate mock data
+      if (importedAnnotations.length > 0) {
+        const filteredAnnotations = importedAnnotations.filter(anno => 
+          paginatedImages.some(img => img.id === anno.imageId)
+        );
+        setVisibleAnnotations(filteredAnnotations);
+      } else {
+        // Generate mock annotations for demonstration
+        const mockAnnotations: AnnotationSample[] = [];
         
-        for (let i = 0; i < annotationCount; i++) {
-          const classes = ["Car", "Person", "Traffic Light", "Bicycle", "Stop Sign"];
-          const colors = ["#3498db", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6"];
-          const classIndex = Math.floor(Math.random() * classes.length);
+        for (let image of paginatedImages) {
+          const annotationCount = Math.floor(Math.random() * 3) + 1;
           
-          // Create annotation with random position and size
-          mockAnnotations.push({
-            id: `${image.id}-anno-${i}`,
-            imageId: image.id,
-            className: classes[classIndex],
-            confidence: Math.random() * 0.5 + 0.5,
-            bbox: [
-              Math.random() * 0.6, // x
-              Math.random() * 0.6, // y
-              Math.random() * 0.3 + 0.1, // width
-              Math.random() * 0.3 + 0.1  // height
-            ],
-            color: colors[classIndex]
-          });
+          for (let i = 0; i < annotationCount; i++) {
+            const classes = ["Car", "Person", "Traffic Light", "Bicycle", "Stop Sign"];
+            const colors = ["#3498db", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6"];
+            const classIndex = Math.floor(Math.random() * classes.length);
+            
+            mockAnnotations.push({
+              id: `${image.id}-anno-${i}`,
+              imageId: image.id,
+              className: classes[classIndex],
+              confidence: Math.random() * 0.5 + 0.5,
+              bbox: [
+                Math.random() * 0.6,
+                Math.random() * 0.6,
+                Math.random() * 0.3 + 0.1,
+                Math.random() * 0.3 + 0.1
+              ],
+              color: colors[classIndex]
+            });
+          }
         }
+        
+        setVisibleAnnotations(mockAnnotations);
       }
-      
-      setVisibleAnnotations(mockAnnotations);
     } else {
-      // Clear annotations when turned off
       setVisibleAnnotations([]);
     }
   };
@@ -230,7 +280,6 @@ export default function Dataset() {
   };
 
   if (!settingsLoaded) {
-    // Optionally show a loading spinner or nothing
     return null;
   }
 
@@ -272,7 +321,7 @@ export default function Dataset() {
             paginatedImages={paginatedImages}
             totalPages={totalPages}
             annotations={showAnnotations ? visibleAnnotations : []}
-            onImportAnnotations={handleUploadImages}
+            onImportAnnotations={handleImportAnnotations}
             onShowAnnotationsChange={handleShowAnnotationsChange}
             selectedImageIndex={selectedImageIndex}
             setSelectedImageIndex={setSelectedImageIndex}

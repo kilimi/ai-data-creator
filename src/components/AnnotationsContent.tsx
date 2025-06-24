@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,8 +16,10 @@ import {
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
-import { AnnotationSample } from "@/utils/annotations";
+import { AnnotationSample, processCOCOAnnotations } from "@/utils/annotations";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
+import { useApi } from "@/hooks/use-api";
+import { useToast } from "@/hooks/use-toast";
 
 interface AnnotationFile {
   id: string;
@@ -24,9 +27,11 @@ interface AnnotationFile {
   date: string;
   format: string;
   classCount: number;
-  imageCount: number; // Total images referenced in annotation
-  matchedImageCount: number; // Images that exist in the dataset
-  datasetId: string; // Add datasetId to link annotations with dataset
+  imageCount: number;
+  matchedImageCount: number;
+  datasetId: string;
+  classStats?: { className: string; count: number; color: string }[];
+  samples?: AnnotationSample[];
 }
 
 interface AnnotationsContentProps {
@@ -46,80 +51,34 @@ export function AnnotationsContent({
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const { api } = useApi();
+  const { toast } = useToast();
 
   // Fetch annotations for this specific dataset on component mount
   useEffect(() => {
-    // In a real application, this would be an API call to fetch annotations for this dataset
-    // For now, we'll use mock data filtered by dataset ID
-    const mockAnnotationFiles = [
-      {
-        id: "ann-001",
-        name: "coco_annotations_v1.json",
-        date: "2025-05-10",
-        format: "COCO",
-        classCount: 3,
-        imageCount: 24,
-        matchedImageCount: 18, // 18 of 24 images are uploaded
-        datasetId: "1" // This matches our dataset ID
-      },
-      {
-        id: "ann-002",
-        name: "yolo_dataset.yaml",
-        date: "2025-05-12",
-        format: "YOLO",
-        classCount: 5,
-        imageCount: 42,
-        matchedImageCount: 12, // 12 of 42 images are uploaded
-        datasetId: "2" // This is for dataset 2
-      },
-      {
-        id: "ann-003",
-        name: "pascal_voc_annotations.xml",
-        date: "2025-05-13",
-        format: "VOC",
-        classCount: 2,
-        imageCount: 16,
-        matchedImageCount: 8, // 8 of 16 images are uploaded
-        datasetId: "1" // This matches our dataset ID
+    // Load existing annotations from localStorage for demo purposes
+    const savedAnnotations = localStorage.getItem(`annotations_${id}`);
+    if (savedAnnotations) {
+      try {
+        const parsed = JSON.parse(savedAnnotations);
+        setAnnotationFiles(parsed);
+      } catch (error) {
+        console.error('Error parsing saved annotations:', error);
       }
-    ];
-    
-    // Filter annotations to only show those for this dataset
-    const datasetAnnotations = mockAnnotationFiles.filter(file => file.datasetId === id);
-    setAnnotationFiles(datasetAnnotations);
+    }
   }, [id]);
 
-  // Mock data for class statistics
-  const mockClassStats = [
-    {
-      className: "Car",
-      count: 245,
-      color: "#3498db"
-    },
-    {
-      className: "Person",
-      count: 189,
-      color: "#e74c3c"
-    },
-    {
-      className: "Traffic Light",
-      count: 67,
-      color: "#2ecc71"
-    },
-    {
-      className: "Bicycle",
-      count: 45,
-      color: "#f39c12"
-    },
-    {
-      className: "Stop Sign",
-      count: 32,
-      color: "#9b59b6"
+  // Save annotations to localStorage whenever they change
+  useEffect(() => {
+    if (annotationFiles.length > 0) {
+      localStorage.setItem(`annotations_${id}`, JSON.stringify(annotationFiles));
     }
-  ];
+  }, [annotationFiles, id]);
 
-  const handleAnnotationClick = (id: string) => {
-    const newSelectedAnnotation = id === selectedAnnotation ? null : id;
+  const handleAnnotationClick = (annotationId: string) => {
+    const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
     setSelectedAnnotation(newSelectedAnnotation);
     
     // When deselecting an annotation, also turn off the annotations display
@@ -134,20 +93,33 @@ export function AnnotationsContent({
     }
   };
 
-  const handleDeleteAnnotation = (id: string, e: React.MouseEvent) => {
+  const handleDeleteAnnotation = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log(`Delete annotation: ${id}`);
-    // Implement actual delete functionality here
+    
+    setAnnotationFiles(prev => prev.filter(file => file.id !== annotationId));
+    
+    if (selectedAnnotation === annotationId) {
+      setSelectedAnnotation(null);
+      if (showAnnotations && onShowAnnotationsChange) {
+        setShowAnnotations(false);
+        onShowAnnotationsChange(false, null);
+      }
+    }
+    
+    toast({
+      title: "Annotation deleted",
+      description: "Annotation file has been removed.",
+    });
   };
 
-  const handleEditAnnotation = (id: string, e: React.MouseEvent) => {
+  const handleEditAnnotation = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log(`Edit annotation: ${id}`);
+    console.log(`Edit annotation: ${annotationId}`);
     // Implement actual edit functionality here
   };
 
   const toggleAnnotationVisibility = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent triggering row click handler
+    e.stopPropagation();
     const newShowAnnotations = !showAnnotations;
     setShowAnnotations(newShowAnnotations);
     
@@ -160,12 +132,66 @@ export function AnnotationsContent({
     setShowUploadDialog(true);
   };
 
-  const handleFilesSelected = (files: File[]) => {
-    if (onImportAnnotations) {
-      onImportAnnotations(files);
+  const handleFilesSelected = async (files: File[]) => {
+    setIsLoading(true);
+    
+    try {
+      for (const file of files) {
+        // Process the COCO annotation file
+        const result = await processCOCOAnnotations(file, id);
+        
+        // Create annotation file record
+        const annotationFile: AnnotationFile = {
+          id: Math.random().toString(36).substring(2, 11),
+          name: file.name,
+          date: new Date().toISOString().split('T')[0],
+          format: "COCO",
+          classCount: result.stats.length,
+          imageCount: result.totalImageCount,
+          matchedImageCount: result.matchedImageCount,
+          datasetId: id,
+          classStats: result.stats,
+          samples: result.samples
+        };
+        
+        setAnnotationFiles(prev => [...prev, annotationFile]);
+        
+        // Also try to import via API if available
+        if (api) {
+          try {
+            const apiResult = await api.importAnnotations(id, file);
+            if (apiResult.success) {
+              console.log('Annotations imported to backend:', apiResult.data);
+            }
+          } catch (error) {
+            console.error('Backend import failed:', error);
+          }
+        }
+      }
+      
+      toast({
+        title: "Annotations imported",
+        description: `Successfully imported ${files.length} annotation file(s).`,
+      });
+      
+      // Also call the parent handler if provided
+      if (onImportAnnotations) {
+        onImportAnnotations(files);
+      }
+    } catch (error) {
+      console.error('Error importing annotations:', error);
+      toast({
+        variant: "destructive",
+        title: "Import failed",
+        description: "There was an error importing the annotation files.",
+      });
+    } finally {
+      setIsLoading(false);
+      setShowUploadDialog(false);
     }
-    setShowUploadDialog(false);
   };
+
+  const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
   return (
     <div className={`h-full ${className}`}>
@@ -181,9 +207,10 @@ export function AnnotationsContent({
             variant="outline" 
             className="border-gray-700 bg-gray-800 hover:bg-gray-700"
             onClick={handleImportClick}
+            disabled={isLoading}
           >
             <Upload className="w-4 h-4 mr-2" />
-            Import Annotations
+            {isLoading ? "Importing..." : "Import Annotations"}
           </Button>
         </div>
       </div>
@@ -291,8 +318,8 @@ export function AnnotationsContent({
               <h3 className="font-medium">Class Distribution</h3>
             </div>
             <div className="p-4">
-              {selectedAnnotation ? (
-                <ClassStatistics statistics={mockClassStats} />
+              {selectedAnnotationData ? (
+                <ClassStatistics statistics={selectedAnnotationData.classStats || []} />
               ) : (
                 <div className="h-[340px] flex flex-col items-center justify-center text-center p-4">
                   <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
