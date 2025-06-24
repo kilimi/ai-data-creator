@@ -1,5 +1,4 @@
 
-
 export interface AnnotationSample {
   id?: string;
   imageId: string;
@@ -28,8 +27,20 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         const jsonString = event.target?.result as string;
         const coco = JSON.parse(jsonString);
 
+        // Validate COCO format structure
+        if (!coco.images || !Array.isArray(coco.images)) {
+          throw new Error('Invalid COCO format: missing or invalid "images" field');
+        }
+
+        if (!coco.annotations || !Array.isArray(coco.annotations)) {
+          throw new Error('Invalid COCO format: missing or invalid "annotations" field');
+        }
+
+        // Handle missing or invalid categories
+        const categories = coco.categories && Array.isArray(coco.categories) ? coco.categories : [];
+        
         const categoryColors: { [key: string]: string } = {};
-        const categories = coco.categories.map((cat: any, index: number) => {
+        const processedCategories = categories.map((cat: any, index: number) => {
           const color = `#${((index + 1) * 5592405).toString(16).slice(0, 6)}`; // Generate distinct colors
           categoryColors[cat.id] = color;
           return { id: cat.id, name: cat.name, color: color };
@@ -42,18 +53,27 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
 
         const classCounts: { [key: string]: number } = {};
         const annotationSamples: AnnotationSample[] = coco.annotations.map((anno: any) => {
-          const category = categories.find(cat => cat.id === anno.category_id);
-          const className = category ? category.name : 'unknown';
+          const category = processedCategories.find(cat => cat.id === anno.category_id);
+          const className = category ? category.name : `category_${anno.category_id || 'unknown'}`;
           const color = category ? category.color : '#808080'; // Default color
 
           classCounts[className] = (classCounts[className] || 0) + 1;
 
-          const bbox = anno.bbox ? [
-            anno.bbox[0] / coco.images[0].width,
-            anno.bbox[1] / coco.images[0].height,
-            anno.bbox[2] / coco.images[0].width,
-            anno.bbox[3] / coco.images[0].height
-          ] : [0, 0, 0, 0];
+          // Handle missing bbox or invalid image dimensions
+          let bbox = [0, 0, 0, 0];
+          if (anno.bbox && Array.isArray(anno.bbox) && anno.bbox.length === 4) {
+            // Find the corresponding image to get dimensions
+            const imageInfo = coco.images.find((img: any) => img.id === anno.image_id);
+            const imageWidth = imageInfo?.width || 1;
+            const imageHeight = imageInfo?.height || 1;
+            
+            bbox = [
+              anno.bbox[0] / imageWidth,
+              anno.bbox[1] / imageHeight,
+              anno.bbox[2] / imageWidth,
+              anno.bbox[3] / imageHeight
+            ];
+          }
 
           const segmentation = anno.segmentation ? [anno.segmentation] : undefined;
 
@@ -69,7 +89,7 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         });
 
         const stats = Object.keys(classCounts).map(className => {
-          const category = categories.find(cat => cat.name === className);
+          const category = processedCategories.find(cat => cat.name === className);
           return {
             className: className,
             count: classCounts[className],
@@ -89,7 +109,7 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         });
 
       } catch (error) {
-        reject(error);
+        reject(new Error(`Failed to process COCO file: ${error instanceof Error ? error.message : 'Unknown error'}`));
       }
     };
 

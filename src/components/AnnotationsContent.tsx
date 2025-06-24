@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ interface AnnotationFile {
   datasetId: string;
   classStats?: { className: string; count: number; color: string }[];
   samples?: AnnotationSample[];
+  isVisible?: boolean; // Add visibility flag
 }
 
 interface AnnotationsContentProps {
@@ -47,7 +49,7 @@ export function AnnotationsContent({
   onImportAnnotations 
 }: AnnotationsContentProps) {
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
-  const [showAnnotations, setShowAnnotations] = useState(false);
+  const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -79,16 +81,32 @@ export function AnnotationsContent({
   const handleAnnotationClick = (annotationId: string) => {
     const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
     setSelectedAnnotation(newSelectedAnnotation);
+  };
+
+  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     
-    // When deselecting an annotation, also turn off the annotations display
-    if (newSelectedAnnotation === null && showAnnotations) {
-      setShowAnnotations(false);
-      if (onShowAnnotationsChange) {
-        onShowAnnotationsChange(false, null);
-      }
-    } else if (showAnnotations && onShowAnnotationsChange) {
-      // When selecting a new annotation with visibility on, update the visibility
-      onShowAnnotationsChange(true, newSelectedAnnotation);
+    const newVisibleAnnotations = new Set(visibleAnnotations);
+    
+    if (visibleAnnotations.has(annotationId)) {
+      newVisibleAnnotations.delete(annotationId);
+    } else {
+      newVisibleAnnotations.add(annotationId);
+    }
+    
+    setVisibleAnnotations(newVisibleAnnotations);
+    
+    // Update the annotation files to mark visibility
+    setAnnotationFiles(prev => prev.map(file => 
+      file.id === annotationId 
+        ? { ...file, isVisible: newVisibleAnnotations.has(annotationId) }
+        : file
+    ));
+    
+    // Notify parent component about visibility changes
+    if (onShowAnnotationsChange) {
+      const hasVisibleAnnotations = newVisibleAnnotations.size > 0;
+      onShowAnnotationsChange(hasVisibleAnnotations, hasVisibleAnnotations ? Array.from(newVisibleAnnotations)[0] : null);
     }
   };
 
@@ -97,12 +115,19 @@ export function AnnotationsContent({
     
     setAnnotationFiles(prev => prev.filter(file => file.id !== annotationId));
     
+    // Remove from visible annotations if it was visible
+    const newVisibleAnnotations = new Set(visibleAnnotations);
+    newVisibleAnnotations.delete(annotationId);
+    setVisibleAnnotations(newVisibleAnnotations);
+    
     if (selectedAnnotation === annotationId) {
       setSelectedAnnotation(null);
-      if (showAnnotations && onShowAnnotationsChange) {
-        setShowAnnotations(false);
-        onShowAnnotationsChange(false, null);
-      }
+    }
+    
+    // Update parent component if needed
+    if (onShowAnnotationsChange) {
+      const hasVisibleAnnotations = newVisibleAnnotations.size > 0;
+      onShowAnnotationsChange(hasVisibleAnnotations, hasVisibleAnnotations ? Array.from(newVisibleAnnotations)[0] : null);
     }
     
     toast({
@@ -115,16 +140,6 @@ export function AnnotationsContent({
     e.stopPropagation();
     console.log(`Edit annotation: ${annotationId}`);
     // Implement actual edit functionality here
-  };
-
-  const toggleAnnotationVisibility = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newShowAnnotations = !showAnnotations;
-    setShowAnnotations(newShowAnnotations);
-    
-    if (onShowAnnotationsChange) {
-      onShowAnnotationsChange(newShowAnnotations, selectedAnnotation);
-    }
   };
 
   const handleImportClick = () => {
@@ -161,7 +176,8 @@ export function AnnotationsContent({
             matchedImageCount: result.matchedImageCount,
             datasetId: id,
             classStats: result.stats,
-            samples: result.samples
+            samples: result.samples,
+            isVisible: false // Default to not visible
           };
           
           setAnnotationFiles(prev => [...prev, annotationFile]);
@@ -240,7 +256,7 @@ export function AnnotationsContent({
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
           <p className="text-sm text-muted-foreground">
-            {annotationFiles.length} annotation files
+            {annotationFiles.length} annotation files • {visibleAnnotations.size} visible on images
           </p>
         </div>
         <div className="flex gap-2">
@@ -261,18 +277,8 @@ export function AnnotationsContent({
           <Card className="h-full bg-gray-900/50 border-gray-700 rounded-none">
             <div className="p-4 border-b border-gray-700 flex justify-between items-center">
               <h3 className="font-medium">Annotation Files</h3>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-400">Show on Images</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-8 w-8 ${showAnnotations ? 'text-blue-400' : 'text-gray-500'}`}
-                  onClick={toggleAnnotationVisibility}
-                  disabled={!selectedAnnotation}
-                  title={showAnnotations ? "Hide annotations" : "Show annotations"}
-                >
-                  {showAnnotations ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                </Button>
+              <div className="text-sm text-gray-400">
+                Show on Images
               </div>
             </div>
             <ScrollArea className="h-[calc(100%-53px)]">
@@ -282,6 +288,7 @@ export function AnnotationsContent({
                     <TableHead>Name</TableHead>
                     <TableHead>Format</TableHead>
                     <TableHead>Images</TableHead>
+                    <TableHead className="text-center">Visible</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -322,6 +329,17 @@ export function AnnotationsContent({
                             </div>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
+                          onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
+                          title={visibleAnnotations.has(file.id) ? "Hide annotations" : "Show annotations"}
+                        >
+                          {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                        </Button>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex gap-2 justify-end">
