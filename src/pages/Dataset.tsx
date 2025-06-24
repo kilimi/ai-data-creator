@@ -163,40 +163,77 @@ export default function Dataset() {
     }
   };
 
-  // Updated function to handle annotation imports
+  // Updated function to handle annotation imports with better error handling
   const handleImportAnnotations = async (files: File[]) => {
     if (!api || !id) return;
 
     try {
+      const successfulImports: string[] = [];
+      const failedImports: Array<{ fileName: string; error: string }> = [];
       const allImportedAnnotations: AnnotationSample[] = [];
       
       for (const file of files) {
-        console.log(`Importing annotation file: ${file.name}`);
-        
-        // Process the COCO file to get annotation data
-        const { processCOCOAnnotations } = await import('@/utils/annotations');
-        const result = await processCOCOAnnotations(file, id);
-        
-        // Add to local state for immediate display
-        allImportedAnnotations.push(...result.samples);
-        
-        // Also try to import via API
-        const apiResult = await api.importAnnotations(id, file);
-        
-        if (apiResult.success && apiResult.data) {
-          const { imported, skipped, message } = apiResult.data;
+        try {
+          console.log(`Importing annotation file: ${file.name}`);
           
-          toast({
-            title: "Annotations imported",
-            description: message || `Imported ${imported} annotations, skipped ${skipped}`,
+          // Validate file type
+          if (!file.name.toLowerCase().endsWith('.json')) {
+            throw new Error('Only JSON files are supported for COCO annotations');
+          }
+          
+          // Process the COCO file to get annotation data
+          const { processCOCOAnnotations } = await import('@/utils/annotations');
+          const result = await processCOCOAnnotations(file, id);
+          
+          // Add to local state for immediate display
+          allImportedAnnotations.push(...result.samples);
+          
+          // Also try to import via API
+          const apiResult = await api.importAnnotations(id, file);
+          
+          if (apiResult.success && apiResult.data) {
+            const { imported, skipped, message } = apiResult.data;
+            successfulImports.push(file.name);
+            console.log(`API import successful for ${file.name}: imported ${imported}, skipped ${skipped}`);
+          } else {
+            throw new Error(apiResult.error || 'Failed to import annotations via API');
+          }
+          
+        } catch (fileError) {
+          console.error(`Error importing file ${file.name}:`, fileError);
+          failedImports.push({
+            fileName: file.name,
+            error: fileError instanceof Error ? fileError.message : 'Unknown error occurred'
           });
-        } else {
-          throw new Error(apiResult.error || 'Failed to import annotations');
         }
       }
       
-      // Update local state with imported annotations
-      setImportedAnnotations(prev => [...prev, ...allImportedAnnotations]);
+      // Update local state with successfully imported annotations
+      if (allImportedAnnotations.length > 0) {
+        setImportedAnnotations(prev => [...prev, ...allImportedAnnotations]);
+      }
+      
+      // Show appropriate success/error messages
+      if (successfulImports.length > 0) {
+        toast({
+          title: "Annotations imported",
+          description: `Successfully imported ${successfulImports.length} annotation file(s): ${successfulImports.join(', ')}`,
+        });
+      }
+      
+      if (failedImports.length > 0) {
+        const errorDetails = failedImports.map(fail => `${fail.fileName}: ${fail.error}`).join('\n');
+        toast({
+          variant: "destructive",
+          title: "Import errors",
+          description: `Failed to import ${failedImports.length} file(s):\n${errorDetails}`,
+        });
+      }
+      
+      if (successfulImports.length === 0 && failedImports.length > 0) {
+        // All imports failed
+        throw new Error(`All ${failedImports.length} file(s) failed to import`);
+      }
       
     } catch (error) {
       console.error("Error importing annotations:", error);

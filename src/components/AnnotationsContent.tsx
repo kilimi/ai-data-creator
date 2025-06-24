@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -136,54 +135,96 @@ export function AnnotationsContent({
     setIsLoading(true);
     
     try {
+      const successfulImports: string[] = [];
+      const failedImports: Array<{ fileName: string; error: string }> = [];
+      
       for (const file of files) {
-        // Process the COCO annotation file
-        const result = await processCOCOAnnotations(file, id);
-        
-        // Create annotation file record
-        const annotationFile: AnnotationFile = {
-          id: Math.random().toString(36).substring(2, 11),
-          name: file.name,
-          date: new Date().toISOString().split('T')[0],
-          format: "COCO",
-          classCount: result.stats.length,
-          imageCount: result.totalImageCount,
-          matchedImageCount: result.matchedImageCount,
-          datasetId: id,
-          classStats: result.stats,
-          samples: result.samples
-        };
-        
-        setAnnotationFiles(prev => [...prev, annotationFile]);
-        
-        // Also try to import via API if available
-        if (api) {
-          try {
-            const apiResult = await api.importAnnotations(id, file);
-            if (apiResult.success) {
-              console.log('Annotations imported to backend:', apiResult.data);
-            }
-          } catch (error) {
-            console.error('Backend import failed:', error);
+        try {
+          console.log(`Processing annotation file: ${file.name}`);
+          
+          // Validate file type
+          if (!file.name.toLowerCase().endsWith('.json')) {
+            throw new Error('Only JSON files are supported for COCO annotations');
           }
+          
+          // Process the COCO annotation file
+          const result = await processCOCOAnnotations(file, id);
+          
+          // Create annotation file record
+          const annotationFile: AnnotationFile = {
+            id: Math.random().toString(36).substring(2, 11),
+            name: file.name,
+            date: new Date().toISOString().split('T')[0],
+            format: "COCO",
+            classCount: result.stats.length,
+            imageCount: result.totalImageCount,
+            matchedImageCount: result.matchedImageCount,
+            datasetId: id,
+            classStats: result.stats,
+            samples: result.samples
+          };
+          
+          setAnnotationFiles(prev => [...prev, annotationFile]);
+          
+          // Also try to import via API if available
+          if (api) {
+            try {
+              const apiResult = await api.importAnnotations(id, file);
+              if (apiResult.success) {
+                console.log('Annotations imported to backend:', apiResult.data);
+              } else {
+                console.warn('Backend import failed:', apiResult.error);
+              }
+            } catch (apiError) {
+              console.error('Backend import failed:', apiError);
+              // Don't fail the whole process if backend fails
+            }
+          }
+          
+          successfulImports.push(file.name);
+          
+        } catch (fileError) {
+          console.error(`Error processing file ${file.name}:`, fileError);
+          failedImports.push({
+            fileName: file.name,
+            error: fileError instanceof Error ? fileError.message : 'Unknown error occurred'
+          });
         }
       }
       
-      toast({
-        title: "Annotations imported",
-        description: `Successfully imported ${files.length} annotation file(s).`,
-      });
-      
-      // Also call the parent handler if provided
-      if (onImportAnnotations) {
-        onImportAnnotations(files);
+      // Show appropriate success/error messages
+      if (successfulImports.length > 0) {
+        toast({
+          title: "Annotations imported",
+          description: `Successfully imported ${successfulImports.length} annotation file(s): ${successfulImports.join(', ')}`,
+        });
+        
+        // Also call the parent handler if provided
+        if (onImportAnnotations) {
+          onImportAnnotations(files.filter(f => successfulImports.includes(f.name)));
+        }
       }
+      
+      if (failedImports.length > 0) {
+        const errorDetails = failedImports.map(fail => `${fail.fileName}: ${fail.error}`).join('\n');
+        toast({
+          variant: "destructive",
+          title: "Import errors",
+          description: `Failed to import ${failedImports.length} file(s):\n${errorDetails}`,
+        });
+      }
+      
+      if (successfulImports.length === 0 && failedImports.length > 0) {
+        // All imports failed
+        throw new Error(`All ${failedImports.length} file(s) failed to import`);
+      }
+      
     } catch (error) {
       console.error('Error importing annotations:', error);
       toast({
         variant: "destructive",
         title: "Import failed",
-        description: "There was an error importing the annotation files.",
+        description: error instanceof Error ? error.message : "There was an error importing the annotation files.",
       });
     } finally {
       setIsLoading(false);
