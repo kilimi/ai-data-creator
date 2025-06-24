@@ -11,6 +11,37 @@ export interface AnnotationSample {
   color?: string;             // Optional color for display
 }
 
+export interface AnnotationFile {
+  id: string;
+  name: string;
+  date: string;
+  format: string;
+  classCount: number;
+  imageCount: number;
+  matchedImageCount: number;
+  datasetId: string;
+  classStats?: { className: string; count: number; color: string }[];
+  samples?: AnnotationSample[];
+  isVisible?: boolean;
+  classColors?: { [className: string]: string }; // Add class color mapping
+}
+
+// Generate distinct colors for classes
+export function generateClassColors(classNames: string[]): { [className: string]: string } {
+  const colors: { [className: string]: string } = {};
+  const predefinedColors = [
+    "#ea384c", "#F97316", "#1EAEDB", "#8B5CF6", "#2ecc71", 
+    "#f39c12", "#9b59b6", "#e74c3c", "#3498db", "#e67e22",
+    "#95a5a6", "#34495e", "#1abc9c", "#16a085", "#27ae60"
+  ];
+  
+  classNames.forEach((className, index) => {
+    colors[className] = predefinedColors[index % predefinedColors.length];
+  });
+  
+  return colors;
+}
+
 // Process COCO annotations
 export async function processCOCOAnnotations(file: File, datasetId?: string): Promise<{
   stats: { className: string; count: number; color: string }[];
@@ -18,6 +49,7 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
   matchedImages: string[];
   totalImageCount: number;   // Added field for total images in annotation file
   matchedImageCount: number; // Added field for matched images
+  classColors: { [className: string]: string }; // Add class colors
 }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -39,11 +71,16 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         // Handle missing or invalid categories
         const categories = coco.categories && Array.isArray(coco.categories) ? coco.categories : [];
         
+        // Get all class names for color generation
+        const classNames = categories.map((cat: any) => cat.name || `category_${cat.id || 'unknown'}`);
+        const classColors = generateClassColors(classNames);
+        
         const categoryColors: { [key: string]: string } = {};
-        const processedCategories = categories.map((cat: any, index: number) => {
-          const color = `#${((index + 1) * 5592405).toString(16).slice(0, 6)}`; // Generate distinct colors
+        const processedCategories = categories.map((cat: any) => {
+          const className = cat.name || `category_${cat.id || 'unknown'}`;
+          const color = classColors[className];
           categoryColors[cat.id] = color;
-          return { id: cat.id, name: cat.name, color: color };
+          return { id: cat.id, name: className, color: color };
         });
 
         const imageMap: { [key: number]: string } = {};
@@ -105,7 +142,8 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
           samples: annotationSamples,
           matchedImages: matchedImages,
           totalImageCount: totalImageCount,
-          matchedImageCount: matchedImages.length
+          matchedImageCount: matchedImages.length,
+          classColors: classColors
         });
 
       } catch (error) {

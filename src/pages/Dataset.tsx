@@ -245,48 +245,16 @@ export default function Dataset() {
     }
   };
 
-  // Updated function to handle annotation visibility changes
-  const handleShowAnnotationsChange = (show: boolean, annotationId: string | null) => {
+  // Updated function to handle annotation visibility changes with actual annotations
+  const handleShowAnnotationsChange = (show: boolean, annotations: AnnotationSample[]) => {
     setShowAnnotations(show);
-    setActiveAnnotationId(annotationId);
     
-    if (show && annotationId) {
-      // Use imported annotations if available, otherwise generate mock data
-      if (importedAnnotations.length > 0) {
-        const filteredAnnotations = importedAnnotations.filter(anno => 
-          paginatedImages.some(img => img.id === anno.imageId)
-        );
-        setVisibleAnnotations(filteredAnnotations);
-      } else {
-        // Generate mock annotations for demonstration
-        const mockAnnotations: AnnotationSample[] = [];
-        
-        for (let image of paginatedImages) {
-          const annotationCount = Math.floor(Math.random() * 3) + 1;
-          
-          for (let i = 0; i < annotationCount; i++) {
-            const classes = ["Car", "Person", "Traffic Light", "Bicycle", "Stop Sign"];
-            const colors = ["#3498db", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6"];
-            const classIndex = Math.floor(Math.random() * classes.length);
-            
-            mockAnnotations.push({
-              id: `${image.id}-anno-${i}`,
-              imageId: image.id,
-              className: classes[classIndex],
-              confidence: Math.random() * 0.5 + 0.5,
-              bbox: [
-                Math.random() * 0.6,
-                Math.random() * 0.6,
-                Math.random() * 0.3 + 0.1,
-                Math.random() * 0.3 + 0.1
-              ],
-              color: colors[classIndex]
-            });
-          }
-        }
-        
-        setVisibleAnnotations(mockAnnotations);
-      }
+    if (show && annotations.length > 0) {
+      // Filter annotations to only show those for currently visible images
+      const filteredAnnotations = annotations.filter(anno => 
+        paginatedImages.some(img => img.id === anno.imageId)
+      );
+      setVisibleAnnotations(filteredAnnotations);
     } else {
       setVisibleAnnotations([]);
     }

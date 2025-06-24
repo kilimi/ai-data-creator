@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,29 +15,16 @@ import {
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
-import { AnnotationSample, processCOCOAnnotations } from "@/utils/annotations";
+import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
+import { ClassColorPicker } from "@/components/ClassColorPicker";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
-
-interface AnnotationFile {
-  id: string;
-  name: string;
-  date: string;
-  format: string;
-  classCount: number;
-  imageCount: number;
-  matchedImageCount: number;
-  datasetId: string;
-  classStats?: { className: string; count: number; color: string }[];
-  samples?: AnnotationSample[];
-  isVisible?: boolean; // Add visibility flag
-}
 
 interface AnnotationsContentProps {
   id: string;
   className?: string;
-  onShowAnnotationsChange?: (show: boolean, annotationId: string | null) => void;
+  onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[]) => void;
   onImportAnnotations?: (files: File[]) => void;
 }
 
@@ -57,9 +43,8 @@ export function AnnotationsContent({
   const { api } = useApi();
   const { toast } = useToast();
 
-  // Fetch annotations for this specific dataset on component mount
+  // Load existing annotations from localStorage for demo purposes
   useEffect(() => {
-    // Load existing annotations from localStorage for demo purposes
     const savedAnnotations = localStorage.getItem(`annotations_${id}`);
     if (savedAnnotations) {
       try {
@@ -77,6 +62,49 @@ export function AnnotationsContent({
       localStorage.setItem(`annotations_${id}`, JSON.stringify(annotationFiles));
     }
   }, [annotationFiles, id]);
+
+  // Update annotation color
+  const handleClassColorChange = (annotationId: string, className: string, newColor: string) => {
+    setAnnotationFiles(prev => prev.map(file => {
+      if (file.id === annotationId) {
+        const updatedClassColors = { ...file.classColors, [className]: newColor };
+        const updatedClassStats = file.classStats?.map(stat => 
+          stat.className === className ? { ...stat, color: newColor } : stat
+        );
+        const updatedSamples = file.samples?.map(sample => 
+          sample.className === className ? { ...sample, color: newColor } : sample
+        );
+        
+        return {
+          ...file,
+          classColors: updatedClassColors,
+          classStats: updatedClassStats,
+          samples: updatedSamples
+        };
+      }
+      return file;
+    }));
+    
+    // Update visible annotations if this file is currently visible
+    if (visibleAnnotations.has(annotationId)) {
+      updateVisibleAnnotations();
+    }
+  };
+
+  // Update visible annotations based on currently visible files
+  const updateVisibleAnnotations = () => {
+    const allVisibleAnnotations: AnnotationSample[] = [];
+    
+    annotationFiles.forEach(file => {
+      if (visibleAnnotations.has(file.id) && file.samples) {
+        allVisibleAnnotations.push(...file.samples);
+      }
+    });
+    
+    if (onShowAnnotationsChange) {
+      onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations);
+    }
+  };
 
   const handleAnnotationClick = (annotationId: string) => {
     const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
@@ -103,11 +131,8 @@ export function AnnotationsContent({
         : file
     ));
     
-    // Notify parent component about visibility changes
-    if (onShowAnnotationsChange) {
-      const hasVisibleAnnotations = newVisibleAnnotations.size > 0;
-      onShowAnnotationsChange(hasVisibleAnnotations, hasVisibleAnnotations ? Array.from(newVisibleAnnotations)[0] : null);
-    }
+    // Update visible annotations
+    setTimeout(() => updateVisibleAnnotations(), 0);
   };
 
   const handleDeleteAnnotation = (annotationId: string, e: React.MouseEvent) => {
@@ -127,7 +152,7 @@ export function AnnotationsContent({
     // Update parent component if needed
     if (onShowAnnotationsChange) {
       const hasVisibleAnnotations = newVisibleAnnotations.size > 0;
-      onShowAnnotationsChange(hasVisibleAnnotations, hasVisibleAnnotations ? Array.from(newVisibleAnnotations)[0] : null);
+      onShowAnnotationsChange(hasVisibleAnnotations, []);
     }
     
     toast({
@@ -177,7 +202,8 @@ export function AnnotationsContent({
             datasetId: id,
             classStats: result.stats,
             samples: result.samples,
-            isVisible: false // Default to not visible
+            isVisible: false,
+            classColors: result.classColors
           };
           
           setAnnotationFiles(prev => [...prev, annotationFile]);
@@ -374,11 +400,40 @@ export function AnnotationsContent({
         <ResizablePanel defaultSize={60}>
           <Card className="h-full bg-gray-900/50 border-gray-700 rounded-none">
             <div className="p-4 border-b border-gray-700">
-              <h3 className="font-medium">Class Distribution</h3>
+              <h3 className="font-medium">
+                {selectedAnnotationData ? 'Class Configuration' : 'Class Distribution'}
+              </h3>
             </div>
             <div className="p-4">
               {selectedAnnotationData ? (
-                <ClassStatistics statistics={selectedAnnotationData.classStats || []} />
+                <div className="space-y-4">
+                  <div className="mb-4">
+                    <h4 className="text-sm font-medium mb-2">Class Colors</h4>
+                    <p className="text-xs text-muted-foreground mb-4">
+                      Customize colors for each class in this annotation file
+                    </p>
+                  </div>
+                  
+                  <ScrollArea className="h-[500px]">
+                    <div className="space-y-2">
+                      {selectedAnnotationData.classStats?.map((classStat) => (
+                        <ClassColorPicker
+                          key={classStat.className}
+                          className={classStat.className}
+                          color={classStat.color}
+                          count={classStat.count}
+                          onColorChange={(className, color) => 
+                            handleClassColorChange(selectedAnnotationData.id, className, color)
+                          }
+                        />
+                      ))}
+                    </div>
+                  </ScrollArea>
+                  
+                  <div className="pt-4 border-t border-gray-700">
+                    <ClassStatistics statistics={selectedAnnotationData.classStats || []} />
+                  </div>
+                </div>
               ) : (
                 <div className="h-[340px] flex flex-col items-center justify-center text-center p-4">
                   <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
@@ -386,7 +441,7 @@ export function AnnotationsContent({
                   </div>
                   <h3 className="text-lg font-medium mb-2">Select an annotation file</h3>
                   <p className="text-sm text-muted-foreground max-w-xs">
-                    Click on an annotation file to view its class distribution and statistics
+                    Click on an annotation file to view and customize its class colors and distribution
                   </p>
                 </div>
               )}

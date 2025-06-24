@@ -84,7 +84,11 @@ export function ResizableDatasetLayout({
       <div className="p-6">
         <AnnotationsContent
           id={id}
-          onShowAnnotationsChange={onShowAnnotationsChange}
+          onShowAnnotationsChange={(show, annotations) => {
+            if (onShowAnnotationsChange) {
+              onShowAnnotationsChange(show, annotations || []);
+            }
+          }}
           onImportAnnotations={onImportAnnotations}
           className="h-full"
         />
