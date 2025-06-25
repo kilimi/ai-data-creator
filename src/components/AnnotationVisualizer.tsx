@@ -2,12 +2,12 @@
 import React, { useRef, useEffect, useState } from "react";
 import { AnnotationSample } from "@/utils/annotations";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui";
+import { Badge } from "@/components/ui/badge";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui";
+} from "@/components/ui/popover";
 
 interface AnnotationVisualizerProps {
   annotations: AnnotationSample[];
@@ -24,79 +24,69 @@ export const AnnotationVisualizer = ({
 }: AnnotationVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState<{ x: number, y: number }>({ x: 1, y: 1 });
+  const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
 
-  // Colors for segmentation masks
-  const colors = [
-    "#ea384c", // Red
-    "#F97316", // Bright Orange
-    "#1EAEDB", // Bright Blue
-    "#8B5CF6", // Vivid Purple
-    "#2ecc71", // Green
-    "#f39c12", // Yellow
-    "#9b59b6", // Purple
-    "#e74c3c", // Red
-  ];
-
-  // Calculate scaling factor based on container size vs original image size
+  // Update container dimensions when container size changes
   useEffect(() => {
-    const calculateScale = () => {
-      if (containerRef.current && imageWidth && imageHeight) {
-        const containerWidth = containerRef.current.clientWidth;
-        const containerHeight = containerRef.current.clientHeight;
-        
-        // Calculate the scaling factor to fit the image in the container
-        // while maintaining aspect ratio
-        const widthScale = containerWidth / imageWidth;
-        const heightScale = containerHeight / imageHeight;
-        
-        // Use the smaller scale to ensure the image fits completely
-        const minScale = Math.min(widthScale, heightScale);
-        
-        // Calculate the displayed dimensions
-        const displayWidth = imageWidth * minScale;
-        const displayHeight = imageHeight * minScale;
-        
-        setScale({
-          x: displayWidth / imageWidth,
-          y: displayHeight / imageHeight
-        });
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setContainerDimensions({ width: rect.width, height: rect.height });
       }
     };
 
-    calculateScale();
-    // Add resize listener to recalculate on window resize
-    window.addEventListener('resize', calculateScale);
-    return () => window.removeEventListener('resize', calculateScale);
-  }, [imageWidth, imageHeight]);
+    updateDimensions();
+    
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // Calculate scaling and positioning
+  const calculateImageDimensions = () => {
+    if (!containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
+      return { scale: 1, offsetX: 0, offsetY: 0, displayWidth: 0, displayHeight: 0 };
+    }
+
+    // Calculate the scaling factor to fit the image in the container while maintaining aspect ratio
+    const scaleX = containerDimensions.width / imageWidth;
+    const scaleY = containerDimensions.height / imageHeight;
+    const scale = Math.min(scaleX, scaleY);
+
+    // Calculate the displayed dimensions
+    const displayWidth = imageWidth * scale;
+    const displayHeight = imageHeight * scale;
+
+    // Calculate offsets to center the image
+    const offsetX = (containerDimensions.width - displayWidth) / 2;
+    const offsetY = (containerDimensions.height - displayHeight) / 2;
+
+    return { scale, offsetX, offsetY, displayWidth, displayHeight };
+  };
 
   // Draw annotations on canvas
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || annotations.length === 0 || !imageWidth || !imageHeight) return;
+    if (!canvas || annotations.length === 0 || !containerDimensions.width || !containerDimensions.height) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Set canvas size to match container dimensions
-    if (containerRef.current) {
-      canvas.width = containerRef.current.clientWidth;
-      canvas.height = containerRef.current.clientHeight;
-    }
+    // Set canvas size to match container
+    canvas.width = containerDimensions.width;
+    canvas.height = containerDimensions.height;
     
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate the centered position of the image
-    const scaledWidth = imageWidth * scale.x;
-    const scaledHeight = imageHeight * scale.y;
-    const offsetX = (canvas.width - scaledWidth) / 2;
-    const offsetY = (canvas.height - scaledHeight) / 2;
+    const { scale, offsetX, offsetY } = calculateImageDimensions();
 
     // Draw each annotation
-    annotations.forEach((annotation, index) => {
-      const colorIndex = index % colors.length;
-      const color = colors[colorIndex];
+    annotations.forEach((annotation) => {
+      const color = annotation.color || "#ea384c";
       
       // Draw segmentation mask if available
       if (annotation.segmentation && annotation.segmentation.length > 0) {
@@ -104,16 +94,14 @@ export const AnnotationVisualizer = ({
           if (segment.length < 6) return; // Need at least 3 points (6 coordinates)
           
           ctx.beginPath();
-          // Set mask style
           ctx.fillStyle = `${color}33`; // Add transparency
           ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
+          ctx.lineWidth = Math.max(1, scale * 2); // Scale line width but ensure minimum visibility
           
           // Draw polygon
           for (let i = 0; i < segment.length; i += 2) {
-            // Convert normalized coordinates to actual pixel values with proper scaling
-            const x = offsetX + segment[i] * imageWidth * scale.x;
-            const y = offsetY + segment[i + 1] * imageHeight * scale.y;
+            const x = offsetX + (segment[i] / imageWidth) * (imageWidth * scale);
+            const y = offsetY + (segment[i + 1] / imageHeight) * (imageHeight * scale);
             
             if (i === 0) {
               ctx.moveTo(x, y);
@@ -132,19 +120,21 @@ export const AnnotationVisualizer = ({
       if (annotation.bbox) {
         const [x, y, width, height] = annotation.bbox;
         
-        // Convert normalized coordinates to actual pixel values with proper scaling
-        const bboxX = offsetX + x * imageWidth * scale.x;
-        const bboxY = offsetY + y * imageHeight * scale.y;
-        const bboxWidth = width * imageWidth * scale.x;
-        const bboxHeight = height * imageHeight * scale.y;
+        // Convert normalized coordinates to actual pixel values
+        const bboxX = offsetX + x * imageWidth * scale;
+        const bboxY = offsetY + y * imageHeight * scale;
+        const bboxWidth = width * imageWidth * scale;
+        const bboxHeight = height * imageHeight * scale;
         
         // Draw rectangle
         ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = Math.max(1, scale * 2); // Scale line width but ensure minimum visibility
         ctx.strokeRect(bboxX, bboxY, bboxWidth, bboxHeight);
       }
     });
-  }, [annotations, imageWidth, imageHeight, scale]);
+  }, [annotations, containerDimensions, imageWidth, imageHeight]);
+
+  const { scale, offsetX, offsetY } = calculateImageDimensions();
 
   return (
     <div 
@@ -156,38 +146,39 @@ export const AnnotationVisualizer = ({
         className="absolute inset-0 z-10 pointer-events-none"
       />
       
-      {/* Display annotation labels with correct scaling */}
+      {/* Display annotation labels with correct scaling and positioning */}
       {annotations.map((anno, index) => {
-        const colorIndex = index % colors.length;
-        const color = colors[colorIndex];
+        if (!anno.bbox || !containerDimensions.width || !containerDimensions.height) return null;
         
-        if (!anno.bbox) return null;
+        const color = anno.color || "#ea384c";
         
-        // Calculate the centered position of the image
-        const scaledWidth = imageWidth * scale.x;
-        const scaledHeight = imageHeight * scale.y;
-        const offsetX = (containerRef.current ? (containerRef.current.clientWidth - scaledWidth) / 2 : 0) / containerRef.current?.clientWidth || 0;
-        const offsetY = (containerRef.current ? (containerRef.current.clientHeight - scaledHeight) / 2 : 0) / containerRef.current?.clientHeight || 0;
+        // Calculate label position based on the bbox
+        const labelX = offsetX + anno.bbox[0] * imageWidth * scale;
+        const labelY = Math.max(8, offsetY + anno.bbox[1] * imageHeight * scale - 8);
         
-        // Position for the label based on the bbox with proper scaling
-        // Convert normalized coordinates to percentage for CSS positioning
-        const labelX = offsetX * 100 + anno.bbox[0] * 100 * (scaledWidth / containerRef.current?.clientWidth || 1);
-        const labelY = offsetY * 100 + Math.max(0, anno.bbox[1] * 100 * (scaledHeight / containerRef.current?.clientHeight || 1) - 6);
+        // Convert to percentage for CSS positioning
+        const labelXPercent = (labelX / containerDimensions.width) * 100;
+        const labelYPercent = (labelY / containerDimensions.height) * 100;
+        
+        // Only show labels if they would be reasonably visible
+        const shouldShowLabel = scale > 0.3 && anno.bbox[2] * imageWidth * scale > 30;
+        
+        if (!shouldShowLabel) return null;
         
         return (
           <div
             key={`label-${index}`}
-            className="absolute z-20"
+            className="absolute z-20 pointer-events-auto"
             style={{
-              left: `${labelX}%`,
-              top: `${labelY}%`,
+              left: `${labelXPercent}%`,
+              top: `${labelYPercent}%`,
             }}
           >
             <Popover>
               <PopoverTrigger asChild>
                 <Badge
-                  className="cursor-pointer"
-                  style={{ backgroundColor: color }}
+                  className="cursor-pointer text-xs px-1 py-0.5"
+                  style={{ backgroundColor: color, fontSize: Math.max(10, scale * 12) }}
                 >
                   {anno.className}
                 </Badge>

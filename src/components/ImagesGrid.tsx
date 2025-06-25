@@ -1,124 +1,58 @@
 
-import React from "react";
-import { Trash2, Upload, Tag } from "lucide-react";
+import { useState } from "react";
+import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Image } from "@/types";
-import { useImageLoad } from "@/utils/animations";
 import { AnnotationSample } from "@/utils/annotations";
-import { Card } from "@/components/ui/card";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 
 interface ImagesGridProps {
   images: Image[];
-  imageSize?: number;
+  imageSize: number;
   onOpenUploadDialog: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
-  maxHeight?: string;
   onImageClick?: (image: Image) => void;
   annotations?: AnnotationSample[];
 }
 
-function ImagesGridImage({ image, imageSize, onDeleteImage, onImageClick, annotations }) {
-  const { isLoaded, getImageFadeProps } = useImageLoad(image.thumbnailUrl);
-  const imageAnnotations = annotations.filter(anno => anno.imageId === image.id);
-
-  return (
-    <motion.div
-      key={image.id}
-      layout
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.9 }}
-      transition={{ duration: 0.2, layout: { duration: 0.3 } }}
-    >
-      <Card
-        className="group relative overflow-hidden border-gray-800 hover:border-blue-500/80 transition-colors bg-gray-900/50 cursor-pointer flex items-center justify-center p-2"
-        onClick={() => onImageClick && onImageClick(image)}
-        style={{ minHeight: 0, minWidth: 0, background: 'transparent' }}
-      >
-        <motion.div
-          className="aspect-square w-full h-full flex items-center justify-center overflow-hidden relative"
-          style={{ maxWidth: imageSize, maxHeight: imageSize }}
-          {...getImageFadeProps()}
-        >
-          <img
-            src={image.thumbnailUrl}
-            alt={image.fileName}
-            className="object-contain w-full h-full"
-            style={{ display: 'block', borderRadius: 8 }}
-          />
-          {imageAnnotations.length > 0 && (
-            <div className="absolute top-2 right-2">
-              <Badge variant="secondary" className="bg-blue-600/70 backdrop-blur-sm">
-                <Tag className="h-3 w-3 mr-1" />
-                {imageAnnotations.length}
-              </Badge>
-            </div>
-          )}
-        </motion.div>
-        {/* Delete button moved to bottom right, smaller, only on hover */}
-        <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 bg-black/60 hover:bg-red-600/80 border border-gray-700 shadow-md"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteImage(image.id);
-            }}
-          >
-            <Trash2 className="h-4 w-4 text-white" />
-          </Button>
-        </div>
-      </Card>
-    </motion.div>
-  );
-}
-
 export function ImagesGrid({
   images,
-  imageSize = 160,
+  imageSize,
   onOpenUploadDialog,
   onDeleteImage,
-  maxHeight = "none",
   onImageClick,
   annotations = [],
 }: ImagesGridProps) {
-  const getGridColumns = (size: number) => {
-    // For very large sizes (500+), show only 1 column
-    if (size >= 500) return "grid-cols-1";
-    // For large sizes (400-499), show 1-2 columns
-    if (size >= 400) return "grid-cols-1 sm:grid-cols-2";
-    // For medium-large sizes (300-399), show 2-3 columns
-    if (size >= 300) return "grid-cols-2 sm:grid-cols-3";
-    // For medium sizes (240-299), show 3-4 columns
-    if (size >= 240) return "grid-cols-3 sm:grid-cols-4 md:grid-cols-5";
-    // For smaller sizes, use existing logic
-    if (size <= 120) return "grid-cols-8 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-16";
-    if (size <= 160) return "grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12";
-    if (size <= 200) return "grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10";
-    return "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8";
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
+
+  const handleDeleteClick = async (e: React.MouseEvent, imageId: string) => {
+    e.stopPropagation();
+    try {
+      setDeletingImageId(imageId);
+      await onDeleteImage(imageId);
+    } catch (error) {
+      console.error('Error deleting image:', error);
+    } finally {
+      setDeletingImageId(null);
+    }
   };
 
-  const gridColumns = getGridColumns(imageSize);
+  const getImageAnnotations = (imageId: string) => {
+    return annotations.filter(annotation => annotation.imageId === imageId);
+  };
 
-  if (!images.length) {
+  if (images.length === 0) {
     return (
-      <div className="col-span-full flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-gray-900/30 border-gray-800">
-        <div className="flex flex-col items-center text-center space-y-3">
-          <div className="p-3 rounded-full bg-gray-900">
-            <Upload className="h-6 w-6 text-gray-400" />
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-32 h-32 mx-auto mb-4 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center">
+            <Upload className="w-12 h-12 text-gray-400" />
           </div>
-          <h3 className="text-lg font-medium">No images</h3>
-          <p className="text-sm text-gray-400">
-            Upload images to get started with your dataset
-          </p>
-          <Button
-            variant="outline"
-            className="mt-4"
-            onClick={onOpenUploadDialog}
-          >
+          <h3 className="text-lg font-medium mb-2">No images yet</h3>
+          <p className="text-gray-500 mb-4">Upload your first images to get started</p>
+          <Button onClick={onOpenUploadDialog}>
+            <Upload className="w-4 h-4 mr-2" />
             Upload Images
           </Button>
         </div>
@@ -127,22 +61,83 @@ export function ImagesGrid({
   }
 
   return (
-    <div
-      className={`grid ${gridColumns} gap-4 overflow-y-auto p-1`}
-      style={{ maxHeight }}
+    <div 
+      className="grid gap-4"
+      style={{
+        gridTemplateColumns: `repeat(auto-fill, minmax(${imageSize}px, 1fr))`,
+      }}
     >
-      <AnimatePresence mode="wait">
-        {images.map((image) => (
-          <ImagesGridImage
-            key={image.id}
-            image={image}
-            imageSize={imageSize}
-            onDeleteImage={onDeleteImage}
-            onImageClick={onImageClick}
-            annotations={annotations}
-          />
-        ))}
-      </AnimatePresence>
+      {images.map((image) => {
+        const imageAnnotations = getImageAnnotations(image.id);
+        
+        return (
+          <Card 
+            key={image.id} 
+            className="group cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all duration-200"
+            onClick={() => onImageClick?.(image)}
+          >
+            <CardContent className="p-0 relative">
+              <div 
+                className="relative overflow-hidden rounded-lg"
+                style={{ height: `${imageSize}px` }}
+              >
+                <img
+                  src={image.url}
+                  alt={image.fileName}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                
+                {/* Annotation overlay */}
+                {imageAnnotations.length > 0 && (
+                  <div className="absolute inset-0">
+                    <AnnotationVisualizer
+                      annotations={imageAnnotations}
+                      imageWidth={image.width || 1}
+                      imageHeight={image.height || 1}
+                      className="w-full h-full"
+                    />
+                  </div>
+                )}
+                
+                {/* Delete button */}
+                <Button
+                  variant="destructive"
+                  size="icon"
+                  className="absolute top-2 right-2 w-8 h-8 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                  onClick={(e) => handleDeleteClick(e, image.id)}
+                  disabled={deletingImageId === image.id}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+                
+                {/* Annotation count badge */}
+                {imageAnnotations.length > 0 && (
+                  <div className="absolute bottom-2 left-2 bg-blue-600/90 text-white text-xs px-2 py-1 rounded">
+                    {imageAnnotations.length} annotation{imageAnnotations.length !== 1 ? 's' : ''}
+                  </div>
+                )}
+              </div>
+              
+              <div className="p-3">
+                <p className="text-sm font-medium truncate" title={image.fileName}>
+                  {image.fileName}
+                </p>
+                <div className="flex justify-between items-center mt-1">
+                  <p className="text-xs text-gray-500">
+                    {image.width} × {image.height}
+                  </p>
+                  {image.fileSize && (
+                    <p className="text-xs text-gray-500">
+                      {(image.fileSize / 1024 / 1024).toFixed(1)} MB
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }

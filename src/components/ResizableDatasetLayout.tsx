@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
@@ -26,7 +25,7 @@ interface ResizableDatasetLayoutProps {
   totalPages: number;
   annotations?: AnnotationSample[];
   onImportAnnotations?: (files: File[]) => void;
-  onShowAnnotationsChange?: (show: boolean, annotationId: string | null) => void;
+  onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[]) => void;
   selectedImageIndex: number | null;
   setSelectedImageIndex: (idx: number | null) => void;
 }
@@ -84,11 +83,7 @@ export function ResizableDatasetLayout({
       <div className="p-6">
         <AnnotationsContent
           id={id}
-          onShowAnnotationsChange={(show, annotations) => {
-            if (onShowAnnotationsChange) {
-              onShowAnnotationsChange(show, annotations || []);
-            }
-          }}
+          onShowAnnotationsChange={onShowAnnotationsChange}
           onImportAnnotations={onImportAnnotations}
           className="h-full"
         />
@@ -118,7 +113,6 @@ export function ResizableDatasetLayout({
         direction="vertical" 
         className="rounded-lg border min-h-[85vh] w-full"
         onLayout={(sizes) => {
-          // Save the first panel size as slider position
           if (sizes[0] !== undefined) {
             onSliderPositionChange(sizes[0]);
           }
@@ -147,7 +141,6 @@ export function ResizableDatasetLayout({
       direction="horizontal" 
       className="rounded-lg border min-h-[85vh] w-full"
       onLayout={(sizes) => {
-        // Save the first panel size as slider position
         if (sizes[0] !== undefined) {
           onSliderPositionChange(sizes[0]);
         }
