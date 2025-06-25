@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,6 +51,13 @@ export function AnnotationsContent({
       try {
         const parsed = JSON.parse(savedAnnotations);
         setAnnotationFiles(parsed);
+        
+        // Restore visibility state
+        const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
+        if (savedVisibility) {
+          const visibilitySet = new Set(JSON.parse(savedVisibility));
+          setVisibleAnnotations(visibilitySet);
+        }
       } catch (error) {
         console.error('Error parsing saved annotations:', error);
       }
@@ -62,6 +70,16 @@ export function AnnotationsContent({
       localStorage.setItem(`annotations_${id}`, JSON.stringify(annotationFiles));
     }
   }, [annotationFiles, id]);
+
+  // Save visibility state to localStorage
+  useEffect(() => {
+    localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(visibleAnnotations)));
+  }, [visibleAnnotations, id]);
+
+  // Update visible annotations whenever visibility or annotation files change
+  useEffect(() => {
+    updateVisibleAnnotations();
+  }, [visibleAnnotations, annotationFiles]);
 
   // Update annotation color
   const handleClassColorChange = (annotationId: string, className: string, newColor: string) => {
@@ -84,22 +102,22 @@ export function AnnotationsContent({
       }
       return file;
     }));
-    
-    // Update visible annotations if this file is currently visible
-    if (visibleAnnotations.has(annotationId)) {
-      updateVisibleAnnotations();
-    }
   };
 
   // Update visible annotations based on currently visible files
   const updateVisibleAnnotations = () => {
+    console.log('Updating visible annotations. Visible files:', Array.from(visibleAnnotations));
+    
     const allVisibleAnnotations: AnnotationSample[] = [];
     
     annotationFiles.forEach(file => {
       if (visibleAnnotations.has(file.id) && file.samples) {
+        console.log(`Adding ${file.samples.length} annotations from file: ${file.name}`);
         allVisibleAnnotations.push(...file.samples);
       }
     });
+    
+    console.log('Total visible annotations:', allVisibleAnnotations.length);
     
     if (onShowAnnotationsChange) {
       onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations);
@@ -118,8 +136,10 @@ export function AnnotationsContent({
     
     if (visibleAnnotations.has(annotationId)) {
       newVisibleAnnotations.delete(annotationId);
+      console.log(`Hiding annotations for file: ${annotationId}`);
     } else {
       newVisibleAnnotations.add(annotationId);
+      console.log(`Showing annotations for file: ${annotationId}`);
     }
     
     setVisibleAnnotations(newVisibleAnnotations);
@@ -130,9 +150,6 @@ export function AnnotationsContent({
         ? { ...file, isVisible: newVisibleAnnotations.has(annotationId) }
         : file
     ));
-    
-    // Update visible annotations
-    setTimeout(() => updateVisibleAnnotations(), 0);
   };
 
   const handleDeleteAnnotation = (annotationId: string, e: React.MouseEvent) => {
@@ -147,12 +164,6 @@ export function AnnotationsContent({
     
     if (selectedAnnotation === annotationId) {
       setSelectedAnnotation(null);
-    }
-    
-    // Update parent component if needed
-    if (onShowAnnotationsChange) {
-      const hasVisibleAnnotations = newVisibleAnnotations.size > 0;
-      onShowAnnotationsChange(hasVisibleAnnotations, []);
     }
     
     toast({
