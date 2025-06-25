@@ -37,6 +37,7 @@ export interface Image {
   thumbnailUrl: string;
   uploadedAt: string;
   annotationsCount: number;
+  annotations?: Annotation[]; // Optional: array of polygon or bbox annotations for this image
 }
 
 export interface Annotation {

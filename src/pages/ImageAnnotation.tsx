@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -6,9 +5,10 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Pencil, Save, ArrowLeft, Plus, X } from "lucide-react";
+import { Pencil, Save, ArrowLeft, Plus, X, Eye, EyeOff } from "lucide-react";
 import { Image } from "@/types";
 import { useApi } from "@/hooks/use-api";
+import { API_CONFIG } from "@/config/api";
 
 const ImageAnnotation = () => {
   const { id: datasetId } = useParams<{ id: string }>();
@@ -20,30 +20,40 @@ const ImageAnnotation = () => {
   const [newClass, setNewClass] = useState("");
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAnnotations, setShowAnnotations] = useState(true);
 
   useEffect(() => {
-    const loadImages = async () => {
+    const loadImagesAndAnnotations = async () => {
       if (!datasetId || !api) return;
-
       try {
         setLoading(true);
-        const response = await api.getImages(datasetId);
-        if (response.success && response.data) {
-          setImages(response.data);
+        const [imagesRes, annRes] = await Promise.all([
+          api.getImages(datasetId),
+          fetch(`${API_CONFIG.baseUrl}/datasets/${datasetId}/annotations`).then(r => r.json())
+        ]);
+        let images = imagesRes.success && imagesRes.data ? imagesRes.data : [];
+        let annotations = annRes.success && annRes.data ? annRes.data : [];
+        // Group annotations by imageId
+        const annByImage = {};
+        for (const ann of annotations) {
+          if (!annByImage[ann.imageId]) annByImage[ann.imageId] = [];
+          annByImage[ann.imageId].push(ann);
         }
+        // Attach annotations to images
+        images = images.map(img => ({ ...img, annotations: annByImage[img.id] || [] }));
+        setImages(images);
       } catch (error) {
-        console.error('Error loading images:', error);
+        console.error('Error loading images/annotations:', error);
         toast({
           variant: "destructive",
           title: "Error",
-          description: "Failed to load images",
+          description: "Failed to load images or annotations",
         });
       } finally {
         setLoading(false);
       }
     };
-
-    loadImages();
+    loadImagesAndAnnotations();
   }, [datasetId, api, toast]);
 
   const handleAddClass = () => {
@@ -117,8 +127,18 @@ const ImageAnnotation = () => {
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Dataset
           </Button>
-          <div className="text-sm text-gray-400">
-            Image {currentImageIndex + 1} of {images.length}
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-gray-400">
+              Image {currentImageIndex + 1} of {images.length}
+            </div>
+            <Button
+              variant="ghost"
+              className="text-gray-300 hover:text-white flex items-center"
+              onClick={() => setShowAnnotations((v) => !v)}
+            >
+              {showAnnotations ? <Eye className="h-4 w-4 mr-1" /> : <EyeOff className="h-4 w-4 mr-1" />}
+              {showAnnotations ? "Visible" : "Hidden"}
+            </Button>
           </div>
         </div>
 
@@ -132,6 +152,33 @@ const ImageAnnotation = () => {
                   alt={currentImage.fileName}
                   className="w-full h-full object-contain"
                 />
+                {/* Render SVG polygons if showAnnotations is true and currentImage.annotations exists */}
+                {showAnnotations && Array.isArray(currentImage.annotations) && currentImage.annotations.length > 0 && (
+                  <svg
+                    className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                    viewBox="0 0 1000 562" // 16:9 aspect ratio, adjust as needed
+                    style={{ zIndex: 2 }}
+                  >
+                    {currentImage.annotations.map((ann, idx) =>
+                      Array.isArray(ann.segmentation)
+                        ? ann.segmentation.map((seg, sidx) => (
+                            <polygon
+                              key={idx + '-' + sidx}
+                              points={seg.reduce((acc, val, i) =>
+                                i % 2 === 0
+                                  ? acc + (i > 0 ? ' ' : '') + `${val},${seg[i + 1]}`
+                                  : acc,
+                                ''
+                              )}
+                              fill="rgba(0, 255, 0, 0.2)"
+                              stroke="#00FF00"
+                              strokeWidth={2}
+                            />
+                          ))
+                        : null
+                    )}
+                  </svg>
+                )}
               </div>
               
               <div className="flex justify-between mt-4">
