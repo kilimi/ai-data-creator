@@ -45,22 +45,22 @@ export const AnnotationVisualizer = ({
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Calculate scaling and positioning
+  // Calculate scaling and positioning for object-cover behavior
   const calculateImageDimensions = () => {
     if (!containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
       return { scale: 1, offsetX: 0, offsetY: 0, displayWidth: 0, displayHeight: 0 };
     }
 
-    // Calculate the scaling factor to fit the image in the container while maintaining aspect ratio
+    // Calculate the scaling factor for object-cover (fill container while maintaining aspect ratio)
     const scaleX = containerDimensions.width / imageWidth;
     const scaleY = containerDimensions.height / imageHeight;
-    const scale = Math.min(scaleX, scaleY);
+    const scale = Math.max(scaleX, scaleY); // Use max for object-cover behavior
 
     // Calculate the displayed dimensions
     const displayWidth = imageWidth * scale;
     const displayHeight = imageHeight * scale;
 
-    // Calculate offsets to center the image
+    // Calculate offsets to center the scaled image
     const offsetX = (containerDimensions.width - displayWidth) / 2;
     const offsetY = (containerDimensions.height - displayHeight) / 2;
 
@@ -94,14 +94,14 @@ export const AnnotationVisualizer = ({
           if (segment.length < 6) return; // Need at least 3 points (6 coordinates)
           
           ctx.beginPath();
-          ctx.fillStyle = `${color}33`; // Add transparency
+          ctx.fillStyle = `${color}40`; // Semi-transparent fill
           ctx.strokeStyle = color;
-          ctx.lineWidth = Math.max(1, scale * 2); // Scale line width but ensure minimum visibility
+          ctx.lineWidth = Math.max(1, scale * 1.5); // Scale line width appropriately
           
-          // Draw polygon
+          // Draw polygon with proper scaling
           for (let i = 0; i < segment.length; i += 2) {
-            const x = offsetX + (segment[i] / imageWidth) * (imageWidth * scale);
-            const y = offsetY + (segment[i + 1] / imageHeight) * (imageHeight * scale);
+            const x = offsetX + segment[i] * scale;
+            const y = offsetY + segment[i + 1] * scale;
             
             if (i === 0) {
               ctx.moveTo(x, y);
@@ -116,20 +116,22 @@ export const AnnotationVisualizer = ({
         });
       }
       
-      // Draw bounding box
+      // Draw bounding box with proper scaling
       if (annotation.bbox) {
         const [x, y, width, height] = annotation.bbox;
         
-        // Convert normalized coordinates to actual pixel values
+        // Convert normalized coordinates to scaled pixel values
         const bboxX = offsetX + x * imageWidth * scale;
         const bboxY = offsetY + y * imageHeight * scale;
         const bboxWidth = width * imageWidth * scale;
         const bboxHeight = height * imageHeight * scale;
         
-        // Draw rectangle
-        ctx.strokeStyle = color;
-        ctx.lineWidth = Math.max(1, scale * 2); // Scale line width but ensure minimum visibility
-        ctx.strokeRect(bboxX, bboxY, bboxWidth, bboxHeight);
+        // Only draw bounding box if segmentation is not available or very small
+        if (!annotation.segmentation || annotation.segmentation.length === 0) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(1, scale * 1.5);
+          ctx.strokeRect(bboxX, bboxY, bboxWidth, bboxHeight);
+        }
       }
     });
   }, [annotations, containerDimensions, imageWidth, imageHeight]);
@@ -139,7 +141,7 @@ export const AnnotationVisualizer = ({
   return (
     <div 
       ref={containerRef} 
-      className={cn("relative w-full h-full", className)}
+      className={cn("relative w-full h-full overflow-hidden", className)}
     >
       <canvas 
         ref={canvasRef}
@@ -152,7 +154,7 @@ export const AnnotationVisualizer = ({
         
         const color = anno.color || "#ea384c";
         
-        // Calculate label position based on the bbox
+        // Calculate label position based on the bbox with proper scaling
         const labelX = offsetX + anno.bbox[0] * imageWidth * scale;
         const labelY = Math.max(8, offsetY + anno.bbox[1] * imageHeight * scale - 8);
         
@@ -160,8 +162,11 @@ export const AnnotationVisualizer = ({
         const labelXPercent = (labelX / containerDimensions.width) * 100;
         const labelYPercent = (labelY / containerDimensions.height) * 100;
         
-        // Only show labels if they would be reasonably visible
-        const shouldShowLabel = scale > 0.3 && anno.bbox[2] * imageWidth * scale > 30;
+        // Show labels if they would be reasonably visible and within bounds
+        const bboxWidthScaled = anno.bbox[2] * imageWidth * scale;
+        const shouldShowLabel = scale > 0.2 && bboxWidthScaled > 20 && 
+                                labelXPercent >= 0 && labelXPercent <= 95 &&
+                                labelYPercent >= 0 && labelYPercent <= 95;
         
         if (!shouldShowLabel) return null;
         
@@ -170,15 +175,19 @@ export const AnnotationVisualizer = ({
             key={`label-${index}`}
             className="absolute z-20 pointer-events-auto"
             style={{
-              left: `${labelXPercent}%`,
-              top: `${labelYPercent}%`,
+              left: `${Math.max(0, Math.min(95, labelXPercent))}%`,
+              top: `${Math.max(0, Math.min(95, labelYPercent))}%`,
             }}
           >
             <Popover>
               <PopoverTrigger asChild>
                 <Badge
                   className="cursor-pointer text-xs px-1 py-0.5"
-                  style={{ backgroundColor: color, fontSize: Math.max(10, scale * 12) }}
+                  style={{ 
+                    backgroundColor: color, 
+                    fontSize: Math.max(8, Math.min(12, scale * 10)),
+                    color: 'white'
+                  }}
                 >
                   {anno.className}
                 </Badge>

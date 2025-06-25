@@ -52,10 +52,11 @@ export function AnnotationsContent({
         const parsed = JSON.parse(savedAnnotations);
         setAnnotationFiles(parsed);
         
-        // Restore visibility state
+        // Restore visibility state with proper typing
         const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
         if (savedVisibility) {
-          const visibilitySet = new Set(JSON.parse(savedVisibility));
+          const visibilityArray: string[] = JSON.parse(savedVisibility);
+          const visibilitySet = new Set(visibilityArray);
           setVisibleAnnotations(visibilitySet);
         }
       } catch (error) {
