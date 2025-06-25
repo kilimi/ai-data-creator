@@ -84,27 +84,44 @@ export const AnnotationVisualizer = ({
 
     const { scale, offsetX, offsetY } = calculateImageDimensions();
 
+    console.log('Drawing annotations:', annotations.length, 'Scale:', scale, 'Offsets:', offsetX, offsetY);
+
     // Draw each annotation
-    annotations.forEach((annotation) => {
+    annotations.forEach((annotation, index) => {
       const color = annotation.color || "#ea384c";
+      console.log(`Drawing annotation ${index}:`, annotation.className, 'has segmentation:', !!annotation.segmentation);
       
       // Draw segmentation mask if available
       if (annotation.segmentation && annotation.segmentation.length > 0) {
-        annotation.segmentation.forEach(segment => {
-          if (segment.length < 6) return; // Need at least 3 points (6 coordinates)
+        console.log(`Drawing segmentation for ${annotation.className}, segments:`, annotation.segmentation.length);
+        
+        annotation.segmentation.forEach((segment, segIndex) => {
+          if (!Array.isArray(segment) || segment.length < 6) {
+            console.log(`Skipping segment ${segIndex}, insufficient points:`, segment.length);
+            return; // Need at least 3 points (6 coordinates)
+          }
+          
+          console.log(`Drawing segment ${segIndex} with ${segment.length / 2} points`);
           
           ctx.beginPath();
-          ctx.fillStyle = `${color}40`; // Semi-transparent fill
-          ctx.strokeStyle = color;
-          ctx.lineWidth = Math.max(1, scale * 1.5); // Scale line width appropriately
+          
+          // Set fill style with transparency for the mask
+          const hexColor = color.startsWith('#') ? color : `#${color}`;
+          ctx.fillStyle = `${hexColor}40`; // 25% opacity (40 in hex = 64/255 ≈ 0.25)
+          ctx.strokeStyle = hexColor;
+          ctx.lineWidth = Math.max(1, scale * 1.5);
           
           // Draw polygon with proper scaling
+          let firstPoint = true;
           for (let i = 0; i < segment.length; i += 2) {
+            if (i + 1 >= segment.length) break; // Ensure we have both x and y
+            
             const x = offsetX + segment[i] * scale;
             const y = offsetY + segment[i + 1] * scale;
             
-            if (i === 0) {
+            if (firstPoint) {
               ctx.moveTo(x, y);
+              firstPoint = false;
             } else {
               ctx.lineTo(x, y);
             }
@@ -113,10 +130,12 @@ export const AnnotationVisualizer = ({
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
+          
+          console.log(`Successfully drew segment ${segIndex} for ${annotation.className}`);
         });
       }
       
-      // Draw bounding box with proper scaling
+      // Draw bounding box with proper scaling (only if no segmentation or as fallback)
       if (annotation.bbox) {
         const [x, y, width, height] = annotation.bbox;
         
@@ -126,11 +145,12 @@ export const AnnotationVisualizer = ({
         const bboxWidth = width * imageWidth * scale;
         const bboxHeight = height * imageHeight * scale;
         
-        // Only draw bounding box if segmentation is not available or very small
+        // Draw bounding box if segmentation is not available or very small
         if (!annotation.segmentation || annotation.segmentation.length === 0) {
           ctx.strokeStyle = color;
           ctx.lineWidth = Math.max(1, scale * 1.5);
           ctx.strokeRect(bboxX, bboxY, bboxWidth, bboxHeight);
+          console.log(`Drew bounding box for ${annotation.className}`);
         }
       }
     });
