@@ -9,6 +9,7 @@ export interface AnnotationSample {
   area?: number;              // Optional area
   confidence?: number;        // Optional confidence score
   color?: string;             // Optional color for display
+  opacity?: number;           // Optional opacity for display
 }
 
 export interface AnnotationFile {
@@ -20,7 +21,7 @@ export interface AnnotationFile {
   imageCount: number;
   matchedImageCount: number;
   datasetId: string;
-  classStats?: { className: string; count: number; color: string }[];
+  classStats?: { className: string; count: number; color: string; opacity?: number }[];
   samples?: AnnotationSample[];
   isVisible?: boolean;
   classColors?: { [className: string]: string }; // Add class color mapping

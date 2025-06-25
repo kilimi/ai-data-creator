@@ -19,6 +19,7 @@ import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { ClassColorPicker } from "@/components/ClassColorPicker";
+import { ClassColorOpacityPicker } from "@/components/ClassColorOpacityPicker";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -40,6 +41,7 @@ export function AnnotationsContent({
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);
   
   const { api } = useApi();
   const { toast } = useToast();
@@ -92,6 +94,29 @@ export function AnnotationsContent({
         );
         const updatedSamples = file.samples?.map(sample => 
           sample.className === className ? { ...sample, color: newColor } : sample
+        );
+        
+        return {
+          ...file,
+          classColors: updatedClassColors,
+          classStats: updatedClassStats,
+          samples: updatedSamples
+        };
+      }
+      return file;
+    }));
+  };
+
+  // Update annotation color and opacity
+  const handleClassColorOpacityChange = (annotationId: string, className: string, newColor: string, opacity: number) => {
+    setAnnotationFiles(prev => prev.map(file => {
+      if (file.id === annotationId) {
+        const updatedClassColors = { ...file.classColors, [className]: newColor };
+        const updatedClassStats = file.classStats?.map(stat => 
+          stat.className === className ? { ...stat, color: newColor, opacity: opacity } : stat
+        );
+        const updatedSamples = file.samples?.map(sample => 
+          sample.className === className ? { ...sample, color: newColor, opacity: opacity } : sample
         );
         
         return {
@@ -410,40 +435,66 @@ export function AnnotationsContent({
         <ResizableHandle withHandle />
 
         <ResizablePanel defaultSize={60}>
-          <Card className="h-full bg-gray-900/50 border-gray-700 rounded-none">
+          <Card className="h-full bg-gray-900/50 border-gray-700 rounded-none flex flex-col">
             <div className="p-4 border-b border-gray-700">
               <h3 className="font-medium">
-                {selectedAnnotationData ? 'Class Configuration' : 'Class Distribution'}
+                {selectedAnnotationData ? 'Statistics & Configuration' : 'Statistics Overview'}
               </h3>
             </div>
-            <div className="p-4">
+            <div className="p-4 flex-1 flex flex-col">
               {selectedAnnotationData ? (
-                <div className="space-y-4">
-                  <div className="mb-4">
-                    <h4 className="text-sm font-medium mb-2">Class Colors</h4>
-                    <p className="text-xs text-muted-foreground mb-4">
-                      Customize colors for each class in this annotation file
-                    </p>
+                <div className="flex flex-col h-full">
+                  {/* Statistics section at the top */}
+                  <div className="mb-6">
+                    <h4 className="text-sm font-medium mb-4">Class Statistics</h4>
+                    <ClassStatistics statistics={selectedAnnotationData.classStats || []} />
                   </div>
                   
-                  <ScrollArea className="h-[500px]">
-                    <div className="space-y-2">
-                      {selectedAnnotationData.classStats?.map((classStat) => (
-                        <ClassColorPicker
-                          key={classStat.className}
-                          className={classStat.className}
-                          color={classStat.color}
-                          count={classStat.count}
-                          onColorChange={(className, color) => 
-                            handleClassColorChange(selectedAnnotationData.id, className, color)
+                  {/* Class Configuration section at the bottom */}
+                  <div className="flex-1 flex flex-col">
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium mb-2">Class Configuration</h4>
+                      <p className="text-xs text-muted-foreground mb-4">
+                        Click on a class name to customize its appearance
+                      </p>
+                    </div>
+                    
+                    <ScrollArea className="flex-1">
+                      <div className="space-y-2">
+                        {selectedAnnotationData.classStats?.map((classStat) => (
+                          <div
+                            key={classStat.className}
+                            className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
+                              selectedClass === classStat.className 
+                                ? 'bg-gray-700' 
+                                : 'bg-gray-900 hover:bg-gray-800'
+                            }`}
+                            onClick={() => setSelectedClass(
+                              selectedClass === classStat.className ? null : classStat.className
+                            )}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">{classStat.className}</span>
+                              <span className="text-sm text-gray-400">{classStat.count} annotations</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                    
+                    {/* Color and Opacity picker for selected class */}
+                    {selectedClass && selectedAnnotationData.classStats && (
+                      <div className="mt-4 pt-4 border-t border-gray-700">
+                        <ClassColorOpacityPicker
+                          className={selectedClass}
+                          color={selectedAnnotationData.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
+                          opacity={(selectedAnnotationData.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
+                          onColorOpacityChange={(className, color, opacity) => 
+                            handleClassColorOpacityChange(selectedAnnotationData.id, className, color, opacity)
                           }
                         />
-                      ))}
-                    </div>
-                  </ScrollArea>
-                  
-                  <div className="pt-4 border-t border-gray-700">
-                    <ClassStatistics statistics={selectedAnnotationData.classStats || []} />
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -453,7 +504,7 @@ export function AnnotationsContent({
                   </div>
                   <h3 className="text-lg font-medium mb-2">Select an annotation file</h3>
                   <p className="text-sm text-muted-foreground max-w-xs">
-                    Click on an annotation file to view and customize its class colors and distribution
+                    Click on an annotation file to view statistics and configure class appearance
                   </p>
                 </div>
               )}
