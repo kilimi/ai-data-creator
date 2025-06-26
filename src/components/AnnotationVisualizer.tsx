@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from "react";
 import { AnnotationSample } from "@/utils/annotations";
 import { cn } from "@/lib/utils";
@@ -44,18 +45,18 @@ export const AnnotationVisualizer = ({
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Calculate scaling and positioning for object-cover behavior
-  const calculateImageDimensions = () => {
+  // Calculate scaling for object-contain behavior (image fits entirely within container)
+  const calculateImageScaling = () => {
     if (!containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
-      return { scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0, displayWidth: 0, displayHeight: 0 };
+      return { scale: 1, offsetX: 0, offsetY: 0, displayWidth: 0, displayHeight: 0 };
     }
 
-    // Calculate the scaling factors for object-cover (fill container while maintaining aspect ratio)
+    // Calculate scale to fit image entirely within container (object-contain)
     const scaleX = containerDimensions.width / imageWidth;
     const scaleY = containerDimensions.height / imageHeight;
-    const scale = Math.max(scaleX, scaleY); // For object-cover
+    const scale = Math.min(scaleX, scaleY); // Use min for object-contain
 
-    // Calculate the displayed dimensions
+    // Calculate the actual displayed dimensions
     const displayWidth = imageWidth * scale;
     const displayHeight = imageHeight * scale;
 
@@ -63,7 +64,7 @@ export const AnnotationVisualizer = ({
     const offsetX = (containerDimensions.width - displayWidth) / 2;
     const offsetY = (containerDimensions.height - displayHeight) / 2;
 
-    return { scaleX, scaleY, offsetX, offsetY, displayWidth, displayHeight };
+    return { scale, offsetX, offsetY, displayWidth, displayHeight };
   };
 
   // Draw annotations on canvas
@@ -71,8 +72,11 @@ export const AnnotationVisualizer = ({
     const canvas = canvasRef.current;
     if (!canvas || annotations.length === 0 || !containerDimensions.width || !containerDimensions.height) return;
 
-    // Debug: log the annotations to verify segmentation data
-    console.log('AnnotationVisualizer: annotations prop', annotations);
+    console.log('AnnotationVisualizer: rendering annotations', {
+      annotationsCount: annotations.length,
+      imageSize: { width: imageWidth, height: imageHeight },
+      containerSize: containerDimensions
+    });
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -84,33 +88,45 @@ export const AnnotationVisualizer = ({
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const { scaleX, scaleY, offsetX, offsetY, displayWidth, displayHeight } = calculateImageDimensions();
+    const { scale, offsetX, offsetY } = calculateImageScaling();
+
+    console.log('AnnotationVisualizer: scaling info', { scale, offsetX, offsetY });
 
     // Draw each annotation
     annotations.forEach((annotation, index) => {
       const color = annotation.color || "#ea384c";
+      
       // Draw segmentation mask if available
       if (annotation.segmentation && annotation.segmentation.length > 0) {
         annotation.segmentation.forEach((segment, segIndex) => {
-          if (!Array.isArray(segment) || segment.length < 6) { return; }
+          if (!Array.isArray(segment) || segment.length < 6) { 
+            console.log('AnnotationVisualizer: skipping invalid segment', segment);
+            return; 
+          }
+          
           ctx.beginPath();
+          
           // Set fill style with transparency for the mask
           const hexColor = color.startsWith('#') ? color : `#${color}`;
           ctx.fillStyle = `${hexColor}40`;
           ctx.strokeStyle = hexColor;
-          ctx.lineWidth = Math.max(1, Math.max(scaleX, scaleY) * 1.5);
-          // Draw polygon with correct scaling (object-fit: contain)
+          ctx.lineWidth = Math.max(1, scale * 2);
+          
+          console.log('AnnotationVisualizer: drawing segment', {
+            segmentIndex: segIndex,
+            pointCount: segment.length / 2,
+            color: hexColor
+          });
+          
+          // Draw polygon with correct scaling
           let firstPoint = true;
           for (let i = 0; i < segment.length; i += 2) {
             if (i + 1 >= segment.length) break;
-            // Map image pixel coordinates to the largest contained rectangle (object-contain)
-            const fitScale = Math.min(containerDimensions.width / imageWidth, containerDimensions.height / imageHeight);
-            const fitDisplayWidth = imageWidth * fitScale;
-            const fitDisplayHeight = imageHeight * fitScale;
-            const fitOffsetX = (containerDimensions.width - fitDisplayWidth) / 2;
-            const fitOffsetY = (containerDimensions.height - fitDisplayHeight) / 2;
-            const x = fitOffsetX + (segment[i] / imageWidth) * fitDisplayWidth;
-            const y = fitOffsetY + (segment[i + 1] / imageHeight) * fitDisplayHeight;
+            
+            // Transform image coordinates to canvas coordinates
+            const x = offsetX + (segment[i] * scale);
+            const y = offsetY + (segment[i + 1] * scale);
+            
             if (firstPoint) {
               ctx.moveTo(x, y);
               firstPoint = false;
@@ -118,6 +134,7 @@ export const AnnotationVisualizer = ({
               ctx.lineTo(x, y);
             }
           }
+          
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
@@ -128,7 +145,7 @@ export const AnnotationVisualizer = ({
 
   return (
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>
-      <canvas ref={canvasRef} className="absolute top-0 left-0" />
+      <canvas ref={canvasRef} className="absolute top-0 left-0 pointer-events-none" />
     </div>
   );
 };
