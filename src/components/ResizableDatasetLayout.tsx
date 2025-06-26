@@ -86,6 +86,8 @@ export function ResizableDatasetLayout({
           onShowAnnotationsChange={onShowAnnotationsChange}
           onImportAnnotations={onImportAnnotations}
           className="h-full"
+          // Add this prop to always show all annotations on the grid
+          showAllAnnotationsOnGrid
         />
       </div>
     </ScrollArea>

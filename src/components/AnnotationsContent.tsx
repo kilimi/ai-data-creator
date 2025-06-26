@@ -27,13 +27,15 @@ interface AnnotationsContentProps {
   className?: string;
   onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[]) => void;
   onImportAnnotations?: (files: File[]) => void;
+  showAllAnnotationsOnGrid?: boolean; // NEW PROP
 }
 
 export function AnnotationsContent({ 
   id, 
   className = "", 
   onShowAnnotationsChange,
-  onImportAnnotations 
+  onImportAnnotations,
+  showAllAnnotationsOnGrid = false // NEW PROP
 }: AnnotationsContentProps) {
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
@@ -145,7 +147,13 @@ export function AnnotationsContent({
     console.log('Total visible annotations:', allVisibleAnnotations.length);
     
     if (onShowAnnotationsChange) {
-      onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations);
+      // If showAllAnnotationsOnGrid is true, always show all annotations
+      if (showAllAnnotationsOnGrid) {
+        const allAnnotations = annotationFiles.flatMap(file => file.samples || []);
+        onShowAnnotationsChange(allAnnotations.length > 0, allAnnotations);
+      } else {
+        onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations);
+      }
     }
   };
 
