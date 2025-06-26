@@ -25,6 +25,7 @@ export function ImagesGrid({
   annotations = [],
 }: ImagesGridProps) {
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
 
   const handleDeleteClick = async (e: React.MouseEvent, imageId: string) => {
     e.stopPropagation();
@@ -36,6 +37,10 @@ export function ImagesGrid({
     } finally {
       setDeletingImageId(null);
     }
+  };
+
+  const handleImageLoad = (imageId: string) => {
+    setLoadedImages(prev => new Set(prev).add(imageId));
   };
 
   const getImageAnnotations = (imageId: string) => {
@@ -86,10 +91,11 @@ export function ImagesGrid({
                   alt={image.fileName}
                   className="w-full h-full object-cover"
                   loading="lazy"
+                  onLoad={() => handleImageLoad(image.id)}
                 />
                 
-                {/* Annotation overlay */}
-                {imageAnnotations.length > 0 && (
+                {/* Annotation overlay - only render after image is loaded */}
+                {loadedImages.has(image.id) && imageAnnotations.length > 0 && (
                   <div className="absolute inset-0">
                     <AnnotationVisualizer
                       annotations={imageAnnotations}
