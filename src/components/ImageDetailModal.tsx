@@ -1,4 +1,3 @@
-
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -40,8 +39,8 @@ export function ImageDetailModal({
 
   // Reset image loaded state when image changes
   useEffect(() => {
-    console.log('ImageDetailModal: Image changed, resetting loaded state');
     setImageLoaded(false);
+    setImageDimensions({ width: 800, height: 600 }); // Reset dimensions to avoid stale state
   }, [image?.id]);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -108,6 +107,7 @@ export function ImageDetailModal({
               </Button>
             )}
             <img
+              key={image?.id}
               src={image.url}
               alt={image.fileName}
               className="max-h-full max-w-full object-contain"

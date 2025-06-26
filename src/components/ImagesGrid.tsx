@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -107,7 +106,7 @@ export function ImagesGrid({
                 <img
                   src={image.url}
                   alt={image.fileName}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                   loading="lazy"
                   onLoad={(e) => handleImageLoad(e, image.id)}
                 />
