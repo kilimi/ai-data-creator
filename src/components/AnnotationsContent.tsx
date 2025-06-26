@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -314,7 +313,7 @@ export function AnnotationsContent({
   const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
   return (
-    <div className={`h-full ${className}`}>
+    <div className={`h-full min-h-[700px] ${className}`}> {/* Add min-h to root */}
       <div className="flex justify-between items-center mb-4">
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
@@ -335,16 +334,17 @@ export function AnnotationsContent({
         </div>
       </div>
 
-      <ResizablePanelGroup direction="horizontal" className="min-h-[600px] border rounded-lg bg-gray-950/20">
-        <ResizablePanel defaultSize={40} minSize={30}>
-          <Card className="h-full bg-gray-900/50 border-gray-700 rounded-none">
+      {/* Main content: annotation files and statistics/configuration with resizable slider */}
+      <ResizablePanelGroup direction="vertical" className="min-h-[600px] h-[calc(100vh-120px)] gap-6">
+        <ResizablePanel defaultSize={50} minSize={10} maxSize={90}> {/* Annotations: can shrink to 10% */}
+          <Card className="bg-gray-900/50 border-gray-700 rounded-lg h-full flex flex-col">
             <div className="p-4 border-b border-gray-700 flex justify-between items-center">
               <h3 className="font-medium">Annotation Files</h3>
               <div className="text-sm text-gray-400">
                 Show on Images
               </div>
             </div>
-            <ScrollArea className="h-[calc(100%-53px)]">
+            <ScrollArea className="flex-1 min-h-[200px]"> {/* Make ScrollArea fill and have min height */}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -431,11 +431,9 @@ export function AnnotationsContent({
             </ScrollArea>
           </Card>
         </ResizablePanel>
-
         <ResizableHandle withHandle />
-
-        <ResizablePanel defaultSize={60}>
-          <Card className="h-full bg-gray-900/50 border-gray-700 rounded-none flex flex-col">
+        <ResizablePanel defaultSize={50} minSize={10} maxSize={95}> {/* Stats/config: can expand to 95% */}
+          <Card className="bg-gray-900/50 border-gray-700 rounded-lg h-full flex flex-col">
             <div className="p-4 border-b border-gray-700">
               <h3 className="font-medium">
                 {selectedAnnotationData ? 'Statistics & Configuration' : 'Statistics Overview'}
@@ -444,57 +442,39 @@ export function AnnotationsContent({
             <div className="p-4 flex-1 flex flex-col">
               {selectedAnnotationData ? (
                 <div className="flex flex-col h-full">
-                  {/* Statistics section at the top */}
+                  {/* Statistics section with clickable icons */}
                   <div className="mb-6">
                     <h4 className="text-sm font-medium mb-4">Class Statistics</h4>
-                    <ClassStatistics statistics={selectedAnnotationData.classStats || []} />
+                    <ClassStatistics
+                      statistics={selectedAnnotationData.classStats || []}
+                      selectedClass={selectedClass}
+                      onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
+                    />
                   </div>
-                  
                   {/* Class Configuration section at the bottom */}
                   <div className="flex-1 flex flex-col">
                     <div className="mb-4">
                       <h4 className="text-sm font-medium mb-2">Class Configuration</h4>
                       <p className="text-xs text-muted-foreground mb-4">
-                        Click on a class name to customize its appearance
+                        Click a class color icon in the statistics above to customize its appearance
                       </p>
                     </div>
                     
                     <ScrollArea className="flex-1">
-                      <div className="space-y-2">
-                        {selectedAnnotationData.classStats?.map((classStat) => (
-                          <div
-                            key={classStat.className}
-                            className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors ${
-                              selectedClass === classStat.className 
-                                ? 'bg-gray-700' 
-                                : 'bg-gray-900 hover:bg-gray-800'
-                            }`}
-                            onClick={() => setSelectedClass(
-                              selectedClass === classStat.className ? null : classStat.className
-                            )}
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="text-sm font-medium">{classStat.className}</span>
-                              <span className="text-sm text-gray-400">{classStat.count} annotations</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      {/* Color and Opacity picker for selected class */}
+                      {selectedClass && selectedAnnotationData.classStats && (
+                        <div className="mt-4 pt-4 border-t border-gray-700">
+                          <ClassColorOpacityPicker
+                            className={selectedClass}
+                            color={selectedAnnotationData.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
+                            opacity={(selectedAnnotationData.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
+                            onColorOpacityChange={(className, color, opacity) => 
+                              handleClassColorOpacityChange(selectedAnnotationData.id, className, color, opacity)
+                            }
+                          />
+                        </div>
+                      )}
                     </ScrollArea>
-                    
-                    {/* Color and Opacity picker for selected class */}
-                    {selectedClass && selectedAnnotationData.classStats && (
-                      <div className="mt-4 pt-4 border-t border-gray-700">
-                        <ClassColorOpacityPicker
-                          className={selectedClass}
-                          color={selectedAnnotationData.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
-                          opacity={(selectedAnnotationData.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
-                          onColorOpacityChange={(className, color, opacity) => 
-                            handleClassColorOpacityChange(selectedAnnotationData.id, className, color, opacity)
-                          }
-                        />
-                      </div>
-                    )}
                   </div>
                 </div>
               ) : (

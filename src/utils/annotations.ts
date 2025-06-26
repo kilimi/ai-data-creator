@@ -1,4 +1,3 @@
-
 export interface AnnotationSample {
   id?: string;
   imageId: string;
@@ -58,19 +57,19 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
     reader.onload = async (event) => {
       try {
         const jsonString = event.target?.result as string;
-        const coco = JSON.parse(jsonString);
+        const data = JSON.parse(jsonString);
 
         // Validate COCO format structure
-        if (!coco.images || !Array.isArray(coco.images)) {
+        if (!data.images || !Array.isArray(data.images)) {
           throw new Error('Invalid COCO format: missing or invalid "images" field');
         }
 
-        if (!coco.annotations || !Array.isArray(coco.annotations)) {
+        if (!data.annotations || !Array.isArray(data.annotations)) {
           throw new Error('Invalid COCO format: missing or invalid "annotations" field');
         }
 
         // Handle missing or invalid categories
-        const categories = coco.categories && Array.isArray(coco.categories) ? coco.categories : [];
+        const categories = data.categories && Array.isArray(data.categories) ? data.categories : [];
         
         // Get all class names for color generation
         const classNames = categories.map((cat: any) => cat.name || `category_${cat.id || 'unknown'}`);
@@ -85,12 +84,13 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         });
 
         const imageMap: { [key: number]: string } = {};
-        coco.images.forEach((img: any) => {
+        data.images.forEach((img: any) => {
           imageMap[img.id] = img.file_name;
         });
 
         const classCounts: { [key: string]: number } = {};
-        const annotationSamples: AnnotationSample[] = coco.annotations.map((anno: any) => {
+        // When mapping annotations, ensure segmentation is valid
+        const samples = data.annotations.map((anno: any) => {
           const category = processedCategories.find(cat => cat.id === anno.category_id);
           const className = category ? category.name : `category_${anno.category_id || 'unknown'}`;
           const color = category ? category.color : '#808080'; // Default color
@@ -101,7 +101,7 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
           let bbox = [0, 0, 0, 0];
           if (anno.bbox && Array.isArray(anno.bbox) && anno.bbox.length === 4) {
             // Find the corresponding image to get dimensions
-            const imageInfo = coco.images.find((img: any) => img.id === anno.image_id);
+            const imageInfo = data.images.find((img: any) => img.id === anno.image_id);
             const imageWidth = imageInfo?.width || 1;
             const imageHeight = imageInfo?.height || 1;
             
@@ -113,7 +113,14 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
             ];
           }
 
-          const segmentation = anno.segmentation ? [anno.segmentation] : undefined;
+          let segmentation: number[][] | undefined = undefined;
+          if (anno.segmentation && Array.isArray(anno.segmentation)) {
+            // COCO polygons: array of arrays of numbers
+            segmentation = anno.segmentation
+              .filter((seg: any) => Array.isArray(seg) && seg.length >= 6)
+              .map((seg: any) => seg.slice());
+            if (segmentation.length === 0) segmentation = undefined;
+          }
 
           return {
             imageId: anno.image_id.toString(),
@@ -135,20 +142,20 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
           };
         });
 
-        const matchedImages = Array.from(new Set(annotationSamples.map(anno => anno.imageId)));
-        const totalImageCount = coco.images.length;
+        const matchedImages = Array.from(new Set(samples.map(anno => anno.imageId)));
+        const totalImageCount = data.images.length;
 
         resolve({
           stats: stats,
-          samples: annotationSamples,
-          matchedImages: matchedImages,
+          samples: samples,
+          matchedImages: (matchedImages as string[]),
           totalImageCount: totalImageCount,
           matchedImageCount: matchedImages.length,
           classColors: classColors
         });
 
-      } catch (error) {
-        reject(new Error(`Failed to process COCO file: ${error instanceof Error ? error.message : 'Unknown error'}`));
+      } catch (err) {
+        reject(err);
       }
     };
 
