@@ -23,7 +23,7 @@ interface AnnotationImagesDialogProps {
   annotationFileName: string;
   fileName?: string;
   onApply?: (annotationsToApply: AnnotationSample[]) => void;
-  onShowOnImage?: (annotations: AnnotationSample[]) => void; // Add the missing prop
+  onShowOnImage?: (annotations: AnnotationSample[]) => void;
 }
 
 export const AnnotationImagesDialog = ({
@@ -36,6 +36,7 @@ export const AnnotationImagesDialog = ({
   onShowOnImage,
 }: AnnotationImagesDialogProps) => {
   const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
   
   // Get unique image IDs from annotations (maximum 5)
   const uniqueImageIds = Array.from(
@@ -57,6 +58,7 @@ export const AnnotationImagesDialog = ({
         height: img.naturalHeight
       }
     }));
+    setLoadedImages(prev => new Set(prev).add(imageId));
   };
   
   return (
@@ -98,7 +100,8 @@ export const AnnotationImagesDialog = ({
                       onLoad={(e) => handleImageLoad(e, image.id)}
                     />
                     
-                    {imageDimensions[image.id] && (
+                    {/* Only render annotations after image is loaded */}
+                    {loadedImages.has(image.id) && imageDimensions[image.id] && (
                       <AnnotationVisualizer
                         annotations={imageAnnotations}
                         imageWidth={imageDimensions[image.id].width}

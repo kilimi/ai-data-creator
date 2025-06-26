@@ -1,3 +1,4 @@
+
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,12 @@ export function ImageDetailModal({
   imageCount = undefined
 }: ImageDetailModalProps) {
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
+  const [imageLoaded, setImageLoaded] = useState(false);
+
+  // Reset image loaded state when image changes
+  useEffect(() => {
+    setImageLoaded(false);
+  }, [image?.id]);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
@@ -42,6 +49,7 @@ export function ImageDetailModal({
       width: img.naturalWidth,
       height: img.naturalHeight
     });
+    setImageLoaded(true);
   };
 
   // Keyboard navigation
@@ -106,7 +114,8 @@ export function ImageDetailModal({
                 <ChevronRight className="h-6 w-6" />
               </Button>
             )}
-            {annotations && annotations.length > 0 && (
+            {/* Only render annotations after image is loaded */}
+            {imageLoaded && annotations && annotations.length > 0 && (
               <AnnotationVisualizer
                 annotations={annotations}
                 imageWidth={imageDimensions.width}
