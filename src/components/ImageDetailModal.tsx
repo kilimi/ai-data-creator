@@ -40,15 +40,19 @@ export function ImageDetailModal({
 
   // Reset image loaded state when image changes
   useEffect(() => {
+    console.log('ImageDetailModal: Image changed, resetting loaded state');
     setImageLoaded(false);
   }, [image?.id]);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
-    setImageDimensions({
+    const dimensions = {
       width: img.naturalWidth,
       height: img.naturalHeight
-    });
+    };
+    
+    console.log('ImageDetailModal: Image loaded with dimensions:', dimensions);
+    setImageDimensions(dimensions);
     setImageLoaded(true);
   };
 
@@ -70,6 +74,13 @@ export function ImageDetailModal({
 
   if (!image) return null;
 
+  console.log('ImageDetailModal: Rendering with annotations:', {
+    imageId: image.id,
+    annotationsCount: annotations.length,
+    imageLoaded,
+    imageDimensions
+  });
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl bg-gray-900 text-white border-gray-700">
@@ -81,7 +92,7 @@ export function ImageDetailModal({
         </div>
         <div className="flex flex-col space-y-2">
           <div className="text-sm text-gray-400">
-            {imageDimensions.width} × {imageDimensions.height} • {(image.fileSize / (1024 * 1024)).toFixed(2)} MB
+            {imageDimensions.width} × {imageDimensions.height} • {((image.fileSize || 0) / (1024 * 1024)).toFixed(2)} MB
           </div>
           <div className="relative aspect-video bg-gray-950 rounded-lg overflow-hidden flex items-center justify-center">
             {/* Left arrow */}

@@ -26,6 +26,7 @@ export function ImagesGrid({
 }: ImagesGridProps) {
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+  const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
 
   const handleDeleteClick = async (e: React.MouseEvent, imageId: string) => {
     e.stopPropagation();
@@ -39,12 +40,27 @@ export function ImagesGrid({
     }
   };
 
-  const handleImageLoad = (imageId: string) => {
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>, imageId: string) => {
+    const img = e.currentTarget;
+    console.log(`ImagesGrid: Image ${imageId} loaded with dimensions:`, {
+      natural: { width: img.naturalWidth, height: img.naturalHeight },
+      displayed: { width: img.clientWidth, height: img.clientHeight }
+    });
+    
+    setImageDimensions(prev => ({
+      ...prev,
+      [imageId]: {
+        width: img.naturalWidth,
+        height: img.naturalHeight
+      }
+    }));
     setLoadedImages(prev => new Set(prev).add(imageId));
   };
 
   const getImageAnnotations = (imageId: string) => {
-    return annotations.filter(annotation => annotation.imageId === imageId);
+    const imageAnnotations = annotations.filter(annotation => annotation.imageId === imageId);
+    console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId}`);
+    return imageAnnotations;
   };
 
   if (images.length === 0) {
@@ -74,6 +90,8 @@ export function ImagesGrid({
     >
       {images.map((image) => {
         const imageAnnotations = getImageAnnotations(image.id);
+        const imageIsLoaded = loadedImages.has(image.id);
+        const dimensions = imageDimensions[image.id];
         
         return (
           <Card 
@@ -91,16 +109,16 @@ export function ImagesGrid({
                   alt={image.fileName}
                   className="w-full h-full object-cover"
                   loading="lazy"
-                  onLoad={() => handleImageLoad(image.id)}
+                  onLoad={(e) => handleImageLoad(e, image.id)}
                 />
                 
-                {/* Annotation overlay - only render after image is loaded */}
-                {loadedImages.has(image.id) && imageAnnotations.length > 0 && (
+                {/* Annotation overlay - only render after image is loaded and we have dimensions */}
+                {imageIsLoaded && dimensions && imageAnnotations.length > 0 && (
                   <div className="absolute inset-0">
                     <AnnotationVisualizer
                       annotations={imageAnnotations}
-                      imageWidth={image.width || 1}
-                      imageHeight={image.height || 1}
+                      imageWidth={dimensions.width}
+                      imageHeight={dimensions.height}
                       className="w-full h-full"
                     />
                   </div>
@@ -131,7 +149,7 @@ export function ImagesGrid({
                 </p>
                 <div className="flex justify-between items-center mt-1">
                   <p className="text-xs text-gray-500">
-                    {image.width} × {image.height}
+                    {dimensions ? `${dimensions.width} × ${dimensions.height}` : `${image.width || 0} × ${image.height || 0}`}
                   </p>
                   {image.fileSize && (
                     <p className="text-xs text-gray-500">
