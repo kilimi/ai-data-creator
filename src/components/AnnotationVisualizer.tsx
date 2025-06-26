@@ -86,16 +86,26 @@ export const AnnotationVisualizer = ({
       return;
     }
 
-    // Set canvas size to match container
-    canvas.width = containerDimensions.width;
-    canvas.height = containerDimensions.height;
+    // Set canvas size to match container exactly
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = containerDimensions.width * dpr;
+    canvas.height = containerDimensions.height * dpr;
+    canvas.style.width = `${containerDimensions.width}px`;
+    canvas.style.height = `${containerDimensions.height}px`;
+    ctx.scale(dpr, dpr);
     
     // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, containerDimensions.width, containerDimensions.height);
 
     const { scale, offsetX, offsetY } = calculateImageScaling();
 
-    console.log('AnnotationVisualizer: Scaling info:', { scale, offsetX, offsetY });
+    console.log('AnnotationVisualizer: Scaling info:', { 
+      scale, 
+      offsetX, 
+      offsetY,
+      imageSize: { width: imageWidth, height: imageHeight },
+      containerSize: containerDimensions
+    });
 
     // Draw each annotation
     annotations.forEach((annotation, index) => {
@@ -133,7 +143,8 @@ export const AnnotationVisualizer = ({
           console.log(`AnnotationVisualizer: Drawing segment ${segIndex} with ${segment.length / 2} points`, {
             color: hexColor,
             opacity,
-            fillStyle: ctx.fillStyle
+            fillStyle: ctx.fillStyle,
+            lineWidth: ctx.lineWidth
           });
           
           // Draw polygon with correct scaling
@@ -142,8 +153,16 @@ export const AnnotationVisualizer = ({
             if (i + 1 >= segment.length) break;
             
             // Transform image coordinates to canvas coordinates
+            // Note: segment coordinates are in absolute pixel values from the original image
             const x = offsetX + (segment[i] * scale);
             const y = offsetY + (segment[i + 1] * scale);
+            
+            console.log(`AnnotationVisualizer: Point ${i/2}:`, {
+              original: [segment[i], segment[i + 1]],
+              scaled: [x, y],
+              scale,
+              offset: [offsetX, offsetY]
+            });
             
             if (firstPoint) {
               ctx.moveTo(x, y);
