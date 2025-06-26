@@ -9,6 +9,7 @@ export interface AnnotationSample {
   confidence?: number;        // Optional confidence score
   color?: string;             // Optional color for display
   opacity?: number;           // Optional opacity for display
+  isVisible?: boolean;        // Optional visibility for toggling in UI
 }
 
 export interface AnnotationFile {
@@ -24,6 +25,7 @@ export interface AnnotationFile {
   samples?: AnnotationSample[];
   isVisible?: boolean;
   classColors?: { [className: string]: string }; // Add class color mapping
+  imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
 }
 
 // Generate distinct colors for classes
@@ -50,7 +52,8 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
   totalImageCount: number;   // Added field for total images in annotation file
   matchedImageCount: number; // Added field for matched images
   classColors: { [className: string]: string }; // Add class colors
-}> {
+  imageMapping: { [imageId: string]: string }; // Map COCO image IDs to filenames
+}>{
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
 
@@ -143,15 +146,14 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         });
 
         const matchedImages = Array.from(new Set(samples.map(anno => anno.imageId)));
-        const totalImageCount = data.images.length;
-
-        resolve({
+        const totalImageCount = data.images.length;        resolve({
           stats: stats,
           samples: samples,
           matchedImages: (matchedImages as string[]),
           totalImageCount: totalImageCount,
           matchedImageCount: matchedImages.length,
-          classColors: classColors
+          classColors: classColors,
+          imageMapping: imageMap
         });
 
       } catch (err) {

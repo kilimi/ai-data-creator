@@ -21,6 +21,13 @@ interface ImageDetailModalProps {
   imageCount?: number;
 }
 
+// Helper: get annotation file name for an annotation
+function getAnnotationFileName(annotation, annotationFiles) {
+  if (!annotationFiles) return '?';
+  const found = annotationFiles.find(f => Array.isArray(f.samples) && f.samples.some(s => s.id === annotation.id));
+  return found ? found.fileName : '?';
+}
+
 export function ImageDetailModal({ 
   image, 
   isOpen, 
@@ -32,8 +39,9 @@ export function ImageDetailModal({
   hasPrev = false,
   hasNext = false,
   imageIndex = null,
-  imageCount = undefined
-}: ImageDetailModalProps) {
+  imageCount = undefined,
+  annotationFiles = [], // <-- add this prop for file name lookup
+}: ImageDetailModalProps & { annotationFiles?: any[] }) {
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
   const [imageLoaded, setImageLoaded] = useState(false);
 
@@ -72,6 +80,12 @@ export function ImageDetailModal({
   }, [isOpen, hasPrev, hasNext, onPrev, onNext]);
 
   if (!image) return null;
+
+  // Add annotationFileName to each annotation for display
+  const annotationsWithFileName = annotations.map(ann => ({
+    ...ann,
+    annotationFileName: getAnnotationFileName(ann, annotationFiles)
+  }));
 
   console.log('ImageDetailModal: Rendering with annotations:', {
     imageId: image.id,
@@ -126,9 +140,9 @@ export function ImageDetailModal({
               </Button>
             )}
             {/* Only render annotations after image is loaded */}
-            {imageLoaded && annotations && annotations.length > 0 && (
+            {imageLoaded && annotationsWithFileName && annotationsWithFileName.length > 0 && (
               <AnnotationVisualizer
-                annotations={annotations}
+                annotations={annotationsWithFileName}
                 imageWidth={imageDimensions.width}
                 imageHeight={imageDimensions.height}
                 className="absolute inset-0"
@@ -137,9 +151,25 @@ export function ImageDetailModal({
           </div>
           <div className="flex justify-between items-center pt-2">
             <div className="text-sm text-gray-400">
-              {annotations && annotations.length > 0 
-                ? `${annotations.length} annotations displayed` 
-                : "No annotations to display"}
+              {annotationsWithFileName && annotationsWithFileName.length > 0 ? (
+                <div className="text-left">
+                  {Object.entries(
+                    annotationsWithFileName.reduce((acc, ann) => {
+                      if (!acc[ann.className]) acc[ann.className] = { count: 0, names: [], color: ann.color };
+                      acc[ann.className].count += 1;
+                      acc[ann.className].names.push(ann.annotationFileName || '?');
+                      acc[ann.className].color = ann.color;
+                      return acc;
+                    }, {} as Record<string, { count: number; names: string[]; color?: string }>))
+                    .map(([className, { count, names, color }], idx, arr) => (
+                      <span key={className} className="flex items-center gap-1">
+                        <span style={{ display: 'inline-block', width: 10, height: 10, background: color || '#ea384c', borderRadius: '50%' }} />
+                        {className} ({count})<br />
+                        <span className="text-[10px] text-blue-200">[{[...new Set(names)].join(', ')}]</span>{idx < arr.length - 1 ? <>, </> : null}
+                      </span>
+                    ))}
+                </div>
+              ) : "No annotations to display"}
             </div>
             {onDelete && (
               <Button

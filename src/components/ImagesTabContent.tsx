@@ -29,6 +29,14 @@ interface ImagesTabContentProps {
   setSelectedImageIndex: (idx: number | null) => void;
 }
 
+function getAnnotationFileName(annotation, annotationFiles) {
+  if (!annotationFiles) return "?";
+  const found = annotationFiles.find((f) =>
+    Array.isArray(f.samples) ? f.samples.some((s) => s.id === annotation.id) : false
+  );
+  return found ? found.fileName : "?";
+}
+
 export function ImagesTabContent({
   id,
   images,
@@ -43,10 +51,10 @@ export function ImagesTabContent({
   paginatedImages,
   totalPages,
   annotations = [],
-  onImportAnnotations,
+  annotationFiles = [], // <-- add this prop for file name lookup
   selectedImageIndex,
   setSelectedImageIndex,
-}: ImagesTabContentProps) {
+}: ImagesTabContentProps & { annotationFiles?: any[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Open modal at clicked image index
@@ -83,6 +91,16 @@ export function ImagesTabContent({
   const selectedImageAnnotations = selectedImage
     ? annotations.filter((anno) => anno.imageId === selectedImage.id)
     : [];
+
+  // Attach annotationFileName to each annotation for grid and popup
+  const annotationsWithFileName = annotations.map((ann) => ({
+    ...ann,
+    annotationFileName: getAnnotationFileName(ann, annotationFiles),
+  }));
+  const selectedImageAnnotationsWithFile = selectedImageAnnotations.map((ann) => ({
+    ...ann,
+    annotationFileName: getAnnotationFileName(ann, annotationFiles),
+  }));
 
   return (
     <div className="h-full flex flex-col">
@@ -121,7 +139,8 @@ export function ImagesTabContent({
           onOpenUploadDialog={onOpenUploadDialog}
           onDeleteImage={onDeleteImage}
           onImageClick={handleImageClick}
-          annotations={annotations}
+          annotations={annotationsWithFileName}
+          annotationFiles={annotationFiles}
         />
       </div>
 
@@ -140,7 +159,8 @@ export function ImagesTabContent({
         isOpen={isModalOpen}
         onClose={handleCloseModal}
         onDelete={handleDeleteFromModal}
-        annotations={selectedImageAnnotations}
+        annotations={selectedImageAnnotationsWithFile}
+        annotationFiles={annotationFiles}
         onPrev={handlePrev}
         onNext={handleNext}
         hasPrev={hasPrev}

@@ -1,5 +1,6 @@
 import React from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { useState } from 'react';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
 import { AnnotationsContent } from '@/components/AnnotationsContent';
 import { Image } from '@/types';
@@ -25,7 +26,7 @@ interface ResizableDatasetLayoutProps {
   totalPages: number;
   annotations?: AnnotationSample[];
   onImportAnnotations?: (files: File[]) => void;
-  onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[]) => void;
+  onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[], annotationFiles?: any[]) => void;
   selectedImageIndex: number | null;
   setSelectedImageIndex: (idx: number | null) => void;
 }
@@ -52,11 +53,19 @@ export function ResizableDatasetLayout({
   selectedImageIndex,
   setSelectedImageIndex,
 }: ResizableDatasetLayoutProps) {
+  const [annotationFiles, setAnnotationFiles] = useState<any[]>([]);
+
+  // Handle annotation changes and store annotation files
+  const handleShowAnnotationsChange = (show: boolean, annots: AnnotationSample[], files?: any[]) => {
+    if (files) {
+      setAnnotationFiles(files);
+    }
+    onShowAnnotationsChange?.(show, annots, files);
+  };
   
   const renderImagesSection = () => (
     <ScrollArea className="h-full">
-      <div className="p-6">
-        <ImagesTabContent
+      <div className="p-6">        <ImagesTabContent
           id={id}
           images={images}
           currentPage={currentPage}
@@ -70,6 +79,7 @@ export function ResizableDatasetLayout({
           paginatedImages={paginatedImages}
           totalPages={totalPages}
           annotations={annotations}
+          annotationFiles={annotationFiles}
           onImportAnnotations={onImportAnnotations}
           selectedImageIndex={selectedImageIndex}
           setSelectedImageIndex={setSelectedImageIndex}
@@ -77,17 +87,17 @@ export function ResizableDatasetLayout({
       </div>
     </ScrollArea>
   );
-
   const renderAnnotationsSection = () => (
     <ScrollArea className="h-full">
-      <div className="p-6">
-        <AnnotationsContent
+      <div className="p-6">        <AnnotationsContent
           id={id}
-          onShowAnnotationsChange={onShowAnnotationsChange}
+          onShowAnnotationsChange={handleShowAnnotationsChange}
           onImportAnnotations={onImportAnnotations}
           className="h-full"
           // Add this prop to always show all annotations on the grid
           showAllAnnotationsOnGrid
+          // Pass the dataset images
+          images={images}
         />
       </div>
     </ScrollArea>

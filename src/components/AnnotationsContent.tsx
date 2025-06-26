@@ -21,13 +21,15 @@ import { ClassColorPicker } from "@/components/ClassColorPicker";
 import { ClassColorOpacityPicker } from "@/components/ClassColorOpacityPicker";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface AnnotationsContentProps {
   id: string;
   className?: string;
-  onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[]) => void;
+  onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[], annotationFiles?: AnnotationFile[]) => void;
   onImportAnnotations?: (files: File[]) => void;
-  showAllAnnotationsOnGrid?: boolean; // NEW PROP
+  showAllAnnotationsOnGrid?: boolean;
+  images?: { id: string; fileName: string }[];
 }
 
 export function AnnotationsContent({ 
@@ -35,25 +37,44 @@ export function AnnotationsContent({
   className = "", 
   onShowAnnotationsChange,
   onImportAnnotations,
-  showAllAnnotationsOnGrid = false // NEW PROP
+  showAllAnnotationsOnGrid = false, // NEW PROP
+  images = [] // NEW PROP
 }: AnnotationsContentProps) {
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
-  const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
-  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);  const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  const [imageStatusDialog, setImageStatusDialog] = useState<{
+    isOpen: boolean;
+    type: 'present' | 'missing';
+    files: string[];
+    annotationFileName: string;
+  }>({ isOpen: false, type: 'present', files: [], annotationFileName: '' });
   
   const { api } = useApi();
-  const { toast } = useToast();
-
-  // Load existing annotations from localStorage for demo purposes
+  const { toast } = useToast();  // Load existing annotations from localStorage for demo purposes
   useEffect(() => {
     const savedAnnotations = localStorage.getItem(`annotations_${id}`);
     if (savedAnnotations) {
       try {
         const parsed = JSON.parse(savedAnnotations);
-        setAnnotationFiles(parsed);
+          // Ensure all annotation samples have annotationFileName property
+        const annotationsWithFileNames = parsed.map((file: AnnotationFile) => {
+          console.log(`Loading annotation file from localStorage: ${file.name}`);
+          console.log(`Has imageMapping:`, !!file.imageMapping);
+          console.log(`imageMapping keys:`, file.imageMapping ? Object.keys(file.imageMapping).slice(0, 5) : 'none');
+          
+          return {
+            ...file,
+            samples: file.samples?.map(sample => ({
+              ...sample,
+              annotationFileName: (sample as any).annotationFileName || file.name
+            }))
+          };
+        });
+        
+        setAnnotationFiles(annotationsWithFileNames);
         
         // Restore visibility state with proper typing
         const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
@@ -79,13 +100,17 @@ export function AnnotationsContent({
   useEffect(() => {
     localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(visibleAnnotations)));
   }, [visibleAnnotations, id]);
-
   // Update visible annotations whenever visibility or annotation files change
   useEffect(() => {
     updateVisibleAnnotations();
   }, [visibleAnnotations, annotationFiles]);
 
-  // Update annotation color
+  // Also call updateVisibleAnnotations when component mounts to handle initial state
+  useEffect(() => {
+    if (annotationFiles.length > 0) {
+      updateVisibleAnnotations();
+    }
+  }, []);// Update annotation color
   const handleClassColorChange = (annotationId: string, className: string, newColor: string) => {
     setAnnotationFiles(prev => prev.map(file => {
       if (file.id === annotationId) {
@@ -94,7 +119,14 @@ export function AnnotationsContent({
           stat.className === className ? { ...stat, color: newColor } : stat
         );
         const updatedSamples = file.samples?.map(sample => 
-          sample.className === className ? { ...sample, color: newColor } : sample
+          sample.className === className ? { 
+            ...sample, 
+            color: newColor,
+            annotationFileName: file.name // Preserve annotationFileName
+          } : {
+            ...sample,
+            annotationFileName: file.name // Ensure all samples have annotationFileName
+          }
         );
         
         return {
@@ -117,7 +149,15 @@ export function AnnotationsContent({
           stat.className === className ? { ...stat, color: newColor, opacity: opacity } : stat
         );
         const updatedSamples = file.samples?.map(sample => 
-          sample.className === className ? { ...sample, color: newColor, opacity: opacity } : sample
+          sample.className === className ? { 
+            ...sample, 
+            color: newColor, 
+            opacity: opacity,
+            annotationFileName: file.name // Preserve annotationFileName
+          } : {
+            ...sample,
+            annotationFileName: file.name // Ensure all samples have annotationFileName
+          }
         );
         
         return {
@@ -129,9 +169,7 @@ export function AnnotationsContent({
       }
       return file;
     }));
-  };
-
-  // Update visible annotations based on currently visible files
+  };  // Update visible annotations based on currently visible files
   const updateVisibleAnnotations = () => {
     console.log('Updating visible annotations. Visible files:', Array.from(visibleAnnotations));
     
@@ -140,19 +178,31 @@ export function AnnotationsContent({
     annotationFiles.forEach(file => {
       if (visibleAnnotations.has(file.id) && file.samples) {
         console.log(`Adding ${file.samples.length} annotations from file: ${file.name}`);
-        allVisibleAnnotations.push(...file.samples);
+        // Attach the annotation file name to each sample
+        const samplesWithFileName = file.samples.map(sample => ({
+          ...sample,
+          annotationFileName: file.name
+        }));
+        allVisibleAnnotations.push(...samplesWithFileName);
       }
     });
     
     console.log('Total visible annotations:', allVisibleAnnotations.length);
-    
-    if (onShowAnnotationsChange) {
+    console.log('Sample annotation with fileName:', (allVisibleAnnotations[0] as any)?.annotationFileName);
+      if (onShowAnnotationsChange) {
       // If showAllAnnotationsOnGrid is true, always show all annotations
       if (showAllAnnotationsOnGrid) {
-        const allAnnotations = annotationFiles.flatMap(file => file.samples || []);
-        onShowAnnotationsChange(allAnnotations.length > 0, allAnnotations);
+        const allAnnotations = annotationFiles.flatMap(file => 
+          (file.samples || []).map(sample => ({
+            ...sample,
+            annotationFileName: file.name
+          }))
+        );
+        console.log('Sending all annotations to parent:', allAnnotations.length, 'first fileName:', (allAnnotations[0] as any)?.annotationFileName);
+        onShowAnnotationsChange(allAnnotations.length > 0, allAnnotations, annotationFiles);
       } else {
-        onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations);
+        console.log('Sending visible annotations to parent:', allVisibleAnnotations.length, 'first fileName:', (allVisibleAnnotations[0] as any)?.annotationFileName);
+        onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations, annotationFiles);
       }
     }
   };
@@ -160,12 +210,11 @@ export function AnnotationsContent({
   const handleAnnotationClick = (annotationId: string) => {
     const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
     setSelectedAnnotation(newSelectedAnnotation);
-  };
-
-  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
+  };  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
     const newVisibleAnnotations = new Set(visibleAnnotations);
+    const isVisible = !visibleAnnotations.has(annotationId);
     
     if (visibleAnnotations.has(annotationId)) {
       newVisibleAnnotations.delete(annotationId);
@@ -177,10 +226,20 @@ export function AnnotationsContent({
     
     setVisibleAnnotations(newVisibleAnnotations);
     
-    // Update the annotation files to mark visibility
+    // Update the annotation files to mark visibility AND update individual sample visibility
     setAnnotationFiles(prev => prev.map(file => 
       file.id === annotationId 
-        ? { ...file, isVisible: newVisibleAnnotations.has(annotationId) }
+        ? { 
+            ...file, 
+            isVisible: isVisible,
+            // Update all samples in this file to inherit the file's visibility
+            // Preserve all existing properties including annotationFileName
+            samples: file.samples?.map(sample => ({
+              ...sample,
+              isVisible: isVisible,
+              annotationFileName: file.name // Ensure annotationFileName is always set
+            }))
+          }
         : file
     ));
   };
@@ -210,9 +269,77 @@ export function AnnotationsContent({
     console.log(`Edit annotation: ${annotationId}`);
     // Implement actual edit functionality here
   };
-
   const handleImportClick = () => {
     setShowUploadDialog(true);
+  };  // Get present and missing image file names for an annotation file
+  const getImageFileLists = (file: AnnotationFile) => {
+    console.log('getImageFileLists called for file:', file.name);
+    console.log('file.samples length:', file.samples?.length);
+    console.log('file.imageMapping:', file.imageMapping);
+    console.log('images prop length:', images.length);
+    console.log('sample images filenames:', images.slice(0, 3).map(img => img.fileName));
+    
+    if (!file.samples || !file.imageMapping) {
+      console.log('Missing samples or imageMapping, returning empty lists');
+      return { presentFiles: [], missingFiles: [] };
+    }
+    
+    // Get all unique image IDs from the annotation samples
+    const annotationImageIds = new Set(file.samples.map(sample => sample.imageId));
+    console.log('annotationImageIds:', Array.from(annotationImageIds).slice(0, 5));
+    
+    // Create a set of uploaded image file names for quick lookup
+    const uploadedImageNames = new Set(images.map(img => img.fileName));
+    console.log('uploadedImageNames:', Array.from(uploadedImageNames).slice(0, 5));
+    
+    const presentFiles: string[] = [];
+    const missingFiles: string[] = [];
+    
+    annotationImageIds.forEach(imageId => {
+      // Get the actual filename from the COCO images array
+      const fileName = file.imageMapping![imageId];
+      console.log(`Image ID ${imageId} maps to filename: ${fileName}`);
+      
+      if (fileName) {
+        // Check if this image file exists in the current dataset
+        if (uploadedImageNames.has(fileName)) {
+          presentFiles.push(fileName);
+          console.log(`Found present: ${fileName}`);
+        } else {
+          missingFiles.push(fileName);
+          console.log(`Found missing: ${fileName}`);
+        }
+      } else {
+        // Fallback for images without mapping
+        const fallbackName = `image_${imageId}.jpg`;
+        missingFiles.push(fallbackName);
+        console.log(`No mapping for image ID ${imageId}, using fallback: ${fallbackName}`);
+      }
+    });
+    
+    console.log('Final presentFiles:', presentFiles);
+    console.log('Final missingFiles:', missingFiles);
+    return { presentFiles, missingFiles };
+  };
+
+  const handleShowPresentImages = (file: AnnotationFile) => {
+    const { presentFiles } = getImageFileLists(file);
+    setImageStatusDialog({
+      isOpen: true,
+      type: 'present',
+      files: presentFiles,
+      annotationFileName: file.name
+    });
+  };
+
+  const handleShowMissingImages = (file: AnnotationFile) => {
+    const { missingFiles } = getImageFileLists(file);
+    setImageStatusDialog({
+      isOpen: true,
+      type: 'missing',
+      files: missingFiles,
+      annotationFileName: file.name
+    });
   };
 
   const handleFilesSelected = async (files: File[]) => {
@@ -229,12 +356,16 @@ export function AnnotationsContent({
           // Validate file type
           if (!file.name.toLowerCase().endsWith('.json')) {
             throw new Error('Only JSON files are supported for COCO annotations');
-          }
-          
-          // Process the COCO annotation file
+          }          // Process the COCO annotation file
           const result = await processCOCOAnnotations(file, id);
           
-          // Create annotation file record
+          // Set all annotation samples to be visible by default and add annotationFileName
+          const visibleSamples = result.samples.map(sample => ({
+            ...sample,
+            isVisible: true,
+            annotationFileName: file.name
+          }));
+            // Create annotation file record
           const annotationFile: AnnotationFile = {
             id: Math.random().toString(36).substring(2, 11),
             name: file.name,
@@ -245,12 +376,16 @@ export function AnnotationsContent({
             matchedImageCount: result.matchedImageCount,
             datasetId: id,
             classStats: result.stats,
-            samples: result.samples,
-            isVisible: false,
-            classColors: result.classColors
+            samples: visibleSamples,
+            isVisible: true, // Set to true so annotations are immediately visible upon upload
+            classColors: result.classColors,
+            imageMapping: result.imageMapping
           };
           
           setAnnotationFiles(prev => [...prev, annotationFile]);
+          
+          // Add the new annotation file to visible annotations immediately
+          setVisibleAnnotations(prev => new Set(prev).add(annotationFile.id));
           
           // Also try to import via API if available
           if (api) {
@@ -380,26 +515,42 @@ export function AnnotationsContent({
                         <Badge variant="outline" className="bg-gray-800 border-gray-700">
                           {file.format}
                         </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <Badge 
-                            variant="outline" 
-                            className={`${file.matchedImageCount > 0 ? 'bg-blue-600/30 text-blue-300 border-blue-700' : 'bg-gray-800 border-gray-700'}`}
-                          >
-                            {file.matchedImageCount} uploaded
-                          </Badge>
-                          <div className="text-xs text-muted-foreground">
-                            of {file.imageCount} total
-                          </div>
-                          {file.matchedImageCount < file.imageCount && (
-                            <div className="mt-1">
-                              <Badge variant="outline" className="bg-amber-600/30 text-amber-300 border-amber-700 text-xs">
-                                {file.imageCount - file.matchedImageCount} missing
-                              </Badge>
+                      </TableCell>                      <TableCell>
+                        {(() => {
+                          const { presentFiles, missingFiles } = getImageFileLists(file);
+                          const currentPresentCount = presentFiles.length;
+                          const currentMissingCount = missingFiles.length;
+                          const totalCount = file.imageCount;
+                          
+                          return (
+                            <div className="flex items-center gap-2 text-sm">
+                              <button
+                                className={`hover:underline cursor-pointer ${currentPresentCount > 0 ? 'text-blue-300 hover:text-blue-200' : 'text-gray-500'}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleShowPresentImages(file);
+                                }}
+                                title="Click to see present image files"
+                              >
+                                {currentPresentCount}
+                              </button>
+                              <span className="text-gray-500">/</span>
+                              <span className="text-gray-400">{totalCount}</span>
+                              {currentMissingCount > 0 && (
+                                <button
+                                  className="text-amber-300 text-xs hover:text-amber-200 hover:underline cursor-pointer"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleShowMissingImages(file);
+                                  }}
+                                  title="Click to see missing image files"
+                                >
+                                  ({currentMissingCount} missing)
+                                </button>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-center">
                         <Button
@@ -499,13 +650,43 @@ export function AnnotationsContent({
             </div>
           </Card>
         </ResizablePanel>
-      </ResizablePanelGroup>
-
-      <AnnotationsUploadDialog
+      </ResizablePanelGroup>      <AnnotationsUploadDialog
         open={showUploadDialog}
         onOpenChange={setShowUploadDialog}
         onFilesSelected={handleFilesSelected}
       />
+
+      <Dialog open={imageStatusDialog.isOpen} onOpenChange={(open) => setImageStatusDialog(prev => ({ ...prev, isOpen: open }))}>
+        <DialogContent className="max-w-md bg-gray-900 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>
+              {imageStatusDialog.type === 'present' ? 'Present Images' : 'Missing Images'} 
+              {' '}({imageStatusDialog.files.length})
+            </DialogTitle>
+            <p className="text-sm text-gray-400">
+              From annotation file: {imageStatusDialog.annotationFileName}
+            </p>
+          </DialogHeader>
+          <div className="max-h-96 overflow-y-auto">
+            {imageStatusDialog.files.length > 0 ? (
+              <div className="space-y-1">
+                {imageStatusDialog.files.map((fileName, index) => (
+                  <div 
+                    key={index} 
+                    className="text-sm p-2 bg-gray-800 rounded border border-gray-700"
+                  >
+                    {fileName}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">
+                No {imageStatusDialog.type} images found.
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

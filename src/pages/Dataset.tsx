@@ -244,9 +244,8 @@ export default function Dataset() {
       });
     }
   };
-
   // Updated function to handle annotation visibility changes with actual annotations
-  const handleShowAnnotationsChange = (show: boolean, annotations: AnnotationSample[]) => {
+  const handleShowAnnotationsChange = (show: boolean, annotations: AnnotationSample[], annotationFiles?: any[]) => {
     setShowAnnotations(show);
     
     if (show && annotations.length > 0) {

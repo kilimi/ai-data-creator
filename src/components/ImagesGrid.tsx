@@ -15,6 +15,14 @@ interface ImagesGridProps {
   annotations?: AnnotationSample[];
 }
 
+// Helper: get annotation file name for an annotation
+function getAnnotationFileName(annotation, annotationFiles) {
+  // Try to find the annotation file by datasetId or other unique property
+  if (!annotationFiles) return '?';
+  const found = annotationFiles.find(f => Array.isArray(f.samples) && f.samples.some(s => s.id === annotation.id));
+  return found ? found.fileName : '?';
+}
+
 export function ImagesGrid({
   images,
   imageSize,
@@ -22,7 +30,11 @@ export function ImagesGrid({
   onDeleteImage,
   onImageClick,
   annotations = [],
-}: ImagesGridProps) {
+  annotationFiles = [], // <-- add this prop for file name lookup
+}: ImagesGridProps & { annotationFiles?: any[] }) {
+  // Only show annotations that are visible (if isVisible is defined, must be true)
+  const filteredAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
+
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
   const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
@@ -57,7 +69,7 @@ export function ImagesGrid({
   };
 
   const getImageAnnotations = (imageId: string) => {
-    const imageAnnotations = annotations.filter(annotation => annotation.imageId === imageId);
+    const imageAnnotations = filteredAnnotations.filter(annotation => annotation.imageId === imageId);
     console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId}`);
     return imageAnnotations;
   };
@@ -134,10 +146,25 @@ export function ImagesGrid({
                   <Trash2 className="w-4 h-4" />
                 </Button>
                 
-                {/* Annotation count badge */}
+                {/* Annotation class names and counts badge */}
                 {imageAnnotations.length > 0 && (
-                  <div className="absolute bottom-2 left-2 bg-blue-600/90 text-white text-xs px-2 py-1 rounded">
-                    {imageAnnotations.length} annotation{imageAnnotations.length !== 1 ? 's' : ''}
+                  <div className="absolute bottom-2 left-2 bg-blue-600/90 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words">
+                    {Object.entries(
+                      imageAnnotations.reduce((acc, ann) => {
+                        if (!acc[ann.className]) acc[ann.className] = { count: 0, names: [], color: ann.color, ids: [] };
+                        acc[ann.className].count += 1;
+                        acc[ann.className].names.push(getAnnotationFileName(ann, annotationFiles));
+                        acc[ann.className].color = ann.color;
+                        acc[ann.className].ids.push(ann.id || '?');
+                        return acc;
+                      }, {} as Record<string, { count: number; names: string[]; color?: string; ids: string[] }>))
+                      .map(([className, { count, names, color }], idx, arr) => (
+                        <span key={className} className="flex items-center gap-1">
+                          <span style={{ display: 'inline-block', width: 10, height: 10, background: color || '#ea384c', borderRadius: '50%' }} />
+                          {className} ({count})<br />
+                          <span className="text-[10px] text-blue-200">[{[...new Set(names)].join(', ')}]</span>{idx < arr.length - 1 ? <>, </> : null}
+                        </span>
+                      ))}
                   </div>
                 )}
               </div>

@@ -1,10 +1,9 @@
-
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useLayoutEffect, useState } from "react";
 import { AnnotationSample } from "@/utils/annotations";
 import { cn } from "@/lib/utils";
 
 interface AnnotationVisualizerProps {
-  annotations: AnnotationSample[];
+  annotations: (AnnotationSample & { annotationFileName?: string })[];
   imageWidth: number;
   imageHeight: number;
   className?: string;
@@ -21,7 +20,7 @@ export const AnnotationVisualizer = ({
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
 
   // Update container dimensions when container size changes
-  useEffect(() => {
+  useLayoutEffect(() => {
     const updateDimensions = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
@@ -62,20 +61,27 @@ export const AnnotationVisualizer = ({
     return { scale, offsetX, offsetY, displayWidth, displayHeight };
   };
 
+  // Filter out hidden annotations before drawing
+  const visibleAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
+
   // Draw annotations on canvas
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || annotations.length === 0 || !containerDimensions.width || !containerDimensions.height) {
+    
+    // Wait for both image and container to be ready before drawing
+    if (!canvas || visibleAnnotations.length === 0 || !containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
       console.log('AnnotationVisualizer: Skipping render due to missing requirements:', {
         hasCanvas: !!canvas,
-        annotationsCount: annotations.length,
-        containerDimensions
+        annotationsCount: visibleAnnotations.length,
+        containerDimensions,
+        imageWidth,
+        imageHeight
       });
       return;
     }
 
     console.log('AnnotationVisualizer: Starting render with:', {
-      annotationsCount: annotations.length,
+      annotationsCount: visibleAnnotations.length,
       imageSize: { width: imageWidth, height: imageHeight },
       containerSize: containerDimensions
     });
@@ -108,7 +114,7 @@ export const AnnotationVisualizer = ({
     });
 
     // Draw each annotation
-    annotations.forEach((annotation, index) => {
+    visibleAnnotations.forEach((annotation, index) => {
       const color = annotation.color || "#ea384c";
       
       console.log(`AnnotationVisualizer: Processing annotation ${index}:`, {
@@ -182,11 +188,17 @@ export const AnnotationVisualizer = ({
     });
     
     console.log('AnnotationVisualizer: Finished rendering all annotations');
-  }, [annotations, containerDimensions, imageWidth, imageHeight]);
+  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight]);
 
   return (
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>
       <canvas ref={canvasRef} className="absolute top-0 left-0 pointer-events-none" />
+      {/* Show annotation file names as a badge in the top-left corner if present */}
+      {visibleAnnotations.length > 0 && (
+        <div className="absolute top-1 left-1 z-10 bg-black/70 text-white text-xs rounded px-2 py-0.5 pointer-events-auto select-none max-w-[90%] overflow-hidden whitespace-nowrap text-ellipsis">
+          {Array.from(new Set(visibleAnnotations.map(a => a.annotationFileName).filter(Boolean))).join(", ")}
+        </div>
+      )}
     </div>
   );
 };
