@@ -103,10 +103,14 @@ export function ImagesTabContent({
   }));
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
+    <div className="h-full flex flex-col">      {/* Header */}
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Images</h2>
+        <div>
+          <h2 className="text-xl font-semibold">Images</h2>
+          <p className="text-sm text-muted-foreground">
+            {images.length} total images
+          </p>
+        </div>
         <div className="flex gap-2">
           <Button asChild>
             <Link to={`/datasets/${id}/annotate`}>

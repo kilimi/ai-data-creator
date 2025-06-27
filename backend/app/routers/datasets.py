@@ -4,6 +4,7 @@ from typing import Optional, List
 import json
 import base64
 from pathlib import Path
+import os
 
 from .. import models, schemas
 from ..database import get_db
@@ -225,8 +226,7 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
                 "fileName": img.file_name,
                 "fileSize": img.file_size,
                 "width": img.width,
-                "height": img.height,
-                "url": url,
+                "height": img.height,                "url": url,
                 "thumbnailUrl": thumbnail_url,
                 "uploadedAt": img.uploaded_at.isoformat(),
                 "annotationsCount": img.annotations_count
@@ -237,6 +237,61 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/datasets/{dataset_id}/images/{image_id}")
+async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a specific image from a dataset.
+    This removes both the database record and the physical file.
+    """
+    try:
+        # Find the image in the database
+        image = db.query(models.Image).filter(
+            models.Image.id == image_id,
+            models.Image.dataset_id == dataset_id
+        ).first()
+        
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Find the dataset to update the image count
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Try to delete the physical file
+        try:
+            dataset_dir = Path("data/images") / str(dataset_id)
+            file_path = dataset_dir / image.file_name
+            if file_path.exists():
+                os.remove(file_path)
+                print(f"Deleted physical file: {file_path}")
+            else:
+                print(f"Physical file not found: {file_path}")
+        except Exception as file_error:
+            print(f"Warning: Could not delete physical file: {file_error}")
+            # Continue with database deletion even if file deletion fails
+        
+        # Delete the image record (this will also cascade delete annotations)
+        db.delete(image)
+        
+        # Update the dataset's image count
+        current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
+        dataset.image_count = current_image_count - 1  # -1 because we're about to delete one
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Image deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
 
 
 @router.post("/datasets/{dataset_id}/import-annotations")
@@ -317,3 +372,58 @@ async def import_annotations(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to import annotations: {str(e)}")
+
+
+@router.delete("/datasets/{dataset_id}/images/{image_id}")
+async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a specific image from a dataset.
+    This removes both the database record and the physical file.
+    """
+    try:
+        # Find the image in the database
+        image = db.query(models.Image).filter(
+            models.Image.id == image_id,
+            models.Image.dataset_id == dataset_id
+        ).first()
+        
+        if not image:
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Find the dataset to update the image count
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Try to delete the physical file
+        try:
+            dataset_dir = Path("data/images") / str(dataset_id)
+            file_path = dataset_dir / image.file_name
+            if file_path.exists():
+                os.remove(file_path)
+                print(f"Deleted physical file: {file_path}")
+            else:
+                print(f"Physical file not found: {file_path}")
+        except Exception as file_error:
+            print(f"Warning: Could not delete physical file: {file_error}")
+            # Continue with database deletion even if file deletion fails
+        
+        # Delete the image record (this will also cascade delete annotations)
+        db.delete(image)
+        
+        # Update the dataset's image count
+        current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
+        dataset.image_count = current_image_count - 1  # -1 because we're about to delete one
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Image deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")

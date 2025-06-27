@@ -10,6 +10,7 @@ export interface AnnotationSample {
   color?: string;             // Optional color for display
   opacity?: number;           // Optional opacity for display
   isVisible?: boolean;        // Optional visibility for toggling in UI
+  annotationFileName?: string; // Optional annotation file name for grouping
 }
 
 export interface AnnotationFile {
@@ -39,8 +40,19 @@ export function generateClassColors(classNames: string[]): { [className: string]
     "#95a5a6", "#34495e", "#1abc9c", "#16a085", "#27ae60",
     "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FECA57",
     "#FF9FF3", "#54A0FF", "#5F27CD", "#00D2D3", "#FF9F43",
-    "#C44569", "#F8B500", "#6C5CE7", "#A29BFE", "#FD79A8"
+    "#C44569", "#F8B500", "#6C5CE7", "#A29BFE", "#FD79A8",
+    "#FF3838", "#FF9500", "#FFDD59", "#C44569", "#F8B500",
+    "#6C5CE7", "#A29BFE", "#FD79A8", "#FDCB6E", "#E17055",
+    "#74B9FF", "#0984E3", "#00B894", "#00CEC9", "#6C5CE7",
+    "#A29BFE", "#FD79A8", "#FDCB6E", "#E17055", "#74B9FF"
   ];
+  
+  // Shuffle the predefined colors for more randomness
+  const shuffledColors = [...predefinedColors];
+  for (let i = shuffledColors.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffledColors[i], shuffledColors[j]] = [shuffledColors[j], shuffledColors[i]];
+  }
   
   // Helper function to generate a random color
   const generateRandomColor = (): string => {
@@ -77,14 +89,23 @@ export function generateClassColors(classNames: string[]): { [className: string]
     return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
   };
   
-  classNames.forEach((className, index) => {
+  // Create a shuffled index array for more randomness
+  const shuffledIndices = classNames.map((_, index) => index);
+  for (let i = shuffledIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffledIndices[i], shuffledIndices[j]] = [shuffledIndices[j], shuffledIndices[i]];
+  }
+  
+  classNames.forEach((className, originalIndex) => {
     let color: string;
+    const randomIndex = shuffledIndices[originalIndex];
     
-    // First try to use predefined colors
-    if (index < predefinedColors.length) {
-      color = predefinedColors[index];
+    // Use shuffled predefined colors, but with additional randomization
+    if (Math.random() < 0.7 && randomIndex < shuffledColors.length) {
+      // 70% chance to use a shuffled predefined color
+      color = shuffledColors[randomIndex];
     } else {
-      // Generate random colors for additional classes
+      // 30% chance to generate a completely random color
       let attempts = 0;
       do {
         const hslColor = generateRandomColor();

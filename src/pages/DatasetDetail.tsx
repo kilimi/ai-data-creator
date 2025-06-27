@@ -7,6 +7,7 @@ import { useProject } from '@/hooks/use-projects';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { DatasetCard, DatasetCardSkeleton } from '@/components/DatasetCard';
+import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dataset } from '@/types';
@@ -107,7 +108,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     return (
       <div className="min-h-screen pb-16">
         <Navbar />
-        <section className="container max-w-6xl pt-24 pb-6">
+        <section className="px-6 pt-24 pb-6">
           <div className="flex items-center gap-2 mb-6">
             <Button 
               variant="ghost" 
@@ -189,7 +190,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     <div className="min-h-screen pb-16">
       <Navbar />
       
-      <section className="container max-w-6xl pt-24 pb-6">
+      <section className="px-6 pt-24 pb-6">
+        {/* Breadcrumb Navigation */}
+        <ProjectBreadcrumb 
+          projectName={project?.name || null}
+          isLoading={loading}
+        />
+        
         {/* Project Header with Back and Create Dataset Button */}
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
           <div className="flex items-center gap-2">

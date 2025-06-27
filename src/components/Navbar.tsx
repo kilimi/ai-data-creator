@@ -24,7 +24,7 @@ export function Navbar() {
         scrolled ? "nav-blur" : "bg-transparent"
       )}
     >
-      <div className="container flex h-full items-center justify-between max-w-7xl mx-auto px-4">
+      <div className="flex h-full items-center justify-between w-full px-4">
         <div className="flex items-center gap-6">
           <Link 
             to="/" 

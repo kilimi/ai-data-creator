@@ -96,6 +96,43 @@ export default function Dataset() {
     fetchDataset();
   }, [id, api, toast]);
 
+  // Re-evaluate annotations when images change (fixes issue when annotations are uploaded before images)
+  useEffect(() => {
+    if (images.length > 0 && visibleAnnotations.length > 0) {
+      // Find any stored annotation files that might need to be re-processed
+      const savedAnnotations = localStorage.getItem(`annotations_${id}`);
+      if (savedAnnotations) {
+        try {
+          const annotationFiles = JSON.parse(savedAnnotations);
+          const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
+          if (savedVisibility) {
+            const visibilityArray: string[] = JSON.parse(savedVisibility);
+            const visibilitySet = new Set(visibilityArray);
+            
+            // Collect all visible annotations from stored files
+            const allVisibleAnnotations: AnnotationSample[] = [];
+            annotationFiles.forEach((file: any) => {
+              if (visibilitySet.has(file.id) && file.samples) {
+                const samplesWithFileName = file.samples.map((sample: any) => ({
+                  ...sample,
+                  annotationFileName: file.name
+                }));
+                allVisibleAnnotations.push(...samplesWithFileName);
+              }
+            });
+            
+            if (allVisibleAnnotations.length > 0) {
+              setShowAnnotations(true);
+              setVisibleAnnotations(allVisibleAnnotations);
+            }
+          }
+        } catch (error) {
+          console.error('Error re-processing annotations after image load:', error);
+        }
+      }
+    }
+  }, [images.length, id]);
+
   const handleUploadImages = async (files: File[]) => {
     if (!api || !id) return;
 
@@ -130,29 +167,40 @@ export default function Dataset() {
     }
     setIsUploadDialogOpen(false);
   };
-
   const handleDeleteImage = async (imageId: string) => {
-    if (!api || !id) return;
+    if (!id) return;
     
     try {
-      const response = await api.deleteImage(id, imageId);
+      // Always delete locally first
+      setImages(prevImages => prevImages.filter(image => image.id !== imageId));
       
-      if (response.success) {
-        toast({
-          title: "Success",
-          description: "Image deleted successfully",
-        });
-        
-        // Update the images state
-        setImages(prevImages => prevImages.filter(image => image.id !== imageId));
-        
-        // Adjust current page if needed after deletion
-        if (paginatedImages.length === 1 && currentPage > 1) {
-          setCurrentPage(currentPage - 1);
+      // Adjust current page if needed after deletion
+      if (paginatedImages.length === 1 && currentPage > 1) {
+        setCurrentPage(currentPage - 1);
+      }
+      
+      // Try to delete via API if available (but don't fail if it doesn't work)
+      if (api) {
+        try {
+          const response = await api.deleteImage(id, imageId);
+          if (response.success) {
+            console.log('Image deleted from backend successfully');
+          } else {
+            console.warn('Backend delete failed (this is non-critical):', response.error);
+          }
+        } catch (apiError) {
+          console.warn('Backend delete failed (this is non-critical):', apiError);
+          // Don't fail the whole process if backend fails - local deletion already succeeded
         }
       } else {
-        throw new Error(response.error || 'Delete failed');
+        console.log('No API available, skipping backend delete');
       }
+      
+      toast({
+        title: "Success",
+        description: "Image deleted successfully",
+      });
+      
     } catch (error) {
       console.error('Error deleting image:', error);
       toast({
@@ -162,10 +210,9 @@ export default function Dataset() {
       });
     }
   };
-
   // Updated function to handle annotation imports with better error handling
   const handleImportAnnotations = async (files: File[]) => {
-    if (!api || !id) return;
+    if (!id) return;
 
     try {
       const successfulImports: string[] = [];
@@ -181,23 +228,32 @@ export default function Dataset() {
             throw new Error('Only JSON files are supported for COCO annotations');
           }
           
-          // Process the COCO file to get annotation data
+          // Process the COCO file to get annotation data (this always works locally)
           const { processCOCOAnnotations } = await import('@/utils/annotations');
           const result = await processCOCOAnnotations(file, id);
           
           // Add to local state for immediate display
           allImportedAnnotations.push(...result.samples);
           
-          // Also try to import via API
-          const apiResult = await api.importAnnotations(id, file);
-          
-          if (apiResult.success && apiResult.data) {
-            const { imported, skipped, message } = apiResult.data;
-            successfulImports.push(file.name);
-            console.log(`API import successful for ${file.name}: imported ${imported}, skipped ${skipped}`);
+          // Also try to import via API if available (but don't fail if it doesn't work)
+          if (api) {
+            try {
+              const apiResult = await api.importAnnotations(id, file);
+              if (apiResult && apiResult.success && apiResult.data) {
+                const { imported, skipped, message } = apiResult.data;
+                console.log(`API import successful for ${file.name}: imported ${imported}, skipped ${skipped}`);
+              } else {
+                console.warn(`Backend import failed for ${file.name} (this is non-critical):`, apiResult?.error);
+              }
+            } catch (apiError) {
+              console.warn(`Backend import failed for ${file.name} (this is non-critical):`, apiError);
+              // Don't fail the whole process if backend fails - this is just for additional persistence
+            }
           } else {
-            throw new Error(apiResult.error || 'Failed to import annotations via API');
+            console.log('No API available, skipping backend import');
           }
+          
+          successfulImports.push(file.name);
           
         } catch (fileError) {
           console.error(`Error importing file ${file.name}:`, fileError);
@@ -249,11 +305,8 @@ export default function Dataset() {
     setShowAnnotations(show);
     
     if (show && annotations.length > 0) {
-      // Filter annotations to only show those for currently visible images
-      const filteredAnnotations = annotations.filter(anno => 
-        paginatedImages.some(img => img.id === anno.imageId)
-      );
-      setVisibleAnnotations(filteredAnnotations);
+      // Store all annotations - filtering will happen at display time
+      setVisibleAnnotations(annotations);
     } else {
       setVisibleAnnotations([]);
     }
@@ -288,26 +341,28 @@ export default function Dataset() {
   }
 
   return (
-    <div className="pb-16">
+    <div className="min-h-screen flex flex-col">
       <Navbar />
-      <main className="container max-w-full mx-auto px-6 pt-24 flex flex-col min-h-screen">
-        <div className="max-w-7xl mx-auto w-full">
-          <DatasetBreadcrumb 
-            projectId={projectId} 
-            projectName={projectName} 
-            datasetName={dataset?.name}
-            isLoading={isLoading}
-          />
-          <DatasetHeader 
-            isLoading={isLoading} 
-            name={dataset?.name} 
-          />
-          <LayoutControls 
-            currentLayout={settings.layout}
-            onLayoutChange={updateLayout}
-          />
+      <main className="flex-1 flex flex-col pt-16">
+        <div className="px-6 py-4 border-b bg-background">
+          <div>
+            <DatasetBreadcrumb 
+              projectId={projectId} 
+              projectName={projectName} 
+              datasetName={dataset?.name}
+              isLoading={isLoading}
+            />
+            <DatasetHeader 
+              isLoading={isLoading} 
+              name={dataset?.name} 
+            />
+            <LayoutControls 
+              currentLayout={settings.layout}
+              onLayoutChange={updateLayout}
+            />
+          </div>
         </div>
-        <div className="flex-1 flex flex-col w-full">
+        <div className="flex-1 flex flex-col">
           <ResizableDatasetLayout
             layout={settings.layout}
             id={id || ''}

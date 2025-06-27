@@ -13,14 +13,30 @@ interface ImagesGridProps {
   onDeleteImage: (imageId: string) => Promise<void>;
   onImageClick?: (image: Image) => void;
   annotations?: AnnotationSample[];
+  annotationFiles?: any[];
 }
 
 // Helper: get annotation file name for an annotation
-function getAnnotationFileName(annotation, annotationFiles) {
-  // Try to find the annotation file by datasetId or other unique property
-  if (!annotationFiles) return '?';
-  const found = annotationFiles.find(f => Array.isArray(f.samples) && f.samples.some(s => s.id === annotation.id));
-  return found ? found.fileName : '?';
+function getAnnotationFileName(annotation: any, annotationFiles: any[]): string {
+  // First try to use the annotationFileName property if it exists
+  if (annotation.annotationFileName) {
+    return annotation.annotationFileName;
+  }
+  
+  // Fallback: try to find the annotation file by matching samples
+  if (!annotationFiles || annotationFiles.length === 0) {
+    return 'Unknown';
+  }
+  
+  const found = annotationFiles.find(f => {
+    return Array.isArray(f.samples) && f.samples.some(s => {
+      // Try multiple ways to match the annotation
+      return s.id === annotation.id || 
+             (s.imageId === annotation.imageId && s.className === annotation.className);
+    });
+  });
+  
+  return found ? (found.name || found.fileName || 'Unknown') : 'Unknown';
 }
 
 export function ImagesGrid({
@@ -30,10 +46,14 @@ export function ImagesGrid({
   onDeleteImage,
   onImageClick,
   annotations = [],
-  annotationFiles = [], // <-- add this prop for file name lookup
-}: ImagesGridProps & { annotationFiles?: any[] }) {
+  annotationFiles = [],
+}: ImagesGridProps) {
   // Only show annotations that are visible (if isVisible is defined, must be true)
   const filteredAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
+  
+  console.log('ImagesGrid: Total annotations received:', annotations.length);
+  console.log('ImagesGrid: Filtered visible annotations:', filteredAnnotations.length);
+  console.log('ImagesGrid: Annotation files received:', annotationFiles.length);
 
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
@@ -70,7 +90,14 @@ export function ImagesGrid({
 
   const getImageAnnotations = (imageId: string) => {
     const imageAnnotations = filteredAnnotations.filter(annotation => annotation.imageId === imageId);
-    console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId}`);
+    
+    if (imageAnnotations.length > 0) {
+      console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId}:`);
+      imageAnnotations.forEach((ann, idx) => {
+        console.log(`  ${idx + 1}. Class: ${ann.className}, File: ${ann.annotationFileName || 'NOT SET'}, Color: ${ann.color}`);
+      });
+    }
+    
     return imageAnnotations;
   };
 
@@ -149,22 +176,68 @@ export function ImagesGrid({
                 {/* Annotation class names and counts badge */}
                 {imageAnnotations.length > 0 && (
                   <div className="absolute bottom-2 left-2 bg-blue-600/90 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words">
-                    {Object.entries(
-                      imageAnnotations.reduce((acc, ann) => {
-                        if (!acc[ann.className]) acc[ann.className] = { count: 0, names: [], color: ann.color, ids: [] };
-                        acc[ann.className].count += 1;
-                        acc[ann.className].names.push(getAnnotationFileName(ann, annotationFiles));
-                        acc[ann.className].color = ann.color;
-                        acc[ann.className].ids.push(ann.id || '?');
+                    {(() => {
+                      // Group annotations by file name first, then by class within each file
+                      const annotationsByFile = imageAnnotations.reduce((acc, ann) => {
+                        // Use annotationFileName if available, otherwise try to derive it, fallback to 'Unknown'
+                        let fileName = ann.annotationFileName;
+                        if (!fileName) {
+                          fileName = getAnnotationFileName(ann, annotationFiles);
+                        }
+                        if (!fileName || fileName === 'Unknown') {
+                          fileName = 'Annotation File'; // Better fallback
+                        }
+                        
+                        if (!acc[fileName]) acc[fileName] = {};
+                        
+                        // Create a unique key for each class in each file
+                        const classKey = ann.className;
+                        if (!acc[fileName][classKey]) {
+                          acc[fileName][classKey] = { count: 0, color: ann.color };
+                        }
+                        acc[fileName][classKey].count += 1;
+                        // Always update color in case it changed
+                        acc[fileName][classKey].color = ann.color;
                         return acc;
-                      }, {} as Record<string, { count: number; names: string[]; color?: string; ids: string[] }>))
-                      .map(([className, { count, names, color }], idx, arr) => (
-                        <span key={className} className="flex items-center gap-1">
-                          <span style={{ display: 'inline-block', width: 10, height: 10, background: color || '#ea384c', borderRadius: '50%' }} />
-                          {className} ({count})<br />
-                          <span className="text-[10px] text-blue-200">[{[...new Set(names)].join(', ')}]</span>{idx < arr.length - 1 ? <>, </> : null}
-                        </span>
-                      ))}
+                      }, {} as Record<string, Record<string, { count: number; color?: string }>>);
+
+                      // Create display elements for each file and its classes
+                      const fileEntries = Object.entries(annotationsByFile);
+                      
+                      return fileEntries.map(([fileName, classes], fileIdx) => (
+                        <div key={`${fileName}-${fileIdx}`} className="mb-1 last:mb-0">
+                          {/* Always show file name when there are multiple files, or when explicitly requested */}
+                          {fileEntries.length > 1 && (
+                            <div className="text-[10px] text-blue-200 mb-0.5 truncate" title={fileName}>
+                              {fileName}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {Object.entries(classes).map(([className, { count, color }], classIdx) => (
+                              <span key={`${fileName}-${className}-${classIdx}`} className="flex items-center gap-1">
+                                <span 
+                                  style={{ 
+                                    display: 'inline-block', 
+                                    width: 8, 
+                                    height: 8, 
+                                    backgroundColor: color || '#ea384c', 
+                                    borderRadius: '50%' 
+                                  }} 
+                                />
+                                <span className="text-[10px]">
+                                  {className} ({count})
+                                  {fileEntries.length > 1 && (
+                                    <span className="text-blue-200 ml-1">
+                                      [{fileName}]
+                                    </span>
+                                  )}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ));
+                    })()}
                   </div>
                 )}
               </div>

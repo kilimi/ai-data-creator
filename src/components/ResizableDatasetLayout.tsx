@@ -105,7 +105,7 @@ export function ResizableDatasetLayout({
 
   if (layout === 'images-only') {
     return (
-      <div className="rounded-lg border bg-card h-full w-full">
+      <div className="w-full h-full">
         {renderImagesSection()}
       </div>
     );
@@ -113,7 +113,7 @@ export function ResizableDatasetLayout({
 
   if (layout === 'annotations-only') {
     return (
-      <div className="rounded-lg border bg-card h-full w-full">
+      <div className="w-full h-full">
         {renderAnnotationsSection()}
       </div>
     );
@@ -123,7 +123,7 @@ export function ResizableDatasetLayout({
     return (
       <ResizablePanelGroup 
         direction="vertical" 
-        className="rounded-lg border min-h-[85vh] w-full"
+        className="w-full h-full"
         onLayout={(sizes) => {
           if (sizes[0] !== undefined) {
             onSliderPositionChange(sizes[0]);
@@ -151,7 +151,7 @@ export function ResizableDatasetLayout({
   return (
     <ResizablePanelGroup 
       direction="horizontal" 
-      className="rounded-lg border min-h-[85vh] w-full"
+      className="w-full h-full"
       onLayout={(sizes) => {
         if (sizes[0] !== undefined) {
           onSliderPositionChange(sizes[0]);
