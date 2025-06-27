@@ -520,7 +520,7 @@ export function AnnotationsContent({
                           const { presentFiles, missingFiles } = getImageFileLists(file);
                           const currentPresentCount = presentFiles.length;
                           const currentMissingCount = missingFiles.length;
-                          const totalCount = file.imageCount;
+                          const totalCount = currentPresentCount + currentMissingCount; // Use actual count of images with annotations
                           
                           return (
                             <div className="flex items-center gap-2 text-sm">
