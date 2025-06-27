@@ -165,7 +165,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     return (
       <div className="min-h-screen pb-16">
         <Navbar />
-        <section className="px-6 pt-24 pb-6">
+        <section className="container max-w-7xl mx-auto px-4 pt-24 pb-6">
           <div className="flex items-center gap-2 mb-6">
             <Button 
               variant="ghost" 
@@ -247,7 +247,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     <div className="min-h-screen pb-16">
       <Navbar />
       
-      <section className="px-6 pt-24 pb-6">
+      <section className="container max-w-7xl mx-auto px-4 pt-24 pb-6">
         {/* Breadcrumb Navigation */}
         <ProjectBreadcrumb 
           projectName={project?.name || null}

@@ -15,9 +15,10 @@ export type LayoutType = 'horizontal' | 'vertical' | 'images-only' | 'annotation
 interface LayoutControlsProps {
   currentLayout: LayoutType;
   onLayoutChange: (layout: LayoutType) => void;
+  compact?: boolean;
 }
 
-export function LayoutControls({ currentLayout, onLayoutChange }: LayoutControlsProps) {
+export function LayoutControls({ currentLayout, onLayoutChange, compact = false }: LayoutControlsProps) {
   const layouts = [
     {
       type: 'horizontal' as LayoutType,
@@ -46,14 +47,39 @@ export function LayoutControls({ currentLayout, onLayoutChange }: LayoutControls
   ];
 
   return (
-    <Card className="p-4 mb-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <Label className="text-sm font-medium">Layout Options</Label>
-          <p className="text-xs text-muted-foreground mt-1">
-            Choose how to arrange images and annotations
-          </p>
-        </div>
+    <div className={compact ? "flex items-center gap-2" : ""}>
+      {!compact && (
+        <Card className="p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm font-medium">Layout Options</Label>
+              <p className="text-xs text-muted-foreground mt-1">
+                Choose how to arrange images and annotations
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {layouts.map((layout) => {
+                const Icon = layout.icon;
+                return (
+                  <Button
+                    key={layout.type}
+                    variant={currentLayout === layout.type ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => onLayoutChange(layout.type)}
+                    className="flex flex-col items-center gap-1 h-auto py-2 px-3"
+                    title={layout.description}
+                  >
+                    <Icon className="h-4 w-4" />
+                    <span className="text-xs">{layout.label}</span>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        </Card>
+      )}
+      
+      {compact && (
         <div className="flex gap-2">
           {layouts.map((layout) => {
             const Icon = layout.icon;
@@ -63,16 +89,15 @@ export function LayoutControls({ currentLayout, onLayoutChange }: LayoutControls
                 variant={currentLayout === layout.type ? "default" : "outline"}
                 size="sm"
                 onClick={() => onLayoutChange(layout.type)}
-                className="flex flex-col items-center gap-1 h-auto py-2 px-3"
+                className="flex items-center gap-1 h-8 px-2"
                 title={layout.description}
               >
                 <Icon className="h-4 w-4" />
-                <span className="text-xs">{layout.label}</span>
               </Button>
             );
           })}
         </div>
-      </div>
-    </Card>
+      )}
+    </div>
   );
 }

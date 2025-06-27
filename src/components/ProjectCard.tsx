@@ -28,6 +28,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { createApiClient } from "@/utils/api";
 import { API_CONFIG } from "@/config/api";
 import { useToast } from "@/hooks/use-toast";
+import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { Badge } from "@/components/ui/badge";
 
@@ -280,6 +281,8 @@ interface DatasetThumbnailProps {
 }
 
 function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
+  const annotationFilesCount = useAnnotationFilesCount(dataset.id);
+  
   return (
     <HoverCard>
       <HoverCardTrigger asChild>
@@ -313,7 +316,7 @@ function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
             <p className="text-xs text-muted-foreground line-clamp-2">{dataset.description}</p>
             <div className="flex items-center pt-1">
               <span className="text-xs text-muted-foreground">
-                {dataset.image_count} images • {dataset.annotation_count} annotations
+                {dataset.image_count} images • {annotationFilesCount} annotation {annotationFilesCount === 1 ? 'file' : 'files'}
               </span>
             </div>
           </div>

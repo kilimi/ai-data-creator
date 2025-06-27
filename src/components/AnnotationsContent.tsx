@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
@@ -135,9 +135,9 @@ export function AnnotationsContent({
   // Update visible annotations whenever visibility, annotation files, or images change
   useEffect(() => {
     updateVisibleAnnotations();
-  }, [visibleAnnotations, annotationFiles, images]);// Update annotation color
+  }, [visibleAnnotations, annotationFiles, images]);  // Update annotation color
   const handleClassColorChange = (annotationId: string, className: string, newColor: string) => {
-    setAnnotationFiles(prev => prev.map(file => {
+    const updatedFiles = annotationFiles.map(file => {
       if (file.id === annotationId) {
         const updatedClassColors = { ...file.classColors, [className]: newColor };
         const updatedClassStats = file.classStats?.map(stat => 
@@ -162,12 +162,17 @@ export function AnnotationsContent({
         };
       }
       return file;
-    }));
+    });
+    
+    setAnnotationFiles(updatedFiles);
+    
+    // Save updated files to localStorage
+    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
   };
 
   // Update annotation color and opacity
   const handleClassColorOpacityChange = (annotationId: string, className: string, newColor: string, opacity: number) => {
-    setAnnotationFiles(prev => prev.map(file => {
+    const updatedFiles = annotationFiles.map(file => {
       if (file.id === annotationId) {
         const updatedClassColors = { ...file.classColors, [className]: newColor };
         const updatedClassStats = file.classStats?.map(stat => 
@@ -193,8 +198,15 @@ export function AnnotationsContent({
         };
       }
       return file;
-    }));
-  };  // Map annotation COCO image IDs to actual uploaded image IDs using filename
+    });
+    
+    setAnnotationFiles(updatedFiles);
+    
+    // Save updated files to localStorage
+    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+  };
+
+  // Map annotation COCO image IDs to actual uploaded image IDs using filename
   const mapAnnotationImageIds = (annotations: AnnotationSample[], annotationFile: AnnotationFile): AnnotationSample[] => {
     if (!annotationFile.imageMapping || images.length === 0) {
       console.log('No image mapping available or no images loaded, returning original annotations');
@@ -291,8 +303,11 @@ export function AnnotationsContent({
     
     setVisibleAnnotations(newVisibleAnnotations);
     
+    // Save visibility state to localStorage
+    localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
+    
     // Update the annotation files to mark visibility AND update individual sample visibility
-    setAnnotationFiles(prev => prev.map(file => 
+    const updatedFiles = annotationFiles.map(file => 
       file.id === annotationId 
         ? { 
             ...file, 
@@ -306,21 +321,44 @@ export function AnnotationsContent({
             }))
           }
         : file
-    ));
+    );
+    
+    setAnnotationFiles(updatedFiles);
+    
+    // Save updated files to localStorage
+    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
   };
 
   const handleDeleteAnnotation = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
-    setAnnotationFiles(prev => prev.filter(file => file.id !== annotationId));
+    const updatedFiles = annotationFiles.filter(file => file.id !== annotationId);
+    setAnnotationFiles(updatedFiles);
+    
+    // Save updated files to localStorage
+    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
     
     // Remove from visible annotations if it was visible
     const newVisibleAnnotations = new Set(visibleAnnotations);
     newVisibleAnnotations.delete(annotationId);
     setVisibleAnnotations(newVisibleAnnotations);
     
+    // Update visibility state in localStorage
+    localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
+    
     if (selectedAnnotation === annotationId) {
       setSelectedAnnotation(null);
+    }
+
+    // Update parent component with new annotation state
+    if (onShowAnnotationsChange) {
+      const allSamples = updatedFiles.flatMap(file => file.samples || []);
+      const visibleSamples = allSamples.filter(sample => 
+        sample.annotationFileName && newVisibleAnnotations.has(
+          updatedFiles.find(f => f.name === sample.annotationFileName)?.id || ''
+        )
+      );
+      onShowAnnotationsChange(visibleSamples.length > 0, visibleSamples, updatedFiles);
     }
     
     toast({
@@ -352,7 +390,7 @@ export function AnnotationsContent({
       return;
     }
 
-    setAnnotationFiles(prev => prev.map(file => 
+    const updatedFiles = annotationFiles.map(file => 
       file.id === editDialog.annotationId 
         ? { 
             ...file, 
@@ -364,7 +402,12 @@ export function AnnotationsContent({
             }))
           }
         : file
-    ));
+    );
+    
+    setAnnotationFiles(updatedFiles);
+    
+    // Save updated files to localStorage
+    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
 
     toast({
       title: "Annotation renamed",
@@ -377,6 +420,107 @@ export function AnnotationsContent({
   const handleCancelEdit = () => {
     setEditDialog({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   };
+
+  const handleDownloadAnnotation = (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (!file) {
+      toast({
+        title: "Error",
+        description: "Annotation file not found.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Extract unique categories from samples
+      const categoryMap = new Map<string, number>();
+      let categoryId = 1;
+      
+      // Build category mapping
+      file.samples?.forEach(sample => {
+        if (!categoryMap.has(sample.className)) {
+          categoryMap.set(sample.className, categoryId++);
+        }
+      });
+
+      // Create categories array
+      const categories = Array.from(categoryMap.entries()).map(([name, id]) => ({
+        id,
+        name,
+        supercategory: ""
+      }));
+
+      // Create a COCO format JSON structure for download
+      const cocoData = {
+        info: {
+          description: `Annotations for ${file.name}`,
+          version: "1.0",
+          year: new Date().getFullYear(),
+          contributor: "AI Data Creator",
+          date_created: new Date().toISOString()
+        },
+        licenses: [{
+          id: 1,
+          name: "Unknown License",
+          url: ""
+        }],
+        images: Object.entries(file.imageMapping || {}).map(([imageId, fileName]) => ({
+          id: parseInt(imageId),
+          width: 640, // Default width - could be enhanced to store actual dimensions
+          height: 480, // Default height - could be enhanced to store actual dimensions
+          file_name: fileName,
+          license: 1,
+          flickr_url: "",
+          coco_url: "",
+          date_captured: ""
+        })),
+        categories,
+        annotations: file.samples?.map((sample, index) => ({
+          id: index + 1,
+          image_id: parseInt(sample.imageId),
+          category_id: categoryMap.get(sample.className) || 1,
+          bbox: sample.bbox ? [
+            sample.bbox[0] * 640, // Convert normalized to pixel coordinates
+            sample.bbox[1] * 480,
+            sample.bbox[2] * 640,
+            sample.bbox[3] * 480
+          ] : [0, 0, 0, 0],
+          area: sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * 640 * 480 : 0),
+          iscrowd: 0,
+          segmentation: sample.segmentation || []
+        })) || []
+      };
+
+      // Create and download the file
+      const dataStr = JSON.stringify(cocoData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${file.name.replace(/\.[^/.]+$/, '')}_export.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Download started",
+        description: `Downloading ${file.name} as COCO JSON format.`,
+      });
+    } catch (error) {
+      console.error('Error downloading annotation:', error);
+      toast({
+        title: "Download failed",
+        description: "Failed to export annotation file.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleImportClick = () => {
     setShowUploadDialog(true);
   };  // Get present and missing image file names for an annotation file
@@ -665,6 +809,14 @@ export function AnnotationsContent({
                           onClick={(e) => handleDeleteAnnotation(file.id, e)}
                         >
                           <Trash2 className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                          onClick={(e) => handleDownloadAnnotation(file.id, e)}
+                        >
+                          <Download className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>

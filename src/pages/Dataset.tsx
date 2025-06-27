@@ -354,9 +354,7 @@ export default function Dataset() {
             />
             <DatasetHeader 
               isLoading={isLoading} 
-              name={dataset?.name} 
-            />
-            <LayoutControls 
+              name={dataset?.name}
               currentLayout={settings.layout}
               onLayoutChange={updateLayout}
             />

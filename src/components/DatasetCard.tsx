@@ -6,6 +6,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button";
 import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
+import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,6 +24,7 @@ interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
+  const annotationFilesCount = useAnnotationFilesCount(dataset.id);
   
   // Function to get dataset type badge color
   const getTypeColor = (type?: string) => {
@@ -142,7 +144,7 @@ export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetC
         </div>
         <div className="flex items-center">
           <Layers className="h-4 w-4 mr-1.5" />
-          <span>{dataset.annotation_count} {dataset.annotation_count === 1 ? 'annotation' : 'annotations'}</span>
+          <span>{annotationFilesCount} {annotationFilesCount === 1 ? 'annotation file' : 'annotation files'}</span>
         </div>
       </CardFooter>
     </Card>
