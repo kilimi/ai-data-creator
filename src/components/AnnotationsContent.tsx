@@ -3,17 +3,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { Upload, Tag, Edit, Trash2, Eye, EyeOff } from "lucide-react";
-import { 
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { ClassStatistics } from "@/components/ClassStatistics";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
@@ -44,13 +36,19 @@ export function AnnotationsContent({
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);  const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedClass, setSelectedClass] = useState<string | null>(null);
-  const [imageStatusDialog, setImageStatusDialog] = useState<{
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);  const [imageStatusDialog, setImageStatusDialog] = useState<{
     isOpen: boolean;
     type: 'present' | 'missing';
     files: string[];
     annotationFileName: string;
   }>({ isOpen: false, type: 'present', files: [], annotationFileName: '' });
+  
+  const [editDialog, setEditDialog] = useState<{
+    isOpen: boolean;
+    annotationId: string;
+    currentName: string;
+    newName: string;
+  }>({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   
   const { api } = useApi();
   const { toast } = useToast();  // Load existing annotations from localStorage for demo purposes
@@ -263,11 +261,54 @@ export function AnnotationsContent({
       description: "Annotation file has been removed.",
     });
   };
-
   const handleEditAnnotation = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    console.log(`Edit annotation: ${annotationId}`);
-    // Implement actual edit functionality here
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (file) {
+      setEditDialog({
+        isOpen: true,
+        annotationId: annotationId,
+        currentName: file.name,
+        newName: file.name
+      });
+    }
+  };
+
+  const handleSaveAnnotationName = () => {
+    if (!editDialog.newName.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Invalid name",
+        description: "Annotation name cannot be empty.",
+      });
+      return;
+    }
+
+    setAnnotationFiles(prev => prev.map(file => 
+      file.id === editDialog.annotationId 
+        ? { 
+            ...file, 
+            name: editDialog.newName.trim(),
+            // Update all samples to reflect the new annotation file name
+            samples: file.samples?.map(sample => ({
+              ...sample,
+              annotationFileName: editDialog.newName.trim()
+            }))
+          }
+        : file
+    ));
+
+    toast({
+      title: "Annotation renamed",
+      description: `Successfully renamed to "${editDialog.newName.trim()}".`,
+    });
+
+    setEditDialog({ isOpen: false, annotationId: '', currentName: '', newName: '' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditDialog({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   };
   const handleImportClick = () => {
     setShowUploadDialog(true);
@@ -383,23 +424,24 @@ export function AnnotationsContent({
           };
           
           setAnnotationFiles(prev => [...prev, annotationFile]);
-          
-          // Add the new annotation file to visible annotations immediately
+            // Add the new annotation file to visible annotations immediately
           setVisibleAnnotations(prev => new Set(prev).add(annotationFile.id));
           
-          // Also try to import via API if available
+          // Also try to import via API if available (but don't fail if it doesn't work)
           if (api) {
             try {
               const apiResult = await api.importAnnotations(id, file);
-              if (apiResult.success) {
+              if (apiResult && apiResult.success) {
                 console.log('Annotations imported to backend:', apiResult.data);
               } else {
-                console.warn('Backend import failed:', apiResult.error);
+                console.warn('Backend import failed or returned no success flag:', apiResult);
               }
             } catch (apiError) {
-              console.error('Backend import failed:', apiError);
-              // Don't fail the whole process if backend fails
+              console.warn('Backend import failed (this is non-critical):', apiError);
+              // Don't fail the whole process if backend fails - this is just for additional persistence
             }
+          } else {
+            console.log('No API available, skipping backend import');
           }
           
           successfulImports.push(file.name);
@@ -475,55 +517,41 @@ export function AnnotationsContent({
             {isLoading ? "Importing..." : "Import Annotations"}
           </Button>
         </div>
-      </div>
-
-      {/* Main content: annotation files and statistics/configuration with resizable slider */}
-      <ResizablePanelGroup direction="vertical" className="min-h-[600px] h-[calc(100vh-120px)] gap-6">
-        <ResizablePanel defaultSize={50} minSize={10} maxSize={90}> {/* Annotations: can shrink to 10% */}
-          <Card className="bg-gray-900/50 border-gray-700 rounded-lg h-full flex flex-col">
-            <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-              <h3 className="font-medium">Annotation Files</h3>
-              <div className="text-sm text-gray-400">
-                Show on Images
-              </div>
-            </div>
-            <ScrollArea className="flex-1 min-h-[200px]"> {/* Make ScrollArea fill and have min height */}
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Format</TableHead>
-                    <TableHead>Images</TableHead>
-                    <TableHead className="text-center">Visible</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {annotationFiles.map((file) => (
-                    <TableRow 
-                      key={file.id}
-                      className={`cursor-pointer ${selectedAnnotation === file.id ? 'bg-gray-800' : ''}`}
-                      onClick={() => handleAnnotationClick(file.id)}
-                    >
-                      <TableCell className="font-medium">
-                        {file.name}
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {new Date(file.date).toLocaleDateString()} • {file.classCount} classes
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="bg-gray-800 border-gray-700">
-                          {file.format}
-                        </Badge>
-                      </TableCell>                      <TableCell>
+      </div>      {/* Main content: annotation files with expandable statistics */}
+      <Card className="bg-gray-900/50 border-gray-700 rounded-lg h-full flex flex-col">
+        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+          <h3 className="font-medium">Annotation Files</h3>
+          <div className="text-sm text-gray-400">
+            Show on Images
+          </div>
+        </div>
+        <ScrollArea className="flex-1 min-h-[200px]">
+          <div className="space-y-2 p-4">
+            {annotationFiles.map((file) => (
+              <div key={file.id} className="border border-gray-700 rounded-lg overflow-hidden">
+                {/* Main annotation row */}
+                <div 
+                  className={`cursor-pointer p-4 hover:bg-gray-800/50 transition-colors ${selectedAnnotation === file.id ? 'bg-gray-800' : ''}`}
+                  onClick={() => handleAnnotationClick(file.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="font-medium">{file.name}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      {/* Images count */}
+                      <div className="flex items-center gap-2 text-sm">
                         {(() => {
                           const { presentFiles, missingFiles } = getImageFileLists(file);
                           const currentPresentCount = presentFiles.length;
                           const currentMissingCount = missingFiles.length;
-                          const totalCount = currentPresentCount + currentMissingCount; // Use actual count of images with annotations
+                          const totalCount = currentPresentCount + currentMissingCount;
                           
                           return (
-                            <div className="flex items-center gap-2 text-sm">
+                            <>
                               <button
                                 className={`hover:underline cursor-pointer ${currentPresentCount > 0 ? 'text-blue-300 hover:text-blue-200' : 'text-gray-500'}`}
                                 onClick={(e) => {
@@ -538,7 +566,7 @@ export function AnnotationsContent({
                               <span className="text-gray-400">{totalCount}</span>
                               {currentMissingCount > 0 && (
                                 <button
-                                  className="text-amber-300 text-xs hover:text-amber-200 hover:underline cursor-pointer"
+                                  className="text-amber-300 text-xs hover:text-amber-200 hover:underline cursor-pointer ml-2"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleShowMissingImages(file);
@@ -548,115 +576,104 @@ export function AnnotationsContent({
                                   ({currentMissingCount} missing)
                                 </button>
                               )}
-                            </div>
+                            </>
                           );
                         })()}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
-                          onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
-                          title={visibleAnnotations.has(file.id) ? "Hide annotations" : "Show annotations"}
+                      </div>
+                      {/* Visibility toggle */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
+                        onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
+                        title={visibleAnnotations.has(file.id) ? "Hide annotations" : "Show annotations"}
+                      >
+                        {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                      </Button>
+                      {/* Actions */}
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          onClick={(e) => handleEditAnnotation(file.id, e)}
                         >
-                          {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          <Edit className="h-4 w-4" />
                         </Button>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex gap-2 justify-end">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                            onClick={(e) => handleEditAnnotation(file.id, e)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={(e) => handleDeleteAnnotation(file.id, e)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </ScrollArea>
-          </Card>
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={50} minSize={10} maxSize={95}> {/* Stats/config: can expand to 95% */}
-          <Card className="bg-gray-900/50 border-gray-700 rounded-lg h-full flex flex-col">
-            <div className="p-4 border-b border-gray-700">
-              <h3 className="font-medium">
-                {selectedAnnotationData ? 'Statistics & Configuration' : 'Statistics Overview'}
-              </h3>
-            </div>
-            <div className="p-4 flex-1 flex flex-col">
-              {selectedAnnotationData ? (
-                <div className="flex flex-col h-full">
-                  {/* Statistics section with clickable icons */}
-                  <div className="mb-6">
-                    <h4 className="text-sm font-medium mb-4">Class Statistics</h4>
-                    <ClassStatistics
-                      statistics={selectedAnnotationData.classStats || []}
-                      selectedClass={selectedClass}
-                      onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
-                    />
-                  </div>
-                  {/* Class Configuration section at the bottom */}
-                  <div className="flex-1 flex flex-col">
-                    <div className="mb-4">
-                      <h4 className="text-sm font-medium mb-2">Class Configuration</h4>
-                      <p className="text-xs text-muted-foreground mb-4">
-                        Click a class color icon in the statistics above to customize its appearance
-                      </p>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={(e) => handleDeleteAnnotation(file.id, e)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                    
-                    <ScrollArea className="flex-1">
-                      {/* Color and Opacity picker for selected class */}
-                      {selectedClass && selectedAnnotationData.classStats && (
-                        <div className="mt-4 pt-4 border-t border-gray-700">
-                          <ClassColorOpacityPicker
-                            className={selectedClass}
-                            color={selectedAnnotationData.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
-                            opacity={(selectedAnnotationData.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
-                            onColorOpacityChange={(className, color, opacity) => 
-                              handleClassColorOpacityChange(selectedAnnotationData.id, className, color, opacity)
-                            }
-                          />
-                        </div>
-                      )}
-                    </ScrollArea>
                   </div>
                 </div>
-              ) : (
-                <div className="h-[340px] flex flex-col items-center justify-center text-center p-4">
-                  <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-                    <Tag className="h-6 w-6 text-blue-400" />
+                
+                {/* Expandable statistics section */}
+                {selectedAnnotation === file.id && (
+                  <div className="border-t border-gray-700 bg-gray-800/30">
+                    <div className="p-4">
+                      <h4 className="text-sm font-medium mb-4">Statistics & Configuration</h4>
+                      
+                      {/* Statistics section */}
+                      <div className="mb-6">
+                        <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
+                        <ClassStatistics
+                          statistics={file.classStats || []}
+                          selectedClass={selectedClass}
+                          onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
+                        />
+                      </div>
+                      
+                      {/* Class Configuration section */}
+                      <div>
+                        <h5 className="text-xs font-medium mb-2 text-gray-400">Class Configuration</h5>
+                        <p className="text-xs text-muted-foreground mb-4">
+                          Click a class color icon in the statistics above to customize its appearance
+                        </p>
+                        
+                        {/* Color and Opacity picker for selected class */}
+                        {selectedClass && file.classStats && (
+                          <div className="mt-4 pt-4 border-t border-gray-700">
+                            <ClassColorOpacityPicker
+                              className={selectedClass}
+                              color={file.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
+                              opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
+                              onColorOpacityChange={(className, color, opacity) => 
+                                handleClassColorOpacityChange(file.id, className, color, opacity)
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-medium mb-2">Select an annotation file</h3>
-                  <p className="text-sm text-muted-foreground max-w-xs">
-                    Click on an annotation file to view statistics and configure class appearance
-                  </p>
+                )}
+              </div>
+            ))}
+            
+            {annotationFiles.length === 0 && (
+              <div className="flex flex-col items-center justify-center text-center p-8">
+                <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
+                  <Tag className="h-6 w-6 text-blue-400" />
                 </div>
-              )}
-            </div>
-          </Card>
-        </ResizablePanel>
-      </ResizablePanelGroup>      <AnnotationsUploadDialog
+                <h3 className="text-lg font-medium mb-2">No annotation files</h3>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                  Import annotation files to view and configure class statistics
+                </p>
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </Card><AnnotationsUploadDialog
         open={showUploadDialog}
         onOpenChange={setShowUploadDialog}
         onFilesSelected={handleFilesSelected}
-      />
-
-      <Dialog open={imageStatusDialog.isOpen} onOpenChange={(open) => setImageStatusDialog(prev => ({ ...prev, isOpen: open }))}>
+      />      <Dialog open={imageStatusDialog.isOpen} onOpenChange={(open) => setImageStatusDialog(prev => ({ ...prev, isOpen: open }))}>
         <DialogContent className="max-w-md bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>
@@ -684,6 +701,55 @@ export function AnnotationsContent({
                 No {imageStatusDialog.type} images found.
               </p>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editDialog.isOpen} onOpenChange={(open) => !open && handleCancelEdit()}>
+        <DialogContent className="max-w-md bg-gray-900 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Edit Annotation File</DialogTitle>
+            <p className="text-sm text-gray-400">
+              Change the name of the annotation file
+            </p>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="annotation-name" className="text-sm font-medium text-gray-300 block mb-2">
+                Annotation Name
+              </label>
+              <Input
+                id="annotation-name"
+                value={editDialog.newName}
+                onChange={(e) => setEditDialog(prev => ({ ...prev, newName: e.target.value }))}
+                className="bg-gray-800 border-gray-600 text-white"
+                placeholder="Enter annotation name..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleSaveAnnotationName();
+                  } else if (e.key === 'Escape') {
+                    handleCancelEdit();
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={handleCancelEdit}
+                className="border-gray-600 text-gray-300 hover:bg-gray-800"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveAnnotationName}
+                className="bg-blue-600 hover:bg-blue-700"
+                disabled={!editDialog.newName.trim() || editDialog.newName.trim() === editDialog.currentName}
+              >
+                Save
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

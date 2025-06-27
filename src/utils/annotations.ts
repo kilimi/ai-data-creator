@@ -28,17 +28,73 @@ export interface AnnotationFile {
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
 }
 
-// Generate distinct colors for classes
+// Generate distinct random colors for classes
 export function generateClassColors(classNames: string[]): { [className: string]: string } {
   const colors: { [className: string]: string } = {};
+  const usedColors = new Set<string>();
+  
   const predefinedColors = [
     "#ea384c", "#F97316", "#1EAEDB", "#8B5CF6", "#2ecc71", 
     "#f39c12", "#9b59b6", "#e74c3c", "#3498db", "#e67e22",
-    "#95a5a6", "#34495e", "#1abc9c", "#16a085", "#27ae60"
+    "#95a5a6", "#34495e", "#1abc9c", "#16a085", "#27ae60",
+    "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FECA57",
+    "#FF9FF3", "#54A0FF", "#5F27CD", "#00D2D3", "#FF9F43",
+    "#C44569", "#F8B500", "#6C5CE7", "#A29BFE", "#FD79A8"
   ];
   
+  // Helper function to generate a random color
+  const generateRandomColor = (): string => {
+    const hue = Math.floor(Math.random() * 360);
+    const saturation = 60 + Math.floor(Math.random() * 40); // 60-100%
+    const lightness = 45 + Math.floor(Math.random() * 20);  // 45-65%
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  };
+  
+  // Helper function to convert HSL to hex for consistency
+  const hslToHex = (hsl: string): string => {
+    const hslMatch = hsl.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    if (!hslMatch) return hsl;
+    
+    const h = parseInt(hslMatch[1]) / 360;
+    const s = parseInt(hslMatch[2]) / 100;
+    const l = parseInt(hslMatch[3]) / 100;
+    
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const r = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+    const g = Math.round(hue2rgb(p, q, h) * 255);
+    const b = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+    
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  };
+  
   classNames.forEach((className, index) => {
-    colors[className] = predefinedColors[index % predefinedColors.length];
+    let color: string;
+    
+    // First try to use predefined colors
+    if (index < predefinedColors.length) {
+      color = predefinedColors[index];
+    } else {
+      // Generate random colors for additional classes
+      let attempts = 0;
+      do {
+        const hslColor = generateRandomColor();
+        color = hslToHex(hslColor);
+        attempts++;
+      } while (usedColors.has(color) && attempts < 50); // Prevent infinite loop
+    }
+    
+    colors[className] = color;
+    usedColors.add(color);
   });
   
   return colors;
