@@ -25,7 +25,7 @@ interface ImageDetailModalProps {
 function getAnnotationFileName(annotation, annotationFiles) {
   if (!annotationFiles) return '?';
   const found = annotationFiles.find(f => Array.isArray(f.samples) && f.samples.some(s => s.id === annotation.id));
-  return found ? found.fileName : '?';
+  return found ? found.name : '?';
 }
 
 export function ImageDetailModal({ 
@@ -42,13 +42,13 @@ export function ImageDetailModal({
   imageCount = undefined,
   annotationFiles = [], // <-- add this prop for file name lookup
 }: ImageDetailModalProps & { annotationFiles?: any[] }) {
-  const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [imageLoaded, setImageLoaded] = useState(false);
 
   // Reset image loaded state when image changes
   useEffect(() => {
     setImageLoaded(false);
-    setImageDimensions({ width: 800, height: 600 }); // Reset dimensions to avoid stale state
+    setImageDimensions({ width: 0, height: 0 }); // Reset dimensions to avoid stale state
   }, [image?.id]);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {

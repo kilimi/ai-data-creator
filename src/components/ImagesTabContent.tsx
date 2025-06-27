@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Pencil, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Image } from "@/types";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { ImagesGrid } from "@/components/ImagesGrid";
@@ -34,7 +35,7 @@ function getAnnotationFileName(annotation, annotationFiles) {
   const found = annotationFiles.find((f) =>
     Array.isArray(f.samples) ? f.samples.some((s) => s.id === annotation.id) : false
   );
-  return found ? found.fileName : "?";
+  return found ? found.name : "?";
 }
 
 export function ImagesTabContent({
@@ -103,8 +104,9 @@ export function ImagesTabContent({
   }));
 
   return (
-    <div className="h-full flex flex-col">      {/* Header */}
-      <div className="flex justify-between items-center mb-4">
+    <div className="h-full flex flex-col min-h-0">
+      {/* Header */}
+      <div className="flex-shrink-0 flex justify-between items-center mb-4">
         <div>
           <h2 className="text-xl font-semibold">Images</h2>
           <p className="text-sm text-muted-foreground">
@@ -126,7 +128,7 @@ export function ImagesTabContent({
       </div>
 
       {/* Controls */}
-      <div className="mb-4">
+      <div className="flex-shrink-0 mb-4">
         <ImageDisplayControls
           imagesPerPage={imagesPerPage}
           onImagesPerPageChange={onImagesPerPageChange}
@@ -135,21 +137,23 @@ export function ImagesTabContent({
         />
       </div>
 
-      {/* Images Grid - takes remaining space */}
-      <div className="flex-1 mb-4">
-        <ImagesGrid
-          images={paginatedImages}
-          imageSize={imageSize}
-          onOpenUploadDialog={onOpenUploadDialog}
-          onDeleteImage={onDeleteImage}
-          onImageClick={handleImageClick}
-          annotations={annotationsWithFileName}
-          annotationFiles={annotationFiles}
-        />
+      {/* Images Grid - scrollable content */}
+      <div className="flex-1 min-h-0 mb-4">
+        <ScrollArea className="h-full">
+          <ImagesGrid
+            images={paginatedImages}
+            imageSize={imageSize}
+            onOpenUploadDialog={onOpenUploadDialog}
+            onDeleteImage={onDeleteImage}
+            onImageClick={handleImageClick}
+            annotations={annotationsWithFileName}
+            annotationFiles={annotationFiles}
+          />
+        </ScrollArea>
       </div>
 
-      {/* Pagination */}
-      <div className="mt-auto">
+      {/* Pagination - fixed at bottom */}
+      <div className="flex-shrink-0">
         <PaginationControls
           currentPage={currentPage}
           totalPages={totalPages}

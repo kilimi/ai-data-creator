@@ -158,6 +158,7 @@ export function ImagesGrid({
                       imageWidth={dimensions.width}
                       imageHeight={dimensions.height}
                       className="w-full h-full"
+                      showFileName={false}
                     />
                   </div>
                 )}
@@ -175,67 +176,37 @@ export function ImagesGrid({
                 
                 {/* Annotation class names and counts badge */}
                 {imageAnnotations.length > 0 && (
-                  <div className="absolute bottom-2 left-2 bg-blue-600/90 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words">
+                  <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words flex flex-wrap gap-x-2 gap-y-1">
                     {(() => {
-                      // Group annotations by file name first, then by class within each file
-                      const annotationsByFile = imageAnnotations.reduce((acc, ann) => {
-                        // Use annotationFileName if available, otherwise try to derive it, fallback to 'Unknown'
-                        let fileName = ann.annotationFileName;
-                        if (!fileName) {
-                          fileName = getAnnotationFileName(ann, annotationFiles);
+                      // Group annotations by class name
+                      const annotationsByClass = imageAnnotations.reduce((acc, ann) => {
+                        const className = ann.className;
+                        if (!acc[className]) {
+                          acc[className] = {
+                            count: 0,
+                            color: ann.color,
+                          };
                         }
-                        if (!fileName || fileName === 'Unknown') {
-                          fileName = 'Annotation File'; // Better fallback
-                        }
-                        
-                        if (!acc[fileName]) acc[fileName] = {};
-                        
-                        // Create a unique key for each class in each file
-                        const classKey = ann.className;
-                        if (!acc[fileName][classKey]) {
-                          acc[fileName][classKey] = { count: 0, color: ann.color };
-                        }
-                        acc[fileName][classKey].count += 1;
-                        // Always update color in case it changed
-                        acc[fileName][classKey].color = ann.color;
+                        acc[className].count += 1;
+                        acc[className].color = ann.color;
                         return acc;
-                      }, {} as Record<string, Record<string, { count: number; color?: string }>>);
+                      }, {} as Record<string, { count: number; color?: string }>);
 
-                      // Create display elements for each file and its classes
-                      const fileEntries = Object.entries(annotationsByFile);
-                      
-                      return fileEntries.map(([fileName, classes], fileIdx) => (
-                        <div key={`${fileName}-${fileIdx}`} className="mb-1 last:mb-0">
-                          {/* Always show file name when there are multiple files, or when explicitly requested */}
-                          {fileEntries.length > 1 && (
-                            <div className="text-[10px] text-blue-200 mb-0.5 truncate" title={fileName}>
-                              {fileName}
-                            </div>
-                          )}
-                          <div className="flex flex-wrap gap-1">
-                            {Object.entries(classes).map(([className, { count, color }], classIdx) => (
-                              <span key={`${fileName}-${className}-${classIdx}`} className="flex items-center gap-1">
-                                <span 
-                                  style={{ 
-                                    display: 'inline-block', 
-                                    width: 8, 
-                                    height: 8, 
-                                    backgroundColor: color || '#ea384c', 
-                                    borderRadius: '50%' 
-                                  }} 
-                                />
-                                <span className="text-[10px]">
-                                  {className} ({count})
-                                  {fileEntries.length > 1 && (
-                                    <span className="text-blue-200 ml-1">
-                                      [{fileName}]
-                                    </span>
-                                  )}
-                                </span>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
+                      return Object.entries(annotationsByClass).map(([className, { count, color }]) => (
+                        <span key={className} className="inline-flex items-center">
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 8,
+                              height: 8,
+                              backgroundColor: color || '#ea384c',
+                              borderRadius: '50%',
+                              marginRight: '4px',
+                            }}
+                          />
+                          {className}
+                          {count > 1 && <span className="ml-1">({count})</span>}
+                        </span>
                       ));
                     })()}
                   </div>

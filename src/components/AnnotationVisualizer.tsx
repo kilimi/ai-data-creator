@@ -7,13 +7,15 @@ interface AnnotationVisualizerProps {
   imageWidth: number;
   imageHeight: number;
   className?: string;
+  showFileName?: boolean;
 }
 
 export const AnnotationVisualizer = ({ 
   annotations, 
   imageWidth, 
   imageHeight,
-  className 
+  className,
+  showFileName = true
 }: AnnotationVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -194,7 +196,7 @@ export const AnnotationVisualizer = ({
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>
       <canvas ref={canvasRef} className="absolute top-0 left-0 pointer-events-none" />
       {/* Show annotation file names as a badge in the top-left corner if present */}
-      {visibleAnnotations.length > 0 && (
+      {showFileName && visibleAnnotations.length > 0 && (
         <div className="absolute top-1 left-1 z-10 bg-black/70 text-white text-xs rounded px-2 py-0.5 pointer-events-auto select-none max-w-[90%] overflow-hidden whitespace-nowrap text-ellipsis">
           {Array.from(new Set(visibleAnnotations.map(a => a.annotationFileName).filter(Boolean))).join(", ")}
         </div>

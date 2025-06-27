@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
-import { useState } from 'react';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
 import { AnnotationsContent } from '@/components/AnnotationsContent';
 import { Image } from '@/types';
@@ -53,6 +52,8 @@ export function ResizableDatasetLayout({
   selectedImageIndex,
   setSelectedImageIndex,
 }: ResizableDatasetLayoutProps) {
+  // Memoize images to prevent new array reference on every render
+  const imagesMemo = useMemo(() => images, [JSON.stringify(images)]);
   const [annotationFiles, setAnnotationFiles] = useState<any[]>([]);
 
   // Handle annotation changes and store annotation files
@@ -64,10 +65,11 @@ export function ResizableDatasetLayout({
   };
   
   const renderImagesSection = () => (
-    <ScrollArea className="h-full">
-      <div className="p-6">        <ImagesTabContent
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 p-6">
+        <ImagesTabContent
           id={id}
-          images={images}
+          images={imagesMemo}
           currentPage={currentPage}
           imagesPerPage={imagesPerPage}
           imageSize={imageSize}
@@ -85,11 +87,12 @@ export function ResizableDatasetLayout({
           setSelectedImageIndex={setSelectedImageIndex}
         />
       </div>
-    </ScrollArea>
+    </div>
   );
   const renderAnnotationsSection = () => (
-    <ScrollArea className="h-full">
-      <div className="p-6">        <AnnotationsContent
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 p-6">
+        <AnnotationsContent
           id={id}
           onShowAnnotationsChange={handleShowAnnotationsChange}
           onImportAnnotations={onImportAnnotations}
@@ -97,10 +100,10 @@ export function ResizableDatasetLayout({
           // Add this prop to always show all annotations on the grid
           showAllAnnotationsOnGrid
           // Pass the dataset images
-          images={images}
+          images={imagesMemo}
         />
       </div>
-    </ScrollArea>
+    </div>
   );
 
   if (layout === 'images-only') {
@@ -130,8 +133,8 @@ export function ResizableDatasetLayout({
           }
         }}
       >
-        <ResizablePanel defaultSize={sliderPosition} minSize={30}>
-          <div className="bg-card h-full">
+        <ResizablePanel defaultSize={sliderPosition} minSize={20}>
+          <div className="bg-card h-full overflow-hidden">
             {renderImagesSection()}
           </div>
         </ResizablePanel>
@@ -139,7 +142,7 @@ export function ResizableDatasetLayout({
         <ResizableHandle withHandle />
         
         <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-          <div className="bg-card h-full">
+          <div className="bg-card h-full overflow-hidden">
             {renderAnnotationsSection()}
           </div>
         </ResizablePanel>
@@ -159,7 +162,7 @@ export function ResizableDatasetLayout({
       }}
     >
       <ResizablePanel defaultSize={sliderPosition} minSize={20}>
-        <div className="bg-card h-full">
+        <div className="bg-card h-full overflow-hidden">
           {renderImagesSection()}
         </div>
       </ResizablePanel>
@@ -167,7 +170,7 @@ export function ResizableDatasetLayout({
       <ResizableHandle withHandle />
       
       <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-        <div className="bg-card h-full">
+        <div className="bg-card h-full overflow-hidden">
           {renderAnnotationsSection()}
         </div>
       </ResizablePanel>

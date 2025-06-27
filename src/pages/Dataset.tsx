@@ -360,7 +360,7 @@ export default function Dataset() {
             />
           </div>
         </div>
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 overflow-hidden">
           <ResizableDatasetLayout
             layout={settings.layout}
             id={id || ''}
