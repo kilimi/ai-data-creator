@@ -31,7 +31,6 @@ function getAnnotationFileName(annotation, annotationFiles) {
 // Helper: get display name for annotation
 function getAnnotationDisplayName(annotation: AnnotationSample): string {
   // Try different properties that could serve as a name
-  if (annotation.name) return annotation.name;
   if (annotation.id && annotation.id !== annotation.className) return annotation.id;
   if (annotation.annotationFileName) return annotation.annotationFileName;
   
@@ -345,10 +344,10 @@ export function ImageDetailModal({
                   }}
                 />
                 
-                {/* Annotations overlay - only at 100% zoom for now */}
-                {imageLoaded && annotationsWithFileName && annotationsWithFileName.length > 0 && zoom === 1 && pan.x === 0 && pan.y === 0 && (
+                {/* Annotations overlay - now shown at all zoom levels and pan positions */}
+                {imageLoaded && annotationsWithFileName && annotationsWithFileName.length > 0 && (
                   <AnnotationVisualizer
-                    key={`${image?.id}-${annotationKey}`} // Force re-render when image or annotation key changes
+                    key={`${image?.id}-${annotationKey}-${zoom}-${pan.x}-${pan.y}`} // Force re-render when image, zoom, or pan changes
                     annotations={annotationsWithFileName}
                     imageWidth={imageDimensions.width}
                     imageHeight={imageDimensions.height}

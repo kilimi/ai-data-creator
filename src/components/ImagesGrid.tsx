@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -43,7 +42,6 @@ function getAnnotationFileName(annotation: any, annotationFiles: any[]): string 
 // Helper: get display name for annotation
 function getAnnotationDisplayName(annotation: AnnotationSample): string {
   // Try different properties that could serve as a name
-  if (annotation.name) return annotation.name;
   if (annotation.id && annotation.id !== annotation.className) return annotation.id;
   if (annotation.annotationFileName) return annotation.annotationFileName;
   
