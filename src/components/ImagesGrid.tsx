@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,17 @@ function getAnnotationFileName(annotation: any, annotationFiles: any[]): string 
   });
   
   return found ? (found.name || found.fileName || 'Unknown') : 'Unknown';
+}
+
+// Helper: get display name for annotation
+function getAnnotationDisplayName(annotation: AnnotationSample): string {
+  // Try different properties that could serve as a name
+  if (annotation.name) return annotation.name;
+  if (annotation.id && annotation.id !== annotation.className) return annotation.id;
+  if (annotation.annotationFileName) return annotation.annotationFileName;
+  
+  // If no unique identifier, just return the class name
+  return annotation.className;
 }
 
 export function ImagesGrid({
@@ -174,26 +186,31 @@ export function ImagesGrid({
                   <Trash2 className="w-4 h-4" />
                 </Button>
                 
-                {/* Enhanced annotation display with individual colors for each annotation */}
+                {/* Enhanced annotation display with individual colors and actual names */}
                 {imageAnnotations.length > 0 && (
                   <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words flex flex-wrap gap-x-2 gap-y-1">
-                    {imageAnnotations.map((annotation, index) => (
-                      <span key={`${annotation.className}-${index}`} className="inline-flex items-center">
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: 8,
-                            height: 8,
-                            backgroundColor: annotation.color || '#ea384c',
-                            borderRadius: '50%',
-                            marginRight: '4px',
-                          }}
-                        />
-                        {annotation.className}
-                        {/* Show unique identifier for this specific annotation */}
-                        <span className="ml-1 opacity-75">(anno{index + 1})</span>
-                      </span>
-                    ))}
+                    {imageAnnotations.map((annotation, index) => {
+                      const displayName = getAnnotationDisplayName(annotation);
+                      return (
+                        <span key={`${annotation.className}-${index}`} className="inline-flex items-center">
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 8,
+                              height: 8,
+                              backgroundColor: annotation.color || '#ea384c',
+                              borderRadius: '50%',
+                              marginRight: '4px',
+                            }}
+                          />
+                          {annotation.className}
+                          {/* Show actual annotation name if different from class name */}
+                          {displayName !== annotation.className && (
+                            <span className="ml-1 opacity-75">({displayName})</span>
+                          )}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
               </div>

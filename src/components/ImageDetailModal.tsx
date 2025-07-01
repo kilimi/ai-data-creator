@@ -28,6 +28,17 @@ function getAnnotationFileName(annotation, annotationFiles) {
   return found ? found.name : '?';
 }
 
+// Helper: get display name for annotation
+function getAnnotationDisplayName(annotation: AnnotationSample): string {
+  // Try different properties that could serve as a name
+  if (annotation.name) return annotation.name;
+  if (annotation.id && annotation.id !== annotation.className) return annotation.id;
+  if (annotation.annotationFileName) return annotation.annotationFileName;
+  
+  // If no unique identifier, just return the class name
+  return annotation.className;
+}
+
 export function ImageDetailModal({ 
   image, 
   isOpen, 
@@ -365,20 +376,20 @@ export function ImageDetailModal({
             <div className="text-sm text-gray-400">
               {annotationsWithFileName && annotationsWithFileName.length > 0 ? (
                 <div className="text-left">
-                  {Object.entries(
-                    annotationsWithFileName.reduce((acc, ann) => {
-                      const key = `${ann.className}|${ann.annotationFileName || '?'}`;
-                      if (!acc[key]) acc[key] = { className: ann.className, annotationFileName: ann.annotationFileName || '?', count: 0, color: ann.color };
-                      acc[key].count += 1;
-                      acc[key].color = ann.color;
-                      return acc;
-                    }, {} as Record<string, { className: string; annotationFileName: string; count: number; color?: string }>))
-                    .map(([key, { className, annotationFileName, count, color }], idx, arr) => (
-                      <span key={key} className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 10, height: 10, background: color || '#ea384c', borderRadius: '50%' }} />
-                        {className} ({annotationFileName}) [{count}]{idx < arr.length - 1 ? ', ' : ''}
+                  {annotationsWithFileName.map((ann, index) => {
+                    const displayName = getAnnotationDisplayName(ann);
+                    return (
+                      <span key={`${ann.className}-${index}`} className="flex items-center gap-1">
+                        <span style={{ display: 'inline-block', width: 10, height: 10, background: ann.color || '#ea384c', borderRadius: '50%' }} />
+                        {ann.className}
+                        {/* Show actual annotation name if different from class name */}
+                        {displayName !== ann.className && (
+                          <span className="opacity-75">({displayName})</span>
+                        )}
+                        {index < annotationsWithFileName.length - 1 ? ', ' : ''}
                       </span>
-                    ))}
+                    );
+                  })}
                 </div>
               ) : "No annotations to display"}
             </div>
