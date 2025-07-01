@@ -609,6 +609,7 @@ export function AnnotationsContent({
   };
 
   const handleFilesSelected = async (files: File[]) => {
+    console.log('AnnotationsContent.handleFilesSelected called with:', files.map(f => f.name));
     setIsLoading(true);
     
     try {
@@ -637,7 +638,9 @@ export function AnnotationsContent({
           // Try to import via API to get the proper file ID
           if (api) {
             try {
+              console.log(`Making API call to import ${file.name}`);
               const apiResult = await api.importAnnotations(id, file);
+              console.log(`API result for ${file.name}:`, apiResult);
               if (apiResult && apiResult.success && apiResult.data.file_id) {
                 // Use the file ID returned by the backend
                 fileId = apiResult.data.file_id;
@@ -709,10 +712,8 @@ export function AnnotationsContent({
           await loadAnnotationFilesFromBackend();
         }
         
-        // Also call the parent handler if provided
-        if (onImportAnnotations) {
-          onImportAnnotations(files.filter(f => successfulImports.includes(f.name)));
-        }
+        // Note: Not calling onImportAnnotations prop to avoid duplicate API calls
+        // since we already handle the backend import in this component
       }
       
       if (failedImports.length > 0) {

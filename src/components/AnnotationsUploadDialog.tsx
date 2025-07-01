@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { UploadCard } from "@/components/UploadCard";
@@ -15,13 +15,31 @@ export function AnnotationsUploadDialog({
   onOpenChange,
   onFilesSelected,
 }: AnnotationsUploadDialogProps) {
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedFiles([]);
+    }
+  }, [open]);
+
+  // Auto-upload when files are selected
+  useEffect(() => {
+    console.log('AnnotationsUploadDialog useEffect triggered, selectedFiles:', selectedFiles.length);
+    if (selectedFiles.length > 0) {
+      console.log('Auto-uploading files:', selectedFiles.map(f => f.name));
+      onFilesSelected(selectedFiles);
+      onOpenChange(false);
+    }
+  }, [selectedFiles]); // Remove onFilesSelected and onOpenChange from dependencies
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md bg-gray-900 text-white border-gray-700">
         <DialogHeader>
           <DialogTitle>Upload Annotations</DialogTitle>
           <DialogDescription className="text-gray-400">
-            Select annotation files to import
+            Select annotation files to import. Files will be uploaded automatically.
           </DialogDescription>
         </DialogHeader>
         
@@ -30,10 +48,7 @@ export function AnnotationsUploadDialog({
             title="Add Annotations"
             description="Drag and drop your annotation files here or click to select files."
             accept=".json"
-            onFilesSelected={(files) => {
-              onFilesSelected(files);
-              onOpenChange(false);
-            }}
+            onFilesSelected={setSelectedFiles}
             type="annotations"
           />
         </div>

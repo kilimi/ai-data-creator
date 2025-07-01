@@ -221,42 +221,28 @@ export default function Dataset() {
       
       for (const file of files) {
         try {
-          console.log(`Importing annotation file: ${file.name}`);
+          console.log(`Processing annotation file locally: ${file.name}`);
           
           // Validate file type
           if (!file.name.toLowerCase().endsWith('.json')) {
             throw new Error('Only JSON files are supported for COCO annotations');
           }
           
-          // Process the COCO file to get annotation data (this always works locally)
+          // Process the COCO file to get annotation data for local display only
+          // The AnnotationsContent component handles the backend import
           const { processCOCOAnnotations } = await import('@/utils/annotations');
           const result = await processCOCOAnnotations(file, id);
           
           // Add to local state for immediate display
           allImportedAnnotations.push(...result.samples);
           
-          // Also try to import via API if available (but don't fail if it doesn't work)
-          if (api) {
-            try {
-              const apiResult = await api.importAnnotations(id, file);
-              if (apiResult && apiResult.success && apiResult.data) {
-                const { imported, skipped, message } = apiResult.data;
-                console.log(`API import successful for ${file.name}: imported ${imported}, skipped ${skipped}`);
-              } else {
-                console.warn(`Backend import failed for ${file.name} (this is non-critical):`, apiResult?.error);
-              }
-            } catch (apiError) {
-              console.warn(`Backend import failed for ${file.name} (this is non-critical):`, apiError);
-              // Don't fail the whole process if backend fails - this is just for additional persistence
-            }
-          } else {
-            console.log('No API available, skipping backend import');
-          }
+          // Note: Backend import is handled by AnnotationsContent component
+          // to avoid duplicate API calls
           
           successfulImports.push(file.name);
           
         } catch (fileError) {
-          console.error(`Error importing file ${file.name}:`, fileError);
+          console.error(`Error processing file ${file.name}:`, fileError);
           failedImports.push({
             fileName: file.name,
             error: fileError instanceof Error ? fileError.message : 'Unknown error occurred'

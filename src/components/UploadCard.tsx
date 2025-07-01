@@ -87,9 +87,10 @@ export function UploadCard({
   const processFiles = (fileList: FileList) => {
     const newFiles = Array.from(fileList);
     const { valid, errors } = validateFiles(newFiles);
-    
-    setFiles(prevFiles => [...prevFiles, ...valid]);
-    
+
+    setFiles(valid);
+    onFilesSelected(valid);
+
     if (errors.length > 0) {
       setErrors(errors);
       toast({
@@ -98,16 +99,15 @@ export function UploadCard({
         description: `${errors.length} file(s) could not be added. Check for details.`,
       });
     }
-    
+
     if (valid.length > 0) {
-      onFilesSelected(valid);
       toast({
         title: "Files added",
         description: `${valid.length} file(s) successfully added`,
       });
     }
   };
-  
+
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -131,7 +131,9 @@ export function UploadCard({
   };
 
   const removeFile = (index: number) => {
-    setFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
+    const updatedFiles = files.filter((_, i) => i !== index);
+    setFiles(updatedFiles);
+    onFilesSelected(updatedFiles);
   };
   
   const clearErrors = () => {
