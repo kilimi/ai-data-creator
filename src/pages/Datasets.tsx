@@ -3,7 +3,8 @@ import { Navbar } from "@/components/Navbar";
 import { useState, useEffect } from "react";
 import { Dataset } from "@/types";
 import { DatasetCard, DatasetCardSkeleton } from "@/components/DatasetCard";
-import { FolderPlus, Search, Settings, SlidersHorizontal, Tag } from "lucide-react";
+import { CreateAugmentedDatasetModal } from "@/components/CreateAugmentedDatasetModal";
+import { FolderPlus, Search, Settings, SlidersHorizontal, Tag, ChevronDown } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { useApi } from "@/hooks/use-api";
@@ -15,6 +16,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const Datasets = () => {
   const [loading, setLoading] = useState(true);
@@ -23,6 +30,7 @@ const Datasets = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
+  const [showAugmentedModal, setShowAugmentedModal] = useState(false);
   const { api } = useApi();
   const { toast } = useToast();
   
@@ -138,16 +146,36 @@ const Datasets = () => {
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild>
-              <Link 
-                to="/projects/new/dataset" 
-                state={{ projectId: project?.id || null }}
-                className="flex items-center gap-2"
-              >
-                <FolderPlus className="w-4 h-4" />
-                New Dataset
-              </Link>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button className="flex items-center gap-2">
+                  <FolderPlus className="w-4 h-4" />
+                  Create
+                  <ChevronDown className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link 
+                    to="/projects/new/dataset" 
+                    state={{ projectId: project?.id || null }}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2" />
+                    Dataset
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <div 
+                    onClick={() => setShowAugmentedModal(true)}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                    <span className="text-yellow-600">Augmented Dataset</span>
+                  </div>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         
@@ -229,18 +257,58 @@ const Datasets = () => {
                   : "Please create a project first before adding datasets."
               }
             </p>
-            <Button asChild>
-              <Link 
-                to={project ? "/projects/new/dataset" : "/projects/new"}
-                state={project ? { projectId: project.id } : undefined}
-              >
-                <FolderPlus className="w-4 h-4 mr-2" />
-                {project ? "Create your first dataset" : "Create your first project"}
-              </Link>
-            </Button>
+            {project ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button>
+                    <FolderPlus className="w-4 h-4 mr-2" />
+                    Create Dataset
+                    <ChevronDown className="w-4 h-4 ml-2" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center">
+                  <DropdownMenuItem asChild>
+                    <Link 
+                      to="/projects/new/dataset"
+                      state={{ projectId: project.id }}
+                      className="flex items-center cursor-pointer"
+                    >
+                      <FolderPlus className="w-4 h-4 mr-2" />
+                      Dataset
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <div 
+                      onClick={() => setShowAugmentedModal(true)}
+                      className="flex items-center cursor-pointer"
+                    >
+                      <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                      <span className="text-yellow-600">Augmented Dataset</span>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button asChild>
+                <Link to="/projects/new">
+                  <FolderPlus className="w-4 h-4 mr-2" />
+                  Create your first project
+                </Link>
+              </Button>
+            )}
           </div>
         )}
       </main>
+      
+      {/* Augmented Dataset Modal */}
+      {project && (
+        <CreateAugmentedDatasetModal
+          open={showAugmentedModal}
+          onOpenChange={setShowAugmentedModal}
+          projectId={project.id || ''}
+          datasets={datasets || []}
+        />
+      )}
     </div>
   );
 };

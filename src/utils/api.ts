@@ -184,6 +184,8 @@ export class ApiClient {
     });
   }
 
+  // Removed old createAugmentedDataset method - replaced with async version below
+
   async updateDataset(id: string | number, formData: FormData): Promise<ApiResponse<Dataset>> {
     return this.request<Dataset>(`/datasets/${id}`, {
       method: 'PUT',
@@ -237,6 +239,21 @@ export class ApiClient {
     });
   }
 
+  // Annotations endpoints
+  async getAnnotations(datasetId: string | number): Promise<ApiResponse<any[]>> {
+    return this.request<any[]>(`/datasets/${datasetId}/annotations`);
+  }
+
+  async getAnnotation(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
+    return this.request<any>(`/datasets/${datasetId}/annotations/${annotationId}`);
+  }
+
+  async deleteAnnotation(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}`, {
+      method: 'DELETE'
+    });
+  }
+
   async importAnnotations(datasetId: string | number, file: File): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('file', file);
@@ -244,6 +261,138 @@ export class ApiClient {
       method: 'POST',
       body: formData
     });
+  }
+
+  /**
+   * Create an augmented dataset asynchronously
+   */
+  async createAugmentedDataset(formData: FormData): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+    task_id: number;
+    dataset_id: number;
+    status: string;
+  }>> {
+    return this.request('/augmentations/', {
+      method: 'POST',
+      body: formData
+    });
+  }
+
+  /**
+   * Get task status and progress
+   */
+  async getTask(taskId: number): Promise<ApiResponse<{
+    id: number;
+    name: string;
+    description: string;
+    task_type: string;
+    status: string;
+    progress: number;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+    error_message?: string;
+    project_id: number;
+    task_metadata?: any;
+  }>> {
+    return this.request(`/tasks/${taskId}`);
+  }
+
+  /**
+   * Get tasks with optional filtering
+   */
+  async getTasks(params?: {
+    project_id?: number;
+    task_type?: string;
+    status?: string;
+    skip?: number;
+    limit?: number;
+  }): Promise<ApiResponse<Array<{
+    id: number;
+    name: string;
+    description: string;
+    task_type: string;
+    status: string;
+    progress: number;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+    error_message?: string;
+    project_id: number;
+    task_metadata?: any;
+  }>>> {
+    const searchParams = new URLSearchParams();
+    if (params?.project_id) searchParams.append('project_id', params.project_id.toString());
+    if (params?.task_type) searchParams.append('task_type', params.task_type);
+    if (params?.status) searchParams.append('status', params.status);
+    if (params?.skip) searchParams.append('skip', params.skip.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    
+    const queryString = searchParams.toString();
+    const endpoint = queryString ? `/tasks/?${queryString}` : '/tasks/';
+    
+    return this.request(endpoint);
+  }
+
+  /**
+   * Get active tasks (pending, running)
+   */
+  async getActiveTasks(projectId?: number): Promise<ApiResponse<Array<{
+    id: number;
+    name: string;
+    description: string;
+    task_type: string;
+    status: string;
+    progress: number;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+    error_message?: string;
+    project_id: number;
+    metadata?: any;
+  }>>> {
+    const searchParams = new URLSearchParams();
+    if (projectId) searchParams.append('project_id', projectId.toString());
+    
+    // Get tasks that are pending or running
+    const pendingTasks = await this.getTasks({
+      project_id: projectId,
+      status: 'pending'
+    });
+    
+    const runningTasks = await this.getTasks({
+      project_id: projectId,
+      status: 'running'
+    });
+    
+    // Combine and return active tasks
+    const activeTasks = [
+      ...(pendingTasks.success ? pendingTasks.data : []),
+      ...(runningTasks.success ? runningTasks.data : [])
+    ];
+    
+    return {
+      success: true,
+      data: activeTasks
+    };
+  }
+
+  /**
+   * Cancel a task
+   */
+  async cancelTask(taskId: number): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+    task_id: number;
+  }>> {
+    return this.request(`/tasks/${taskId}/cancel`, {
+      method: 'PATCH'
+    });
+  }
+
+  async getAnnotationContent(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
+    return this.request<any>(`/datasets/${datasetId}/annotations/${annotationId}/content`);
   }
 }
 

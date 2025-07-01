@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Settings, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
+import { TasksPopover } from "./TasksPopover";
 
 export function Navbar() {
   const location = useLocation();
@@ -49,6 +50,8 @@ export function Navbar() {
           >
             <Link to="/">Projects</Link>
           </Button>
+          
+          <TasksPopover />
           
           <Button
             variant="outline"

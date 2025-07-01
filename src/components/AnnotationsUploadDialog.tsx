@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -22,14 +21,14 @@ export function AnnotationsUploadDialog({
         <DialogHeader>
           <DialogTitle>Upload Annotations</DialogTitle>
           <DialogDescription className="text-gray-400">
-            Drag and drop or select JSON files in COCO format
+            Select annotation files to import
           </DialogDescription>
         </DialogHeader>
         
         <div className="mt-4">
           <UploadCard
-            title="Add COCO Annotations"
-            description="Upload JSON files in COCO format"
+            title="Add Annotations"
+            description="Drag and drop your annotation files here or click to select files."
             accept=".json"
             onFilesSelected={(files) => {
               onFilesSelected(files);

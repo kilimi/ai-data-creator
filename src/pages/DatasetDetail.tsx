@@ -10,7 +10,8 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { DatasetCard, DatasetCardSkeleton } from '@/components/DatasetCard';
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
-import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag } from "lucide-react";
+import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
+import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dataset } from '@/types';
 import {
@@ -20,6 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface DatasetDetailProps {
   projectMode?: boolean;
@@ -36,6 +43,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
+  const [showAugmentedModal, setShowAugmentedModal] = useState(false);
 
   // Debug logging to track project ID
   console.log("Project Detail - Current Project ID:", id);
@@ -309,20 +317,41 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
               </SelectContent>
             </Select>
             
-            <Button 
-              variant="default" 
-              size="sm" 
-              asChild
-              className="whitespace-nowrap ml-2"
-            >
-              <Link 
-                to="/projects/new/dataset" 
-                state={{ projectId: id ? parseInt(id, 10) : undefined }}
-              >
-                <FolderPlus className="w-4 h-4 mr-2" />
-                Create Dataset
-              </Link>
-            </Button>
+            
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  className="whitespace-nowrap ml-2"
+                >
+                  <FolderPlus className="w-4 h-4 mr-2" />
+                  Create
+                  <ChevronDown className="w-4 h-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem asChild>
+                  <Link 
+                    to="/projects/new/dataset" 
+                    state={{ projectId: id ? parseInt(id, 10) : undefined }}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2" />
+                    Dataset
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <div 
+                    onClick={() => setShowAugmentedModal(true)}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                    <span className="text-yellow-600">Augmented Dataset</span>
+                  </div>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         
@@ -388,18 +417,49 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                 : "This project doesn't have any datasets yet."
               }
             </p>
-            <Button asChild>
-              <Link 
-                to="/projects/new/dataset" 
-                state={{ projectId: id ? parseInt(id, 10) : undefined }}
-              >
-                <FolderPlus className="w-4 h-4 mr-2" />
-                Create your first dataset
-              </Link>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button>
+                  <FolderPlus className="w-4 h-4 mr-2" />
+                  Create Dataset
+                  <ChevronDown className="w-4 h-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center">
+                <DropdownMenuItem asChild>
+                  <Link 
+                    to="/projects/new/dataset" 
+                    state={{ projectId: id ? parseInt(id, 10) : undefined }}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2" />
+                    Dataset
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <div 
+                    onClick={() => setShowAugmentedModal(true)}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                    <span className="text-yellow-600">Augmented Dataset</span>
+                  </div>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
       </section>
+      
+      {/* Augmented Dataset Modal */}
+      {project && (
+        <CreateAugmentedDatasetModal
+          open={showAugmentedModal}
+          onOpenChange={setShowAugmentedModal}
+          projectId={id || ''}
+          datasets={project.datasets || []}
+        />
+      )}
     </div>
   );
 };

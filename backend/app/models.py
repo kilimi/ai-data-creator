@@ -112,3 +112,41 @@ class Annotation(Base):
 
     dataset = relationship("Dataset", back_populates="annotations")
     image = relationship("Image", back_populates="annotations")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    description = Column(Text, nullable=True)
+    task_type = Column(String)  # 'augmentation', 'training', 'inference', etc.
+    status = Column(String, default='pending')  # 'pending', 'running', 'completed', 'failed'
+    project_id = Column(Integer, ForeignKey("projects.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    error_message = Column(Text, nullable=True)
+    progress = Column(Float, default=0.0)  # Progress percentage (0-100)
+    task_metadata = Column(JSON, nullable=True)  # Additional task-specific data
+
+    project = relationship("Project")
+    augmentation = relationship("Augmentation", back_populates="task", uselist=False)
+
+
+class Augmentation(Base):
+    __tablename__ = "augmentations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), unique=True)
+    source_dataset_ids = Column(JSON)  # List of source dataset IDs
+    target_dataset_id = Column(Integer, ForeignKey("datasets.id"))
+    augmentation_methods = Column(JSON)  # List of augmentation method names
+    method_parameters = Column(JSON)  # Parameters for each augmentation method
+    augmentation_factor = Column(String, default='2')  # How many augmented images per original
+    transform_annotations = Column(Boolean, default=True)  # Whether to transform annotations
+    annotation_settings = Column(JSON)  # Settings for annotation transformation
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="augmentation")
+    target_dataset = relationship("Dataset")

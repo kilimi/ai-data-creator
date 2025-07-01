@@ -121,7 +121,7 @@ export function ImagesGrid({
 
   return (
     <div 
-      className="grid gap-4"
+      className="grid gap-4 p-2"
       style={{
         gridTemplateColumns: `repeat(auto-fill, minmax(${imageSize}px, 1fr))`,
       }}

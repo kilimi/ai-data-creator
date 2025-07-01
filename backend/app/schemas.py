@@ -107,3 +107,64 @@ class Image(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+
+
+class TaskBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    task_type: str
+    project_id: int
+    task_metadata: Optional[dict] = None
+
+class TaskCreate(TaskBase):
+    pass
+
+class Task(TaskBase):
+    id: int
+    status: str = 'pending'
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    progress: float = 0.0
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class AugmentationBase(BaseModel):
+    source_dataset_ids: List[int]
+    augmentation_methods: List[str]
+    method_parameters: dict = {}
+    augmentation_factor: str = '2'
+    transform_annotations: bool = True
+    annotation_settings: dict = {}
+
+class AugmentationCreate(AugmentationBase):
+    task_id: int
+    target_dataset_id: int
+
+class Augmentation(AugmentationBase):
+    id: int
+    task_id: int
+    target_dataset_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+
+class CreateAugmentedDatasetRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    project_id: int
+    source_datasets: List[int]
+    augmentation_methods: List[str]
+    method_parameters: dict = {}
+    augmentation_factor: str = '2'

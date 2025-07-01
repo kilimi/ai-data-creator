@@ -1,4 +1,3 @@
-
 import { useState, useRef, DragEvent, ChangeEvent } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -162,7 +161,7 @@ export function UploadCard({
           <p className="text-xs">
             {type === "images" 
               ? "Supports JPG, PNG, WEBP up to 10MB"
-              : "Supports JSON files in COCO format"}
+              : ""}
           </p>
           <Button 
             variant="secondary" 

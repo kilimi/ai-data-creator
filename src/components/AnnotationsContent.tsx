@@ -37,6 +37,7 @@ export function AnnotationsContent({
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);  const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingFromBackend, setIsLoadingFromBackend] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);  const [imageStatusDialog, setImageStatusDialog] = useState<{
     isOpen: boolean;
     type: 'present' | 'missing';
@@ -52,48 +53,15 @@ export function AnnotationsContent({
   }>({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   
   const { api } = useApi();
-  const { toast } = useToast();  // Load existing annotations from localStorage for demo purposes
-  useEffect(() => {
-    const savedAnnotations = localStorage.getItem(`annotations_${id}`);
-    if (savedAnnotations) {
-      try {
-        const parsed = JSON.parse(savedAnnotations);
-          // Ensure all annotation samples have annotationFileName property
-        const annotationsWithFileNames = parsed.map((file: AnnotationFile) => {
-          return {
-            ...file,
-            samples: file.samples?.map(sample => ({
-              ...sample,
-              annotationFileName: (sample as any).annotationFileName || file.name
-            }))
-          };
-        });
-        
-        setAnnotationFiles(annotationsWithFileNames);
-        
-        // Restore visibility state with proper typing
-        const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
-        if (savedVisibility) {
-          const visibilityArray: string[] = JSON.parse(savedVisibility);
-          const visibilitySet = new Set(visibilityArray);
-          setVisibleAnnotations(visibilitySet);
-            // If we have visible annotations after restoration, trigger an update to display them
-          if (visibilitySet.size > 0 && annotationsWithFileNames.length > 0) {
-            // Restored visibility state with visible annotations
-          }
-        }
-      } catch (error) {
-        console.error('Error parsing saved annotations:', error);
-      }
-    }
-  }, [id]);
+  const { toast } = useToast();
 
-  // Save annotations to localStorage whenever they change
+  // Save annotations to localStorage only when no API is available
   useEffect(() => {
-    if (annotationFiles.length > 0) {
+    if (annotationFiles.length > 0 && !api) {
       localStorage.setItem(`annotations_${id}`, JSON.stringify(annotationFiles));
     }
-  }, [annotationFiles, id]);
+  }, [annotationFiles, id, api]);
+  
   // Save visibility state to localStorage
   useEffect(() => {
     localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(visibleAnnotations)));
@@ -257,8 +225,10 @@ export function AnnotationsContent({
     
     setAnnotationFiles(updatedFiles);
     
-    // Save updated files to localStorage
-    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    // Save updated files to localStorage only when no API is available
+    if (!api) {
+      localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    }
   };
 
   // Update annotation color and opacity
@@ -293,8 +263,10 @@ export function AnnotationsContent({
     
     setAnnotationFiles(updatedFiles);
     
-    // Save updated files to localStorage
-    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    // Save updated files to localStorage only when no API is available
+    if (!api) {
+      localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    }
   };
 
   const handleAnnotationClick = (annotationId: string) => {
@@ -302,6 +274,22 @@ export function AnnotationsContent({
     setSelectedAnnotation(newSelectedAnnotation);
   };  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (!file) return;
+    
+    // Get the present files count
+    const { presentFiles } = getImageFileLists(file);
+    
+    // If trying to make annotations visible but there are no present images, show a warning
+    if (!visibleAnnotations.has(annotationId) && presentFiles.length === 0) {
+      toast({
+        title: "Cannot show annotations",
+        description: "There are no matching images in the dataset for these annotations.",
+        variant: "destructive"
+      });
+      return;
+    }
     
     const newVisibleAnnotations = new Set(visibleAnnotations);
     const isVisible = !visibleAnnotations.has(annotationId);
@@ -323,12 +311,10 @@ export function AnnotationsContent({
         ? { 
             ...file, 
             isVisible: isVisible,
-            // Update all samples in this file to inherit the file's visibility
-            // Preserve all existing properties including annotationFileName
             samples: file.samples?.map(sample => ({
               ...sample,
               isVisible: isVisible,
-              annotationFileName: file.name // Ensure annotationFileName is always set
+              annotationFileName: file.name
             }))
           }
         : file
@@ -340,42 +326,72 @@ export function AnnotationsContent({
     localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
   };
 
-  const handleDeleteAnnotation = (annotationId: string, e: React.MouseEvent) => {
+  const handleDeleteAnnotation = async (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
-    const updatedFiles = annotationFiles.filter(file => file.id !== annotationId);
-    setAnnotationFiles(updatedFiles);
-    
-    // Save updated files to localStorage
-    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
-    
-    // Remove from visible annotations if it was visible
-    const newVisibleAnnotations = new Set(visibleAnnotations);
-    newVisibleAnnotations.delete(annotationId);
-    setVisibleAnnotations(newVisibleAnnotations);
-    
-    // Update visibility state in localStorage
-    localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
-    
-    if (selectedAnnotation === annotationId) {
-      setSelectedAnnotation(null);
+    // Find the annotation file that's being deleted
+    const fileToDelete = annotationFiles.find(file => file.id === annotationId);
+    if (!fileToDelete) {
+      toast({
+        title: "Error",
+        description: "Could not find the annotation file to delete.",
+        variant: "destructive",
+      });
+      return;
     }
 
-    // Update parent component with new annotation state
-    if (onShowAnnotationsChange) {
-      const allSamples = updatedFiles.flatMap(file => file.samples || []);
-      const visibleSamples = allSamples.filter(sample => 
-        sample.annotationFileName && newVisibleAnnotations.has(
-          updatedFiles.find(f => f.name === sample.annotationFileName)?.id || ''
-        )
-      );
-      onShowAnnotationsChange(visibleSamples.length > 0, visibleSamples, updatedFiles);
+    try {
+      // Delete from backend first
+      if (api) {
+        const response = await api.deleteAnnotation(id, annotationId);
+        if (!response.success) {
+          throw new Error(response.error || "Failed to delete annotation file");
+        }
+        
+        // If backend deletion was successful, refresh from backend
+        await loadAnnotationFilesFromBackend();
+      } else {
+        // If no API, update the UI manually
+        const updatedFiles = annotationFiles.filter(file => file.id !== annotationId);
+        setAnnotationFiles(updatedFiles);
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+      
+      // Remove from visible annotations if it was visible (this is UI state)
+      const newVisibleAnnotations = new Set(visibleAnnotations);
+      newVisibleAnnotations.delete(annotationId);
+      setVisibleAnnotations(newVisibleAnnotations);
+      
+      // Update visibility state in localStorage
+      localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
+      
+      if (selectedAnnotation === annotationId) {
+        setSelectedAnnotation(null);
+      }
+
+      // Update parent component with new annotation state
+      if (onShowAnnotationsChange) {
+        const currentFiles = api ? annotationFiles : annotationFiles.filter(file => file.id !== annotationId);
+        const allSamples = currentFiles.flatMap(file => file.samples || []);
+        const visibleSamples = allSamples.filter(sample => 
+          sample.annotationFileName && newVisibleAnnotations.has(
+            currentFiles.find(f => f.name === sample.annotationFileName)?.id || ''
+          )
+        );
+        onShowAnnotationsChange(visibleSamples.length > 0, visibleSamples, currentFiles);
+      }
+      
+      toast({
+        title: "Annotation deleted",
+        description: "Annotation file has been removed.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete annotation file",
+        variant: "destructive",
+      });
     }
-    
-    toast({
-      title: "Annotation deleted",
-      description: "Annotation file has been removed.",
-    });
   };
   const handleEditAnnotation = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -417,8 +433,10 @@ export function AnnotationsContent({
     
     setAnnotationFiles(updatedFiles);
     
-    // Save updated files to localStorage
-    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    // Save updated files to localStorage only when no API is available
+    if (!api) {
+      localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    }
 
     toast({
       title: "Annotation renamed",
@@ -602,18 +620,42 @@ export function AnnotationsContent({
           // Validate file type
           if (!file.name.toLowerCase().endsWith('.json')) {
             throw new Error('Only JSON files are supported for COCO annotations');
-          }          // Process the COCO annotation file
+          }
+          
+          // Process the COCO annotation file
           const result = await processCOCOAnnotations(file, id);
           
-          // Set all annotation samples to be visible by default and add annotationFileName
-          const visibleSamples = result.samples.map(sample => ({
+          // Set all annotation samples to be hidden by default
+          const samples = result.samples.map(sample => ({
             ...sample,
-            isVisible: true,
+            isVisible: false,
             annotationFileName: file.name
           }));
-            // Create annotation file record
+          
+          let fileId = Math.random().toString(36).substring(2, 11); // Default fallback ID
+          
+          // Try to import via API to get the proper file ID
+          if (api) {
+            try {
+              const apiResult = await api.importAnnotations(id, file);
+              if (apiResult && apiResult.success && apiResult.data.file_id) {
+                // Use the file ID returned by the backend
+                fileId = apiResult.data.file_id;
+                console.log(`Backend assigned file ID: ${fileId} for ${file.name}`);
+              } else {
+                console.warn('Backend import succeeded but no file_id returned, using fallback ID');
+              }
+            } catch (apiError) {
+              console.warn('Backend import failed, using fallback ID:', apiError);
+              // Don't fail the whole process if backend fails - use fallback ID
+            }
+          } else {
+            console.warn('No API available, using fallback ID');
+          }
+          
+          // Create annotation file record with the backend-provided ID
           const annotationFile: AnnotationFile = {
-            id: Math.random().toString(36).substring(2, 11),
+            id: fileId,
             name: file.name,
             date: new Date().toISOString().split('T')[0],
             format: "COCO",
@@ -622,32 +664,26 @@ export function AnnotationsContent({
             matchedImageCount: result.matchedImageCount,
             datasetId: id,
             classStats: result.stats,
-            samples: visibleSamples,
-            isVisible: true, // Set to true so annotations are immediately visible upon upload
+            samples: samples,
+            isVisible: false, // Set visibility to false by default
             classColors: result.classColors,
             imageMapping: result.imageMapping
-          };
+          };              console.log(`Creating annotation file with ID: ${fileId} for file: ${file.name}`);
           
-          setAnnotationFiles(prev => [...prev, annotationFile]);
-            // Add the new annotation file to visible annotations immediately
-          setVisibleAnnotations(prev => new Set(prev).add(annotationFile.id));
-          
-          // Also try to import via API if available (but don't fail if it doesn't work)
-          if (api) {
-            try {
-              const apiResult = await api.importAnnotations(id, file);
-              if (apiResult && apiResult.success) {
-                // Annotations imported to backend successfully
-              } else {
-                // Backend import failed or returned no success flag
-              }
-            } catch (apiError) {
-              // Backend import failed (this is non-critical)
-              // Don't fail the whole process if backend fails - this is just for additional persistence
-            }
-          } else {
-            // No API available, skipping backend import
+          // If API is available, we'll refresh from backend after all uploads
+          // If no API, add to local state immediately
+          if (!api) {
+            setAnnotationFiles(prev => {
+              // Remove any existing file with the same name to avoid duplicates
+              const filteredPrev = prev.filter(existingFile => existingFile.name !== file.name);
+              const newFiles = [...filteredPrev, annotationFile];
+              console.log(`Updated annotation files. Total count: ${newFiles.length}. IDs: ${newFiles.map(f => f.id).join(', ')}`);
+              return newFiles;
+            });
           }
+          
+          // Do not add to visible annotations set
+          // The user will need to explicitly enable visibility
           
           successfulImports.push(file.name);
           
@@ -666,6 +702,12 @@ export function AnnotationsContent({
           title: "Annotations imported",
           description: `Successfully imported ${successfulImports.length} annotation file(s): ${successfulImports.join(', ')}`,
         });
+        
+        // If API is available, refresh from backend to get the updated list
+        if (api) {
+          console.log('Refreshing annotation files from backend after successful import');
+          await loadAnnotationFilesFromBackend();
+        }
         
         // Also call the parent handler if provided
         if (onImportAnnotations) {
@@ -699,6 +741,156 @@ export function AnnotationsContent({
       setShowUploadDialog(false);
     }
   };
+
+  // Load existing annotation files from backend
+  const loadAnnotationFilesFromBackend = async () => {
+    if (!api || isLoadingFromBackend) return;
+    
+    setIsLoadingFromBackend(true);
+    try {
+      const response = await api.getAnnotations(id);
+      if (response && response.success && response.data) {
+        // Convert backend annotation files to frontend format and fetch their content
+        const processedFiles = [];
+        
+        for (const file of response.data) {
+          try {
+            // Fetch the file content to re-process it
+            const contentResponse = await api.getAnnotationContent(id, file.id);
+            
+            if (contentResponse && contentResponse.success && contentResponse.data.content) {
+              // Create a mock File object to process the COCO data
+              const mockFile = new File([contentResponse.data.content], file.name, { type: 'application/json' });
+              
+              // Re-process the COCO annotation file
+              const result = await processCOCOAnnotations(mockFile, id);
+              
+              // Set all annotation samples to be hidden by default
+              const samples = result.samples.map(sample => ({
+                ...sample,
+                isVisible: false,
+                annotationFileName: file.name
+              }));
+              
+              const annotationFile: AnnotationFile = {
+                id: file.id, // Use the backend-provided ID
+                name: file.name || file.filename,
+                date: file.created_at ? new Date(file.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                format: file.format || 'COCO',
+                classCount: result.stats.length,
+                imageCount: result.totalImageCount,
+                matchedImageCount: result.matchedImageCount,
+                datasetId: id,
+                classStats: result.stats,
+                samples: samples,
+                isVisible: false,
+                classColors: result.classColors,
+                imageMapping: result.imageMapping
+              };
+              
+              processedFiles.push(annotationFile);
+            } else {
+              // Fallback if content can't be fetched - create basic structure
+              const annotationFile = {
+                id: file.id,
+                name: file.name || file.filename,
+                date: file.created_at ? new Date(file.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+                format: file.format || 'COCO',
+                classCount: file.category_count || 0,
+                imageCount: file.image_count || 0,
+                matchedImageCount: 0,
+                datasetId: id,
+                classStats: [],
+                samples: [],
+                isVisible: false,
+                classColors: {},
+                imageMapping: {}
+              };
+              
+              processedFiles.push(annotationFile);
+            }
+            
+          } catch (error) {
+            console.warn(`Failed to process annotation file ${file.name}:`, error);
+            // Create basic structure as fallback
+            const annotationFile = {
+              id: file.id,
+              name: file.name || file.filename,
+              date: file.created_at ? new Date(file.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+              format: file.format || 'COCO',
+              classCount: file.category_count || 0,
+              imageCount: file.image_count || 0,
+              matchedImageCount: 0,
+              datasetId: id,
+              classStats: [],
+              samples: [],
+              isVisible: false,
+              classColors: {},
+              imageMapping: {}
+            };
+            
+            processedFiles.push(annotationFile);
+          }
+        }
+        
+        setAnnotationFiles(processedFiles);
+        console.log(`Loaded and processed ${processedFiles.length} annotation files from backend`);
+        
+        // Clear localStorage to prevent conflicts with backend data
+        localStorage.removeItem(`annotations_${id}`);
+        console.log(`Cleared localStorage for dataset ${id} to prevent conflicts`);
+      }
+    } catch (error) {
+      console.warn('Failed to load annotation files from backend:', error);
+      // Fallback to localStorage if backend fails
+      loadAnnotationFilesFromLocalStorage();
+    } finally {
+      setIsLoadingFromBackend(false);
+    }
+  };
+
+  // Load existing annotations from localStorage (fallback)
+  const loadAnnotationFilesFromLocalStorage = () => {
+    const savedAnnotations = localStorage.getItem(`annotations_${id}`);
+    if (savedAnnotations) {
+      try {
+        const parsed = JSON.parse(savedAnnotations);
+        // Ensure all annotation samples have annotationFileName property
+        const annotationsWithFileNames = parsed.map((file: AnnotationFile) => {
+          return {
+            ...file,
+            samples: file.samples?.map(sample => ({
+              ...sample,
+              annotationFileName: (sample as any).annotationFileName || file.name
+            }))
+          };
+        });
+        
+        setAnnotationFiles(annotationsWithFileNames);
+        
+        // Restore visibility state with proper typing
+        const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
+        if (savedVisibility) {
+          const visibilityArray: string[] = JSON.parse(savedVisibility);
+          const visibilitySet = new Set(visibilityArray);
+          setVisibleAnnotations(visibilitySet);
+        }
+      } catch (error) {
+        console.error('Error loading annotations from localStorage:', error);
+      }
+    }
+  };
+
+  // Load annotations on component mount
+  useEffect(() => {
+    if (api) {
+      // Clear localStorage when using backend to prevent conflicts
+      localStorage.removeItem(`annotations_${id}`);
+      loadAnnotationFilesFromBackend();
+    } else {
+      loadAnnotationFilesFromLocalStorage();
+    }
+  }, [id, api]);
 
   const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
@@ -879,7 +1071,7 @@ export function AnnotationsContent({
         onOpenChange={setShowUploadDialog}
         onFilesSelected={handleFilesSelected}
       />      <Dialog open={imageStatusDialog.isOpen} onOpenChange={(open) => setImageStatusDialog(prev => ({ ...prev, isOpen: open }))}>
-        <DialogContent className="max-w-md bg-gray-900 text-white border-gray-700">
+        <DialogContent className="max-w-2xl bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>
               {imageStatusDialog.type === 'present' ? 'Present Images' : 'Missing Images'} 

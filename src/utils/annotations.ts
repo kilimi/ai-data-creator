@@ -203,6 +203,7 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
           }
 
           return {
+            id: anno.id ? anno.id.toString() : undefined, // Preserve original COCO annotation ID
             imageId: anno.image_id.toString(),
             datasetId: datasetId, // Add datasetId to each annotation
             className: className,

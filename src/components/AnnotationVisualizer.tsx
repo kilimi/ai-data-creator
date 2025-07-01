@@ -27,7 +27,6 @@ export const AnnotationVisualizer = ({
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         setContainerDimensions({ width: rect.width, height: rect.height });
-        console.log('AnnotationVisualizer: Container dimensions updated:', { width: rect.width, height: rect.height });
       }
     };
 
@@ -72,21 +71,8 @@ export const AnnotationVisualizer = ({
     
     // Wait for both image and container to be ready before drawing
     if (!canvas || visibleAnnotations.length === 0 || !containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
-      console.log('AnnotationVisualizer: Skipping render due to missing requirements:', {
-        hasCanvas: !!canvas,
-        annotationsCount: visibleAnnotations.length,
-        containerDimensions,
-        imageWidth,
-        imageHeight
-      });
       return;
     }
-
-    console.log('AnnotationVisualizer: Starting render with:', {
-      annotationsCount: visibleAnnotations.length,
-      imageSize: { width: imageWidth, height: imageHeight },
-      containerSize: containerDimensions
-    });
 
     const ctx = canvas.getContext("2d");
     if (!ctx) {
@@ -107,29 +93,14 @@ export const AnnotationVisualizer = ({
 
     const { scale, offsetX, offsetY } = calculateImageScaling();
 
-    console.log('AnnotationVisualizer: Scaling info:', { 
-      scale, 
-      offsetX, 
-      offsetY,
-      imageSize: { width: imageWidth, height: imageHeight },
-      containerSize: containerDimensions
-    });
-
     // Draw each annotation
     visibleAnnotations.forEach((annotation, index) => {
       const color = annotation.color || "#ea384c";
-      
-      console.log(`AnnotationVisualizer: Processing annotation ${index}:`, {
-        className: annotation.className,
-        color,
-        hasSegmentation: !!(annotation.segmentation && annotation.segmentation.length > 0)
-      });
       
       // Draw segmentation mask if available
       if (annotation.segmentation && annotation.segmentation.length > 0) {
         annotation.segmentation.forEach((segment, segIndex) => {
           if (!Array.isArray(segment) || segment.length < 6) { 
-            console.log('AnnotationVisualizer: Skipping invalid segment', segment);
             return; 
           }
           
@@ -148,13 +119,6 @@ export const AnnotationVisualizer = ({
           ctx.strokeStyle = hexColor;
           ctx.lineWidth = Math.max(1, scale * 2);
           
-          console.log(`AnnotationVisualizer: Drawing segment ${segIndex} with ${segment.length / 2} points`, {
-            color: hexColor,
-            opacity,
-            fillStyle: ctx.fillStyle,
-            lineWidth: ctx.lineWidth
-          });
-          
           // Draw polygon with correct scaling
           let firstPoint = true;
           for (let i = 0; i < segment.length; i += 2) {
@@ -164,13 +128,6 @@ export const AnnotationVisualizer = ({
             // Note: segment coordinates are in absolute pixel values from the original image
             const x = offsetX + (segment[i] * scale);
             const y = offsetY + (segment[i + 1] * scale);
-            
-            console.log(`AnnotationVisualizer: Point ${i/2}:`, {
-              original: [segment[i], segment[i + 1]],
-              scaled: [x, y],
-              scale,
-              offset: [offsetX, offsetY]
-            });
             
             if (firstPoint) {
               ctx.moveTo(x, y);
@@ -183,13 +140,9 @@ export const AnnotationVisualizer = ({
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
-          
-          console.log(`AnnotationVisualizer: Completed drawing segment ${segIndex}`);
         });
       }
     });
-    
-    console.log('AnnotationVisualizer: Finished rendering all annotations');
   }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight]);
 
   return (

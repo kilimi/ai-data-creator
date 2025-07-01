@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import json
 import base64
 from pathlib import Path
 import os
+from datetime import datetime
+from datetime import datetime
+import asyncio
+import shutil
+import uuid
 
 from .. import models, schemas
 from ..database import get_db
@@ -146,9 +151,14 @@ async def upload_images(
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        
         base_url = str(request.base_url).rstrip('/')
-        dataset_dir = Path("data/images") / str(dataset_id)
+        
+        # Use projects/{project_id}/{dataset_id}/images/ directory structure
+        project_id = dataset.project_id
+        dataset_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
         dataset_dir.mkdir(parents=True, exist_ok=True)
+        
         uploaded_images = []
         for file in files:
             if not file.content_type.startswith('image/'):
@@ -158,7 +168,9 @@ async def upload_images(
                 contents = await file.read()
                 with open(file_path, 'wb') as f:
                     f.write(contents)
-                relative_url = f"/data/images/{dataset_id}/{file.filename}"
+                
+                # Update URL to use the new structure
+                relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{file.filename}"
                 db_image = models.Image(
                     dataset_id=dataset_id,
                     file_name=file.filename,
@@ -171,11 +183,16 @@ async def upload_images(
                 )
                 db.add(db_image)
                 uploaded_images.append(db_image)
-            except Exception:
+            except Exception as e:
+                print(f"Error uploading file {file.filename}: {e}")
                 continue
+        
+        # Update dataset image count
         current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
         dataset.image_count = current_image_count + len(uploaded_images)
         db.commit()
+        
+        # Prepare response
         response_images = []
         for img in uploaded_images:
             url = f"{base_url}{img.url}" if img.url.startswith('/') else img.url
@@ -226,7 +243,8 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
                 "fileName": img.file_name,
                 "fileSize": img.file_size,
                 "width": img.width,
-                "height": img.height,                "url": url,
+                "height": img.height,
+                "url": url,
                 "thumbnailUrl": thumbnail_url,
                 "uploadedAt": img.uploaded_at.isoformat(),
                 "annotationsCount": img.annotations_count
@@ -260,15 +278,23 @@ async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Try to delete the physical file
+        # Try to delete the physical file from the new projects structure
         try:
-            dataset_dir = Path("data/images") / str(dataset_id)
+            project_id = dataset.project_id
+            dataset_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
             file_path = dataset_dir / image.file_name
             if file_path.exists():
                 os.remove(file_path)
                 print(f"Deleted physical file: {file_path}")
             else:
                 print(f"Physical file not found: {file_path}")
+                
+                # Fallback: also try the old data/images structure for backward compatibility
+                old_dataset_dir = Path("data/images") / str(dataset_id)
+                old_file_path = old_dataset_dir / image.file_name
+                if old_file_path.exists():
+                    os.remove(old_file_path)
+                    print(f"Deleted physical file from old location: {old_file_path}")
         except Exception as file_error:
             print(f"Warning: Could not delete physical file: {file_error}")
             # Continue with database deletion even if file deletion fails
@@ -300,130 +326,409 @@ async def import_annotations(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Import COCO-format annotations for a dataset.
-    - Links annotations to dataset and corresponding image by file_name.
-    - Only images present in both the DB and the annotation file will get annotations imported.
-    """
+    """Import annotations from a file (COCO format, YOLO format, etc.)"""
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
-
-        # Read the file and parse COCO
-        content = await file.read()
-        coco = json.loads(content.decode('utf-8'))
-
-        images_in_db = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
-        file_name_to_image = {img.file_name: img for img in images_in_db}
-        image_id_to_dbid = {}
-
-        # Build mapping from COCO image id to database image id
-        for coco_image in coco.get("images", []):
-            file_name = coco_image.get("file_name")
-            db_img = file_name_to_image.get(file_name)
-            if db_img:
-                image_id_to_dbid[coco_image["id"]] = db_img.id
-
+        
+        # Create annotations directory using projects/{project_id}/{dataset_id}/annotations/ structure
+        project_id = dataset.project_id
+        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+        annotations_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Read the uploaded file
+        contents = await file.read()
+        
+        # Generate a random ID for the annotation file to avoid conflicts
+        import uuid
+        random_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
+        file_extension = Path(file.filename).suffix or '.json'
+        safe_filename = f"{random_id}_{file.filename}"
+        
+        # Save the annotation file physically with random ID prefix
+        annotation_file_path = annotations_dir / safe_filename
+        with open(annotation_file_path, 'wb') as f:
+            f.write(contents)
+        
+        # Try to parse as JSON (COCO format) to get statistics
         imported_count = 0
-        skipped_count = 0
-
-        for anno in coco.get("annotations", []):
-            coco_image_id = anno["image_id"]
-            db_image_id = image_id_to_dbid.get(coco_image_id)
-            if db_image_id is None:
-                skipped_count += 1
-                continue
-
-            bbox = anno.get("bbox")    # [x, y, width, height]
-            segmentation = anno.get("segmentation")
-            area = anno.get("area")
-            category = None
-
-            # Category name
-            if "category_id" in anno and "categories" in coco:
-                category_obj = next((c for c in coco["categories"] if c["id"] == anno["category_id"]), None)
-                if category_obj:
-                    category = category_obj.get("name")
-            if not category:
-                category = str(anno.get("category_id", "unknown"))
-
-            db_anno = models.Annotation(
-                image_id=db_image_id,
-                dataset_id=dataset_id,
-                category=category,
-                bbox=bbox,
-                segmentation=segmentation if isinstance(segmentation, list) else None,
-                area=area,
-            )
-            db.add(db_anno)
-            imported_count += 1
-
-        db.commit()
-        # Optionally update annotation_count on dataset/images
-        dataset.annotation_count += imported_count
-        db.commit()
+        image_count = 0
+        category_count = 0
+        
+        try:
+            annotations_data = json.loads(contents.decode('utf-8'))
+            
+            # Basic COCO format processing - just count, don't save to database
+            if 'annotations' in annotations_data:
+                imported_count = len(annotations_data['annotations'])
+            
+            if 'images' in annotations_data:
+                image_count = len(annotations_data['images'])
+                
+            if 'categories' in annotations_data:
+                category_count = len(annotations_data['categories'])
+                
+        except json.JSONDecodeError:
+            # Handle non-JSON files (like YOLO format)
+            # For now, just save the file and return success
+            print(f"Non-JSON annotation file saved: {annotation_file_path}")
+        
         return {
             "success": True,
-            "imported": imported_count,
-            "skipped": skipped_count,
-            "message": f"Imported {imported_count} annotations. Skipped {skipped_count} (images not found)."
+            "data": {
+                "message": f"Annotation file saved as {safe_filename}",
+                "imported": imported_count,
+                "skipped": 0,
+                "file_path": str(annotation_file_path),
+                "file_id": random_id,  # Return the ID for frontend reference
+                "original_filename": file.filename,
+                "annotation_count": imported_count,
+                "image_count": image_count,
+                "category_count": category_count
+            }
         }
+        
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to import annotations: {str(e)}")
 
 
-@router.delete("/datasets/{dataset_id}/images/{image_id}")
-async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get_db)):
-    """
-    Delete a specific image from a dataset.
-    This removes both the database record and the physical file.
-    """
+@router.delete("/datasets/{dataset_id}/annotations/{annotation_id}")
+async def delete_dataset_annotation(
+    dataset_id: int,
+    annotation_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete an annotation file by its ID"""
     try:
-        # Find the image in the database
-        image = db.query(models.Image).filter(
-            models.Image.id == image_id,
-            models.Image.dataset_id == dataset_id
-        ).first()
-        
-        if not image:
-            raise HTTPException(status_code=404, detail="Image not found")
-        
-        # Find the dataset to update the image count
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Try to delete the physical file
-        try:
-            dataset_dir = Path("data/images") / str(dataset_id)
-            file_path = dataset_dir / image.file_name
-            if file_path.exists():
-                os.remove(file_path)
-                print(f"Deleted physical file: {file_path}")
-            else:
-                print(f"Physical file not found: {file_path}")
-        except Exception as file_error:
-            print(f"Warning: Could not delete physical file: {file_error}")
-            # Continue with database deletion even if file deletion fails
+        # Get the project ID from the dataset
+        project_id = dataset.project_id
         
-        # Delete the image record (this will also cascade delete annotations)
-        db.delete(image)
+        # Construct the path to the annotations directory
+        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
         
-        # Update the dataset's image count
-        current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
-        dataset.image_count = current_image_count - 1  # -1 because we're about to delete one
+        # Check if annotations directory exists
+        if not annotations_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Annotations directory not found for dataset {dataset_id}"
+            )
         
-        db.commit()
+        # Look for annotation file that starts with the annotation_id
+        found_file = None
+        print(f"Looking for annotation file with ID: {annotation_id}")
+        print(f"Searching in directory: {annotations_dir}")
+        
+        all_files = list(annotations_dir.glob("*"))
+        print(f"All files in directory: {[f.name for f in all_files if f.is_file()]}")
+        
+        for file_path in annotations_dir.glob("*"):
+            if file_path.is_file():
+                filename = file_path.name
+                print(f"Checking file: {filename}")
+                # Check if filename starts with the annotation_id
+                if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
+                    found_file = file_path
+                    print(f"Found matching file: {filename}")
+                    break
+                else:
+                    print(f"File {filename} does not start with {annotation_id}_")
+        
+        if found_file:
+            # Count annotations before deletion for reporting
+            annotations_count = 0
+            try:
+                if found_file.suffix.lower() == '.json':
+                    with open(found_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if 'annotations' in data:
+                        annotations_count = len(data['annotations'])
+            except:
+                pass
+            
+            # Delete the file
+            found_file.unlink()
+            print(f"Deleted annotation file: {found_file}")
+            
+            # If the annotations directory is empty, we can remove it
+            try:
+                remaining_files = list(annotations_dir.glob('*'))
+                if not remaining_files:
+                    annotations_dir.rmdir()
+                    print(f"Removed empty annotations directory: {annotations_dir}")
+            except Exception as e:
+                print(f"Warning: Could not remove empty annotations directory: {e}")
+            
+            # Note: We don't delete database annotation records since we don't create them anymore
+            # The annotation data is only stored in the JSON files
+            
+            return {
+                "success": True,
+                "message": f"Annotation file '{found_file.name}' deleted successfully",
+                "annotations_removed": annotations_count
+            }
+        
+        # If file wasn't found, provide helpful error message
+        all_files = [f.name for f in annotations_dir.glob("*")]
+        available_ids = []
+        for file_path in annotations_dir.glob("*"):
+            if file_path.is_file():
+                filename = file_path.name
+                if '_' in filename:
+                    file_id = filename.split('_', 1)[0]
+                    available_ids.append(file_id)
+                else:
+                    available_ids.append(file_path.stem)
+        
+        error_detail = f"Annotation file with ID '{annotation_id}' not found in dataset {dataset_id}."
+        if all_files:
+            error_detail += f" Available files: {all_files}"
+        if available_ids:
+            error_detail += f" Available annotation IDs: {available_ids}"
+            
+        raise HTTPException(
+            status_code=404,
+            detail=error_detail
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in delete_dataset_annotation: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete annotation: {str(e)}")
+
+
+@router.get("/datasets/{dataset_id}/annotations")
+async def get_dataset_annotations(
+    dataset_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all annotation files for a dataset"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Get the project ID from the dataset
+        project_id = dataset.project_id
+        
+        # Construct the path to the annotations directory
+        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+        
+        # Check if annotations directory exists
+        if not annotations_dir.exists():
+            return {
+                "success": True,
+                "data": []
+            }
+        
+        # Get all annotation files
+        annotation_files = []
+        for file_path in annotations_dir.glob("*"):
+            if file_path.is_file():
+                try:
+                    # Read file stats
+                    file_stats = file_path.stat()
+                    
+                    # Extract the random ID and original filename from the filename
+                    filename = file_path.name
+                    if '_' in filename:
+                        # Format: randomid_originalname.json
+                        parts = filename.split('_', 1)
+                        file_id = parts[0]
+                        original_name = parts[1] if len(parts) > 1 else filename
+                    else:
+                        # Fallback for files without random ID (legacy files)
+                        file_id = file_path.stem
+                        original_name = filename
+                    
+                    file_info = {
+                        "id": file_id,  # Use the random ID part
+                        "name": original_name,  # Show the original filename
+                        "filename": filename,  # Full filename for reference
+                        "path": str(file_path),
+                        "size": file_stats.st_size,
+                        "created_at": datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
+                        "modified_at": datetime.fromtimestamp(file_stats.st_mtime).isoformat()
+                    }
+                    
+                    # Try to read and parse JSON files to get additional info
+                    if file_path.suffix.lower() == '.json':
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                content = json.load(f)
+                                if 'annotations' in content:
+                                    file_info['annotation_count'] = len(content['annotations'])
+                                if 'images' in content:
+                                    file_info['image_count'] = len(content['images'])
+                                if 'categories' in content:
+                                    file_info['category_count'] = len(content['categories'])
+                                    file_info['categories'] = content['categories']
+                                file_info['format'] = 'COCO'
+                        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                            print(f"Could not parse JSON file {file_path}: {e}")
+                            file_info['format'] = 'Unknown'
+                    else:
+                        file_info['format'] = 'Unknown'
+                    
+                    annotation_files.append(file_info)
+                    
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {e}")
+                    continue
         
         return {
             "success": True,
-            "message": "Image deleted successfully"
+            "data": annotation_files
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
+        print(f"Error in get_dataset_annotations: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get annotations: {str(e)}")
+
+
+@router.get("/datasets/{dataset_id}/annotations/list")
+async def get_dataset_annotations_list(
+    dataset_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all individual annotations from annotation files"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Get the project ID from the dataset
+        project_id = dataset.project_id
+        
+        # Construct the path to the annotations directory
+        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+        
+        # Check if annotations directory exists
+        if not annotations_dir.exists():
+            return {
+                "success": True,
+                "data": []
+            }
+        
+        # Get all individual annotations from all files
+        all_annotations = []
+        for file_path in annotations_dir.glob("*.json"):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                if 'annotations' in data:
+                    for ann in data['annotations']:
+                        # Add metadata about which file this annotation comes from
+                        annotation_with_meta = {
+                            **ann,
+                            'source_file': file_path.name,
+                            'dataset_id': dataset_id
+                        }
+                        all_annotations.append(annotation_with_meta)
+                        
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                print(f"Could not parse annotation file {file_path}: {e}")
+                continue
+            except Exception as e:
+                print(f"Error processing annotation file {file_path}: {e}")
+                continue
+        
+        print(f"Found {len(all_annotations)} individual annotations in dataset {dataset_id}")
+        if all_annotations:
+            sample_ids = [str(ann.get('id', 'no-id')) for ann in all_annotations[:10]]
+            print(f"Sample annotation IDs: {sample_ids}")
+        
+        return {
+            "success": True,
+            "data": all_annotations
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_dataset_annotations_list: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get annotations: {str(e)}")
+
+
+@router.get("/datasets/{dataset_id}/annotations/{annotation_id}/content")
+async def get_dataset_annotation_content(
+    dataset_id: int,
+    annotation_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get the content of a specific annotation file"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Get the project ID from the dataset
+        project_id = dataset.project_id
+        
+        # Construct the path to the annotations directory
+        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+        
+        # Check if annotations directory exists
+        if not annotations_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Annotations directory not found for dataset {dataset_id}"
+            )
+        
+        # Look for annotation file that starts with the annotation_id
+        found_file = None
+        for file_path in annotations_dir.glob("*"):
+            if file_path.is_file():
+                filename = file_path.name
+                # Check if filename starts with the annotation_id
+                if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
+                    found_file = file_path
+                    break
+        
+        if not found_file:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Annotation file with ID '{annotation_id}' not found in dataset {dataset_id}"
+            )
+        
+        # Read and return the file content
+        try:
+            with open(found_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Try to parse as JSON to validate
+            try:
+                json.loads(content)
+                file_format = 'COCO'
+            except json.JSONDecodeError:
+                file_format = 'Unknown'
+            
+            return {
+                "success": True,
+                "data": {
+                    "content": content,
+                    "filename": found_file.name,
+                    "format": file_format,
+                    "size": len(content)
+                }
+            }
+            
+        except Exception as read_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to read annotation file: {str(read_error)}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_dataset_annotation_content: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get annotation content: {str(e)}")
