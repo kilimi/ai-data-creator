@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -174,25 +175,28 @@ export function ImagesGrid({
                   <Trash2 className="w-4 h-4" />
                 </Button>
                 
-                {/* Annotation class names and counts badge */}
+                {/* Enhanced annotation class names and counts badge with unique identifiers */}
                 {imageAnnotations.length > 0 && (
                   <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words flex flex-wrap gap-x-2 gap-y-1">
                     {(() => {
-                      // Group annotations by class name
-                      const annotationsByClass = imageAnnotations.reduce((acc, ann) => {
+                      // Group annotations by class name and assign unique identifiers
+                      const annotationsByClass = imageAnnotations.reduce((acc, ann, index) => {
                         const className = ann.className;
                         if (!acc[className]) {
                           acc[className] = {
-                            count: 0,
+                            annotations: [],
                             color: ann.color,
                           };
                         }
-                        acc[className].count += 1;
-                        acc[className].color = ann.color;
+                        acc[className].annotations.push({
+                          ...ann,
+                          uniqueId: `anno${index + 1}`
+                        });
+                        acc[className].color = ann.color; // Use the last color found
                         return acc;
-                      }, {} as Record<string, { count: number; color?: string }>);
+                      }, {} as Record<string, { annotations: any[]; color?: string }>);
 
-                      return Object.entries(annotationsByClass).map(([className, { count, color }]) => (
+                      return Object.entries(annotationsByClass).map(([className, { annotations, color }]) => (
                         <span key={className} className="inline-flex items-center">
                           <span
                             style={{
@@ -204,8 +208,12 @@ export function ImagesGrid({
                               marginRight: '4px',
                             }}
                           />
-                          {className}
-                          {count > 1 && <span className="ml-1">({count})</span>}
+                          {/* Show class name with unique identifiers if multiple annotations of same class */}
+                          {annotations.length === 1 ? (
+                            `${className}`
+                          ) : (
+                            `${className} (${annotations.map(ann => ann.uniqueId).join(', ')})`
+                          )}
                         </span>
                       ));
                     })()}
