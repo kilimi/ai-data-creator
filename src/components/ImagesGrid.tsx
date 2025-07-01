@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -175,48 +174,26 @@ export function ImagesGrid({
                   <Trash2 className="w-4 h-4" />
                 </Button>
                 
-                {/* Enhanced annotation class names and counts badge with unique identifiers */}
+                {/* Enhanced annotation display with individual colors for each annotation */}
                 {imageAnnotations.length > 0 && (
                   <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words flex flex-wrap gap-x-2 gap-y-1">
-                    {(() => {
-                      // Group annotations by class name and assign unique identifiers
-                      const annotationsByClass = imageAnnotations.reduce((acc, ann, index) => {
-                        const className = ann.className;
-                        if (!acc[className]) {
-                          acc[className] = {
-                            annotations: [],
-                            color: ann.color,
-                          };
-                        }
-                        acc[className].annotations.push({
-                          ...ann,
-                          uniqueId: `anno${index + 1}`
-                        });
-                        acc[className].color = ann.color; // Use the last color found
-                        return acc;
-                      }, {} as Record<string, { annotations: any[]; color?: string }>);
-
-                      return Object.entries(annotationsByClass).map(([className, { annotations, color }]) => (
-                        <span key={className} className="inline-flex items-center">
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              width: 8,
-                              height: 8,
-                              backgroundColor: color || '#ea384c',
-                              borderRadius: '50%',
-                              marginRight: '4px',
-                            }}
-                          />
-                          {/* Show class name with unique identifiers if multiple annotations of same class */}
-                          {annotations.length === 1 ? (
-                            `${className}`
-                          ) : (
-                            `${className} (${annotations.map(ann => ann.uniqueId).join(', ')})`
-                          )}
-                        </span>
-                      ));
-                    })()}
+                    {imageAnnotations.map((annotation, index) => (
+                      <span key={`${annotation.className}-${index}`} className="inline-flex items-center">
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            width: 8,
+                            height: 8,
+                            backgroundColor: annotation.color || '#ea384c',
+                            borderRadius: '50%',
+                            marginRight: '4px',
+                          }}
+                        />
+                        {annotation.className}
+                        {/* Show unique identifier for this specific annotation */}
+                        <span className="ml-1 opacity-75">(anno{index + 1})</span>
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
