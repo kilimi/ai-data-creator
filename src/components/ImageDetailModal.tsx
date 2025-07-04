@@ -1,11 +1,14 @@
+
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Trash2, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { AnnotationSample } from "@/utils/annotations";
-import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
-import { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ImageZoomControls } from "@/components/ImageZoomControls";
+import { ImageNavigation } from "@/components/ImageNavigation";
+import { ImageViewport } from "@/components/ImageViewport";
+import { ImageAnnotationDisplay } from "@/components/ImageAnnotationDisplay";
 
 interface ImageDetailModalProps {
   image: Image | null;
@@ -26,16 +29,6 @@ function getAnnotationFileName(annotation, annotationFiles) {
   if (!annotationFiles) return '?';
   const found = annotationFiles.find(f => Array.isArray(f.samples) && f.samples.some(s => s.id === annotation.id));
   return found ? found.name : '?';
-}
-
-// Helper: get display name for annotation
-function getAnnotationDisplayName(annotation: AnnotationSample): string {
-  // Try different properties that could serve as a name
-  if (annotation.id && annotation.id !== annotation.className) return annotation.id;
-  if (annotation.annotationFileName) return annotation.annotationFileName;
-  
-  // If no unique identifier, just return the class name
-  return annotation.className;
 }
 
 export function ImageDetailModal({ 
@@ -62,9 +55,6 @@ export function ImageDetailModal({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  
-  const containerRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
 
   // Reset zoom and pan when image changes
   useEffect(() => {
@@ -99,23 +89,7 @@ export function ImageDetailModal({
     
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     const newZoom = Math.max(0.1, Math.min(5, zoom + delta));
-    
-    if (containerRef.current && imageRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      
-      // Calculate the point in image coordinates
-      const imageX = (mouseX - pan.x) / zoom;
-      const imageY = (mouseY - pan.y) / zoom;
-      
-      // Calculate new pan to keep the mouse point fixed
-      const newPanX = mouseX - imageX * newZoom;
-      const newPanY = mouseY - imageY * newZoom;
-      
-      setZoom(newZoom);
-      setPan({ x: newPanX, y: newPanY });
-    }
+    setZoom(newZoom);
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -245,38 +219,12 @@ export function ImageDetailModal({
         <div className="flex items-center justify-between">
           <DialogTitle>{image.fileName}</DialogTitle>
           <div className="flex items-center gap-4">
-            {/* Zoom controls */}
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={zoomOut}
-                disabled={zoom <= 0.1}
-                className="border-gray-600 hover:bg-gray-800"
-              >
-                <ZoomOut className="h-4 w-4" />
-              </Button>
-              <span className="text-sm text-gray-400 min-w-[4rem] text-center">
-                {Math.round(zoom * 100)}%
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={zoomIn}
-                disabled={zoom >= 5}
-                className="border-gray-600 hover:bg-gray-800"
-              >
-                <ZoomIn className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={resetZoom}
-                className="border-gray-600 hover:bg-gray-800"
-              >
-                <RotateCcw className="h-4 w-4" />
-              </Button>
-            </div>
+            <ImageZoomControls
+              zoom={zoom}
+              onZoomIn={zoomIn}
+              onZoomOut={zoomOut}
+              onResetZoom={resetZoom}
+            />
             {imageIndex !== null && imageCount !== undefined && (
               <span className="text-sm text-gray-400">{imageIndex} of {imageCount}</span>
             )}
@@ -291,111 +239,34 @@ export function ImageDetailModal({
               </span>
             )}
           </div>
-          <div 
-            ref={containerRef}
-            className="relative bg-gray-950 rounded-lg overflow-hidden flex items-center justify-center"
-            style={{ 
-              height: '60vh',
-              cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
-            }}
-            onWheel={handleWheel}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onDoubleClick={handleDoubleClick}
-          >
-            {/* Left arrow */}
-            {hasPrev && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute left-2 top-1/2 -translate-y-1/2 z-20 bg-gray-800/70 hover:bg-gray-700"
-                onClick={onPrev}
-                aria-label="Previous image"
-              >
-                <ChevronLeft className="h-6 w-6" />
-              </Button>
-            )}
+          <div className="relative">
+            <ImageViewport
+              image={image}
+              imageDimensions={imageDimensions}
+              imageLoaded={imageLoaded}
+              zoom={zoom}
+              pan={pan}
+              isDragging={isDragging}
+              annotations={annotationsWithFileName}
+              annotationKey={annotationKey}
+              onImageLoad={handleImageLoad}
+              onWheel={handleWheel}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onDoubleClick={handleDoubleClick}
+              onImageClick={handleImageClick}
+            />
             
-            {/* Image and annotations container */}
-            <div
-              className="relative flex items-center justify-center"
-              style={{
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                transformOrigin: '0 0',
-                transition: isDragging ? 'none' : 'transform 0.1s ease-out',
-                maxHeight: '60vh',
-                maxWidth: '100%'
-              }}
-              onClick={handleImageClick}
-            >
-              {/* Image container with natural dimensions */}
-              <div className="relative">
-                <img
-                  ref={imageRef}
-                  key={image?.id}
-                  src={image.url}
-                  alt={image.fileName}
-                  className="max-h-full max-w-full object-contain"
-                  onLoad={handleImageLoad}
-                  draggable={false}
-                  style={{ 
-                    maxHeight: '60vh',
-                    maxWidth: '100%',
-                    userSelect: 'none'
-                  }}
-                />
-              </div>
-            </div>
-            
-            {/* Annotations overlay - positioned absolutely to cover the entire container */}
-            {imageLoaded && annotationsWithFileName && annotationsWithFileName.length > 0 && (
-              <AnnotationVisualizer
-                key={`${image?.id}-${annotationKey}`}
-                annotations={annotationsWithFileName}
-                imageWidth={imageDimensions.width}
-                imageHeight={imageDimensions.height}
-                className="absolute inset-0 pointer-events-none"
-                showFileName={false}
-                zoom={zoom}
-                pan={pan}
-              />
-            )}
-            
-            {/* Right arrow */}
-            {hasNext && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-1/2 -translate-y-1/2 z-20 bg-gray-800/70 hover:bg-gray-700"
-                onClick={onNext}
-                aria-label="Next image"
-              >
-                <ChevronRight className="h-6 w-6" />
-              </Button>
-            )}
+            <ImageNavigation
+              hasPrev={hasPrev}
+              hasNext={hasNext}
+              onPrev={onPrev}
+              onNext={onNext}
+            />
           </div>
           <div className="flex justify-between items-center pt-2">
-            <div className="text-sm text-gray-400">
-              {annotationsWithFileName && annotationsWithFileName.length > 0 ? (
-                <div className="text-left">
-                  {annotationsWithFileName.map((ann, index) => {
-                    const displayName = getAnnotationDisplayName(ann);
-                    return (
-                      <span key={`${ann.className}-${index}`} className="flex items-center gap-1">
-                        <span style={{ display: 'inline-block', width: 10, height: 10, background: ann.color || '#ea384c', borderRadius: '50%' }} />
-                        {ann.className}
-                        {/* Show actual annotation name if different from class name */}
-                        {displayName !== ann.className && (
-                          <span className="opacity-75">({displayName})</span>
-                        )}
-                        {index < annotationsWithFileName.length - 1 ? ', ' : ''}
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : "No annotations to display"}
-            </div>
+            <ImageAnnotationDisplay annotations={annotationsWithFileName} />
             {onDelete && (
               <Button
                 variant="destructive"
