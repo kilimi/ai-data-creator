@@ -1,3 +1,4 @@
+
 import React, { useRef, useLayoutEffect, useState } from "react";
 import { AnnotationSample } from "@/utils/annotations";
 import { cn } from "@/lib/utils";
@@ -8,6 +9,8 @@ interface AnnotationVisualizerProps {
   imageHeight: number;
   className?: string;
   showFileName?: boolean;
+  zoom?: number;
+  pan?: { x: number; y: number };
 }
 
 export const AnnotationVisualizer = ({ 
@@ -15,7 +18,9 @@ export const AnnotationVisualizer = ({
   imageWidth, 
   imageHeight,
   className,
-  showFileName = true
+  showFileName = true,
+  zoom = 1,
+  pan = { x: 0, y: 0 }
 }: AnnotationVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,20 +51,27 @@ export const AnnotationVisualizer = ({
       return { scale: 1, offsetX: 0, offsetY: 0, displayWidth: 0, displayHeight: 0 };
     }
 
-    // Calculate scale to fit image entirely within container (object-contain)
+    // Calculate base scale to fit image entirely within container (object-contain)
     const scaleX = containerDimensions.width / imageWidth;
     const scaleY = containerDimensions.height / imageHeight;
-    const scale = Math.min(scaleX, scaleY); // Use min for object-contain
+    const baseScale = Math.min(scaleX, scaleY); // Use min for object-contain
+
+    // Apply additional zoom factor
+    const finalScale = baseScale * zoom;
 
     // Calculate the actual displayed dimensions
-    const displayWidth = imageWidth * scale;
-    const displayHeight = imageHeight * scale;
+    const displayWidth = imageWidth * baseScale;
+    const displayHeight = imageHeight * baseScale;
 
-    // Calculate offsets to center the scaled image
-    const offsetX = (containerDimensions.width - displayWidth) / 2;
-    const offsetY = (containerDimensions.height - displayHeight) / 2;
+    // Calculate base offsets to center the scaled image (before zoom and pan)
+    const baseOffsetX = (containerDimensions.width - displayWidth) / 2;
+    const baseOffsetY = (containerDimensions.height - displayHeight) / 2;
 
-    return { scale, offsetX, offsetY, displayWidth, displayHeight };
+    // Apply pan offset
+    const offsetX = baseOffsetX + pan.x;
+    const offsetY = baseOffsetY + pan.y;
+
+    return { scale: finalScale, offsetX, offsetY, displayWidth, displayHeight, baseScale };
   };
 
   // Filter out hidden annotations before drawing
@@ -71,6 +83,12 @@ export const AnnotationVisualizer = ({
     
     // Wait for both image and container to be ready before drawing
     if (!canvas || visibleAnnotations.length === 0 || !containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+      }
       return;
     }
 
@@ -119,13 +137,12 @@ export const AnnotationVisualizer = ({
           ctx.strokeStyle = hexColor;
           ctx.lineWidth = Math.max(1, scale * 2);
           
-          // Draw polygon with correct scaling
+          // Draw polygon with correct scaling and offset
           let firstPoint = true;
           for (let i = 0; i < segment.length; i += 2) {
             if (i + 1 >= segment.length) break;
             
-            // Transform image coordinates to canvas coordinates
-            // Note: segment coordinates are in absolute pixel values from the original image
+            // Transform image coordinates to canvas coordinates with zoom and pan
             const x = offsetX + (segment[i] * scale);
             const y = offsetY + (segment[i + 1] * scale);
             
@@ -143,7 +160,7 @@ export const AnnotationVisualizer = ({
         });
       }
     });
-  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight]);
+  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan]);
 
   return (
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>

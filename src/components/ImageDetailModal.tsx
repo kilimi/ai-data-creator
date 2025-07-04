@@ -50,7 +50,7 @@ export function ImageDetailModal({
   hasNext = false,
   imageIndex = null,
   imageCount = undefined,
-  annotationFiles = [], // <-- add this prop for file name lookup
+  annotationFiles = [],
 }: ImageDetailModalProps & { annotationFiles?: any[] }) {
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -234,7 +234,9 @@ export function ImageDetailModal({
     imageId: image.id,
     annotationsCount: annotations.length,
     imageLoaded,
-    imageDimensions
+    imageDimensions,
+    zoom,
+    pan
   });
 
   return (
@@ -343,20 +345,22 @@ export function ImageDetailModal({
                     userSelect: 'none'
                   }}
                 />
-                
-                {/* Annotations overlay - now shown at all zoom levels and pan positions */}
-                {imageLoaded && annotationsWithFileName && annotationsWithFileName.length > 0 && (
-                  <AnnotationVisualizer
-                    key={`${image?.id}-${annotationKey}-${zoom}-${pan.x}-${pan.y}`} // Force re-render when image, zoom, or pan changes
-                    annotations={annotationsWithFileName}
-                    imageWidth={imageDimensions.width}
-                    imageHeight={imageDimensions.height}
-                    className="absolute inset-0 pointer-events-none"
-                    showFileName={false}
-                  />
-                )}
               </div>
             </div>
+            
+            {/* Annotations overlay - positioned absolutely to cover the entire container */}
+            {imageLoaded && annotationsWithFileName && annotationsWithFileName.length > 0 && (
+              <AnnotationVisualizer
+                key={`${image?.id}-${annotationKey}`}
+                annotations={annotationsWithFileName}
+                imageWidth={imageDimensions.width}
+                imageHeight={imageDimensions.height}
+                className="absolute inset-0 pointer-events-none"
+                showFileName={false}
+                zoom={zoom}
+                pan={pan}
+              />
+            )}
             
             {/* Right arrow */}
             {hasNext && (
