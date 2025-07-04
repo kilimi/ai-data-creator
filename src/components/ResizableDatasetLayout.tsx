@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
@@ -89,6 +90,7 @@ export function ResizableDatasetLayout({
       </div>
     </div>
   );
+  
   const renderAnnotationsSection = () => (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0 p-6">
@@ -124,29 +126,39 @@ export function ResizableDatasetLayout({
 
   if (layout === 'vertical') {
     return (
-      <ResizablePanelGroup 
-        direction="vertical" 
-        className="w-full h-full"
-        onLayout={(sizes) => {
-          if (sizes[0] !== undefined) {
-            onSliderPositionChange(sizes[0]);
-          }
-        }}
-      >
-        <ResizablePanel defaultSize={sliderPosition} minSize={20}>
-          <div className="bg-card h-full overflow-hidden">
-            {renderImagesSection()}
-          </div>
-        </ResizablePanel>
-        
-        <ResizableHandle withHandle />
-        
-        <ResizablePanel defaultSize={100 - sliderPosition} minSize={20}>
-          <div className="bg-card h-full overflow-hidden">
-            {renderAnnotationsSection()}
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+      <div className="w-full h-full">
+        <ResizablePanelGroup 
+          direction="vertical" 
+          className="w-full h-full"
+          onLayout={(sizes) => {
+            if (sizes[0] !== undefined) {
+              onSliderPositionChange(sizes[0]);
+            }
+          }}
+        >
+          <ResizablePanel 
+            defaultSize={sliderPosition} 
+            minSize={20}
+            className="min-h-0"
+          >
+            <div className="bg-card h-full overflow-hidden">
+              {renderImagesSection()}
+            </div>
+          </ResizablePanel>
+          
+          <ResizableHandle withHandle />
+          
+          <ResizablePanel 
+            defaultSize={100 - sliderPosition} 
+            minSize={20}
+            className="min-h-0"
+          >
+            <div className="bg-card h-full overflow-hidden">
+              {renderAnnotationsSection()}
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
     );
   }
 
