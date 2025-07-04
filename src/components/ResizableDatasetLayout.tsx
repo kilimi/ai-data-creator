@@ -1,5 +1,4 @@
 
-
 import React, { useMemo, useState } from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
@@ -67,8 +66,8 @@ export function ResizableDatasetLayout({
   };
   
   const renderImagesSection = () => (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex-1 min-h-0 p-6">
+    <ScrollArea className="h-full w-full">
+      <div className="p-6">
         <ImagesTabContent
           id={id}
           images={imagesMemo}
@@ -89,12 +88,12 @@ export function ResizableDatasetLayout({
           setSelectedImageIndex={setSelectedImageIndex}
         />
       </div>
-    </div>
+    </ScrollArea>
   );
   
   const renderAnnotationsSection = () => (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex-1 min-h-0 p-6">
+    <ScrollArea className="h-full w-full">
+      <div className="p-6">
         <AnnotationsContent
           id={id}
           onShowAnnotationsChange={handleShowAnnotationsChange}
@@ -106,7 +105,7 @@ export function ResizableDatasetLayout({
           images={imagesMemo}
         />
       </div>
-    </div>
+    </ScrollArea>
   );
 
   if (layout === 'images-only') {
@@ -133,10 +132,10 @@ export function ResizableDatasetLayout({
     console.log('Vertical layout - Panel sizes:', { topPanelSize, bottomPanelSize, sliderPosition });
     
     return (
-      <div className="w-full h-full flex flex-col">
+      <div className="w-full h-full">
         <ResizablePanelGroup 
           direction="vertical" 
-          className="w-full h-full flex-1"
+          className="w-full h-full"
           onLayout={(sizes) => {
             console.log('Vertical layout sizes changed:', sizes);
             if (sizes[0] !== undefined) {
@@ -148,25 +147,23 @@ export function ResizableDatasetLayout({
             defaultSize={topPanelSize} 
             minSize={15}
             maxSize={85}
-            className="flex flex-col"
           >
-            <div className="bg-card h-full flex flex-col overflow-hidden">
+            <div className="bg-card h-full w-full">
               {renderImagesSection()}
             </div>
           </ResizablePanel>
           
           <ResizableHandle 
             withHandle 
-            className="flex-shrink-0 h-2 w-full bg-gray-800 hover:bg-blue-600 transition-colors cursor-row-resize"
+            className="h-2 w-full bg-gray-800 hover:bg-blue-600 transition-colors cursor-row-resize"
           />
           
           <ResizablePanel 
             defaultSize={bottomPanelSize} 
             minSize={15}
             maxSize={85}
-            className="flex flex-col"
           >
-            <div className="bg-card h-full flex flex-col overflow-hidden">
+            <div className="bg-card h-full w-full">
               {renderAnnotationsSection()}
             </div>
           </ResizablePanel>
@@ -202,4 +199,3 @@ export function ResizableDatasetLayout({
     </ResizablePanelGroup>
   );
 }
-
