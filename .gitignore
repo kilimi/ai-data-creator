@@ -123,6 +123,7 @@ yarn.lock
 pnpm-lock.yaml
 bun.lockb
 
+.vs
 
 *.md
 ai-data-creator/
