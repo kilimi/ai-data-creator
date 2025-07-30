@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Database Reset Script for AI Data Creator
+Database Reset Script for LAI
 This script will clear the entire database and recreate all tables fresh.
 """
 

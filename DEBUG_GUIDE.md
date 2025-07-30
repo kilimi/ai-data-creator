@@ -1,4 +1,4 @@
-# Debug Guide for AI Data Creator Backend
+# Debug Guide for LAI Backend
 
 ## Ways to See Debug Messages
 
@@ -35,13 +35,13 @@ If running with Docker:
 
 ```bash
 # View logs from Docker container
-docker logs ai-data-creator-backend
+docker logs lai-backend
 
 # Follow logs in real-time
-docker logs -f ai-data-creator-backend
+docker logs -f lai-backend
 
 # View last 50 lines
-docker logs --tail 50 ai-data-creator-backend
+docker logs --tail 50 lai-backend
 ```
 
 ### 4. Enhanced Debugging

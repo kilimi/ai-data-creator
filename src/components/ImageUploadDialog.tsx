@@ -29,6 +29,29 @@ export const ImageUploadDialog = ({
     if (!files?.length) return;
     
     const fileArray = Array.from(files);
+    const currentTotal = selectedFiles.length + fileArray.length;
+    
+    // Check if total would exceed 5000 files
+    if (currentTotal > 5000) {
+      // Show warning and only add files up to the limit
+      const remainingSlots = 5000 - selectedFiles.length;
+      const filesToAdd = fileArray.slice(0, remainingSlots);
+      
+      setSelectedFiles(prev => [...prev, ...filesToAdd]);
+      
+      // Show warning toast
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('toast', {
+          detail: {
+            title: "File Limit Warning",
+            description: `Maximum 5000 files allowed. Added ${filesToAdd.length} files. ${fileArray.length - filesToAdd.length} files were excluded.`,
+            variant: "destructive"
+          }
+        }));
+      }
+      return;
+    }
+    
     setSelectedFiles(prev => [...prev, ...fileArray]);
   };
 
@@ -52,7 +75,7 @@ export const ImageUploadDialog = ({
         <DialogHeader>
           <DialogTitle>Upload Images</DialogTitle>
           <DialogDescription className="text-gray-400">
-            Upload images to add to your dataset
+            Upload images to add to your dataset (Max: 5000 files)
           </DialogDescription>
         </DialogHeader>
         
@@ -73,7 +96,12 @@ export const ImageUploadDialog = ({
             {selectedFiles.length > 0 ? (
               <div className="flex flex-col items-center">
                 <Image className="h-12 w-12 text-gray-400 mb-4" />
-                <p className="text-lg font-medium">{selectedFiles.length} {selectedFiles.length === 1 ? 'image' : 'images'} selected</p>
+                <p className="text-lg font-medium">
+                  {selectedFiles.length} {selectedFiles.length === 1 ? 'image' : 'images'} selected
+                  <span className="text-sm text-gray-500 ml-2">
+                    ({selectedFiles.length}/5000)
+                  </span>
+                </p>
                 <p className="mt-2 text-sm text-gray-500">Click to add more images</p>
               </div>
             ) : (
@@ -86,7 +114,7 @@ export const ImageUploadDialog = ({
                   </Button>
                 </div>
                 <p className="mt-2 text-sm text-gray-500">
-                  PNG, JPG, WEBP up to 10MB
+                  PNG, JPG, WEBP up to 10MB each. Large batches will be uploaded in chunks of 1000.
                 </p>
               </>
             )}

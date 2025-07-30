@@ -7,7 +7,7 @@ const getApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
   
   // Return the first available URL in order of priority
-  const url = savedUrl || envUrl || 'http://localhost:8000';
+  const url = savedUrl || envUrl || 'http://localhost:9999';
   console.log("Using API URL:", url);
   return url;
 };

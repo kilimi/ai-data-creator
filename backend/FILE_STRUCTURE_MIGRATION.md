@@ -1,6 +1,6 @@
 # File Structure Migration
 
-This document explains the updated file storage structure for the AI Data Creator project.
+This document explains the updated file storage structure for the LAI project.
 
 ## New File Structure
 

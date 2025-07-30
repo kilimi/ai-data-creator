@@ -1,6 +1,6 @@
 # Albumentations Integration
 
-This document describes the integration of [Albumentations](https://albumentations.ai/) library for powerful image augmentation in the AI Data Creator project.
+This document describes the integration of [Albumentations](https://albumentations.ai/) library for powerful image augmentation in the LAI project.
 
 ## Installation
 

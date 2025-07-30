@@ -38,7 +38,7 @@ const Datasets = () => {
     const fetchData = async () => {
       try {
         // Fetch projects first
-        const projectsResponse = await fetch('http://localhost:8000/projects/');
+        const projectsResponse = await fetch('http://localhost:9999/projects/');
         if (projectsResponse.ok) {
           const projectsData = await projectsResponse.json();
           // Get the first project
@@ -48,7 +48,7 @@ const Datasets = () => {
         }
 
         // Then fetch datasets
-        const datasetsResponse = await fetch('http://localhost:8000/datasets/');
+        const datasetsResponse = await fetch('http://localhost:9999/datasets/');
         if (!datasetsResponse.ok) {
           throw new Error(`HTTP error! status: ${datasetsResponse.status}`);
         }
@@ -127,6 +127,12 @@ const Datasets = () => {
         variant: "destructive",
       });
     }
+  };
+
+  const handleDatasetUpdated = (updatedDataset: Dataset) => {
+    setDatasets(prevDatasets => 
+      prevDatasets.map(d => d.id === updatedDataset.id ? updatedDataset : d)
+    );
   };
   
   return (
@@ -242,7 +248,11 @@ const Datasets = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-300">
             {filteredAndSortedDatasets().map(dataset => (
               <div key={dataset.id}>
-                <DatasetCard dataset={dataset} onDelete={handleDeleteDataset} />
+                <DatasetCard 
+                  dataset={dataset} 
+                  onDelete={handleDeleteDataset}
+                  onDatasetUpdated={handleDatasetUpdated}
+                />
               </div>
             ))}
           </div>

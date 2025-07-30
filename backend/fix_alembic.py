@@ -15,7 +15,7 @@ from sqlalchemy import text, inspect
 
 def fix_alembic_state():
     """Fix Alembic state when tables exist but version tracking is broken."""
-    print("AI Data Creator - Alembic State Fix")
+    print("LAI - Alembic State Fix")
     print("=" * 50)
     
     db = SessionLocal()

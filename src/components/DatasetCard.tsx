@@ -4,11 +4,12 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { EditDatasetDialog } from "@/components/EditDatasetDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,11 +21,13 @@ interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
   dataset: Dataset;
   className?: string;
   onDelete?: (dataset: Dataset) => Promise<void>;
+  onDatasetUpdated?: (dataset: Dataset) => void;
 }
 
-export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetCardProps) {
+export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ...props }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
   const annotationFilesCount = useAnnotationFilesCount(dataset.id);
+  const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   
   // Function to get dataset type badge color
   const getTypeColor = (type?: string) => {
@@ -37,6 +40,12 @@ export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetC
         return "bg-purple-500";
       default:
         return "bg-gray-500";
+    }
+  };
+
+  const handleDatasetUpdated = (updatedDataset: Dataset) => {
+    if (onDatasetUpdated) {
+      onDatasetUpdated(updatedDataset);
     }
   };
   
@@ -94,7 +103,10 @@ export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetC
                     Annotate
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem>Rename</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setIsEditDialogOpen(true)}>
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Dataset
+                </DropdownMenuItem>
                 <DropdownMenuItem>Duplicate</DropdownMenuItem>
                 <DropdownMenuItem 
                   className="text-destructive"
@@ -147,6 +159,13 @@ export function DatasetCard({ dataset, className, onDelete, ...props }: DatasetC
           <span>{annotationFilesCount} {annotationFilesCount === 1 ? 'annotation file' : 'annotation files'}</span>
         </div>
       </CardFooter>
+
+      <EditDatasetDialog
+        dataset={dataset}
+        open={isEditDialogOpen}
+        onOpenChange={setIsEditDialogOpen}
+        onDatasetUpdated={handleDatasetUpdated}
+      />
     </Card>
   );
 }

@@ -58,9 +58,9 @@ export function ImagesTabContent({
 }: ImagesTabContentProps & { annotationFiles?: any[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Open modal at clicked image index
+  // Open modal at clicked image index (based on full images array)
   const handleImageClick = (image: Image) => {
-    const idx = paginatedImages.findIndex((img) => img.id === image.id);
+    const idx = images.findIndex((img) => img.id === image.id);
     if (idx !== -1) {
       setSelectedImageIndex(idx);
       setIsModalOpen(true);
@@ -77,18 +77,38 @@ export function ImagesTabContent({
     handleCloseModal();
   };
 
-  // Navigation handlers
+  // Navigation handlers (work across all images, not just current page)
   const hasPrev = selectedImageIndex !== null && selectedImageIndex > 0;
-  const hasNext = selectedImageIndex !== null && selectedImageIndex < paginatedImages.length - 1;
+  const hasNext = selectedImageIndex !== null && selectedImageIndex < images.length - 1;
+  
   const handlePrev = () => {
-    if (hasPrev && selectedImageIndex !== null) setSelectedImageIndex(selectedImageIndex - 1);
+    if (hasPrev && selectedImageIndex !== null) {
+      const newIndex = selectedImageIndex - 1;
+      setSelectedImageIndex(newIndex);
+      
+      // Update page if the new image is on a different page
+      const newPage = Math.floor(newIndex / imagesPerPage) + 1;
+      if (newPage !== currentPage) {
+        onPageChange(newPage);
+      }
+    }
   };
+  
   const handleNext = () => {
-    if (hasNext && selectedImageIndex !== null) setSelectedImageIndex(selectedImageIndex + 1);
+    if (hasNext && selectedImageIndex !== null) {
+      const newIndex = selectedImageIndex + 1;
+      setSelectedImageIndex(newIndex);
+      
+      // Update page if the new image is on a different page
+      const newPage = Math.floor(newIndex / imagesPerPage) + 1;
+      if (newPage !== currentPage) {
+        onPageChange(newPage);
+      }
+    }
   };
 
-  // Get current image and annotations
-  const selectedImage = selectedImageIndex !== null ? paginatedImages[selectedImageIndex] : null;
+  // Get current image and annotations (based on full images array)
+  const selectedImage = selectedImageIndex !== null ? images[selectedImageIndex] : null;
   const selectedImageAnnotations = selectedImage
     ? annotations.filter((anno) => anno.imageId === selectedImage.id)
     : [];
@@ -174,7 +194,7 @@ export function ImagesTabContent({
         hasPrev={hasPrev}
         hasNext={hasNext}
         imageIndex={selectedImageIndex !== null ? selectedImageIndex + 1 : null}
-        imageCount={paginatedImages.length}
+        imageCount={images.length}
       />
     </div>
   );

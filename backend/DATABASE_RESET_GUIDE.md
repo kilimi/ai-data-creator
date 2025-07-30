@@ -1,6 +1,6 @@
 # Database Reset Guide
 
-This guide shows different ways to clear your AI Data Creator database and start fresh.
+This guide shows different ways to clear your LAI database and start fresh.
 
 ## Quick Commands
 
@@ -24,7 +24,7 @@ alembic upgrade head
 # Stop the backend
 # Then reset the database container
 docker-compose down
-docker volume rm ai-data-creator_postgres_data  # Remove database volume
+docker volume rm lai_postgres_data  # Remove database volume
 docker-compose up -d db  # Start just the database
 alembic upgrade head  # Run migrations
 ```
@@ -35,8 +35,8 @@ alembic upgrade head  # Run migrations
 psql -U postgres -h localhost
 
 # Drop and recreate the database
-DROP DATABASE ai_data_creator;
-CREATE DATABASE ai_data_creator;
+DROP DATABASE lai_db;
+CREATE DATABASE lai_db;
 \q
 
 # Run migrations
@@ -135,9 +135,9 @@ sudo rm -rf data projects
 ### "Database does not exist"
 ```bash
 # Create the database first
-createdb ai_data_creator
+createdb lai_db
 # or via psql:
-CREATE DATABASE ai_data_creator;
+CREATE DATABASE lai_db;
 ```
 
 ### Alembic errors after reset

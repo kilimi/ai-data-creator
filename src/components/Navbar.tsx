@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Settings, FolderOpen } from "lucide-react";
+import { Settings, FolderOpen, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TasksPopover } from "./TasksPopover";
 
@@ -29,12 +29,15 @@ export function Navbar() {
         <div className="flex items-center gap-6">
           <Link 
             to="/" 
-            className="flex items-center gap-2 text-xl font-bold tracking-tight"
+            className="flex items-center gap-3 text-xl font-bold tracking-tight group"
           >
-            <div className="flex items-center justify-center rounded-lg bg-primary/10 text-primary p-2">
-              <FolderOpen className="h-5 w-5" />
+            <div className="relative">
+              <Sparkles className="w-6 h-6 text-primary animate-pulse-soft group-hover:animate-spin transition-all duration-300" />
+              <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
             </div>
-            <span>Nine pixels</span>
+            <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent group-hover:from-accent group-hover:via-primary group-hover:to-secondary transition-all duration-300">
+              LAI
+            </span>
           </Link>
         </div>
         

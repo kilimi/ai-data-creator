@@ -156,10 +156,10 @@ const ApiSettings = () => {
                 id="api-url"
                 value={apiUrl}
                 onChange={(e) => setApiUrl(e.target.value)}
-                placeholder="http://localhost:8000"
+                placeholder="http://localhost:9999"
               />
               <p className="text-sm text-muted-foreground">
-                The base URL of your FastAPI application (e.g., http://localhost:8000)
+                The base URL of your FastAPI application (e.g., http://localhost:9999)
               </p>
             </div>
             

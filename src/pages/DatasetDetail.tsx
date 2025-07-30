@@ -13,7 +13,7 @@ import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
 import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { Dataset } from '@/types';
+import { Dataset, Project } from '@/types';
 import {
   Select,
   SelectContent,
@@ -35,15 +35,23 @@ interface DatasetDetailProps {
 const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { project, loading, error } = useProject(id || '');
+  const { project: originalProject, loading, error } = useProject(id || '');
   const { api } = useApi();
   const { toast } = useToast();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [project, setProject] = useState<Project | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   const [showAugmentedModal, setShowAugmentedModal] = useState(false);
+
+  // Update local project state when original project changes
+  useEffect(() => {
+    if (originalProject) {
+      setProject(originalProject);
+    }
+  }, [originalProject]);
 
   // Debug logging to track project ID
   console.log("Project Detail - Current Project ID:", id);
@@ -62,7 +70,19 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         throw new Error(response.error || 'Failed to delete dataset');
       }
 
+      // Update local datasets state for non-project mode
       setDatasets(prevDatasets => prevDatasets.filter(d => d.id !== dataset.id));
+      
+      // Update project state for project mode  
+      if (project && projectMode) {
+        setProject(prevProject => {
+          if (!prevProject) return prevProject;
+          return {
+            ...prevProject,
+            datasets: prevProject.datasets.filter(d => d.id !== dataset.id)
+          };
+        });
+      }
       
       toast({
         title: "Dataset deleted",
@@ -74,6 +94,26 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         title: "Error",
         description: err instanceof Error ? err.message : "Failed to delete. Please try again.",
         variant: "destructive",
+      });
+    }
+  };
+
+  const handleDatasetUpdated = (updatedDataset: Dataset) => {
+    // Update local datasets state for non-project mode
+    setDatasets(prevDatasets => 
+      prevDatasets.map(d => d.id === updatedDataset.id ? updatedDataset : d)
+    );
+    
+    // Update project state for project mode
+    if (project && projectMode) {
+      setProject(prevProject => {
+        if (!prevProject) return prevProject;
+        return {
+          ...prevProject,
+          datasets: prevProject.datasets.map(d => 
+            d.id === updatedDataset.id ? updatedDataset : d
+          )
+        };
       });
     }
   };
@@ -129,7 +169,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     new Set(
       (project?.datasets || []).flatMap(dataset => dataset.tags || [])
     )
-  ).sort();
+  ).sort() as string[];
 
   // Filter and sort datasets
   const filteredAndSortedDatasets = () => {
@@ -192,7 +232,10 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             <DatasetCardSkeleton />
           ) : datasets[0] ? (
             <div className="max-w-2xl">
-              <DatasetCard dataset={datasets[0]} />
+              <DatasetCard 
+                dataset={datasets[0]} 
+                onDatasetUpdated={handleDatasetUpdated}
+              />
               
               <div className="mt-6 space-y-6">
                 <Card className="p-6">
@@ -402,6 +445,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                 key={dataset.id} 
                 dataset={dataset}
                 onDelete={handleDeleteDataset}
+                onDatasetUpdated={handleDatasetUpdated}
               />
             ))}
           </div>

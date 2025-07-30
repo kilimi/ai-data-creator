@@ -48,6 +48,7 @@ export function AnnotationsUploadDialog({
             title="Add Annotations"
             description="Drag and drop your annotation files here or click to select files."
             accept=".json"
+            maxSize={100}
             onFilesSelected={setSelectedFiles}
             type="annotations"
           />

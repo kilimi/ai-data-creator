@@ -148,6 +148,18 @@ async def upload_images(
     db: Session = Depends(get_db)
 ):
     try:
+        # Add debug logging
+        print(f"DEBUG: Upload request received for dataset {dataset_id} with {len(files)} files")
+        
+        # Check file count limit
+        if len(files) > 5000:
+            error_msg = f"Too many files. Maximum number of files is 5000. You selected {len(files)} files. Please select fewer files or upload in smaller batches."
+            print(f"DEBUG: File limit exceeded - {error_msg}")
+            raise HTTPException(
+                status_code=413, 
+                detail=error_msg
+            )
+        
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")

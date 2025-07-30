@@ -7,6 +7,7 @@ import { Dataset as DatasetType, Image } from "@/types";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
+import { EditDatasetDialog } from "@/components/EditDatasetDialog";
 import { AnnotationSample } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
@@ -19,6 +20,7 @@ export default function Dataset() {
   const [dataset, setDataset] = useState<DatasetType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -27,6 +29,14 @@ export default function Dataset() {
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
   const [importedAnnotations, setImportedAnnotations] = useState<AnnotationSample[]>([]);
+  
+  // Upload progress state
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedCount, setUploadedCount] = useState(0);
+  const [totalFiles, setTotalFiles] = useState(0);
+  const [currentChunk, setCurrentChunk] = useState(0);
+  const [totalChunks, setTotalChunks] = useState(0);
   
   // Use persistent settings hook with better ID handling
   const datasetId = id || '';
@@ -136,36 +146,173 @@ export default function Dataset() {
   const handleUploadImages = async (files: File[]) => {
     if (!api || !id) return;
 
-    try {
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append('files', file);
-      });
+    const CHUNK_SIZE = 1000; // Upload in chunks of 1000 files
+    const totalFiles = files.length;
+    const totalChunks = Math.ceil(totalFiles / CHUNK_SIZE);
 
-      const response = await api.uploadImages(id, formData);
-      
-      if (response.success) {
-        // Update images state with the newly uploaded images
-        if (response.data?.images) {
-          setImages(prevImages => [...prevImages, ...response.data.images]);
-        }
-        
-        toast({
-          title: "Success",
-          description: `Successfully uploaded ${files.length} images`,
-        });
-      } else {
-        throw new Error(response.error || 'Upload failed');
-      }
-    } catch (error) {
-      console.error('Error uploading images:', error);
+    // Check total file count limit (5000)
+    if (totalFiles > 5000) {
       toast({
-        title: "Error",
-        description: "Failed to upload images",
+        title: "Too Many Files",
+        description: `Maximum 5000 files allowed. You selected ${totalFiles} files. Please select fewer files.`,
         variant: "destructive",
       });
+      setIsUploadDialogOpen(false);
+      return;
     }
-    setIsUploadDialogOpen(false);
+
+    // Initialize progress tracking
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadedCount(0);
+    setTotalFiles(totalFiles);
+    setCurrentChunk(0);
+    setTotalChunks(totalChunks);
+
+    try {
+      let allUploadedImages: any[] = [];
+      let totalUploaded = 0;
+
+      // Process files in chunks
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const startIndex = chunkIndex * CHUNK_SIZE;
+        const endIndex = Math.min(startIndex + CHUNK_SIZE, totalFiles);
+        const chunk = files.slice(startIndex, endIndex);
+        
+        // Update current chunk information
+        setCurrentChunk(chunkIndex + 1);
+        
+        console.log(`DEBUG: Uploading chunk ${chunkIndex + 1}/${totalChunks} (${chunk.length} files)`);
+
+        const formData = new FormData();
+        chunk.forEach((file) => {
+          formData.append('files', file);
+        });
+
+        // Create a custom XMLHttpRequest for progress tracking
+        const xhr = new XMLHttpRequest();
+        
+        // Set up progress tracking for this chunk
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const chunkProgress = (event.loaded / event.total) * 100;
+            const overallProgress = ((chunkIndex * CHUNK_SIZE + (event.loaded / event.total) * chunk.length) / totalFiles) * 100;
+            setUploadProgress(Math.round(overallProgress));
+          }
+        };
+
+        // Create a promise for the chunk upload
+        const uploadPromise = new Promise<any>((resolve, reject) => {
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                resolve(response);
+              } catch (e) {
+                reject(new Error('Invalid response format'));
+              }
+            } else {
+              try {
+                const errorResponse = JSON.parse(xhr.responseText);
+                console.log('DEBUG: Error response:', errorResponse);
+                console.log('DEBUG: Response status:', xhr.status);
+                console.log('DEBUG: Response headers:', xhr.getAllResponseHeaders());
+                reject(new Error(errorResponse.detail || `HTTP ${xhr.status}`));
+              } catch (e) {
+                console.log('DEBUG: Failed to parse error response:', xhr.responseText);
+                reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+              }
+            }
+          };
+
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.ontimeout = () => reject(new Error('Upload timeout'));
+        });
+
+        // Get the API base URL from localStorage or environment
+        const apiBaseUrl = localStorage.getItem("apiBaseUrl") || 
+                          import.meta.env.VITE_API_URL || 
+                          'http://localhost:9999';
+        
+        console.log('DEBUG: Upload URL:', `${apiBaseUrl}/datasets/${id}/images`);
+        console.log('DEBUG: Chunk file count:', chunk.length);
+        
+        // Configure and send the request
+        xhr.open('POST', `${apiBaseUrl}/datasets/${id}/images`);
+        xhr.timeout = 300000; // 5 minute timeout per chunk
+        xhr.send(formData);
+
+        // Wait for this chunk to complete
+        const response = await uploadPromise;
+        
+        // Check if the response has a success field
+        const isSuccess = response.success !== false;
+        
+        if (isSuccess) {
+          // Update images state with the newly uploaded images from this chunk
+          const responseData = response.data || response;
+          if (responseData?.images) {
+            allUploadedImages.push(...responseData.images);
+            totalUploaded += responseData.uploaded || chunk.length;
+          } else {
+            totalUploaded += chunk.length;
+          }
+          
+          setUploadedCount(totalUploaded);
+          
+          toast({
+            title: `Chunk ${chunkIndex + 1}/${totalChunks} Complete`,
+            description: `Uploaded ${chunk.length} images (${totalUploaded}/${totalFiles} total)`,
+          });
+        } else {
+          throw new Error(response.error || `Upload failed for chunk ${chunkIndex + 1}`);
+        }
+
+        // Small delay between chunks to avoid overwhelming the server
+        if (chunkIndex < totalChunks - 1) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Increased delay to 2 seconds
+        }
+      }
+
+      // Update the images state with all uploaded images
+      if (allUploadedImages.length > 0) {
+        setImages(prevImages => [...prevImages, ...allUploadedImages]);
+      }
+
+      toast({
+        title: "Upload Complete!",
+        description: `Successfully uploaded all ${totalFiles} images in ${totalChunks} chunks`,
+      });
+
+    } catch (error) {
+      console.error('Error uploading images:', error);
+      
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Check if it's a file limit error
+      if (errorMessage.includes('Too many files') || errorMessage.includes('File limit')) {
+        toast({
+          title: "File Limit Exceeded",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Upload Error",
+          description: errorMessage || "Failed to upload images",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      // Reset progress state
+      setIsUploading(false);
+      setUploadProgress(0);
+      setUploadedCount(0);
+      setTotalFiles(0);
+      setCurrentChunk(0);
+      setTotalChunks(0);
+      setIsUploadDialogOpen(false);
+    }
   };
   const handleDeleteImage = async (imageId: string) => {
     if (!id) return;
@@ -209,6 +356,20 @@ export default function Dataset() {
         variant: "destructive",
       });
     }
+  };
+
+  // Handle dataset updates
+  const handleDatasetUpdated = (updatedDataset: DatasetType) => {
+    setDataset(updatedDataset);
+    toast({
+      title: "Success",
+      description: "Dataset updated successfully",
+    });
+  };
+
+  // Handle opening edit dialog
+  const handleEditDataset = () => {
+    setIsEditDialogOpen(true);
   };
   // Updated function to handle annotation imports with better error handling
   const handleImportAnnotations = async (files: File[]) => {
@@ -343,6 +504,8 @@ export default function Dataset() {
               name={dataset?.name}
               currentLayout={settings.layout}
               onLayoutChange={updateLayout}
+              dataset={dataset}
+              onEditDataset={handleEditDataset}
             />
           </div>
         </div>
@@ -375,6 +538,50 @@ export default function Dataset() {
           onOpenChange={setIsUploadDialogOpen}
           onFilesSelected={handleUploadImages}
         />
+        {dataset && (
+          <EditDatasetDialog
+            dataset={dataset}
+            open={isEditDialogOpen}
+            onOpenChange={setIsEditDialogOpen}
+            onDatasetUpdated={handleDatasetUpdated}
+          />
+        )}
+        {isUploading && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+            <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border">
+              <div className="text-center space-y-4">
+                <div className="text-lg font-semibold">Uploading Images</div>
+                {totalChunks > 1 && (
+                  <div className="text-sm text-muted-foreground">
+                    Processing chunk {currentChunk} of {totalChunks}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <div className="w-full bg-secondary rounded-full h-2.5">
+                    <div 
+                      className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-out" 
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {uploadProgress}% complete
+                    {totalFiles > 0 && (
+                      <span className="ml-2">
+                        ({uploadedCount}/{totalFiles} files)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {totalChunks > 1 
+                    ? `Uploading in ${totalChunks} chunks of 1000 files each...` 
+                    : "Please wait while your images are being uploaded..."
+                  }
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

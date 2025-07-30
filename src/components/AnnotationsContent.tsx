@@ -488,7 +488,7 @@ export function AnnotationsContent({
           description: `Annotations for ${file.name}`,
           version: "1.0",
           year: new Date().getFullYear(),
-          contributor: "AI Data Creator",
+          contributor: "LAI",
           date_created: new Date().toISOString()
         },
         licenses: [{

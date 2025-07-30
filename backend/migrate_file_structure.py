@@ -178,7 +178,7 @@ def update_image_urls():
         db.close()
 
 if __name__ == "__main__":
-    print("AI Data Creator - File Structure Migration")
+    print("LAI - File Structure Migration")
     print("=" * 50)
     
     # Check if we're in the right directory

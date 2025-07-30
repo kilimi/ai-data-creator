@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { API_CONFIG } from '../config/api';
 
-const baseUrl = API_CONFIG?.baseUrl || 'http://localhost:8000';
+const baseUrl = API_CONFIG?.baseUrl || 'http://localhost:9999';
 
 export const handlers = [
   http.post(`${baseUrl}/projects`, () => {
