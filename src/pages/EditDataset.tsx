@@ -264,25 +264,50 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     });
   };
 
-  const handleRenameAnnotation = () => {
+  const handleRenameAnnotation = async () => {
     if (!selectedAnnotation || !newFilename.trim()) return;
     
-    setAnnotations(prevAnnotations => 
-      prevAnnotations.map(anno => 
-        anno.id === selectedAnnotation.id 
-          ? { ...anno, fileName: newFilename.trim() } 
-          : anno
-      )
-    );
-    
-    setSelectedAnnotation(prev => prev ? { ...prev, fileName: newFilename.trim() } : null);
-    setIsRenaming(false);
-    setNewFilename("");
-    
-    toast({
-      title: "Annotation renamed",
-      description: "Filename has been updated.",
-    });
+    try {
+      // Import the API hook dynamically
+      const { useApi } = await import('@/hooks/use-api');
+      const { api } = useApi();
+      
+      if (!api) {
+        throw new Error('API client not available');
+      }
+
+      // Call the backend API to rename the annotation file
+      const result = await api.renameAnnotation(id, selectedAnnotation.id, newFilename.trim());
+      
+      if (result.success) {
+        // Update local state only after successful backend update
+        setAnnotations(prevAnnotations => 
+          prevAnnotations.map(anno => 
+            anno.id === selectedAnnotation.id 
+              ? { ...anno, fileName: newFilename.trim() } 
+              : anno
+          )
+        );
+        
+        setSelectedAnnotation(prev => prev ? { ...prev, fileName: newFilename.trim() } : null);
+        setIsRenaming(false);
+        setNewFilename("");
+        
+        toast({
+          title: "Annotation renamed",
+          description: result.data?.message || "Filename has been updated successfully.",
+        });
+      } else {
+        throw new Error(result.error || 'Failed to rename annotation file');
+      }
+    } catch (error) {
+      console.error("Error renaming annotation:", error);
+      toast({
+        variant: "destructive",
+        title: "Rename failed",
+        description: error instanceof Error ? error.message : "There was an error renaming the annotation file.",
+      });
+    }
   };
 
   const handleShowAnnotationsOnImage = (annotation: AnnotationFile) => {

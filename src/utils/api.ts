@@ -254,6 +254,15 @@ export class ApiClient {
     });
   }
 
+  async renameAnnotation(datasetId: string | number, annotationId: string, newName: string): Promise<ApiResponse<any>> {
+    const formData = new FormData();
+    formData.append('new_name', newName);
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}/rename`, {
+      method: 'PUT',
+      body: formData
+    });
+  }
+
   async importAnnotations(datasetId: string | number, file: File): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('file', file);

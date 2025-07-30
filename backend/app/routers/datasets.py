@@ -732,3 +732,90 @@ async def get_dataset_annotation_content(
     except Exception as e:
         print(f"Error in get_dataset_annotation_content: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get annotation content: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/annotations/{annotation_id}/rename")
+async def rename_annotation_file(
+    dataset_id: int,
+    annotation_id: str,
+    new_name: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Rename an annotation file"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Get the project ID from the dataset
+        project_id = dataset.project_id
+        
+        # Construct the path to the annotations directory
+        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+        
+        # Check if annotations directory exists
+        if not annotations_dir.exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Annotations directory not found for dataset {dataset_id}"
+            )
+        
+        # Look for annotation file that starts with the annotation_id
+        found_file = None
+        for file_path in annotations_dir.glob("*"):
+            if file_path.is_file():
+                filename = file_path.name
+                # Check if filename starts with the annotation_id
+                if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
+                    found_file = file_path
+                    break
+        
+        if not found_file:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Annotation file with ID '{annotation_id}' not found in dataset {dataset_id}"
+            )
+        
+        # Validate new name
+        if not new_name.strip():
+            raise HTTPException(status_code=400, detail="New filename cannot be empty")
+        
+        # Ensure the new name has the correct extension
+        new_name = new_name.strip()
+        if not new_name.endswith('.json') and found_file.suffix.lower() == '.json':
+            new_name += '.json'
+        
+        # Create new filename with the annotation ID prefix
+        if '_' in found_file.name:
+            # Keep the same random ID prefix
+            prefix = found_file.name.split('_', 1)[0]
+            new_filename = f"{prefix}_{new_name}"
+        else:
+            # For legacy files without prefix, add one
+            new_filename = f"{annotation_id}_{new_name}"
+        
+        new_file_path = annotations_dir / new_filename
+        
+        # Check if target filename already exists
+        if new_file_path.exists():
+            raise HTTPException(
+                status_code=409, 
+                detail=f"A file with the name '{new_filename}' already exists"
+            )
+        
+        # Rename the file
+        found_file.rename(new_file_path)
+        
+        return {
+            "success": True,
+            "message": f"Annotation file renamed from '{found_file.name}' to '{new_filename}'",
+            "old_filename": found_file.name,
+            "new_filename": new_filename,
+            "display_name": new_name
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in rename_annotation_file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to rename annotation file: {str(e)}")

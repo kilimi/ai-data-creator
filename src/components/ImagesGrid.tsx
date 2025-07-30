@@ -49,6 +49,45 @@ function getAnnotationDisplayName(annotation: AnnotationSample): string {
   return annotation.className;
 }
 
+// Helper: group annotations by class and annotation file with counts
+function groupAnnotationsByClassAndFile(annotations: AnnotationSample[]): Array<{
+  className: string;
+  annotationFileName: string;
+  color: string;
+  count: number;
+}> {
+  const groupMap = new Map<string, {
+    className: string;
+    annotationFileName: string;
+    color: string;
+    count: number;
+  }>();
+
+  annotations.forEach(annotation => {
+    const fileName = annotation.annotationFileName || 'Unknown';
+    const key = `${annotation.className}_${fileName}`;
+    
+    if (groupMap.has(key)) {
+      groupMap.get(key)!.count++;
+    } else {
+      groupMap.set(key, {
+        className: annotation.className,
+        annotationFileName: fileName,
+        color: annotation.color || '#ea384c',
+        count: 1
+      });
+    }
+  });
+
+  return Array.from(groupMap.values()).sort((a, b) => {
+    // Sort by class name first, then by annotation file name
+    if (a.className !== b.className) {
+      return a.className.localeCompare(b.className);
+    }
+    return a.annotationFileName.localeCompare(b.annotationFileName);
+  });
+}
+
 export function ImagesGrid({
   images,
   imageSize,
@@ -184,31 +223,24 @@ export function ImagesGrid({
                   <Trash2 className="w-4 h-4" />
                 </Button>
                 
-                {/* Enhanced annotation display with individual colors and actual names */}
+                {/* Enhanced annotation display with grouping by class and annotation file */}
                 {imageAnnotations.length > 0 && (
                   <div className="absolute bottom-2 left-2 bg-black/80 text-white text-xs px-2 py-1 rounded max-w-[90%] break-words flex flex-wrap gap-x-2 gap-y-1">
-                    {imageAnnotations.map((annotation, index) => {
-                      const displayName = getAnnotationDisplayName(annotation);
-                      return (
-                        <span key={`${annotation.className}-${index}`} className="inline-flex items-center">
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              width: 8,
-                              height: 8,
-                              backgroundColor: annotation.color || '#ea384c',
-                              borderRadius: '50%',
-                              marginRight: '4px',
-                            }}
-                          />
-                          {annotation.className}
-                          {/* Show actual annotation name if different from class name */}
-                          {displayName !== annotation.className && (
-                            <span className="ml-1 opacity-75">({displayName})</span>
-                          )}
-                        </span>
-                      );
-                    })}
+                    {groupAnnotationsByClassAndFile(imageAnnotations).map((group, index) => (
+                      <span key={`${group.className}-${group.annotationFileName}-${index}`} className="inline-flex items-center">
+                        <span
+                          style={{
+                            display: 'inline-block',
+                            width: 8,
+                            height: 8,
+                            backgroundColor: group.color,
+                            borderRadius: '50%',
+                            marginRight: '4px',
+                          }}
+                        />
+                        {group.className} ({group.annotationFileName}) ({group.count})
+                      </span>
+                    ))}
                   </div>
                 )}
               </div>
