@@ -611,33 +611,53 @@ export function AnnotationsContent({
       return;
     }
 
+    const newName = editDialog.newName.trim();
+    const annotationId = editDialog.annotationId;
     const updatedFiles = annotationFiles.map(file => 
-      file.id === editDialog.annotationId 
+      file.id === annotationId 
         ? { 
             ...file, 
-            name: editDialog.newName.trim(),
+            name: newName,
             // Update all samples to reflect the new annotation file name
             samples: file.samples?.map(sample => ({
               ...sample,
-              annotationFileName: editDialog.newName.trim()
+              annotationFileName: newName
             }))
           }
         : file
     );
-    
-    setAnnotationFiles(updatedFiles);
-    
-    // Save updated files to localStorage only when no API is available
-    if (!api) {
-      localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
-    }
 
-    toast({
-      title: "Annotation renamed",
-      description: `Successfully renamed to "${editDialog.newName.trim()}".`,
-    });
-
-    setEditDialog({ isOpen: false, annotationId: '', currentName: '', newName: '' });
+    const doRename = async () => {
+      let success = true;
+      if (api) {
+        try {
+          // Call backend API to rename annotation file
+          const response = await api.renameAnnotation(id, annotationId, newName);
+          if (!response.success) {
+            success = false;
+            throw new Error(response.error || "Failed to rename annotation file on server");
+          }
+        } catch (error) {
+          success = false;
+          toast({
+            title: "Rename failed",
+            description: error instanceof Error ? error.message : "Failed to rename annotation file on server.",
+            variant: "destructive",
+          });
+        }
+      } else {
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+      if (success) {
+        setAnnotationFiles(updatedFiles);
+        toast({
+          title: "Annotation renamed",
+          description: `Successfully renamed to "${newName}".`,
+        });
+        setEditDialog({ isOpen: false, annotationId: '', currentName: '', newName: '' });
+      }
+    };
+    doRename();
   };
 
   const handleCancelEdit = () => {
