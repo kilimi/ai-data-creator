@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { UploadCard } from "@/components/UploadCard";
 import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
+import { ClassStatisticsWithManagement } from "@/components/ClassStatisticsWithManagement";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 import { AnnotationImagesDialog } from "@/components/AnnotationImagesDialog";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
@@ -416,6 +417,85 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     window.open(`/datasets/${id}/annotate`, '_blank');
   };
 
+  // Class management handlers
+  const handleRenameClass = (oldClassName: string, newClassName: string) => {
+    if (!selectedAnnotation) return;
+    
+    const updatedAnnotation = {
+      ...selectedAnnotation,
+      classStats: selectedAnnotation.classStats?.map(stat => 
+        stat.className === oldClassName 
+          ? { ...stat, className: newClassName }
+          : stat
+      ),
+      samples: selectedAnnotation.samples?.map(sample =>
+        sample.className === oldClassName
+          ? { ...sample, className: newClassName }
+          : sample
+      )
+    };
+    
+    setSelectedAnnotation(updatedAnnotation);
+    setAnnotations(prev => 
+      prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
+    );
+    
+    toast({
+      title: "Class renamed",
+      description: `"${oldClassName}" has been renamed to "${newClassName}"`
+    });
+  };
+
+  const handleDeleteClass = (className: string) => {
+    if (!selectedAnnotation) return;
+    
+    const updatedAnnotation = {
+      ...selectedAnnotation,
+      classStats: selectedAnnotation.classStats?.filter(stat => stat.className !== className),
+      samples: selectedAnnotation.samples?.filter(sample => sample.className !== className)
+    };
+    
+    setSelectedAnnotation(updatedAnnotation);
+    setAnnotations(prev => 
+      prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
+    );
+    
+    toast({
+      title: "Class deleted",
+      description: `All annotations for "${className}" have been removed`
+    });
+  };
+
+  const handleMergeClasses = (sourceClassName: string, targetClassName: string) => {
+    if (!selectedAnnotation) return;
+    
+    const updatedAnnotation = {
+      ...selectedAnnotation,
+      classStats: selectedAnnotation.classStats?.map(stat => {
+        if (stat.className === targetClassName) {
+          const sourceCount = selectedAnnotation.classStats?.find(s => s.className === sourceClassName)?.count || 0;
+          return { ...stat, count: stat.count + sourceCount };
+        }
+        return stat;
+      }).filter(stat => stat.className !== sourceClassName),
+      samples: selectedAnnotation.samples?.map(sample =>
+        sample.className === sourceClassName
+          ? { ...sample, className: targetClassName }
+          : sample
+      )
+    };
+    
+    setSelectedAnnotation(updatedAnnotation);
+    setAnnotations(prev => 
+      prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
+    );
+    
+    toast({
+      title: "Classes merged",
+      description: `"${sourceClassName}" has been merged into "${targetClassName}"`
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-white">
@@ -820,7 +900,13 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           
           {selectedAnnotation?.classStats && selectedAnnotation.classStats.length > 0 ? (
             <div className="max-h-[60vh] overflow-y-auto">
-              <ClassStatistics statistics={selectedAnnotation.classStats} />
+              <ClassStatisticsWithManagement 
+                statistics={selectedAnnotation.classStats}
+                annotations={selectedAnnotation.samples || []}
+                onRenameClass={handleRenameClass}
+                onDeleteClass={handleDeleteClass}
+                onMergeClasses={handleMergeClasses}
+              />
               
               {selectedAnnotation.samples && selectedAnnotation.samples.length > 0 && (
                 <div className="mt-6">
