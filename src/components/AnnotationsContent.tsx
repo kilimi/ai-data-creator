@@ -1183,6 +1183,70 @@ export function AnnotationsContent({
     }
   };
 
+  // Duplicate annotation handler
+  const handleDuplicateAnnotation = async (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (!file) {
+      toast({
+        title: "Error",
+        description: "Annotation file not found.",
+        variant: "destructive",
+      });
+      return;
+    }
+    // Create a deep copy and new name
+    const newId = Math.random().toString(36).substring(2, 11);
+    const baseName = file.name.replace(/(\.[^/.]+)?$/, "");
+    let copyIndex = 2;
+    let newName = `${baseName}_copy`;
+    // Ensure unique name
+    while (annotationFiles.some(f => f.name === newName || f.name === `${baseName}_copy${copyIndex}`)) {
+      newName = `${baseName}_copy${copyIndex}`;
+      copyIndex++;
+    }
+    const duplicatedFile = {
+      ...file,
+      id: newId,
+      name: newName,
+      date: new Date().toISOString().split('T')[0],
+      samples: file.samples ? file.samples.map(sample => ({ ...sample, annotationFileName: newName })) : [],
+    };
+    let success = true;
+    if (api) {
+      try {
+        // Upload to backend
+        const jsonContent = JSON.stringify(toCOCOFormat(duplicatedFile), null, 2);
+        const uploadFile = new File([jsonContent], newName, { type: 'application/json' });
+        const response = await api.importAnnotations(id, uploadFile);
+        if (!response.success) {
+          success = false;
+          throw new Error(response.error || "Failed to upload duplicated annotation file");
+        }
+        // Refresh annotation files from backend
+        await loadAnnotationFilesFromBackend();
+      } catch (error) {
+        success = false;
+        toast({
+          title: "Duplicate failed",
+          description: error instanceof Error ? error.message : "Failed to duplicate annotation file.",
+          variant: "destructive",
+        });
+      }
+    } else {
+      // Add to localStorage
+      const updatedFiles = [...annotationFiles, duplicatedFile];
+      setAnnotationFiles(updatedFiles);
+      localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    }
+    if (success) {
+      toast({
+        title: "Annotation duplicated",
+        description: `Created a copy: ${newName}`,
+      });
+    }
+  };
+  
   return (
     <div className={`h-full flex flex-col min-h-0 ${className}`}>
       <div className="flex-shrink-0 flex justify-between items-center mb-4">
@@ -1275,14 +1339,26 @@ export function AnnotationsContent({
                           size="icon" 
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
                           onClick={(e) => handleEditAnnotation(file.id, e)}
+                          title="Edit annotation file"
                         >
                           <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                          onClick={(e) => handleDuplicateAnnotation(file.id, e)}
+                          title="Duplicate annotation file"
+                        >
+                          {/* Copy icon SVG */}
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" strokeWidth="2"/><rect x="3" y="3" width="13" height="13" rx="2" strokeWidth="2"/></svg>
                         </Button>
                         <Button 
                           variant="ghost" 
                           size="icon" 
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
                           onClick={(e) => handleDeleteAnnotation(file.id, e)}
+                          title="Delete annotation file"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -1291,6 +1367,7 @@ export function AnnotationsContent({
                           size="icon" 
                           className="h-8 w-8 text-muted-foreground hover:text-green-400"
                           onClick={(e) => handleDownloadAnnotation(file.id, e)}
+                          title="Download annotation file"
                         >
                           <Download className="h-4 w-4" />
                         </Button>
