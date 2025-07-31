@@ -11,10 +11,13 @@ import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/util
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { ClassColorPicker } from "@/components/ClassColorPicker";
 import { ClassColorOpacityPicker } from "@/components/ClassColorOpacityPicker";
+import { RenameClassDialog } from "./RenameClassDialog";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
+import { useRef } from "react";
+import { MergeClassesDialog } from "./MergeClassesDialog";
 
 interface AnnotationsContentProps {
   id: string;
@@ -23,6 +26,62 @@ interface AnnotationsContentProps {
   onImportAnnotations?: (files: File[]) => void;
   showAllAnnotationsOnGrid?: boolean;
   images?: Image[];
+}
+
+// Helper to convert AnnotationFile to COCO format
+function toCOCOFormat(file: AnnotationFile) {
+  // Extract unique categories from samples
+  const categoryMap = new Map<string, number>();
+  let categoryId = 1;
+  (file.samples || []).forEach(sample => {
+    if (!categoryMap.has(sample.className)) {
+      categoryMap.set(sample.className, categoryId++);
+    }
+  });
+  const categories = Array.from(categoryMap.entries()).map(([name, id]) => ({
+    id,
+    name,
+    supercategory: ""
+  }));
+  return {
+    info: {
+      description: `Annotations for ${file.name}`,
+      version: "1.0",
+      year: new Date().getFullYear(),
+      contributor: "LAI",
+      date_created: new Date().toISOString()
+    },
+    licenses: [{
+      id: 1,
+      name: "Unknown License",
+      url: ""
+    }],
+    images: Object.entries(file.imageMapping || {}).map(([imageId, fileName]) => ({
+      id: parseInt(imageId),
+      width: 640, // Default width
+      height: 480, // Default height
+      file_name: fileName,
+      license: 1,
+      flickr_url: "",
+      coco_url: "",
+      date_captured: ""
+    })),
+    categories,
+    annotations: (file.samples || []).map((sample, index) => ({
+      id: index + 1,
+      image_id: parseInt(sample.imageId),
+      category_id: categoryMap.get(sample.className) || 1,
+      bbox: sample.bbox ? [
+        sample.bbox[0] * 640,
+        sample.bbox[1] * 480,
+        sample.bbox[2] * 640,
+        sample.bbox[3] * 480
+      ] : [0, 0, 0, 0],
+      area: sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * 640 * 480 : 0),
+      iscrowd: 0,
+      segmentation: sample.segmentation || []
+    }))
+  };
 }
 
 export function AnnotationsContent({ 
@@ -35,10 +94,88 @@ export function AnnotationsContent({
 }: AnnotationsContentProps) {
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
-  const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingFromBackend, setIsLoadingFromBackend] = useState(false);
-  const [selectedClass, setSelectedClass] = useState<string | null>(null);  const [imageStatusDialog, setImageStatusDialog] = useState<{
+  const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  const [renameClassDialog, setRenameClassDialog] = useState<{ isOpen: boolean; className: string; annotationId: string }>({ isOpen: false, className: '', annotationId: '' });
+  const [dirtyAnnotationIds, setDirtyAnnotationIds] = useState<Set<string>>(new Set());
+  // Handler for renaming a class in an annotation file
+  const markDirty = (annotationId: string) => {
+    setDirtyAnnotationIds(prev => new Set(prev).add(annotationId));
+  };
+  const clearDirty = (annotationId: string) => {
+    setDirtyAnnotationIds(prev => {
+      const next = new Set(prev);
+      next.delete(annotationId);
+      return next;
+    });
+  };
+  const handleRenameClass = async (annotationId: string, oldClassName: string, newClassName: string) => {
+    try {
+      const updatedFiles = annotationFiles.map(file => {
+        if (file.id === annotationId) {
+          // Update classStats
+          const updatedClassStats = file.classStats?.map(stat =>
+            stat.className === oldClassName ? { ...stat, className: newClassName } : stat
+          );
+          // Update samples
+          const updatedSamples = file.samples?.map(sample =>
+            sample.className === oldClassName ? { ...sample, className: newClassName } : sample
+          );
+          // Update classColors
+          const updatedClassColors = { ...file.classColors };
+          if (updatedClassColors[oldClassName]) {
+            updatedClassColors[newClassName] = updatedClassColors[oldClassName];
+            delete updatedClassColors[oldClassName];
+          }
+          return {
+            ...file,
+            classStats: updatedClassStats,
+            samples: updatedSamples,
+            classColors: updatedClassColors,
+          };
+        }
+        return file;
+      });
+      // Mark as dirty
+      markDirty(annotationId);
+      let success = true;
+      if (api) {
+        const fileToUpdate = updatedFiles.find(file => file.id === annotationId);
+        if (fileToUpdate) {
+          const jsonContent = JSON.stringify(toCOCOFormat(fileToUpdate), null, 2);
+          const updatedFile = new File([jsonContent], fileToUpdate.name, { type: 'application/json' });
+          const response = await api.updateAnnotationContent(id, annotationId, updatedFile);
+          if (!response.success) {
+            success = false;
+            throw new Error(response.error || "Failed to update annotation file on server");
+          }
+        }
+      } else {
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+      if (success) {
+        setAnnotationFiles(updatedFiles);
+        if (selectedClass === oldClassName) {
+          setSelectedClass(newClassName);
+        }
+        toast({
+          title: "Class renamed",
+          description: `Class \"${oldClassName}\" renamed to \"${newClassName}\".`,
+        });
+      }
+    } catch (error) {
+      console.error('Error renaming class:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to rename class",
+        variant: "destructive",
+      });
+    }
+  };
+  const [imageStatusDialog, setImageStatusDialog] = useState<{
     isOpen: boolean;
     type: 'present' | 'missing';
     files: string[];
@@ -54,6 +191,63 @@ export function AnnotationsContent({
   
   const { api } = useApi();
   const { toast } = useToast();
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+
+  const handleMergeClasses = (annotationId: string, sources: string[], mergedName: string) => {
+    const updatedFiles = annotationFiles.map(file => {
+      if (file.id === annotationId) {
+        // Update samples
+        const updatedSamples = file.samples?.map(sample =>
+          sources.includes(sample.className)
+            ? { ...sample, className: mergedName }
+            : sample
+        );
+        // Update classStats
+        const mergedCount = file.classStats
+          ?.filter(stat => sources.includes(stat.className))
+          .reduce((sum, stat) => sum + (stat.count || 0), 0) || 0;
+        const filteredStats = file.classStats?.filter(stat => !sources.includes(stat.className)) || [];
+        // If mergedName already exists, add to its count, else create new stat
+        let found = false;
+        let mergedColor: string | undefined = undefined;
+        let mergedOpacity: number | undefined = undefined;
+        file.classStats?.forEach(stat => {
+          if (sources.includes(stat.className)) {
+            if (!mergedColor && stat.color) mergedColor = stat.color;
+            if (mergedOpacity === undefined && stat.opacity !== undefined) mergedOpacity = stat.opacity;
+          }
+        });
+        const updatedClassStats = filteredStats.map(stat => {
+          if (stat.className === mergedName) {
+            found = true;
+            return { ...stat, count: (stat.count || 0) + mergedCount };
+          }
+          return stat;
+        });
+        if (!found && mergedCount > 0) {
+          updatedClassStats.push({ className: mergedName, count: mergedCount, color: mergedColor || '#ea384c', ...(mergedOpacity !== undefined ? { opacity: mergedOpacity } : {}) });
+        }
+        // Update classColors
+        const updatedClassColors = { ...file.classColors };
+        sources.forEach(source => {
+          delete updatedClassColors[source];
+        });
+        if (mergedColor) {
+          updatedClassColors[mergedName] = mergedColor;
+        }
+        return {
+          ...file,
+          samples: updatedSamples,
+          classStats: updatedClassStats,
+          classColors: updatedClassColors,
+        };
+      }
+      return file;
+    });
+    setAnnotationFiles(updatedFiles);
+    markDirty(annotationId);
+    toast({ title: "Classes merged", description: `Merged [${sources.join(", ")}] into '${mergedName}'.` });
+  };
 
   // Save annotations to localStorage only when no API is available
   useEffect(() => {
@@ -895,6 +1089,80 @@ export function AnnotationsContent({
 
   const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
+  const handleDeleteClass = async (annotationId: string, className: string) => {
+    try {
+      const updatedFiles = annotationFiles.map(file => {
+        if (file.id === annotationId) {
+          const updatedClassStats = file.classStats?.filter(stat => stat.className !== className);
+          const updatedSamples = file.samples?.filter(sample => sample.className !== className);
+          const updatedClassColors = { ...file.classColors };
+          delete updatedClassColors[className];
+          return {
+            ...file,
+            classStats: updatedClassStats,
+            samples: updatedSamples,
+            classColors: updatedClassColors,
+          };
+        }
+        return file;
+      });
+      // Mark as dirty
+      markDirty(annotationId);
+      let success = true;
+      if (api) {
+        const fileToUpdate = updatedFiles.find(file => file.id === annotationId);
+        if (fileToUpdate) {
+          const jsonContent = JSON.stringify(toCOCOFormat(fileToUpdate), null, 2);
+          const updatedFile = new File([jsonContent], fileToUpdate.name, { type: 'application/json' });
+          const response = await api.updateAnnotationContent(id, annotationId, updatedFile);
+          if (!response.success) {
+            success = false;
+            throw new Error(response.error || "Failed to update annotation file on server");
+          }
+        }
+      } else {
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+      if (success) {
+        setAnnotationFiles(updatedFiles);
+        if (selectedClass === className) {
+          setSelectedClass(null);
+        }
+        toast({
+          title: "Class deleted",
+          description: `Class '${className}' has been deleted from the annotation file.`,
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting class:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete class",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Save handler for a single annotation file
+  const handleSaveAnnotationFile = async (annotationId: string) => {
+    const fileToSave = annotationFiles.find(f => f.id === annotationId);
+    if (!fileToSave) return;
+    try {
+      if (api) {
+        const jsonContent = JSON.stringify(toCOCOFormat(fileToSave), null, 2);
+        const updatedFile = new File([jsonContent], fileToSave.name, { type: 'application/json' });
+        const response = await api.updateAnnotationContent(id, annotationId, updatedFile);
+        if (!response.success) throw new Error(response.error || "Failed to update annotation file on server");
+      } else {
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(annotationFiles));
+      }
+      clearDirty(annotationId);
+      toast({ title: "Changes saved", description: `Annotation file '${fileToSave.name}' saved successfully.` });
+    } catch (error) {
+      toast({ title: "Save failed", description: error instanceof Error ? error.message : "Failed to save changes.", variant: "destructive" });
+    }
+  };
+
   return (
     <div className={`h-full flex flex-col min-h-0 ${className}`}>
       <div className="flex-shrink-0 flex justify-between items-center mb-4">
@@ -1015,11 +1283,28 @@ export function AnnotationsContent({
                 {selectedAnnotation === file.id && (
                   <div className="border-t border-gray-700 bg-gray-800/30">
                     <div className="p-4">
-                      <h4 className="text-sm font-medium mb-4">Statistics & Configuration</h4>
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-medium">Statistics & Configuration</h4>
+                        {dirtyAnnotationIds.has(file.id) && (
+                          <Button size="sm" className="ml-2" onClick={() => handleSaveAnnotationFile(file.id)}>
+                            Save Changes
+                          </Button>
+                        )}
+                      </div>
                       
                       {/* Statistics section */}
                       <div className="mb-6">
-                        <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="text-xs ml-2 bg-yellow-400 text-black hover:bg-yellow-300 border-yellow-400"
+                            onClick={() => setMergeDialogOpen(true)}
+                          >
+                            Merge Classes
+                          </Button>
+                        </div>
                         <ClassStatistics
                           statistics={file.classStats || []}
                           selectedClass={selectedClass}
@@ -1027,26 +1312,32 @@ export function AnnotationsContent({
                         />
                       </div>
                       
-                      {/* Class Configuration section */}
-                      <div>
-                        <h5 className="text-xs font-medium mb-2 text-gray-400">Class Configuration</h5>
-                        <p className="text-xs text-muted-foreground mb-4">
-                          Click a class color icon in the statistics above to customize its appearance
-                        </p>
-                        
-                        {/* Color and Opacity picker for selected class */}
-                        {selectedClass && file.classStats && (
-                          <div className="mt-4 pt-4 border-t border-gray-700">
-                            <ClassColorOpacityPicker
-                              className={selectedClass}
-                              color={file.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
-                              opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
-                              onColorOpacityChange={(className, color, opacity) => 
-                                handleClassColorOpacityChange(file.id, className, color, opacity)
-                              }
-                            />
-                          </div>
-                        )}
+                                             {/* Class Configuration section */}
+                       <div>
+                         <p className="text-xs text-muted-foreground mb-4">
+                           Click a class color icon in the statistics above to customize its appearance
+                         </p>
+                         {selectedClass && file.classStats && (
+                           <div className="mt-4 pt-4 border-t border-gray-700">
+                             <ClassColorOpacityPicker
+                               annotationId={file.id}
+                               className={selectedClass}
+                               color={file.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
+                               opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
+                               onColorOpacityChange={handleClassColorOpacityChange}
+                               onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
+                               onDeleteClass={(className) => handleDeleteClass(file.id, className)}
+                             />
+                           </div>
+                         )}
+                        {/* Rename Class Dialog */}
+                        <RenameClassDialog
+                          isOpen={renameClassDialog.isOpen}
+                          onClose={() => setRenameClassDialog({ isOpen: false, className: '', annotationId: '' })}
+                          className={renameClassDialog.className}
+                          annotations={annotationFiles.find(f => f.id === renameClassDialog.annotationId)?.samples || []}
+                          onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1151,6 +1442,12 @@ export function AnnotationsContent({
           </div>
         </DialogContent>
       </Dialog>
+      <MergeClassesDialog
+        open={mergeDialogOpen}
+        onOpenChange={setMergeDialogOpen}
+        classStats={selectedAnnotationData?.classStats || []}
+        onMerge={(sources, mergedName) => handleMergeClasses(selectedAnnotation!, sources, mergedName)}
+      />
     </div>
   );
 }

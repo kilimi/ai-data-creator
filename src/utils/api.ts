@@ -403,6 +403,15 @@ export class ApiClient {
   async getAnnotationContent(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
     return this.request<any>(`/datasets/${datasetId}/annotations/${annotationId}/content`);
   }
+
+  async updateAnnotationContent(datasetId: string | number, annotationId: string, file: File): Promise<ApiResponse<any>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}/content`, {
+      method: 'PUT',
+      body: formData
+    });
+  }
 }
 
 /**

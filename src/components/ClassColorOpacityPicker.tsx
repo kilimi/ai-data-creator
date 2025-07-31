@@ -5,19 +5,26 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
+import { Edit } from "lucide-react";
 
 interface ClassColorOpacityPickerProps {
+  annotationId: string;
   className: string;
   color: string;
   opacity: number;
-  onColorOpacityChange: (className: string, color: string, opacity: number) => void;
+  onColorOpacityChange: (annotationId: string, className: string, color: string, opacity: number) => void;
+  onRenameClass?: (className: string) => void;
+  onDeleteClass?: (className: string) => void;
 }
 
 export function ClassColorOpacityPicker({ 
+  annotationId,
   className, 
   color, 
   opacity, 
-  onColorOpacityChange 
+  onColorOpacityChange,
+  onRenameClass,
+  onDeleteClass
 }: ClassColorOpacityPickerProps) {
   const [tempColor, setTempColor] = useState(color);
   const [tempOpacity, setTempOpacity] = useState(opacity);
@@ -29,7 +36,7 @@ export function ClassColorOpacityPicker({
   ];
 
   const handleApply = () => {
-    onColorOpacityChange(className, tempColor, tempOpacity);
+    onColorOpacityChange(annotationId, className, tempColor, tempOpacity);
   };
 
   const handleReset = () => {
@@ -40,10 +47,32 @@ export function ClassColorOpacityPicker({
   return (
     <Card className="p-4 bg-gray-800 border-gray-700">
       <div className="space-y-4">
-        <div>
-          <Label className="text-sm font-medium mb-2 block">
+        <div className="flex items-center gap-2 mb-2">
+          <Label className="text-sm font-medium">
             Configuring: {className}
           </Label>
+          {onRenameClass && (
+            <button
+              className="text-blue-400 hover:text-blue-300 p-1 rounded"
+              title="Rename class"
+              onClick={() => onRenameClass(className)}
+              style={{ lineHeight: 0, display: 'inline-flex', alignItems: 'center' }}
+            >
+              <Edit className="h-4 w-4" />
+            </button>
+          )}
+          {onDeleteClass && (
+            <button
+              className="text-red-400 hover:text-red-300 p-1 rounded"
+              title="Delete class"
+              onClick={() => onDeleteClass(className)}
+              style={{ lineHeight: 0, display: 'inline-flex', alignItems: 'center' }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-4 w-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
 
         <div>
@@ -52,13 +81,19 @@ export function ClassColorOpacityPicker({
             <Input
               type="color"
               value={tempColor}
-              onChange={(e) => setTempColor(e.target.value)}
+              onChange={(e) => {
+                setTempColor(e.target.value);
+                onColorOpacityChange(annotationId, className, e.target.value, tempOpacity);
+              }}
               className="w-16 h-8 p-1 border"
             />
             <Input
               type="text"
               value={tempColor}
-              onChange={(e) => setTempColor(e.target.value)}
+              onChange={(e) => {
+                setTempColor(e.target.value);
+                onColorOpacityChange(annotationId, className, e.target.value, tempOpacity);
+              }}
               placeholder="#000000"
               className="flex-1 h-8"
             />
@@ -72,7 +107,10 @@ export function ClassColorOpacityPicker({
                   tempColor === presetColor ? 'border-white' : 'border-gray-600'
                 }`}
                 style={{ backgroundColor: presetColor }}
-                onClick={() => setTempColor(presetColor)}
+                onClick={() => {
+                  setTempColor(presetColor);
+                  onColorOpacityChange(annotationId, className, presetColor, tempOpacity);
+                }}
               />
             ))}
           </div>
@@ -84,7 +122,10 @@ export function ClassColorOpacityPicker({
           </Label>
           <Slider
             value={[tempOpacity]}
-            onValueChange={(value) => setTempOpacity(value[0])}
+            onValueChange={(value) => {
+              setTempOpacity(value[0]);
+              onColorOpacityChange(annotationId, className, tempColor, value[0]);
+            }}
             max={1}
             min={0}
             step={0.05}
@@ -92,36 +133,8 @@ export function ClassColorOpacityPicker({
           />
         </div>
 
-        <div className="flex items-center gap-3 p-3 bg-gray-900 rounded-lg">
-          <span className="text-sm">Preview:</span>
-          <div
-            className="w-8 h-8 rounded border border-gray-600"
-            style={{ 
-              backgroundColor: `${tempColor}${Math.round(tempOpacity * 255).toString(16).padStart(2, '0')}`
-            }}
-          />
-          <span className="text-sm text-gray-400">
-            {tempColor} at {Math.round(tempOpacity * 100)}%
-          </span>
-        </div>
+      
         
-        <div className="flex gap-2 pt-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleReset}
-            className="flex-1"
-          >
-            Reset
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleApply}
-            className="flex-1"
-          >
-            Apply
-          </Button>
-        </div>
       </div>
     </Card>
   );

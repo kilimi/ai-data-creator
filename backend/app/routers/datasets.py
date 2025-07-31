@@ -831,3 +831,45 @@ async def rename_annotation_file(
     except Exception as e:
         print(f"Error in rename_annotation_file: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to rename annotation file: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/annotations/{annotation_id}/content")
+async def update_annotation_content(
+    dataset_id: int,
+    annotation_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Overwrite the content of an existing annotation file.
+    """
+    import os
+    from pathlib import Path
+
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    project_id = dataset.project_id
+    annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+    if not annotations_dir.exists():
+        raise HTTPException(status_code=404, detail="Annotations directory not found")
+
+    # Find the file with the annotation_id prefix
+    found_file = None
+    for file_path in annotations_dir.glob("*"):
+        if file_path.is_file():
+            filename = file_path.name
+            if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
+                found_file = file_path
+                break
+
+    if not found_file:
+        raise HTTPException(status_code=404, detail=f"Annotation file with ID '{annotation_id}' not found")
+
+    # Overwrite the file content
+    contents = await file.read()
+    with open(found_file, "wb") as f:
+        f.write(contents)
+
+    return {"success": True, "message": f"Annotation file '{found_file.name}' updated."}

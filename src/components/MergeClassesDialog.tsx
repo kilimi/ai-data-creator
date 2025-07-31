@@ -1,119 +1,62 @@
-import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { AnnotationSample } from "@/utils/annotations";
-import { Merge } from "lucide-react";
+import { useState } from "react";
 
-interface MergeClassesDialogProps {
-  isOpen: boolean;
-  onClose: () => void;
-  className: string;
-  annotations: AnnotationSample[];
-  availableClasses: string[];
-  onMerge: (sourceClassName: string, targetClassName: string) => void;
-}
-
-export function MergeClassesDialog({
-  isOpen,
-  onClose,
-  className,
-  annotations,
-  availableClasses,
-  onMerge,
-}: MergeClassesDialogProps) {
-  const [targetClass, setTargetClass] = useState<string>("");
-  const sourceClassCount = annotations.filter(ann => ann.className === className).length;
-  const targetClassCount = targetClass ? annotations.filter(ann => ann.className === targetClass).length : 0;
-  
-  // Filter out the current class from available targets
-  const mergeTargets = availableClasses.filter(cls => cls !== className);
+export function MergeClassesDialog({ open, onOpenChange, classStats, onMerge }) {
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  const [mergedName, setMergedName] = useState<string>("");
 
   const handleMerge = () => {
-    if (targetClass) {
-      onMerge(className, targetClass);
-      onClose();
+    if (selectedSources.length && mergedName.trim()) {
+      onMerge(selectedSources, mergedName.trim());
+      setSelectedSources([]);
+      setMergedName("");
+      onOpenChange(false);
     }
   };
 
-  const handleClose = () => {
-    setTargetClass("");
-    onClose();
-  };
-
   return (
-    <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="bg-gray-900 text-white border-gray-700">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Merge className="h-5 w-5 text-blue-500" />
-            Merge Classes
-          </DialogTitle>
-          <DialogDescription className="text-gray-400">
-            Merge "{className}" ({sourceClassCount} annotation{sourceClassCount !== 1 ? 's' : ''}) into another class.
-          </DialogDescription>
+          <DialogTitle>Merge Classes</DialogTitle>
         </DialogHeader>
-
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="targetClass" className="text-right text-gray-300">
-              Merge Into
-            </Label>
-            <div className="col-span-3">
-              <Select value={targetClass} onValueChange={setTargetClass}>
-                <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
-                  <SelectValue placeholder="Select target class" />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-800 border-gray-700 z-50">
-                  {mergeTargets.map((cls) => {
-                    const count = annotations.filter(ann => ann.className === cls).length;
-                    return (
-                      <SelectItem key={cls} value={cls} className="text-white hover:bg-gray-700">
-                        {cls} ({count} annotation{count !== 1 ? 's' : ''})
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
+        <div>
+          <div className="mb-2 font-medium">Select classes to merge:</div>
+          <div className="flex flex-col gap-1 mb-4">
+            {classStats.map(stat => (
+              <label key={stat.className} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedSources.includes(stat.className)}
+                  onChange={e => {
+                    if (e.target.checked) {
+                      setSelectedSources([...selectedSources, stat.className]);
+                    } else {
+                      setSelectedSources(selectedSources.filter(c => c !== stat.className));
+                    }
+                  }}
+                />
+                <span>{stat.className}</span>
+              </label>
+            ))}
           </div>
-          
-          {targetClass && (
-            <div className="text-sm text-gray-400 bg-gray-800 p-3 rounded">
-              This will merge {sourceClassCount} annotation{sourceClassCount !== 1 ? 's' : ''} from "{className}" 
-              into "{targetClass}" (which currently has {targetClassCount} annotation{targetClassCount !== 1 ? 's' : ''}), 
-              resulting in {sourceClassCount + targetClassCount} total annotations for "{targetClass}".
-            </div>
-          )}
+          <div className="mb-2 font-medium">Merged class name:</div>
+          <input
+            className="w-full border rounded p-1 mb-4 text-black"
+            value={mergedName}
+            onChange={e => setMergedName(e.target.value)}
+            placeholder="Enter new class name"
+          />
+          <div className="flex justify-end mt-4">
+            <Button
+              onClick={handleMerge}
+              disabled={!selectedSources.length || !mergedName.trim()}
+            >
+              Merge
+            </Button>
+          </div>
         </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={handleClose}>
-            Cancel
-          </Button>
-          <Button 
-            onClick={handleMerge}
-            disabled={!targetClass}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            <Merge className="h-4 w-4 mr-2" />
-            Merge Classes
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
