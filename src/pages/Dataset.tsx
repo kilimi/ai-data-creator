@@ -494,49 +494,59 @@ export default function Dataset() {
     <div className="min-h-screen flex flex-col">
       <Navbar />
       <main className="flex-1 flex flex-col pt-16">
-        <div className="px-6 py-4 border-b bg-background">
-          <div>
-            <DatasetBreadcrumb 
-              projectId={projectId} 
-              projectName={projectName} 
-              datasetName={dataset?.name}
-              isLoading={isLoading}
-            />
-            <DatasetHeader 
-              isLoading={isLoading} 
-              name={dataset?.name}
-              currentLayout={settings.layout}
-              onLayoutChange={updateLayout}
-              dataset={dataset}
-              onEditDataset={handleEditDataset}
-            />
+        {isLoading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+              <h3 className="text-lg font-medium">Loading dataset...</h3>
+              <p className="text-gray-500">Please wait while we fetch your images</p>
+            </div>
           </div>
-        </div>
-        <div className="flex-1 overflow-hidden">
-          <ResizableDatasetLayout
-            layout={settings.layout}
-            id={id || ''}
-            images={images}
-            currentPage={currentPage}
-            imagesPerPage={settings.imagesPerPage}
-            imageSize={settings.imageSize}
-            sliderPosition={settings.sliderPosition}
-            onImagesPerPageChange={updateImagesPerPage}
-            onImageSizeChange={handleImageSizeChange}
-            onSliderPositionChange={updateSliderPosition}
-            onPageChange={setCurrentPage}
-            onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-            onDeleteImage={handleDeleteImage}
-            paginatedImages={paginatedImages}
-            totalPages={totalPages}
-            annotations={showAnnotations ? visibleAnnotations : []}
-            onImportAnnotations={handleImportAnnotations}
-            onShowAnnotationsChange={handleShowAnnotationsChange}
-            selectedImageIndex={selectedImageIndex}
-            setSelectedImageIndex={setSelectedImageIndex}
-          />
-        </div>
-        <ImageUploadDialog 
+        ) : (
+          <>
+            <div className="px-6 py-4 border-b bg-background">
+              <div>
+                <DatasetBreadcrumb 
+                  projectId={projectId} 
+                  projectName={projectName} 
+                  datasetName={dataset?.name}
+                  isLoading={isLoading}
+                />
+                <DatasetHeader 
+                  isLoading={isLoading} 
+                  name={dataset?.name}
+                  currentLayout={settings.layout}
+                  onLayoutChange={updateLayout}
+                  dataset={dataset}
+                  onEditDataset={handleEditDataset}
+                />
+              </div>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <ResizableDatasetLayout
+                layout={settings.layout}
+                id={id || ''}
+                images={images}
+                currentPage={currentPage}
+                imagesPerPage={settings.imagesPerPage}
+                imageSize={settings.imageSize}
+                sliderPosition={settings.sliderPosition}
+                onImagesPerPageChange={updateImagesPerPage}
+                onImageSizeChange={handleImageSizeChange}
+                onSliderPositionChange={updateSliderPosition}
+                onPageChange={setCurrentPage}
+                onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+                onDeleteImage={handleDeleteImage}
+                paginatedImages={paginatedImages}
+                totalPages={totalPages}
+                annotations={showAnnotations ? visibleAnnotations : []}
+                onImportAnnotations={handleImportAnnotations}
+                onShowAnnotationsChange={handleShowAnnotationsChange}
+                selectedImageIndex={selectedImageIndex}
+                setSelectedImageIndex={setSelectedImageIndex}
+              />
+            </div>
+            <ImageUploadDialog 
           open={isUploadDialogOpen}
           onOpenChange={setIsUploadDialogOpen}
           onFilesSelected={handleUploadImages}
@@ -584,6 +594,8 @@ export default function Dataset() {
               </div>
             </div>
           </div>
+        )}
+          </>
         )}
       </main>
     </div>

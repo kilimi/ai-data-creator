@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -92,6 +93,7 @@ export function AnnotationsContent({
   showAllAnnotationsOnGrid = false, // NEW PROP
   images = [] // NEW PROP
 }: AnnotationsContentProps) {
+  const navigate = useNavigate();
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
@@ -601,6 +603,16 @@ export function AnnotationsContent({
     }
   };
 
+  const handleEditClassificationAnnotation = (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (file && (file as any).type === 'classification') {
+      // Navigate to classification page with the dataset ID
+      navigate(`/datasets/${id}/annotate/classification`);
+    }
+  };
+
   const handleSaveAnnotationName = () => {
     if (!editDialog.newName.trim()) {
       toast({
@@ -1102,24 +1114,41 @@ export function AnnotationsContent({
     if (savedAnnotations) {
       try {
         const annotationsList = JSON.parse(savedAnnotations);
-        const classificationFiles = annotationsList.map((annotation: any) => ({
-          id: annotation.id,
-          name: annotation.name,
-          date: new Date(annotation.savedAt).toISOString().split('T')[0],
-          format: 'JSON',
-          classCount: Object.values(annotation.content).reduce((acc: number, classes: any) => 
-            acc + (classes.class ? classes.class.length : 0), 0),
-          imageCount: Object.keys(annotation.content).length,
-          matchedImageCount: Object.keys(annotation.content).length,
-          datasetId: id,
-          classStats: [],
-          samples: [],
-          isVisible: false,
-          classColors: {},
-          imageMapping: {},
-          type: 'classification',
-          content: annotation.content
-        }));
+        const classificationFiles = annotationsList.map((annotation: any) => {
+          let classCount = 0;
+          let imageCount = 0;
+          
+          // Check if it's COCO format or legacy JSON format
+          if (annotation.type === 'COCO' && annotation.content) {
+            // COCO format
+            const cocoData = annotation.content;
+            classCount = cocoData.categories ? cocoData.categories.length : 0;
+            imageCount = cocoData.images ? cocoData.images.length : 0;
+          } else if (annotation.content) {
+            // Legacy JSON format
+            classCount = Object.values(annotation.content).reduce((acc: number, classes: any) => 
+              acc + (classes.class ? classes.class.length : 0), 0) as number;
+            imageCount = Object.keys(annotation.content).length;
+          }
+          
+          return {
+            id: annotation.id,
+            name: annotation.name,
+            date: new Date(annotation.savedAt).toISOString().split('T')[0],
+            format: annotation.type === 'COCO' ? 'COCO' : 'JSON',
+            classCount: classCount,
+            imageCount: imageCount,
+            matchedImageCount: imageCount,
+            datasetId: id,
+            classStats: [],
+            samples: [],
+            isVisible: false,
+            classColors: {},
+            imageMapping: {},
+            type: 'classification',
+            content: annotation.content
+          };
+        });
         
         return classificationFiles;
       } catch (error) {
@@ -1397,7 +1426,17 @@ export function AnnotationsContent({
                       </Button>
                        {/* Actions */}
                        <div className="flex gap-2">
-                         {(file as any).type !== 'classification' && (
+                         {(file as any).type === 'classification' ? (
+                           <Button 
+                             variant="ghost" 
+                             size="icon" 
+                             className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                             onClick={(e) => handleEditClassificationAnnotation(file.id, e)}
+                             title="Edit classification annotations"
+                           >
+                             <Edit className="h-4 w-4" />
+                           </Button>
+                         ) : (
                            <>
                              <Button 
                                variant="ghost" 

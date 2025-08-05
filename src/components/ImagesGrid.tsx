@@ -191,10 +191,15 @@ export function ImagesGrid({
                 className="relative overflow-hidden rounded-lg"
                 style={{ height: `${imageSize}px` }}
               >
+                {!imageIsLoaded && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                  </div>
+                )}
                 <img
                   src={image.url}
                   alt={image.fileName}
-                  className="w-full h-full object-contain"
+                  className={`w-full h-full object-contain ${imageIsLoaded ? 'opacity-100' : 'opacity-0'}`}
                   loading="lazy"
                   onLoad={(e) => handleImageLoad(e, image.id)}
                 />
