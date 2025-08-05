@@ -8,6 +8,7 @@ import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
 import { AnnotationSample } from "@/utils/annotations";
 import { ImageDetailModal } from "@/components/ImageDetailModal";
+import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { useState } from "react";
 
 interface ImagesTabContentProps {
@@ -57,6 +58,7 @@ export function ImagesTabContent({
   setSelectedImageIndex,
 }: ImagesTabContentProps & { annotationFiles?: any[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAnnotationChoiceModalOpen, setIsAnnotationChoiceModalOpen] = useState(false);
 
   // Open modal at clicked image index (based on full images array)
   const handleImageClick = (image: Image) => {
@@ -134,11 +136,9 @@ export function ImagesTabContent({
           </p>
         </div>
         <div className="flex gap-2">
-          <Button asChild>
-            <Link to={`/datasets/${id}/annotate`}>
-              <Pencil className="w-4 h-4 mr-2" />
-              Annotate
-            </Link>
+          <Button onClick={() => setIsAnnotationChoiceModalOpen(true)}>
+            <Pencil className="w-4 h-4 mr-2" />
+            Annotate
           </Button>
           <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
             <Upload className="w-4 h-4 mr-2" />
@@ -195,6 +195,13 @@ export function ImagesTabContent({
         hasNext={hasNext}
         imageIndex={selectedImageIndex !== null ? selectedImageIndex + 1 : null}
         imageCount={images.length}
+      />
+
+      {/* Annotation Choice Modal */}
+      <AnnotationChoiceModal
+        isOpen={isAnnotationChoiceModalOpen}
+        onOpenChange={setIsAnnotationChoiceModalOpen}
+        datasetId={id}
       />
     </div>
   );

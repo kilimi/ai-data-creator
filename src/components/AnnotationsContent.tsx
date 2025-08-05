@@ -1096,6 +1096,40 @@ export function AnnotationsContent({
     }
   };
 
+  // Load saved classification annotations
+  const loadSavedClassifications = () => {
+    const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+    if (savedAnnotations) {
+      try {
+        const annotationsList = JSON.parse(savedAnnotations);
+        const classificationFiles = annotationsList.map((annotation: any) => ({
+          id: annotation.id,
+          name: annotation.name,
+          date: new Date(annotation.savedAt).toISOString().split('T')[0],
+          format: 'JSON',
+          classCount: Object.values(annotation.content).reduce((acc: number, classes: any) => 
+            acc + (classes.class ? classes.class.length : 0), 0),
+          imageCount: Object.keys(annotation.content).length,
+          matchedImageCount: Object.keys(annotation.content).length,
+          datasetId: id,
+          classStats: [],
+          samples: [],
+          isVisible: false,
+          classColors: {},
+          imageMapping: {},
+          type: 'classification',
+          content: annotation.content
+        }));
+        
+        return classificationFiles;
+      } catch (error) {
+        console.error('Error loading saved classifications:', error);
+        return [];
+      }
+    }
+    return [];
+  };
+
   // Load annotations on component mount
   useEffect(() => {
     if (api) {
@@ -1105,7 +1139,33 @@ export function AnnotationsContent({
     } else {
       loadAnnotationFilesFromLocalStorage();
     }
+    
+    // Always load saved classifications from localStorage
+    const savedClassifications = loadSavedClassifications();
+    if (savedClassifications.length > 0) {
+      setAnnotationFiles(prev => {
+        // Remove any existing classification files to avoid duplicates
+        const nonClassificationFiles = prev.filter(file => (file as any).type !== 'classification');
+        return [...nonClassificationFiles, ...savedClassifications];
+      });
+    }
   }, [id, api]);
+
+  // Periodically check for new saved classifications
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const savedClassifications = loadSavedClassifications();
+      if (savedClassifications.length > 0) {
+        setAnnotationFiles(prev => {
+          // Remove any existing classification files to avoid duplicates
+          const nonClassificationFiles = prev.filter(file => (file as any).type !== 'classification');
+          return [...nonClassificationFiles, ...savedClassifications];
+        });
+      }
+    }, 2000); // Check every 2 seconds
+    
+    return () => clearInterval(interval);
+  }, [id]);
 
   const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
@@ -1278,13 +1338,16 @@ export function AnnotationsContent({
                   className={`cursor-pointer p-4 hover:bg-gray-800/50 transition-colors ${selectedAnnotation === file.id ? 'bg-gray-800' : ''}`}
                   onClick={() => handleAnnotationClick(file.id)}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="font-medium">{file.name}</div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
-                      </div>
-                    </div>
+                   <div className="flex items-center justify-between">
+                     <div className="flex-1">
+                       <div className="font-medium">{file.name}</div>
+                       <div className="text-xs text-muted-foreground mt-1">
+                         {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
+                         {(file as any).type === 'classification' && (
+                           <Badge variant="secondary" className="ml-2 text-xs">Classification</Badge>
+                         )}
+                       </div>
+                     </div>
                     <div className="flex items-center gap-4">                      {/* Images count */}
                       <div className="flex items-center gap-2 text-sm">
                         {(() => {                          const { presentFiles, missingFiles } = getImageFileLists(file);
@@ -1332,46 +1395,50 @@ export function AnnotationsContent({
                       >
                         {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                       </Button>
-                      {/* Actions */}
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          onClick={(e) => handleEditAnnotation(file.id, e)}
-                          title="Edit annotation file"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-blue-400"
-                          onClick={(e) => handleDuplicateAnnotation(file.id, e)}
-                          title="Duplicate annotation file"
-                        >
-                          {/* Copy icon SVG */}
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" strokeWidth="2"/><rect x="3" y="3" width="13" height="13" rx="2" strokeWidth="2"/></svg>
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          onClick={(e) => handleDeleteAnnotation(file.id, e)}
-                          title="Delete annotation file"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          className="h-8 w-8 text-muted-foreground hover:text-green-400"
-                          onClick={(e) => handleDownloadAnnotation(file.id, e)}
-                          title="Download annotation file"
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </div>
+                       {/* Actions */}
+                       <div className="flex gap-2">
+                         {(file as any).type !== 'classification' && (
+                           <>
+                             <Button 
+                               variant="ghost" 
+                               size="icon" 
+                               className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                               onClick={(e) => handleEditAnnotation(file.id, e)}
+                               title="Edit annotation file"
+                             >
+                               <Edit className="h-4 w-4" />
+                             </Button>
+                             <Button
+                               variant="ghost"
+                               size="icon"
+                               className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                               onClick={(e) => handleDuplicateAnnotation(file.id, e)}
+                               title="Duplicate annotation file"
+                             >
+                               {/* Copy icon SVG */}
+                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" strokeWidth="2"/><rect x="3" y="3" width="13" height="13" rx="2" strokeWidth="2"/></svg>
+                             </Button>
+                           </>
+                         )}
+                         <Button 
+                           variant="ghost" 
+                           size="icon" 
+                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                           onClick={(e) => handleDeleteAnnotation(file.id, e)}
+                           title="Delete annotation file"
+                         >
+                           <Trash2 className="h-4 w-4" />
+                         </Button>
+                         <Button 
+                           variant="ghost" 
+                           size="icon" 
+                           className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                           onClick={(e) => handleDownloadAnnotation(file.id, e)}
+                           title="Download annotation file"
+                         >
+                           <Download className="h-4 w-4" />
+                         </Button>
+                       </div>
                     </div>
                   </div>
                 </div>
@@ -1381,7 +1448,9 @@ export function AnnotationsContent({
                   <div className="border-t border-gray-700 bg-gray-800/30">
                     <div className="p-4">
                       <div className="flex items-center justify-between mb-4">
-                        <h4 className="text-sm font-medium">Statistics & Configuration</h4>
+                        <h4 className="text-sm font-medium">
+                          {(file as any).type === 'classification' ? 'JSON Content' : 'Statistics & Configuration'}
+                        </h4>
                         {dirtyAnnotationIds.has(file.id) && (
                           <Button size="sm" className="ml-2" onClick={() => handleSaveAnnotationFile(file.id)}>
                             Save Changes
@@ -1389,53 +1458,69 @@ export function AnnotationsContent({
                         )}
                       </div>
                       
-                      {/* Statistics section */}
-                      <div className="mb-6">
-                        <div className="flex items-center justify-between mb-2">
-                          <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="text-xs ml-2 bg-yellow-400 text-black hover:bg-yellow-300 border-yellow-400"
-                            onClick={() => setMergeDialogOpen(true)}
-                          >
-                            Merge Classes
-                          </Button>
+                      {/* Classification JSON Content */}
+                      {(file as any).type === 'classification' ? (
+                        <div className="mb-6">
+                          <h5 className="text-xs font-medium mb-3 text-gray-400">Classification Data</h5>
+                          <div className="bg-gray-900 rounded border border-gray-600 p-4">
+                            <pre className="text-xs text-gray-300 whitespace-pre-wrap overflow-x-auto">
+                              {JSON.stringify((file as any).content, null, 2)}
+                            </pre>
+                          </div>
                         </div>
-                        <ClassStatistics
-                          statistics={file.classStats || []}
-                          selectedClass={selectedClass}
-                          onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
-                        />
-                      </div>
+                      ) : (
+                        <>
+                          {/* Statistics section */}
+                          <div className="mb-6">
+                            <div className="flex items-center justify-between mb-2">
+                              <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="text-xs ml-2 bg-yellow-400 text-black hover:bg-yellow-300 border-yellow-400"
+                                onClick={() => setMergeDialogOpen(true)}
+                              >
+                                Merge Classes
+                              </Button>
+                            </div>
+                            <ClassStatistics
+                              statistics={file.classStats || []}
+                              selectedClass={selectedClass}
+                              onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
+                            />
+                          </div>
+                        </>
+                      )}
                       
-                                             {/* Class Configuration section */}
-                       <div>
-                         <p className="text-xs text-muted-foreground mb-4">
-                           Click a class color icon in the statistics above to customize its appearance
-                         </p>
-                         {selectedClass && file.classStats && (
-                           <div className="mt-4 pt-4 border-t border-gray-700">
-                             <ClassColorOpacityPicker
-                               annotationId={file.id}
-                               className={selectedClass}
-                               color={file.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
-                               opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
-                               onColorOpacityChange={handleClassColorOpacityChange}
-                               onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
-                               onDeleteClass={(className) => handleDeleteClass(file.id, className)}
-                             />
-                           </div>
-                         )}
-                        {/* Rename Class Dialog */}
-                        <RenameClassDialog
-                          isOpen={renameClassDialog.isOpen}
-                          onClose={() => setRenameClassDialog({ isOpen: false, className: '', annotationId: '' })}
-                          className={renameClassDialog.className}
-                          annotations={annotationFiles.find(f => f.id === renameClassDialog.annotationId)?.samples || []}
-                          onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
-                        />
-                      </div>
+                      {/* Class Configuration section - only for non-classification annotations */}
+                      {(file as any).type !== 'classification' && (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-4">
+                            Click a class color icon in the statistics above to customize its appearance
+                          </p>
+                          {selectedClass && file.classStats && (
+                            <div className="mt-4 pt-4 border-t border-gray-700">
+                              <ClassColorOpacityPicker
+                                annotationId={file.id}
+                                className={selectedClass}
+                                color={file.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
+                                opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
+                                onColorOpacityChange={handleClassColorOpacityChange}
+                                onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
+                                onDeleteClass={(className) => handleDeleteClass(file.id, className)}
+                              />
+                            </div>
+                          )}
+                          {/* Rename Class Dialog */}
+                          <RenameClassDialog
+                            isOpen={renameClassDialog.isOpen}
+                            onClose={() => setRenameClassDialog({ isOpen: false, className: '', annotationId: '' })}
+                            className={renameClassDialog.className}
+                            annotations={annotationFiles.find(f => f.id === renameClassDialog.annotationId)?.samples || []}
+                            onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

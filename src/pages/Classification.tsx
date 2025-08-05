@@ -9,7 +9,7 @@ import { Navbar } from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { Image } from "@/types";
-import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2, Save } from "lucide-react";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { PaginationControls } from "@/components/PaginationControls";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
@@ -180,6 +180,50 @@ export default function Classification() {
     updateImageSize(value[0]);
   };
 
+  // Save annotations as JSON file
+  const handleSaveAnnotations = () => {
+    const annotationsData: { [filename: string]: { class: string[] } } = {};
+    
+    images.forEach(image => {
+      const imageClasses = classifications[image.id] || [];
+      annotationsData[image.fileName] = { class: imageClasses };
+    });
+
+    // Create JSON file
+    const jsonContent = JSON.stringify(annotationsData, null, 2);
+    const blob = new Blob([jsonContent], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Download file
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `classifications_${id}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    // Store in localStorage to be picked up by annotations section
+    const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`) || '[]';
+    const annotationsList = JSON.parse(savedAnnotations);
+    
+    const newAnnotation = {
+      id: `classification_${Date.now()}`,
+      name: `classifications_${id}.json`,
+      type: 'JSON',
+      content: annotationsData,
+      savedAt: new Date().toISOString()
+    };
+    
+    annotationsList.push(newAnnotation);
+    localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
+
+    toast({
+      title: "Annotations saved",
+      description: `Classification annotations saved as JSON file`,
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -213,6 +257,10 @@ export default function Classification() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Button onClick={handleSaveAnnotations} className="mr-4">
+                <Save className="h-4 w-4 mr-2" />
+                Save
+              </Button>
               <Button
                 variant="outline"
                 size="icon"
