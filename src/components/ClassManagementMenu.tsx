@@ -87,11 +87,9 @@ export function ClassManagementMenu({
       />
 
       <MergeClassesDialog
-        isOpen={showMergeDialog}
-        onClose={() => setShowMergeDialog(false)}
-        className={className}
-        annotations={annotations}
-        availableClasses={availableClasses}
+        open={showMergeDialog}
+        onOpenChange={() => setShowMergeDialog(false)}
+        classStats={availableClasses.map(cls => ({ className: cls, count: 0, color: '#000000' }))}
         onMerge={onMergeClasses}
       />
     </>

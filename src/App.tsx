@@ -13,6 +13,8 @@ import ApiSettings from "./pages/ApiSettings";
 import CreateProject from "./pages/CreateProject";
 import Dataset from "@/pages/Dataset";
 import ImageAnnotation from "./pages/ImageAnnotation";
+import AnnotationChoice from "./pages/AnnotationChoice";
+import Classification from "./pages/Classification";
 
 const queryClient = new QueryClient();
 
@@ -30,7 +32,9 @@ const App = () => (
           <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
           <Route path="/datasets/:id" element={<DatasetDetail />} />
           <Route path="/datasets/:id/edit" element={<EditDataset />} />
-          <Route path="/datasets/:id/annotate" element={<ImageAnnotation />} />
+          <Route path="/datasets/:id/annotate" element={<AnnotationChoice />} />
+          <Route path="/datasets/:id/annotate/classification" element={<Classification />} />
+          <Route path="/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
           <Route path="/api-settings" element={<ApiSettings />} />
           <Route path="/dataset/:id" element={<Dataset />} />
           <Route path="*" element={<NotFound />} />
