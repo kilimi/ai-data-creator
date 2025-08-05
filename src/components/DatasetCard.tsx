@@ -4,7 +4,9 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, ScanEye, Eye, SquareStack } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useImageLoad } from "@/utils/animations";
 import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,6 +30,8 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
   const annotationFilesCount = useAnnotationFilesCount(dataset.id);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
+  const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
+  const [selectedModel, setSelectedModel] = React.useState<string>("SAM");
   
   // Function to get dataset type badge color
   const getTypeColor = (type?: string) => {
@@ -98,10 +102,13 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem asChild>
-                  <Link to={`/dataset/${dataset.id}/annotate`}>
+                  <button
+                    className="flex items-center w-full"
+                    onClick={() => setIsAnnotateModalOpen(true)}
+                  >
                     <Pencil className="h-4 w-4 mr-2" />
-                    Annotate
-                  </Link>
+                    Annotate using AI foundation models
+                  </button>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setIsEditDialogOpen(true)}>
                   <Edit className="h-4 w-4 mr-2" />
@@ -166,6 +173,72 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
         onOpenChange={setIsEditDialogOpen}
         onDatasetUpdated={handleDatasetUpdated}
       />
+
+      {/* Annotate Modal */}
+      <Dialog open={isAnnotateModalOpen} onOpenChange={setIsAnnotateModalOpen}>
+      {/* Annotate Modal - Modern UI */}
+      <Dialog open={isAnnotateModalOpen} onOpenChange={setIsAnnotateModalOpen}>
+        <DialogContent className="max-w-md mx-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
+              <Bot className="h-5 w-5 text-primary" />
+              Annotate with AI Model
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground mt-1">Select a foundation model to annotate your dataset images.</p>
+          </DialogHeader>
+          <div className="flex flex-col gap-6 mt-4">
+            <div>
+              <span className="block mb-2 font-medium text-sm">Model</span>
+              <ToggleGroup
+                type="single"
+                value={selectedModel}
+                onValueChange={setSelectedModel}
+                className="flex gap-3"
+              >
+                <ToggleGroupItem value="SAM" aria-label="SAM" className="flex flex-col items-center px-4 py-2 rounded-lg border data-[state=on]:bg-primary data-[state=on]:text-white transition-colors">
+                  <ScanEye className="h-5 w-5 mb-1" />
+                  <span className="text-xs">SAM</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem value="YOLOv11n" aria-label="YOLOv11n" className="flex flex-col items-center px-4 py-2 rounded-lg border data-[state=on]:bg-primary data-[state=on]:text-white transition-colors">
+                  <Eye className="h-5 w-5 mb-1" />
+                  <span className="text-xs">YOLOv11n</span>
+                </ToggleGroupItem>
+                <ToggleGroupItem value="YOLOv11s" aria-label="YOLOv11s" className="flex flex-col items-center px-4 py-2 rounded-lg border data-[state=on]:bg-primary data-[state=on]:text-white transition-colors">
+                  <SquareStack className="h-5 w-5 mb-1" />
+                  <span className="text-xs">YOLOv11s</span>
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            <DialogFooter>
+              <Button
+                className="w-full"
+                size="lg"
+                onClick={async () => {
+                  try {
+                    await fetch("/api/preannotate", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        model_name: selectedModel,
+                        dataset_id: dataset.id,
+                      }),
+                    });
+                  } catch (err) {
+                    // Optionally handle error
+                  }
+                  setIsAnnotateModalOpen(false);
+                }}
+              >
+                <Pencil className="h-4 w-4 mr-2" />
+                Annotate
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+      </Dialog>
     </Card>
   );
 }

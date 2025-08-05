@@ -150,17 +150,6 @@ export default function Dataset() {
     const totalFiles = files.length;
     const totalChunks = Math.ceil(totalFiles / CHUNK_SIZE);
 
-    // Check total file count limit (5000)
-    if (totalFiles > 5000) {
-      toast({
-        title: "Too Many Files",
-        description: `Maximum 5000 files allowed. You selected ${totalFiles} files. Please select fewer files.`,
-        variant: "destructive",
-      });
-      setIsUploadDialogOpen(false);
-      return;
-    }
-
     // Initialize progress tracking
     setIsUploading(true);
     setUploadProgress(0);
@@ -172,6 +161,7 @@ export default function Dataset() {
     try {
       let allUploadedImages: any[] = [];
       let totalUploaded = 0;
+      let totalOverwritten = 0;
 
       // Process files in chunks
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -254,15 +244,23 @@ export default function Dataset() {
           if (responseData?.images) {
             allUploadedImages.push(...responseData.images);
             totalUploaded += responseData.uploaded || chunk.length;
+            totalOverwritten += responseData.overwritten || 0;
           } else {
             totalUploaded += chunk.length;
           }
           
           setUploadedCount(totalUploaded);
           
+          const chunkOverwritten = responseData.overwritten || 0;
+          let chunkMessage = `Uploaded ${responseData.uploaded || chunk.length} images`;
+          if (chunkOverwritten > 0) {
+            chunkMessage += `, overwrote ${chunkOverwritten} existing images`;
+          }
+          chunkMessage += ` (${totalUploaded}/${totalFiles} total)`;
+          
           toast({
             title: `Chunk ${chunkIndex + 1}/${totalChunks} Complete`,
-            description: `Uploaded ${chunk.length} images (${totalUploaded}/${totalFiles} total)`,
+            description: chunkMessage,
           });
         } else {
           throw new Error(response.error || `Upload failed for chunk ${chunkIndex + 1}`);
@@ -276,12 +274,26 @@ export default function Dataset() {
 
       // Update the images state with all uploaded images
       if (allUploadedImages.length > 0) {
-        setImages(prevImages => [...prevImages, ...allUploadedImages]);
+        setImages(prevImages => {
+          // For overwritten images, we need to update existing ones and add new ones
+          const existingImages = prevImages.filter(img => 
+            !allUploadedImages.some(newImg => newImg.fileName === img.fileName)
+          );
+          return [...existingImages, ...allUploadedImages];
+        });
+      }
+
+      // Create final success message
+      let successMessage = `Successfully processed ${totalFiles} images in ${totalChunks} chunks`;
+      if (totalOverwritten > 0) {
+        successMessage += `\n• ${totalUploaded} new images uploaded\n• ${totalOverwritten} existing images overwritten`;
+      } else {
+        successMessage += `\n• ${totalUploaded} images uploaded`;
       }
 
       toast({
         title: "Upload Complete!",
-        description: `Successfully uploaded all ${totalFiles} images in ${totalChunks} chunks`,
+        description: successMessage,
       });
 
     } catch (error) {
@@ -289,20 +301,11 @@ export default function Dataset() {
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
-      // Check if it's a file limit error
-      if (errorMessage.includes('Too many files') || errorMessage.includes('File limit')) {
-        toast({
-          title: "File Limit Exceeded",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Upload Error",
-          description: errorMessage || "Failed to upload images",
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Upload Error",
+        description: errorMessage || "Failed to upload images",
+        variant: "destructive",
+      });
     } finally {
       // Reset progress state
       setIsUploading(false);

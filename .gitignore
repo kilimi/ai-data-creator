@@ -130,3 +130,7 @@ ai-data-creator/
 convert_scripts/*.md
 convert_scripts/*.txt
 convert_scripts/*.json
+
+*.pt
+*.json
+backend/ai_models/

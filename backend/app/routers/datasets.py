@@ -103,13 +103,55 @@ async def update_dataset(
 
 @router.delete("/datasets/{dataset_id}")
 async def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a dataset and all its associated data.
+    This removes both the database records and all physical files.
+    """
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Delete physical files before deleting database records
+        try:
+            project_id = dataset.project_id
+            
+            # Delete from new projects structure: projects/{project_id}/{dataset_id}/
+            dataset_dir = Path("projects") / str(project_id) / str(dataset_id)
+            if dataset_dir.exists():
+                shutil.rmtree(dataset_dir)
+                print(f"Deleted dataset directory: {dataset_dir}")
+            else:
+                print(f"Dataset directory not found: {dataset_dir}")
+            
+            # Also check and delete from old data structure for backward compatibility
+            # Old structure: data/images/{dataset_id}/ and data/annotations/{dataset_id}/
+            old_images_dir = Path("data/images") / str(dataset_id)
+            old_annotations_dir = Path("data/annotations") / str(dataset_id)
+            
+            if old_images_dir.exists():
+                shutil.rmtree(old_images_dir)
+                print(f"Deleted old images directory: {old_images_dir}")
+            
+            if old_annotations_dir.exists():
+                shutil.rmtree(old_annotations_dir)
+                print(f"Deleted old annotations directory: {old_annotations_dir}")
+                
+        except Exception as file_error:
+            print(f"Warning: Could not delete some physical files: {file_error}")
+            # Continue with database deletion even if file deletion fails
+        
+        # Delete the dataset record (this will cascade delete images and annotations)
         db.delete(dataset)
         db.commit()
-        return {"message": "Dataset and all associated data deleted successfully"}
+        
+        return {
+            "success": True,
+            "message": "Dataset and all associated data deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -151,15 +193,6 @@ async def upload_images(
         # Add debug logging
         print(f"DEBUG: Upload request received for dataset {dataset_id} with {len(files)} files")
         
-        # Check file count limit
-        if len(files) > 5000:
-            error_msg = f"Too many files. Maximum number of files is 5000. You selected {len(files)} files. Please select fewer files or upload in smaller batches."
-            print(f"DEBUG: File limit exceeded - {error_msg}")
-            raise HTTPException(
-                status_code=413, 
-                detail=error_msg
-            )
-        
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
@@ -172,41 +205,70 @@ async def upload_images(
         dataset_dir.mkdir(parents=True, exist_ok=True)
         
         uploaded_images = []
+        overwritten_images = []
+        
         for file in files:
             if not file.content_type.startswith('image/'):
                 continue
-            file_path = dataset_dir / file.filename
+            
+            # Extract just the filename, not the full path (for folder uploads)
+            clean_filename = os.path.basename(file.filename)
+            file_path = dataset_dir / clean_filename
+            
             try:
                 contents = await file.read()
+                
+                # Check if image with same filename already exists in database
+                existing_image = db.query(models.Image).filter(
+                    models.Image.dataset_id == dataset_id,
+                    models.Image.file_name == clean_filename
+                ).first()
+                
+                # Write the file (overwrite if exists)
                 with open(file_path, 'wb') as f:
                     f.write(contents)
                 
                 # Update URL to use the new structure
-                relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{file.filename}"
-                db_image = models.Image(
-                    dataset_id=dataset_id,
-                    file_name=file.filename,
-                    file_size=len(contents),
-                    width=0,
-                    height=0,
-                    url=relative_url,
-                    thumbnail_url=relative_url,
-                    annotations_count=0
-                )
-                db.add(db_image)
-                uploaded_images.append(db_image)
+                relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{clean_filename}"
+                
+                if existing_image:
+                    # Update existing image record
+                    existing_image.file_size = len(contents)
+                    existing_image.url = relative_url
+                    existing_image.thumbnail_url = relative_url
+                    existing_image.uploaded_at = datetime.utcnow()
+                    overwritten_images.append(existing_image)
+                    print(f"Overwriting existing image: {clean_filename}")
+                else:
+                    # Create new image record
+                    db_image = models.Image(
+                        dataset_id=dataset_id,
+                        file_name=clean_filename,
+                        file_size=len(contents),
+                        width=0,
+                        height=0,
+                        url=relative_url,
+                        thumbnail_url=relative_url,
+                        annotations_count=0
+                    )
+                    db.add(db_image)
+                    uploaded_images.append(db_image)
+                    print(f"Adding new image: {clean_filename}")
+                    
             except Exception as e:
                 print(f"Error uploading file {file.filename}: {e}")
                 continue
         
-        # Update dataset image count
+        # Update dataset image count (only add count for new images, not overwritten ones)
         current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
         dataset.image_count = current_image_count + len(uploaded_images)
         db.commit()
         
-        # Prepare response
+        # Prepare response including both new and overwritten images
         response_images = []
-        for img in uploaded_images:
+        all_processed_images = uploaded_images + overwritten_images
+        
+        for img in all_processed_images:
             url = f"{base_url}{img.url}" if img.url.startswith('/') else img.url
             thumbnail_url = f"{base_url}{img.thumbnail_url}" if img.thumbnail_url.startswith('/') else img.thumbnail_url
             response_images.append({
@@ -221,10 +283,12 @@ async def upload_images(
                 "uploadedAt": img.uploaded_at.isoformat(),
                 "annotationsCount": img.annotations_count
             })
+            
         return {
             "success": True,
             "data": {
                 "uploaded": len(uploaded_images),
+                "overwritten": len(overwritten_images),
                 "images": response_images
             }
         }

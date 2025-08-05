@@ -86,38 +86,11 @@ export function UploadCard({
   
   const processFiles = (fileList: FileList) => {
     const newFiles = Array.from(fileList);
-    const currentTotal = files.length + newFiles.length;
-    
-    // Check if total would exceed 5000 files
-    if (currentTotal > 5000) {
-      const remainingSlots = 5000 - files.length;
-      const filesToProcess = newFiles.slice(0, remainingSlots);
-      const { valid, errors } = validateFiles(filesToProcess);
-      
-      const newErrors = [...errors];
-      if (newFiles.length > remainingSlots) {
-        newErrors.push(`File limit exceeded: Maximum 5000 files allowed. ${newFiles.length - remainingSlots} files were excluded.`);
-      }
-
-      setFiles(valid);
-      onFilesSelected(valid);
-      
-      if (newErrors.length > 0) {
-        setErrors(newErrors);
-        toast({
-          variant: "destructive",
-          title: "Upload limits reached",
-          description: `${newErrors.length} issue(s) occurred. Check for details.`,
-        });
-      }
-      
-      return;
-    }
-    
     const { valid, errors } = validateFiles(newFiles);
 
-    setFiles(valid);
-    onFilesSelected(valid);
+    const updatedFiles = [...files, ...valid];
+    setFiles(updatedFiles);
+    onFilesSelected(updatedFiles);
 
     if (errors.length > 0) {
       setErrors(errors);

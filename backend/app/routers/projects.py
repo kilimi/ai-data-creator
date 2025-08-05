@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import json
 import base64
+from pathlib import Path
+import shutil
 
 from .. import models, schemas
 from ..database import get_db
@@ -117,13 +119,62 @@ async def update_project(
 
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a project and all its associated data.
+    This removes both the database records and all physical files.
+    """
     try:
+        # Check if project exists
+        project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Delete physical files before deleting database records
+        try:
+            # Delete from new projects structure: projects/{project_id}/
+            project_dir = Path("projects") / str(project_id)
+            if project_dir.exists():
+                shutil.rmtree(project_dir)
+                print(f"Deleted project directory: {project_dir}")
+            else:
+                print(f"Project directory not found: {project_dir}")
+            
+            # Also check and delete from old data structure for backward compatibility
+            # Get all datasets for this project to clean up old structure
+            datasets = db.query(models.Dataset).filter(models.Dataset.project_id == project_id).all()
+            for dataset in datasets:
+                old_images_dir = Path("data/images") / str(dataset.id)
+                old_annotations_dir = Path("data/annotations") / str(dataset.id)
+                
+                if old_images_dir.exists():
+                    shutil.rmtree(old_images_dir)
+                    print(f"Deleted old images directory: {old_images_dir}")
+                
+                if old_annotations_dir.exists():
+                    shutil.rmtree(old_annotations_dir)
+                    print(f"Deleted old annotations directory: {old_annotations_dir}")
+                
+        except Exception as file_error:
+            print(f"Warning: Could not delete some physical files: {file_error}")
+            # Continue with database deletion even if file deletion fails
+        
+        # Delete datasets first (foreign key constraint)
         db.query(models.Dataset).filter(models.Dataset.project_id == project_id).delete()
+        
+        # Delete the project record
         result = db.query(models.Project).filter(models.Project.id == project_id).delete()
         if result == 0:
             raise HTTPException(status_code=404, detail="Project not found")
+            
         db.commit()
-        return {"success": True, "message": "Project and all its datasets have been deleted"}
+        
+        return {
+            "success": True, 
+            "message": "Project and all its datasets have been deleted"
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

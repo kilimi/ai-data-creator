@@ -8,7 +8,7 @@ import {
   DialogFooter
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { X, Upload, Image } from "lucide-react";
+import { X, Upload, Image, Folder } from "lucide-react";
 
 export interface ImageUploadDialogProps {
   open: boolean;
@@ -22,41 +22,32 @@ export const ImageUploadDialog = ({
   onFilesSelected 
 }: ImageUploadDialogProps) => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isSelectingFolder, setIsSelectingFolder] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files?.length) return;
     
     const fileArray = Array.from(files);
-    const currentTotal = selectedFiles.length + fileArray.length;
     
-    // Check if total would exceed 5000 files
-    if (currentTotal > 5000) {
-      // Show warning and only add files up to the limit
-      const remainingSlots = 5000 - selectedFiles.length;
-      const filesToAdd = fileArray.slice(0, remainingSlots);
-      
-      setSelectedFiles(prev => [...prev, ...filesToAdd]);
-      
-      // Show warning toast
-      if (typeof window !== 'undefined' && window.dispatchEvent) {
-        window.dispatchEvent(new CustomEvent('toast', {
-          detail: {
-            title: "File Limit Warning",
-            description: `Maximum 5000 files allowed. Added ${filesToAdd.length} files. ${fileArray.length - filesToAdd.length} files were excluded.`,
-            variant: "destructive"
-          }
-        }));
-      }
-      return;
-    }
+    // Filter for image files only
+    const imageFiles = fileArray.filter(file => 
+      file.type.startsWith('image/')
+    );
     
-    setSelectedFiles(prev => [...prev, ...fileArray]);
+    setSelectedFiles(prev => [...prev, ...imageFiles]);
   };
 
   const handleSelectFiles = () => {
+    setIsSelectingFolder(false);
     fileInputRef.current?.click();
+  };
+
+  const handleSelectFolder = () => {
+    setIsSelectingFolder(true);
+    folderInputRef.current?.click();
   };
 
   const handleSubmit = () => {
@@ -75,11 +66,12 @@ export const ImageUploadDialog = ({
         <DialogHeader>
           <DialogTitle>Upload Images</DialogTitle>
           <DialogDescription className="text-gray-400">
-            Upload images to add to your dataset (Max: 5000 files)
+            Upload images to add to your dataset
           </DialogDescription>
         </DialogHeader>
         
         <div className="my-4">
+          {/* File selection input */}
           <input 
             type="file"
             ref={fileInputRef}
@@ -89,34 +81,55 @@ export const ImageUploadDialog = ({
             multiple
           />
           
-          <div 
-            className="border-2 border-dashed border-gray-700 rounded-lg p-12 text-center hover:border-gray-600 transition-colors cursor-pointer"
-            onClick={handleSelectFiles}
-          >
-            {selectedFiles.length > 0 ? (
-              <div className="flex flex-col items-center">
-                <Image className="h-12 w-12 text-gray-400 mb-4" />
-                <p className="text-lg font-medium">
-                  {selectedFiles.length} {selectedFiles.length === 1 ? 'image' : 'images'} selected
-                  <span className="text-sm text-gray-500 ml-2">
-                    ({selectedFiles.length}/5000)
-                  </span>
-                </p>
-                <p className="mt-2 text-sm text-gray-500">Click to add more images</p>
+          {/* Folder selection input */}
+          <input 
+            type="file"
+            ref={folderInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+            accept="image/*"
+            {...({ webkitdirectory: "true" } as any)}
+            multiple
+          />
+          
+          <div className="space-y-4">
+            {/* Selection buttons */}
+            <div className="flex gap-4">
+              <div 
+                className="flex-1 border-2 border-dashed border-gray-700 rounded-lg p-8 text-center hover:border-gray-600 transition-colors cursor-pointer"
+                onClick={handleSelectFiles}
+              >
+                <Upload className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                <p className="text-sm font-medium">Select Files</p>
+                <p className="text-xs text-gray-500 mt-1">Choose individual image files</p>
               </div>
-            ) : (
-              <>
-                <Image className="mx-auto h-12 w-12 text-gray-400" />
-                <div className="mt-4">
-                  <Button>
-                    <Upload className="mr-2 h-4 w-4" />
-                    Select Images
-                  </Button>
+              
+              <div 
+                className="flex-1 border-2 border-dashed border-gray-700 rounded-lg p-8 text-center hover:border-gray-600 transition-colors cursor-pointer"
+                onClick={handleSelectFolder}
+              >
+                <Folder className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                <p className="text-sm font-medium">Select Folder</p>
+                <p className="text-xs text-gray-500 mt-1">Choose entire folder with images</p>
+              </div>
+            </div>
+            
+            {/* Selected files display */}
+            {selectedFiles.length > 0 && (
+              <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
+                <div className="flex items-center justify-center">
+                  <Image className="h-8 w-8 text-gray-400 mb-2" />
                 </div>
-                <p className="mt-2 text-sm text-gray-500">
+                <p className="text-center text-lg font-medium">
+                  {selectedFiles.length} {selectedFiles.length === 1 ? 'image' : 'images'} selected
+                </p>
+                <p className="text-center text-sm text-gray-500 mt-1">
                   PNG, JPG, WEBP up to 10MB each. Large batches will be uploaded in chunks of 1000.
                 </p>
-              </>
+                <p className="text-center text-xs text-gray-400 mt-2">
+                  Files with duplicate names will overwrite existing images
+                </p>
+              </div>
             )}
           </div>
         </div>

@@ -281,7 +281,11 @@ interface DatasetThumbnailProps {
 }
 
 function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
-  const annotationFilesCount = useAnnotationFilesCount(dataset.id);
+  // Get annotation count from localStorage (for locally saved annotations)
+  const localAnnotationCount = useAnnotationFilesCount(dataset.id);
+  
+  // Use the higher of backend count or localStorage count
+  const totalAnnotationCount = Math.max(dataset.annotation_count || 0, localAnnotationCount || 0);
   
   return (
     <HoverCard>
@@ -316,7 +320,7 @@ function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
             <p className="text-xs text-muted-foreground line-clamp-2">{dataset.description}</p>
             <div className="flex items-center pt-1">
               <span className="text-xs text-muted-foreground">
-                {dataset.image_count} images • {annotationFilesCount} annotation {annotationFilesCount === 1 ? 'file' : 'files'}
+                {dataset.image_count} images • {totalAnnotationCount} annotation {totalAnnotationCount === 1 ? 'file' : 'files'}
               </span>
             </div>
           </div>
