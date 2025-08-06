@@ -55,6 +55,7 @@ export default function Classification() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [uploadFileName, setUploadFileName] = useState("");
   const [showNavigationTip, setShowNavigationTip] = useState(false);
+  const [annotationName, setAnnotationName] = useState<string>("");
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
     isOpen: boolean;
     className: string;
@@ -111,6 +112,7 @@ export default function Classification() {
         
         if (targetAnnotation && targetAnnotation.content) {
           console.log('Found annotation file in localStorage:', targetAnnotation.name);
+          setAnnotationName(targetAnnotation.name);
           
           const cocoData = targetAnnotation.content;
           const newClassifications: ClassificationData = {};
@@ -188,9 +190,16 @@ export default function Classification() {
       // If not found in localStorage, try loading from backend
       if (api) {
         try {
+          // First get annotation metadata to get the name
+          const annotationResponse = await api.getAnnotation(id!, annotationFileId);
           const response = await api.getAnnotationContent(id!, annotationFileId);
           if (response.success && response.data.content) {
             console.log('Loading annotation from backend');
+            
+            // Set annotation name if available
+            if (annotationResponse.success && annotationResponse.data?.file_name) {
+              setAnnotationName(annotationResponse.data.file_name);
+            }
             
             const cocoData = JSON.parse(response.data.content);
             const newClassifications: ClassificationData = {};
@@ -327,11 +336,13 @@ export default function Classification() {
             console.log('Images not loaded yet, will load annotation data after images');
           }
         } else if (storage) {
-          // Otherwise load from storage as usual
-          console.log('Loading classifications from storage');
-          const { classifications: loadedClassifications, classes: loadedClasses } = storage.loadClassifications();
-          setClassifications(loadedClassifications);
-          setClasses(loadedClasses);
+        // Otherwise load from storage as usual
+        console.log('Loading classifications from storage');
+        const { classifications: loadedClassifications, classes: loadedClasses } = storage.loadClassifications();
+        setClassifications(loadedClassifications);
+        setClasses(loadedClasses);
+        // Clear annotation name since we're not editing an existing annotation
+        setAnnotationName("");
           console.log('Loaded', Object.keys(loadedClassifications).length, 'classifications and', loadedClasses.length, 'classes');
           
           // Assign colors to any loaded classes that don't have them
@@ -1282,17 +1293,12 @@ export default function Classification() {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl font-semibold">Classification</h1>
-                  {annotationId && (
-                    <Badge variant="outline" className="text-xs">
-                      Editing Annotation
+                  {annotationId && annotationName && (
+                    <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/40 text-xs">
+                      Editing {annotationName}
                     </Badge>
                   )}
                 </div>
-                {annotationId && (
-                  <div className="bg-blue-500/10 text-blue-400 px-3 py-1 rounded-md text-sm font-medium mb-2 border border-blue-500/20">
-                    Editing existing annotation file
-                  </div>
-                )}
                 <p className="text-muted-foreground">
                   Assign class labels to images ({images.length} total images)
                 </p>
