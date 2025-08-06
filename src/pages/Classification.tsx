@@ -486,9 +486,39 @@ export default function Classification() {
       if (api) {
         try {
           const file = new File([jsonContent], fileName, { type: 'application/json' });
-          const result = await api.importAnnotations(id!, file);
+          const result = await api.importAnnotations(id!, file, 'classification');
           
           if (result.success) {
+            // Also save to localStorage for annotations display
+            try {
+              const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+              let annotationsList: any[] = savedAnnotations ? JSON.parse(savedAnnotations) : [];
+              
+              // Add the new classification annotation
+              const annotationFile = {
+                id: `classification_${Date.now()}`,
+                name: fileName,
+                date: new Date().toISOString().split('T')[0], // Today's date
+                format: 'COCO',
+                type: 'classification',
+                classCount: cocoData.categories?.length || 0,
+                imageCount: cocoData.images?.length || 0,
+                matchedImageCount: 0,
+                datasetId: id!,
+                classStats: [],
+                samples: [],
+                isVisible: false,
+                classColors: {},
+                imageMapping: {},
+                content: cocoData // Store the actual COCO data
+              };
+              
+              annotationsList.unshift(annotationFile); // Add to top of list
+              localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
+            } catch (storageError) {
+              console.error('Failed to save to localStorage:', storageError);
+            }
+            
             toast({
               title: "Annotations saved",
               description: `Classification annotations saved in COCO format and uploaded to dataset`,
@@ -512,10 +542,44 @@ export default function Classification() {
           });
         }
       } else {
-        toast({
-          title: "Annotations saved",
-          description: `Classification annotations saved in COCO format (local download only)`,
-        });
+        // When no API is available, also save to localStorage for annotations display
+        try {
+          const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+          let annotationsList: any[] = savedAnnotations ? JSON.parse(savedAnnotations) : [];
+          
+          // Add the new classification annotation
+          const annotationFile = {
+            id: `classification_${Date.now()}`,
+            name: fileName,
+            date: new Date().toISOString().split('T')[0], // Today's date
+            format: 'COCO',
+            type: 'classification',
+            classCount: cocoData.categories?.length || 0,
+            imageCount: cocoData.images?.length || 0,
+            matchedImageCount: 0,
+            datasetId: id!,
+            classStats: [],
+            samples: [],
+            isVisible: false,
+            classColors: {},
+            imageMapping: {},
+            content: cocoData // Store the actual COCO data
+          };
+          
+          annotationsList.unshift(annotationFile); // Add to top of list
+          localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
+          
+          toast({
+            title: "Annotations saved",
+            description: `Classification annotations saved in COCO format (local download only)`,
+          });
+        } catch (storageError) {
+          console.error('Failed to save to localStorage:', storageError);
+          toast({
+            title: "Annotations saved",
+            description: `Classification annotations saved in COCO format (local download only, but not added to annotations list)`,
+          });
+        }
       }
 
     } catch (error) {

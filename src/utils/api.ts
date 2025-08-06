@@ -263,9 +263,12 @@ export class ApiClient {
     });
   }
 
-  async importAnnotations(datasetId: string | number, file: File): Promise<ApiResponse<any>> {
+  async importAnnotations(datasetId: string | number, file: File, annotationType?: string): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('file', file);
+    if (annotationType && annotationType !== 'any') {
+      formData.append('annotation_type', annotationType);
+    }
     return this.request(`/datasets/${datasetId}/import-annotations`, {
       method: 'POST',
       body: formData

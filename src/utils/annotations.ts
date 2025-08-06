@@ -18,6 +18,7 @@ export interface AnnotationFile {
   name: string;
   date: string;
   format: string;
+  type?: 'classification' | 'segmentation' | 'depth' | 'any'; // Add annotation type
   classCount: number;
   imageCount: number;
   matchedImageCount: number;
