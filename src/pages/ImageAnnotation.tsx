@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -9,11 +9,17 @@ import { Pencil, Save, ArrowLeft, Plus, X, Eye, EyeOff } from "lucide-react";
 import { Image } from "@/types";
 import { useApi } from "@/hooks/use-api";
 import { API_CONFIG } from "@/config/api";
+import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 
 const ImageAnnotation = () => {
   const { id: datasetId } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { toast } = useToast();
   const { api } = useApi();
+  
+  // Dataset settings
+  const { settings, updateLayout } = useDatasetSettings(datasetId || '');
+  
   const [images, setImages] = useState<Image[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [classes, setClasses] = useState<string[]>([]);
@@ -21,6 +27,17 @@ const ImageAnnotation = () => {
   const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAnnotations, setShowAnnotations] = useState(true);
+
+  // Handle back to dataset navigation
+  const handleBackToDataset = () => {
+    // Ensure the dataset view shows both Images and Annotations
+    // If current layout is 'images-only' or 'annotations-only', change to horizontal
+    if (settings.layout === 'images-only' || settings.layout === 'annotations-only') {
+      updateLayout('horizontal');
+    }
+    // Navigate to dataset page
+    navigate(`/datasets/${datasetId}`);
+  };
 
   useEffect(() => {
     const loadImagesAndAnnotations = async () => {
@@ -121,7 +138,7 @@ const ImageAnnotation = () => {
         <div className="flex items-center justify-between mb-8">
           <Button
             variant="ghost"
-            onClick={() => window.history.back()}
+            onClick={handleBackToDataset}
             className="text-gray-300 hover:text-white"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />

@@ -191,6 +191,61 @@ export function AnnotationsContent({
     newName: string;
   }>({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   
+  // Auto-detect annotation type based on content
+  const detectAnnotationType = (file: AnnotationFile): 'classification' | 'segmentation' | 'depth' => {
+    // If type is explicitly set, use it
+    if (file.type === 'classification') return 'classification';
+    if (file.type === 'segmentation') return 'segmentation';
+    if (file.type === 'depth') return 'depth';
+    
+    // Auto-detect based on samples content
+    if (file.samples && file.samples.length > 0) {
+      // Check if any annotation has segmentation data
+      const hasSegmentation = file.samples.some(sample => 
+        sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+      );
+      if (hasSegmentation) return 'segmentation';
+      
+      // Check if annotations have meaningful bounding boxes (not [0,0,0,0])
+      const hasMeaningfulBbox = file.samples.some(sample => 
+        sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+        (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+      );
+      if (hasMeaningfulBbox) return 'segmentation'; // Bounding boxes are part of segmentation/detection
+      
+      // If all bboxes are [0,0,0,0] or missing, it's classification
+      const hasOnlyEmptyBbox = file.samples.every(sample => 
+        !sample.bbox || 
+        (Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+         sample.bbox[0] === 0 && sample.bbox[1] === 0 && sample.bbox[2] === 0 && sample.bbox[3] === 0)
+      );
+      if (hasOnlyEmptyBbox) return 'classification';
+    }
+    
+    // Check filename for hints
+    if (file.name) {
+      const nameLower = file.name.toLowerCase();
+      if (nameLower.includes('classification') || nameLower.includes('class')) return 'classification';
+      if (nameLower.includes('segmentation') || nameLower.includes('seg')) return 'segmentation';
+      if (nameLower.includes('depth')) return 'depth';
+    }
+    
+    // Check content for COCO classification patterns (for saved classifications)
+    if ((file as any).content) {
+      const content = (file as any).content;
+      // COCO format with only category_ids and no bbox/segmentation
+      if (content.annotations && Array.isArray(content.annotations)) {
+        const hasOnlyCategories = content.annotations.every((ann: any) => 
+          ann.category_id && !ann.bbox && !ann.segmentation
+        );
+        if (hasOnlyCategories && content.annotations.length > 0) return 'classification';
+      }
+    }
+    
+    // Default fallback - if we can't determine, assume depth
+    return 'depth';
+  };
+
   const { api } = useApi();
   const { toast } = useToast();
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -538,7 +593,7 @@ export function AnnotationsContent({
 
     try {
       // Check if this is a classification file stored only in localStorage
-      const isClassificationFile = (fileToDelete as any).type === 'classification' || fileToDelete.type === 'classification';
+      const isClassificationFile = detectAnnotationType(fileToDelete) === 'classification';
       
       if (isClassificationFile) {
         // Delete from saved_annotations localStorage
@@ -629,9 +684,9 @@ export function AnnotationsContent({
     e.stopPropagation();
     
     const file = annotationFiles.find(f => f.id === annotationId);
-    if (file && (file.type === 'classification' || (file as any).type === 'classification')) {
-      // Navigate to classification page with the dataset ID
-      navigate(`/datasets/${id}/annotate/classification`);
+    if (file && detectAnnotationType(file) === 'classification') {
+      // Navigate to classification page with the dataset ID and annotation file ID
+      navigate(`/datasets/${id}/annotate/classification?annotationId=${annotationId}`);
     }
   };
 
@@ -1118,8 +1173,29 @@ export function AnnotationsContent({
           return dateB.getTime() - dateA.getTime();
         });
         
-        setAnnotationFiles(processedFiles);
-        console.log(`Loaded and processed ${processedFiles.length} annotation files from backend`);
+        // Load saved classifications and merge them with backend files
+        const savedClassifications = loadSavedClassifications();
+        
+        // Filter out classifications that are already in backend files (to avoid duplicates)
+        const backendClassificationIds = new Set(
+          processedFiles.filter(file => detectAnnotationType(file) === 'classification').map(file => file.id)
+        );
+        
+        const filteredSavedClassifications = savedClassifications.filter(classification => 
+          !backendClassificationIds.has(classification.id)
+        );
+        
+        const combined = [...filteredSavedClassifications, ...processedFiles];
+        
+        // Sort by date (newest first)
+        combined.sort((a, b) => {
+          const dateA = new Date(a.date);
+          const dateB = new Date(b.date);
+          return dateB.getTime() - dateA.getTime();
+        });
+        
+        setAnnotationFiles(combined);
+        console.log(`Loaded and processed ${processedFiles.length} annotation files from backend and ${filteredSavedClassifications.length} classifications from localStorage`);
         
         // Clear localStorage to prevent conflicts with backend data
         localStorage.removeItem(`annotations_${id}`);
@@ -1184,7 +1260,7 @@ export function AnnotationsContent({
           let imageCount = 0;
           
           // Check if it's COCO format or legacy JSON format
-          if (annotation.type === 'COCO' && annotation.content) {
+          if (annotation.format === 'COCO' && annotation.content) {
             // COCO format
             const cocoData = annotation.content;
             classCount = cocoData.categories ? cocoData.categories.length : 0;
@@ -1199,8 +1275,8 @@ export function AnnotationsContent({
           return {
             id: annotation.id,
             name: annotation.name,
-            date: new Date(annotation.savedAt).toISOString().split('T')[0],
-            format: annotation.type === 'COCO' ? 'COCO' : 'JSON',
+            date: annotation.date || new Date().toISOString().split('T')[0], // Use annotation.date instead of annotation.savedAt
+            format: annotation.format || (annotation.type === 'COCO' ? 'COCO' : 'JSON'),
             classCount: classCount,
             imageCount: imageCount,
             matchedImageCount: imageCount,
@@ -1229,37 +1305,64 @@ export function AnnotationsContent({
     if (api) {
       // Clear localStorage when using backend to prevent conflicts
       localStorage.removeItem(`annotations_${id}`);
-      loadAnnotationFilesFromBackend();
+      loadAnnotationFilesFromBackend(); // This now handles classifications too
     } else {
       loadAnnotationFilesFromLocalStorage();
-    }
-    
-    // Always load saved classifications from localStorage
-    const savedClassifications = loadSavedClassifications();
-    if (savedClassifications.length > 0) {
-      setAnnotationFiles(prev => {
-        // Remove any existing classification files to avoid duplicates
-        const nonClassificationFiles = prev.filter(file => (file as any).type !== 'classification' && file.type !== 'classification');
-        const combined = [...savedClassifications, ...nonClassificationFiles];
-        // Sort by date (newest first)
-        combined.sort((a, b) => {
-          const dateA = new Date(a.date);
-          const dateB = new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
+      
+      // Always load saved classifications from localStorage when no API
+      const savedClassifications = loadSavedClassifications();
+      if (savedClassifications.length > 0) {
+        setAnnotationFiles(prev => {
+          // Remove any existing classification files to avoid duplicates
+          const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'classification');
+          const combined = [...savedClassifications, ...nonClassificationFiles];
+          // Sort by date (newest first)
+          combined.sort((a, b) => {
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+            return dateB.getTime() - dateA.getTime();
+          });
+          return combined;
         });
-        return combined;
-      });
+      }
     }
   }, [id, api]);
 
-  // Periodically check for new saved classifications
+  // Refresh data when component becomes visible or user returns to the page
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && api) {
+        // Refresh data when page becomes visible
+        loadAnnotationFilesFromBackend();
+      }
+    };
+
+    const handleFocus = () => {
+      if (api) {
+        // Refresh data when window gains focus
+        loadAnnotationFilesFromBackend();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [api, id]);
+
+  // Periodically check for new saved classifications (only when no API)
+  useEffect(() => {
+    if (api) return; // Don't run periodic checks when using backend
+    
     const interval = setInterval(() => {
       const savedClassifications = loadSavedClassifications();
       if (savedClassifications.length > 0) {
         setAnnotationFiles(prev => {
           // Remove any existing classification files to avoid duplicates
-          const nonClassificationFiles = prev.filter(file => (file as any).type !== 'classification' && file.type !== 'classification');
+          const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'classification');
           const combined = [...savedClassifications, ...nonClassificationFiles];
           // Sort by date (newest first)
           combined.sort((a, b) => {
@@ -1273,7 +1376,7 @@ export function AnnotationsContent({
     }, 2000); // Check every 2 seconds
     
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, api]);
 
   const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
@@ -1458,38 +1561,28 @@ export function AnnotationsContent({
                        <div className="font-medium">{file.name}</div>
                         <div className="text-xs text-muted-foreground mt-1">
                           {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
-                          {(() => {
-                            // Debug: Show file type info
-                            console.log('File type debug:', file.name, 'type:', file.type, 'as any type:', (file as any).type);
-                            return null;
-                          })()}
-                          {(file.type || (file as any).type || 
-                            // Auto-detect if type is missing but filename suggests classification
-                            (file.name && file.name.toLowerCase().includes('classification'))
-                          ) && (
-                            <Badge 
-                              variant="secondary" 
-                              className={`ml-2 text-xs capitalize ${
-                                (file.type === 'classification' || (file as any).type === 'classification' || 
-                                 (file.name && file.name.toLowerCase().includes('classification'))) 
-                                  ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors' 
-                                  : ''
-                              }`}
-                              onClick={(e) => {
-                                if (file.type === 'classification' || (file as any).type === 'classification' ||
-                                    (file.name && file.name.toLowerCase().includes('classification'))) {
-                                  handleEditClassificationAnnotation(file.id, e);
-                                }
-                              }}
-                              title={(file.type === 'classification' || (file as any).type === 'classification' ||
-                                     (file.name && file.name.toLowerCase().includes('classification'))) 
+                          <Badge 
+                            variant="secondary" 
+                            className={`ml-2 text-xs capitalize ${
+                              detectAnnotationType(file) === 'classification'
+                                ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors bg-blue-500/20 text-blue-300 border-blue-500' 
+                                : detectAnnotationType(file) === 'segmentation'
+                                ? 'bg-green-500/20 text-green-300 border-green-500'
+                                : 'bg-purple-500/20 text-purple-300 border-purple-500' // depth
+                            }`}
+                            onClick={(e) => {
+                              if (detectAnnotationType(file) === 'classification') {
+                                handleEditClassificationAnnotation(file.id, e);
+                              }
+                            }}
+                            title={
+                              detectAnnotationType(file) === 'classification'
                                 ? 'Click to edit classification annotations' 
-                                : `Type: ${file.type || (file as any).type || 'unknown'}`}
-                            >
-                              {file.type || (file as any).type || 
-                               (file.name && file.name.toLowerCase().includes('classification') ? 'classification' : 'annotation')}
-                            </Badge>
-                          )}
+                                : `Type: ${detectAnnotationType(file)}`
+                            }
+                          >
+                            {detectAnnotationType(file)}
+                          </Badge>
                         </div>
                      </div>
                     <div className="flex items-center gap-4">                      {/* Images count */}
@@ -1541,7 +1634,7 @@ export function AnnotationsContent({
                       </Button>
                        {/* Actions */}
                        <div className="flex gap-2">
-                         {(file.type === 'classification' || (file as any).type === 'classification') ? (
+                         {detectAnnotationType(file) === 'classification' ? (
                            <Button 
                              variant="ghost" 
                              size="icon" 
@@ -1603,7 +1696,7 @@ export function AnnotationsContent({
                     <div className="p-4">
                       <div className="flex items-center justify-between mb-4">
                         <h4 className="text-sm font-medium">
-                          {(file.type === 'classification' || (file as any).type === 'classification') ? 'JSON Content' : 'Statistics & Configuration'}
+                          {detectAnnotationType(file) === 'classification' ? 'JSON Content' : 'Statistics & Configuration'}
                         </h4>
                         {dirtyAnnotationIds.has(file.id) && (
                           <Button size="sm" className="ml-2" onClick={() => handleSaveAnnotationFile(file.id)}>
@@ -1613,7 +1706,7 @@ export function AnnotationsContent({
                       </div>
                       
                       {/* Classification JSON Content */}
-                      {(file.type === 'classification' || (file as any).type === 'classification') ? (
+                      {detectAnnotationType(file) === 'classification' ? (
                         <div className="mb-6">
                           <h5 className="text-xs font-medium mb-3 text-gray-400">Classification Data</h5>
                           <div className="bg-gray-900 rounded border border-gray-600 p-4">
@@ -1647,7 +1740,7 @@ export function AnnotationsContent({
                       )}
                       
                       {/* Class Configuration section - only for non-classification annotations */}
-                      {(file as any).type !== 'classification' && (
+                      {detectAnnotationType(file) !== 'classification' && (
                         <div>
                           <p className="text-xs text-muted-foreground mb-4">
                             Click a class color icon in the statistics above to customize its appearance

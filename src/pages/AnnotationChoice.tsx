@@ -1,11 +1,28 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Navbar } from "@/components/Navbar";
 import { ArrowLeft, Grid3X3, Layers } from "lucide-react";
+import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 
 export default function AnnotationChoice() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  
+  // Dataset settings
+  const datasetId = id || '';
+  const { settings, updateLayout } = useDatasetSettings(datasetId);
+
+  // Handle back to dataset navigation
+  const handleBackToDataset = () => {
+    // Ensure the dataset view shows both Images and Annotations
+    // If current layout is 'images-only' or 'annotations-only', change to horizontal
+    if (settings.layout === 'images-only' || settings.layout === 'annotations-only') {
+      updateLayout('horizontal');
+    }
+    // Navigate to dataset page
+    navigate(`/datasets/${id}`);
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -13,11 +30,9 @@ export default function AnnotationChoice() {
       <main className="flex-1 flex flex-col pt-16">
         <div className="px-6 py-4 border-b bg-background">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" asChild>
-              <Link to={`/dataset/${id}`}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Dataset
-              </Link>
+            <Button variant="ghost" onClick={handleBackToDataset}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Dataset
             </Button>
             <div>
               <h1 className="text-2xl font-semibold">Choose Annotation Type</h1>

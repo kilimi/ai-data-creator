@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +9,8 @@ import { Navbar } from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { Image } from "@/types";
-import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2, Save } from "lucide-react";
+import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2, Save, Upload, Download } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { PaginationControls } from "@/components/PaginationControls";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
@@ -21,12 +22,17 @@ interface ClassificationData {
 
 export default function Classification() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { toast } = useToast();
   const { api, isConfigured } = useApi();
   
+  // Get annotation ID from URL params if editing existing annotation
+  const annotationId = searchParams.get('annotationId');
+  
   // Dataset settings
   const datasetId = id || '';
-  const { settings, updateImagesPerPage, updateImageSize } = useDatasetSettings(datasetId);
+  const { settings, updateImagesPerPage, updateImageSize, updateLayout } = useDatasetSettings(datasetId);
   
   // Optimized storage instance
   const storage = useMemo(() => {
@@ -37,6 +43,7 @@ export default function Classification() {
   const [images, setImages] = useState<Image[]>([]);
   const [classes, setClasses] = useState<string[]>([]);
   const [classifications, setClassifications] = useState<ClassificationData>({});
+  const [classColors, setClassColors] = useState<{ [className: string]: string }>({});
   const [loading, setLoading] = useState(true);
   
   // UI states
@@ -45,6 +52,44 @@ export default function Classification() {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [hasShownQuotaWarning, setHasShownQuotaWarning] = useState(false);
   const [sessionOnly, setSessionOnly] = useState(false); // Whether to store data temporarily
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [uploadFileName, setUploadFileName] = useState("");
+  const [showNavigationTip, setShowNavigationTip] = useState(false);
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
+    isOpen: boolean;
+    className: string;
+    annotationCount: number;
+  }>({ isOpen: false, className: '', annotationCount: 0 });
+  
+  // Color utility functions
+  const generateRandomColor = () => {
+    const colors = [
+      '#ea384c', '#F97316', '#1EAEDB', '#8B5CF6', '#2ecc71', 
+      '#f39c12', '#9b59b6', '#e74c3c', '#3498db', '#e67e22',
+      '#95a5a6', '#34495e', '#1abc9c', '#16a085', '#27ae60',
+      '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7',
+      '#dda0dd', '#98d8c8', '#f7dc6f', '#bb8fce', '#85c1e9'
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
+  };
+
+  const getClassColor = (className: string): string => {
+    if (classColors[className]) {
+      return classColors[className];
+    }
+    // Generate new color for this class
+    const newColor = generateRandomColor();
+    setClassColors(prev => ({ ...prev, [className]: newColor }));
+    return newColor;
+  };
+
+  const handleClassColorChange = (className: string, newColor: string) => {
+    setClassColors(prev => ({ ...prev, [className]: newColor }));
+    // Save to localStorage
+    if (id) {
+      localStorage.setItem(`class_colors_${id}`, JSON.stringify({ ...classColors, [className]: newColor }));
+    }
+  };
   
   // Calculate pagination
   const totalPages = Math.ceil(images.length / settings.imagesPerPage);
@@ -52,6 +97,191 @@ export default function Classification() {
     (currentPage - 1) * settings.imagesPerPage,
     currentPage * settings.imagesPerPage
   );
+
+  // Function to load classification data from an existing annotation file
+  const loadFromAnnotationFile = useCallback(async (annotationFileId: string) => {
+    try {
+      console.log('Loading classification data from annotation file:', annotationFileId);
+      
+      // First try to load from saved_annotations localStorage
+      const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+      if (savedAnnotations) {
+        const annotationsList = JSON.parse(savedAnnotations);
+        const targetAnnotation = annotationsList.find((ann: any) => ann.id === annotationFileId);
+        
+        if (targetAnnotation && targetAnnotation.content) {
+          console.log('Found annotation file in localStorage:', targetAnnotation.name);
+          
+          const cocoData = targetAnnotation.content;
+          const newClassifications: ClassificationData = {};
+          const classSet = new Set<string>();
+          
+          // Extract classes from categories
+          if (cocoData.categories) {
+            cocoData.categories.forEach((category: any) => {
+              classSet.add(category.name);
+            });
+          }
+          
+          // Create filename to image ID mapping
+          const filenameToImageId: { [filename: string]: string } = {};
+          images.forEach(img => {
+            filenameToImageId[img.fileName] = img.id;
+          });
+          
+          // Map annotations to classifications
+          if (cocoData.annotations && cocoData.images) {
+            // Create image ID to filename mapping from COCO data
+            const cocoImageIdToFilename: { [id: string]: string } = {};
+            cocoData.images.forEach((img: any) => {
+              cocoImageIdToFilename[img.id.toString()] = img.file_name;
+            });
+            
+            // Create category ID to name mapping
+            const categoryIdToName: { [id: string]: string } = {};
+            cocoData.categories.forEach((cat: any) => {
+              categoryIdToName[cat.id.toString()] = cat.name;
+            });
+            
+            // Process annotations
+            cocoData.annotations.forEach((annotation: any) => {
+              const cocoImageId = annotation.image_id.toString();
+              const filename = cocoImageIdToFilename[cocoImageId];
+              const actualImageId = filenameToImageId[filename];
+              const className = categoryIdToName[annotation.category_id.toString()];
+              
+              if (actualImageId && className) {
+                if (!newClassifications[actualImageId]) {
+                  newClassifications[actualImageId] = [];
+                }
+                if (!newClassifications[actualImageId].includes(className)) {
+                  newClassifications[actualImageId].push(className);
+                }
+              }
+            });
+          }
+          
+          // Update state
+          const loadedClasses = Array.from(classSet);
+          setClasses(loadedClasses);
+          setClassifications(newClassifications);
+          
+          // Assign colors to any new classes that don't have them
+          const newColors = { ...classColors };
+          loadedClasses.forEach(className => {
+            if (!newColors[className]) {
+              newColors[className] = generateRandomColor();
+            }
+          });
+          setClassColors(newColors);
+          
+          console.log('Loaded', Object.keys(newClassifications).length, 'classifications from annotation file');
+          toast({
+            title: "Annotation loaded",
+            description: `Loaded classification data from "${targetAnnotation.name}"`,
+          });
+          
+          return true;
+        }
+      }
+      
+      // If not found in localStorage, try loading from backend
+      if (api) {
+        try {
+          const response = await api.getAnnotationContent(id!, annotationFileId);
+          if (response.success && response.data.content) {
+            console.log('Loading annotation from backend');
+            
+            const cocoData = JSON.parse(response.data.content);
+            const newClassifications: ClassificationData = {};
+            const classSet = new Set<string>();
+            
+            // Extract classes from categories
+            if (cocoData.categories) {
+              cocoData.categories.forEach((category: any) => {
+                classSet.add(category.name);
+              });
+            }
+            
+            // Create filename to image ID mapping
+            const filenameToImageId: { [filename: string]: string } = {};
+            images.forEach(img => {
+              filenameToImageId[img.fileName] = img.id;
+            });
+            
+            // Map annotations to classifications (similar logic as above)
+            if (cocoData.annotations && cocoData.images) {
+              const cocoImageIdToFilename: { [id: string]: string } = {};
+              cocoData.images.forEach((img: any) => {
+                cocoImageIdToFilename[img.id.toString()] = img.file_name;
+              });
+              
+              const categoryIdToName: { [id: string]: string } = {};
+              cocoData.categories.forEach((cat: any) => {
+                categoryIdToName[cat.id.toString()] = cat.name;
+              });
+              
+              cocoData.annotations.forEach((annotation: any) => {
+                const cocoImageId = annotation.image_id.toString();
+                const filename = cocoImageIdToFilename[cocoImageId];
+                const actualImageId = filenameToImageId[filename];
+                const className = categoryIdToName[annotation.category_id.toString()];
+                
+                if (actualImageId && className) {
+                  if (!newClassifications[actualImageId]) {
+                    newClassifications[actualImageId] = [];
+                  }
+                  if (!newClassifications[actualImageId].includes(className)) {
+                    newClassifications[actualImageId].push(className);
+                  }
+                }
+              });
+            }
+            
+            const loadedClasses = Array.from(classSet);
+            setClasses(loadedClasses);
+            setClassifications(newClassifications);
+            
+            // Assign colors to any new classes that don't have them
+            const newColors = { ...classColors };
+            loadedClasses.forEach(className => {
+              if (!newColors[className]) {
+                newColors[className] = generateRandomColor();
+              }
+            });
+            setClassColors(newColors);
+            
+            console.log('Loaded', Object.keys(newClassifications).length, 'classifications from backend');
+            toast({
+              title: "Annotation loaded",
+              description: `Loaded classification data from annotation file`,
+            });
+            
+            return true;
+          }
+        } catch (error) {
+          console.error('Error loading annotation from backend:', error);
+        }
+      }
+      
+      console.warn('Could not find annotation file:', annotationFileId);
+      toast({
+        title: "Annotation not found",
+        description: "Could not load the specified annotation file",
+        variant: "destructive",
+      });
+      
+      return false;
+    } catch (error) {
+      console.error('Error loading annotation file:', error);
+      toast({
+        title: "Error loading annotation",
+        description: "Failed to load classification data from annotation file",
+        variant: "destructive",
+      });
+      return false;
+    }
+  }, [id, api, images, toast]);
 
   // Load images and existing classifications
   useEffect(() => {
@@ -85,13 +315,43 @@ export default function Classification() {
           console.warn('API client not available');
         }
         
-        // Load existing classifications from optimized storage
-        if (storage) {
+        // Load existing classifications from optimized storage or annotation file
+        if (annotationId) {
+          // If we have an annotation ID, load from that annotation file
+          console.log('Loading from annotation file:', annotationId);
+          // Wait for images to be loaded first
+          if (images.length > 0) {
+            await loadFromAnnotationFile(annotationId);
+          } else {
+            // If images aren't loaded yet, we'll load from annotation in a separate effect
+            console.log('Images not loaded yet, will load annotation data after images');
+          }
+        } else if (storage) {
+          // Otherwise load from storage as usual
           console.log('Loading classifications from storage');
           const { classifications: loadedClassifications, classes: loadedClasses } = storage.loadClassifications();
           setClassifications(loadedClassifications);
           setClasses(loadedClasses);
           console.log('Loaded', Object.keys(loadedClassifications).length, 'classifications and', loadedClasses.length, 'classes');
+          
+          // Assign colors to any loaded classes that don't have them
+          const savedColors = localStorage.getItem(`class_colors_${id}`);
+          let currentColors = {};
+          if (savedColors) {
+            try {
+              currentColors = JSON.parse(savedColors);
+            } catch (error) {
+              console.warn('Error loading class colors:', error);
+            }
+          }
+          
+          const newColors = { ...currentColors };
+          loadedClasses.forEach(className => {
+            if (!newColors[className]) {
+              newColors[className] = generateRandomColor();
+            }
+          });
+          setClassColors(newColors);
           
           // Try to migrate legacy data if optimized data is empty but legacy exists
           if (Object.keys(loadedClassifications).length === 0) {
@@ -101,6 +361,16 @@ export default function Classification() {
               const { classifications: migratedClassifications, classes: migratedClasses } = storage.loadClassifications();
               setClassifications(migratedClassifications);
               setClasses(migratedClasses);
+              
+              // Assign colors to migrated classes too
+              const migratedColors = { ...newColors };
+              migratedClasses.forEach(className => {
+                if (!migratedColors[className]) {
+                  migratedColors[className] = generateRandomColor();
+                }
+              });
+              setClassColors(migratedColors);
+              
               console.log('Migrated', Object.keys(migratedClassifications).length, 'classifications');
             }
           }
@@ -126,7 +396,36 @@ export default function Classification() {
     };
     
     loadData();
-  }, [id, api, isConfigured, toast]);
+  }, [id, api, isConfigured, toast, annotationId]);
+
+  // Load annotation data when images are loaded and we have an annotationId
+  useEffect(() => {
+    if (annotationId && images.length > 0 && Object.keys(classifications).length === 0) {
+      console.log('Loading annotation data after images loaded');
+      loadFromAnnotationFile(annotationId);
+    }
+  }, [annotationId, images, classifications, loadFromAnnotationFile]);
+
+  // Load class colors from localStorage
+  useEffect(() => {
+    if (id) {
+      const savedColors = localStorage.getItem(`class_colors_${id}`);
+      if (savedColors) {
+        try {
+          setClassColors(JSON.parse(savedColors));
+        } catch (error) {
+          console.warn('Error loading class colors:', error);
+        }
+      }
+    }
+  }, [id]);
+
+  // Save class colors to localStorage when they change
+  useEffect(() => {
+    if (id && Object.keys(classColors).length > 0) {
+      localStorage.setItem(`class_colors_${id}`, JSON.stringify(classColors));
+    }
+  }, [classColors, id]);
 
   // Save classifications to optimized localStorage (with session-only option)
   const saveClassifications = useCallback((newClassifications: ClassificationData) => {
@@ -214,18 +513,42 @@ export default function Classification() {
   // Add new class
   const handleAddClass = () => {
     if (newClass.trim() && !classes.includes(newClass.trim())) {
-      const updatedClasses = [...classes, newClass.trim()];
+      const className = newClass.trim();
+      const updatedClasses = [...classes, className];
       saveClasses(updatedClasses);
+      
+      // Assign a color to the new class
+      if (!classColors[className]) {
+        const newColor = generateRandomColor();
+        setClassColors(prev => ({ ...prev, [className]: newColor }));
+      }
+      
       setNewClass("");
       toast({
         title: "Class added",
-        description: `Added new class: ${newClass.trim()}`,
+        description: `Added new class: ${className}`,
       });
     }
   };
 
-  // Remove class
+  // Remove class (with confirmation)
   const handleRemoveClass = (classToRemove: string) => {
+    // Count how many images have this class assigned
+    const annotationCount = Object.values(classifications).filter(
+      imageClasses => imageClasses.includes(classToRemove)
+    ).length;
+    
+    // Show confirmation dialog
+    setDeleteConfirmDialog({
+      isOpen: true,
+      className: classToRemove,
+      annotationCount: annotationCount
+    });
+  };
+
+  // Confirm class deletion
+  const handleConfirmDeleteClass = () => {
+    const classToRemove = deleteConfirmDialog.className;
     const updatedClasses = classes.filter(c => c !== classToRemove);
     saveClasses(updatedClasses);
     
@@ -236,10 +559,25 @@ export default function Classification() {
     });
     saveClassifications(updatedClassifications);
     
+    // Remove class color
+    setClassColors(prev => {
+      const newColors = { ...prev };
+      delete newColors[classToRemove];
+      return newColors;
+    });
+    
+    // Clear selected class if it was the deleted one
+    if (selectedClass === classToRemove) {
+      setSelectedClass(null);
+    }
+    
     toast({
       title: "Class removed",
-      description: `Removed class: ${classToRemove}`,
+      description: `Removed class "${classToRemove}" and ${deleteConfirmDialog.annotationCount} annotations`,
     });
+    
+    // Close dialog
+    setDeleteConfirmDialog({ isOpen: false, className: '', annotationCount: 0 });
   };
 
   // Toggle class for specific image
@@ -254,43 +592,98 @@ export default function Classification() {
     saveClassifications(updatedClassifications);
   };
 
-  // Assign class to all images on current page
+  // Assign/Remove class to/from all images on current page (toggle behavior)
   const handleAssignToAllOnPage = (className: string) => {
     const updatedClassifications = { ...classifications };
-    paginatedImages.forEach(image => {
-      const currentClasses = updatedClassifications[image.id] || [];
-      if (!currentClasses.includes(className)) {
-        updatedClassifications[image.id] = [...currentClasses, className];
-      }
-    });
-    saveClassifications(updatedClassifications);
     
-    toast({
-      title: "Class assigned",
-      description: `Assigned "${className}" to all ${paginatedImages.length} images on this page`,
+    // Check if all images on the page already have this class
+    const allImagesHaveClass = paginatedImages.every(image => {
+      const currentClasses = updatedClassifications[image.id] || [];
+      return currentClasses.includes(className);
     });
+    
+    let processedCount = 0;
+    
+    if (allImagesHaveClass) {
+      // Remove class from all images on page
+      paginatedImages.forEach(image => {
+        const currentClasses = updatedClassifications[image.id] || [];
+        if (currentClasses.includes(className)) {
+          updatedClassifications[image.id] = currentClasses.filter(c => c !== className);
+          processedCount++;
+        }
+      });
+      
+      saveClassifications(updatedClassifications);
+      
+      toast({
+        title: "Class removed",
+        description: `Removed "${className}" from all ${processedCount} images on this page`,
+      });
+    } else {
+      // Add class to all images on page
+      paginatedImages.forEach(image => {
+        const currentClasses = updatedClassifications[image.id] || [];
+        if (!currentClasses.includes(className)) {
+          updatedClassifications[image.id] = [...currentClasses, className];
+          processedCount++;
+        }
+      });
+      
+      saveClassifications(updatedClassifications);
+      
+      toast({
+        title: "Class assigned",
+        description: `Assigned "${className}" to ${processedCount} images on this page`,
+      });
+    }
   };
 
-  // Assign class to all images without any classes on current page
+  // Assign/Remove class to/from unclassified images on current page (toggle behavior)
   const handleAssignWithoutClasses = (className: string) => {
     const updatedClassifications = { ...classifications };
-    let assignedCount = 0;
     
-    paginatedImages.forEach(image => {
+    // Get all unclassified images on the page
+    const unclassifiedImages = paginatedImages.filter(image => {
       const currentClasses = updatedClassifications[image.id] || [];
-      // Only assign if image has no classes assigned
-      if (currentClasses.length === 0) {
+      return currentClasses.length === 0;
+    });
+    
+    // Get images that only have this specific class (were previously assigned via AU)
+    const imagesWithOnlyThisClass = paginatedImages.filter(image => {
+      const currentClasses = updatedClassifications[image.id] || [];
+      return currentClasses.length === 1 && currentClasses[0] === className;
+    });
+    
+    let processedCount = 0;
+    
+    if (imagesWithOnlyThisClass.length > 0 && unclassifiedImages.length === 0) {
+      // If there are images with only this class and no unclassified images, remove the class
+      imagesWithOnlyThisClass.forEach(image => {
+        updatedClassifications[image.id] = [];
+        processedCount++;
+      });
+      
+      saveClassifications(updatedClassifications);
+      
+      toast({
+        title: "Class removed from previously assigned",
+        description: `Removed "${className}" from ${processedCount} images, making them unclassified`,
+      });
+    } else {
+      // Assign class to unclassified images
+      unclassifiedImages.forEach(image => {
         updatedClassifications[image.id] = [className];
-        assignedCount++;
-      }
-    });
-    
-    saveClassifications(updatedClassifications);
-    
-    toast({
-      title: "Class assigned to unclassified",
-      description: `Assigned "${className}" to ${assignedCount} unclassified images on this page`,
-    });
+        processedCount++;
+      });
+      
+      saveClassifications(updatedClassifications);
+      
+      toast({
+        title: "Class assigned to unclassified",
+        description: `Assigned "${className}" to ${processedCount} unclassified images on this page`,
+      });
+    }
   };
 
   // Handle pagination
@@ -346,11 +739,62 @@ export default function Classification() {
     });
   };
 
+  // Handle back to dataset navigation
+  const handleBackToDataset = () => {
+    // Ensure the dataset view shows both Images and Annotations
+    // If current layout is 'images-only' or 'annotations-only', change to horizontal
+    if (settings.layout === 'images-only' || settings.layout === 'annotations-only') {
+      updateLayout('horizontal');
+    }
+    // Navigate to dataset page
+    navigate(`/datasets/${id}`);
+  };
+
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle shortcuts when no input is focused
       if (e.target instanceof HTMLInputElement) return;
+      
+      // Handle arrow keys for page navigation
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (currentPage > 1) {
+          setCurrentPage(currentPage - 1);
+          toast({
+            title: "Previous page",
+            description: `Moved to page ${currentPage - 1}`,
+          });
+        }
+        return;
+      }
+      
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (currentPage < totalPages) {
+          setCurrentPage(currentPage + 1);
+          toast({
+            title: "Next page",
+            description: `Moved to page ${currentPage + 1}`,
+          });
+        }
+        return;
+      }
+      
+      // Handle number keys 1-9 to select classes
+      if (e.key >= '1' && e.key <= '9') {
+        const classIndex = parseInt(e.key) - 1;
+        if (classIndex < classes.length) {
+          e.preventDefault();
+          const selectedClassName = classes[classIndex];
+          setSelectedClass(selectedClassName);
+          toast({
+            title: "Class selected",
+            description: `Selected "${selectedClassName}" (shortcut ${e.key})`,
+          });
+        }
+        return;
+      }
       
       if (selectedClass && e.ctrlKey) {
         if (e.key === 'a') {
@@ -365,7 +809,7 @@ export default function Classification() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedClass, handleAssignToAllOnPage, handleAssignWithoutClasses]);
+  }, [selectedClass, classes, currentPage, totalPages, toast, handleAssignToAllOnPage, handleAssignWithoutClasses]);
 
   // Cleanup effect: Clear classification data when leaving the page
   // Since classifications are uploaded to annotations, we don't need to persist them
@@ -461,18 +905,18 @@ export default function Classification() {
     };
   };
 
-  // Save annotations as COCO format file
-  const handleSaveAnnotations = async () => {
+  // Download annotations as JSON file
+  const handleDownload = async () => {
     try {
       // Convert to COCO format
       const cocoData = convertToCOCOFormat();
 
-      // Create JSON file
+      // Create filename with the requested format: project_id_dataset_id_page_number_images_per_page.json
+      const fileName = `project_${id}_dataset_${id}_page_${currentPage}_images_${settings.imagesPerPage}.json`;
+
+      // Create JSON file and download
       const jsonContent = JSON.stringify(cocoData, null, 2);
       const blob = new Blob([jsonContent], { type: 'application/json' });
-      const fileName = `classifications_${id}_coco.json`;
-
-      // Download file locally
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -482,11 +926,168 @@ export default function Classification() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
+      toast({
+        title: "File downloaded",
+        description: `Classification data downloaded as ${fileName}`,
+      });
+
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      toast({
+        title: "Download failed",
+        description: error instanceof Error ? error.message : "Failed to download file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Save annotations (either update existing or create new with dialog)
+  const handleSave = async () => {
+    if (annotationId) {
+      // If editing existing annotation file, directly update it
+      await handleSaveExistingAnnotation();
+    } else {
+      // If creating new annotations, ask for filename and then save
+      const defaultName = `classification_dataset_${id}_${new Date().toISOString().split('T')[0]}`;
+      setUploadFileName(defaultName);
+      setUploadDialogOpen(true);
+    }
+  };
+
+  // Save existing annotation file (direct update)
+  const handleSaveExistingAnnotation = async () => {
+    if (!annotationId) return;
+
+    try {
+      // Convert to COCO format
+      const cocoData = convertToCOCOFormat();
+      const fileName = uploadFileName.trim() || `classification_updated_${new Date().toISOString().split('T')[0]}.json`;
+      const fullFileName = fileName.endsWith('.json') ? fileName : `${fileName}.json`;
+
+      // Create JSON file
+      const jsonContent = JSON.stringify(cocoData, null, 2);
+
+      // Update via backend if API is available
+      if (api) {
+        try {
+          const file = new File([jsonContent], fullFileName, { type: 'application/json' });
+          const result = await api.updateAnnotationContent(id!, annotationId, file);
+          
+          if (result.success) {
+            // Also update localStorage for annotations display
+            try {
+              const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+              if (savedAnnotations) {
+                let annotationsList: any[] = JSON.parse(savedAnnotations);
+                const existingIndex = annotationsList.findIndex((ann: any) => ann.id === annotationId);
+                if (existingIndex >= 0) {
+                  annotationsList[existingIndex] = {
+                    ...annotationsList[existingIndex],
+                    content: cocoData,
+                    name: fullFileName,
+                    date: new Date().toISOString().split('T')[0],
+                    classCount: cocoData.categories?.length || 0,
+                    imageCount: cocoData.images?.length || 0,
+                  };
+                  localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
+                }
+              }
+            } catch (storageError) {
+              console.error('Failed to update localStorage:', storageError);
+            }
+            
+            toast({
+              title: "Annotation updated",
+              description: `Classification annotations have been updated successfully`,
+            });
+            
+          } else {
+            throw new Error(result.error || 'Failed to update annotation');
+          }
+        } catch (updateError) {
+          console.error('Failed to update annotation:', updateError);
+          toast({
+            title: "Update failed",
+            description: updateError instanceof Error ? updateError.message : 'Unknown error occurred',
+            variant: "destructive",
+          });
+        }
+      } else {
+        // When no API is available, update localStorage
+        try {
+          const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+          if (savedAnnotations) {
+            let annotationsList: any[] = JSON.parse(savedAnnotations);
+            const existingIndex = annotationsList.findIndex((ann: any) => ann.id === annotationId);
+            if (existingIndex >= 0) {
+              annotationsList[existingIndex] = {
+                ...annotationsList[existingIndex],
+                content: cocoData,
+                name: fullFileName,
+                date: new Date().toISOString().split('T')[0],
+                classCount: cocoData.categories?.length || 0,
+                imageCount: cocoData.images?.length || 0,
+              };
+              localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
+              
+              toast({
+                title: "Annotation updated",
+                description: `Classification annotations updated locally`,
+              });
+            }
+          }
+        } catch (storageError) {
+          console.error('Failed to save to localStorage:', storageError);
+          toast({
+            title: "Update failed", 
+            description: "Failed to update annotations locally",
+            variant: "destructive",
+          });
+        }
+      }
+
+    } catch (error) {
+      console.error('Error updating annotations:', error);
+      toast({
+        title: "Update failed",
+        description: error instanceof Error ? error.message : "Failed to update annotations",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Upload new annotation file to dataset (from dialog)
+  const handleUpload = async () => {
+    if (!uploadFileName.trim()) {
+      toast({
+        title: "Name required",
+        description: "Please enter a name for the annotation file",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Convert to COCO format
+      const cocoData = convertToCOCOFormat();
+      const fileName = uploadFileName.trim().endsWith('.json') ? uploadFileName.trim() : `${uploadFileName.trim()}.json`;
+
+      // Create JSON file
+      const jsonContent = JSON.stringify(cocoData, null, 2);
+
       // Upload to backend if API is available
       if (api) {
         try {
           const file = new File([jsonContent], fileName, { type: 'application/json' });
-          const result = await api.importAnnotations(id!, file, 'classification');
+          
+          let result;
+          if (annotationId) {
+            // Update existing annotation
+            result = await api.updateAnnotationContent(id!, annotationId, file);
+          } else {
+            // Create new annotation
+            result = await api.importAnnotations(id!, file, 'classification');
+          }
           
           if (result.success) {
             // Also save to localStorage for annotations display
@@ -494,90 +1095,150 @@ export default function Classification() {
               const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
               let annotationsList: any[] = savedAnnotations ? JSON.parse(savedAnnotations) : [];
               
-              // Add the new classification annotation
-              const annotationFile = {
-                id: `classification_${Date.now()}`,
-                name: fileName,
-                date: new Date().toISOString().split('T')[0], // Today's date
-                format: 'COCO',
-                type: 'classification',
-                classCount: cocoData.categories?.length || 0,
-                imageCount: cocoData.images?.length || 0,
-                matchedImageCount: 0,
-                datasetId: id!,
-                classStats: [],
-                samples: [],
-                isVisible: false,
-                classColors: {},
-                imageMapping: {},
-                content: cocoData // Store the actual COCO data
-              };
+              if (annotationId) {
+                // Update existing annotation in localStorage
+                const existingIndex = annotationsList.findIndex((ann: any) => ann.id === annotationId);
+                if (existingIndex >= 0) {
+                  annotationsList[existingIndex] = {
+                    ...annotationsList[existingIndex],
+                    content: cocoData,
+                    name: fileName,
+                    date: new Date().toISOString().split('T')[0],
+                    classCount: cocoData.categories?.length || 0,
+                    imageCount: cocoData.images?.length || 0,
+                  };
+                }
+              } else {
+                // Add new classification annotation
+                const newAnnotationId = result.data?.file_id || `classification_${Date.now()}`;
+                const annotationFile = {
+                  id: newAnnotationId,
+                  name: fileName,
+                  date: new Date().toISOString().split('T')[0],
+                  format: 'COCO',
+                  type: 'classification',
+                  classCount: cocoData.categories?.length || 0,
+                  imageCount: cocoData.images?.length || 0,
+                  matchedImageCount: 0,
+                  datasetId: id!,
+                  classStats: [],
+                  samples: [],
+                  isVisible: true,
+                  classColors: classColors,
+                  imageMapping: {},
+                  content: cocoData
+                };
+                
+                annotationsList.unshift(annotationFile);
+              }
               
-              annotationsList.unshift(annotationFile); // Add to top of list
               localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
             } catch (storageError) {
               console.error('Failed to save to localStorage:', storageError);
             }
             
             toast({
-              title: "Annotations saved",
-              description: `Classification annotations saved in COCO format and uploaded to dataset`,
+              title: "Annotation saved", 
+              description: annotationId 
+                ? `Classification annotations updated in dataset`
+                : `Classification annotations saved as "${fileName}" and uploaded to dataset`,
             });
             
             // Clear classification data after successful upload since it's now stored as annotations
-            if (storage) {
+            if (storage && !annotationId) {
               storage.clearData();
               console.log('Classification data cleared after successful upload');
             }
+
+            // Close dialog and reset filename
+            setUploadDialogOpen(false);
+            setUploadFileName("");
+            
+            // If creating new annotation, navigate to edit mode
+            if (!annotationId) {
+              const newAnnotationId = result.data?.file_id || `classification_${Date.now()}`;
+              navigate(`/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}`);
+            }
             
           } else {
-            throw new Error(result.error || 'Failed to upload to backend');
+            throw new Error(result.error || 'Failed to save to dataset');
           }
         } catch (uploadError) {
-          console.error('Failed to upload to backend:', uploadError);
+          console.error('Failed to save to dataset:', uploadError);
           toast({
-            title: "Partially saved",
-            description: `File downloaded locally, but failed to upload to dataset: ${uploadError instanceof Error ? uploadError.message : 'Unknown error'}`,
+            title: "Save failed",
+            description: uploadError instanceof Error ? uploadError.message : 'Unknown error occurred',
             variant: "destructive",
           });
         }
       } else {
-        // When no API is available, also save to localStorage for annotations display
+        // When no API is available, save to localStorage for annotations display
         try {
           const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
           let annotationsList: any[] = savedAnnotations ? JSON.parse(savedAnnotations) : [];
           
-          // Add the new classification annotation
-          const annotationFile = {
-            id: `classification_${Date.now()}`,
-            name: fileName,
-            date: new Date().toISOString().split('T')[0], // Today's date
-            format: 'COCO',
-            type: 'classification',
-            classCount: cocoData.categories?.length || 0,
-            imageCount: cocoData.images?.length || 0,
-            matchedImageCount: 0,
-            datasetId: id!,
-            classStats: [],
-            samples: [],
-            isVisible: false,
-            classColors: {},
-            imageMapping: {},
-            content: cocoData // Store the actual COCO data
-          };
+          if (annotationId) {
+            // Update existing annotation in localStorage
+            const existingIndex = annotationsList.findIndex((ann: any) => ann.id === annotationId);
+            if (existingIndex >= 0) {
+              annotationsList[existingIndex] = {
+                ...annotationsList[existingIndex],
+                content: cocoData,
+                name: fileName,
+                date: new Date().toISOString().split('T')[0],
+                classCount: cocoData.categories?.length || 0,
+                imageCount: cocoData.images?.length || 0,
+              };
+            }
+          } else {
+            // Add new classification annotation
+            const newAnnotationId = `classification_${Date.now()}`;
+            const annotationFile = {
+              id: newAnnotationId,
+              name: fileName,
+              date: new Date().toISOString().split('T')[0],
+              format: 'COCO',
+              type: 'classification',
+              classCount: cocoData.categories?.length || 0,
+              imageCount: cocoData.images?.length || 0,
+              matchedImageCount: 0,
+              datasetId: id!,
+              classStats: [],
+              samples: [],
+              isVisible: true,
+              classColors: classColors,
+              imageMapping: {},
+              content: cocoData
+            };
+            
+            annotationsList.unshift(annotationFile);
+          }
           
-          annotationsList.unshift(annotationFile); // Add to top of list
           localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(annotationsList));
           
           toast({
-            title: "Annotations saved",
-            description: `Classification annotations saved in COCO format (local download only)`,
+            title: "Annotation saved",
+            description: annotationId 
+              ? `Classification annotations updated locally`
+              : `Classification annotations saved locally as "${fileName}"`,
           });
+
+          // Close dialog and reset filename
+          setUploadDialogOpen(false);
+          setUploadFileName("");
+          
+          // If creating new annotation, navigate to edit mode
+          if (!annotationId) {
+            const newAnnotationId = `classification_${Date.now()}`;
+            navigate(`/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}`);
+          }
+          
         } catch (storageError) {
           console.error('Failed to save to localStorage:', storageError);
           toast({
-            title: "Annotations saved",
-            description: `Classification annotations saved in COCO format (local download only, but not added to annotations list)`,
+            title: "Save failed", 
+            description: "Failed to save annotations locally",
+            variant: "destructive",
           });
         }
       }
@@ -614,26 +1275,45 @@ export default function Classification() {
         <div className="px-6 py-4 border-b bg-background">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <Button variant="ghost" asChild>
-                <Link to={`/datasets/${id}/annotate`}>
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back to Annotation Choice
-                </Link>
+              <Button variant="ghost" onClick={handleBackToDataset}>
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Dataset
               </Button>
               <div>
-                <h1 className="text-2xl font-semibold">Classification</h1>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-semibold">Classification</h1>
+                  {annotationId && (
+                    <Badge variant="outline" className="text-xs">
+                      Editing Annotation
+                    </Badge>
+                  )}
+                </div>
+                {annotationId && (
+                  <div className="bg-blue-500/10 text-blue-400 px-3 py-1 rounded-md text-sm font-medium mb-2 border border-blue-500/20">
+                    Editing existing annotation file
+                  </div>
+                )}
                 <p className="text-muted-foreground">
                   Assign class labels to images ({images.length} total images)
                 </p>
+                {showNavigationTip && (
+                  <div className="text-xs text-blue-400 mt-1">
+                    Use ← → to navigate page
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button onClick={handleSaveAnnotations} className="mr-2">
+              <Button onClick={handleSave} variant="outline">
                 <Save className="h-4 w-4 mr-2" />
-                Save & Upload
+                Save
+              </Button>
+              <Button onClick={handleDownload}>
+                <Download className="h-4 w-4 mr-2" />
+                Download
               </Button>
               {sessionOnly && (
-                <Badge variant="destructive" className="mr-2">
+                <Badge variant="destructive" className="ml-2">
                   Session Only
                 </Badge>
               )}
@@ -649,6 +1329,10 @@ export default function Classification() {
                 size="icon"
                 onClick={handlePrevPage}
                 disabled={currentPage === 1}
+                onMouseEnter={() => setShowNavigationTip(true)}
+                onMouseLeave={() => setShowNavigationTip(false)}
+                onFocus={() => setShowNavigationTip(true)}
+                onBlur={() => setShowNavigationTip(false)}
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -660,6 +1344,10 @@ export default function Classification() {
                 size="icon"
                 onClick={handleNextPage}
                 disabled={currentPage === totalPages}
+                onMouseEnter={() => setShowNavigationTip(true)}
+                onMouseLeave={() => setShowNavigationTip(false)}
+                onFocus={() => setShowNavigationTip(true)}
+                onBlur={() => setShowNavigationTip(false)}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -714,16 +1402,22 @@ export default function Classification() {
                         <div className="space-y-1">
                           {classes.map((className) => {
                             const isAssigned = imageClasses.includes(className);
+                            const classColor = getClassColor(className);
                             return (
                               <Button
                                 key={className}
                                 variant={isAssigned ? "default" : "outline"}
                                 size="sm"
-                                className="w-full h-7 text-xs"
+                                className="w-full h-7 text-xs flex items-center justify-start gap-2"
                                 onClick={() => handleImageClassToggle(image.id, className)}
+                                style={isAssigned ? { backgroundColor: classColor, borderColor: classColor } : { borderColor: classColor }}
                               >
-                                {isAssigned && <Check className="h-3 w-3 mr-1" />}
-                                {className}
+                                <div 
+                                  className="w-2 h-2 rounded-full flex-shrink-0" 
+                                  style={{ backgroundColor: classColor }}
+                                />
+                                {isAssigned && <Check className="h-3 w-3 flex-shrink-0" />}
+                                <span className="truncate">{className}</span>
                               </Button>
                             );
                           })}
@@ -748,7 +1442,10 @@ export default function Classification() {
             <ScrollArea className="h-full">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">Class Management</h3>
+                  <h3 className="text-lg font-semibold mb-2">Class Management</h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Use keys 1-9 to quickly select classes
+                  </p>
                   
                   {/* Add new class */}
                   <div className="flex gap-2 mb-4">
@@ -771,12 +1468,13 @@ export default function Classification() {
                   <div className="space-y-2">
                     <h4 className="text-sm font-medium text-muted-foreground">
                       Available Classes ({classes.length})
-                      <span className="text-xs ml-2 opacity-60">Click to select for bulk ops</span>
+                      <span className="text-xs ml-2 opacity-60">Click to select • Keys 1-9 for shortcuts</span>
                     </h4>
-                    {classes.map((className) => {
+                    {classes.map((className, index) => {
                       const totalAssigned = Object.values(classifications).filter(
                         imageClasses => imageClasses.includes(className)
                       ).length;
+                      const shortcutKey = index < 9 ? (index + 1).toString() : null;
                       
                       return (
                         <Card 
@@ -788,34 +1486,41 @@ export default function Classification() {
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
-                              <p className="font-medium">{className}</p>
+                              <div className="flex items-center gap-2">
+                                {/* Color indicator */}
+                                <div className="relative">
+                                  <button
+                                    className="w-5 h-5 rounded-full border-2 border-gray-500 hover:border-gray-300 transition-colors"
+                                    style={{ backgroundColor: getClassColor(className) }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Click to change color"
+                                  >
+                                    <input
+                                      type="color"
+                                      value={getClassColor(className)}
+                                      onChange={(e) => handleClassColorChange(className, e.target.value)}
+                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  </button>
+                                </div>
+                                <p className="font-medium">{className}</p>
+                                {shortcutKey && (
+                                  <Badge 
+                                    variant={selectedClass === className ? "default" : "outline"} 
+                                    className={`text-xs px-1.5 py-0.5 h-5 ${
+                                      selectedClass === className ? 'bg-primary text-primary-foreground' : ''
+                                    }`}
+                                  >
+                                    {shortcutKey}
+                                  </Badge>
+                                )}
+                              </div>
                               <p className="text-xs text-muted-foreground">
                                 {totalAssigned} image{totalAssigned !== 1 ? 's' : ''} assigned
                               </p>
                             </div>
                             <div className="flex items-center gap-1">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAssignToAllOnPage(className);
-                                }}
-                                title="Assign to all images on page (Ctrl+A)"
-                              >
-                                AP
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAssignWithoutClasses(className);
-                                }}
-                                title="Assign to unclassified images on page (Ctrl+U)"
-                              >
-                                AU
-                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -844,26 +1549,59 @@ export default function Classification() {
                     <Card className="p-3">
                       <p className="text-sm mb-3">Selected: {selectedClass}</p>
                       <div className="space-y-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => handleAssignToAllOnPage(selectedClass)}
-                          title="Assign to all images on page (Ctrl+A)"
-                        >
-                          AP - Assign to All
-                          <span className="ml-2 text-xs opacity-60">Ctrl+A</span>
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => handleAssignWithoutClasses(selectedClass)}
-                          title="Assign to unclassified images on page (Ctrl+U)"
-                        >
-                          AU - Assign Unclassified
-                          <span className="ml-2 text-xs opacity-60">Ctrl+U</span>
-                        </Button>
+                        {(() => {
+                          // Check if all images on page have the selected class
+                          const allImagesHaveClass = paginatedImages.every(image => {
+                            const imageClasses = classifications[image.id] || [];
+                            return imageClasses.includes(selectedClass);
+                          });
+                          
+                          return (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => handleAssignToAllOnPage(selectedClass)}
+                              title={allImagesHaveClass 
+                                ? "Remove from all images on page (Ctrl+A)" 
+                                : "Assign to all images on page (Ctrl+A)"
+                              }
+                            >
+                              {allImagesHaveClass ? "AP - Remove from All" : "AP - Assign to All"}
+                              <span className="ml-2 text-xs opacity-60">Ctrl+A</span>
+                            </Button>
+                          );
+                        })()}
+                        {(() => {
+                          // Check for unclassified images and images with only this class
+                          const unclassifiedImages = paginatedImages.filter(image => {
+                            const imageClasses = classifications[image.id] || [];
+                            return imageClasses.length === 0;
+                          });
+                          
+                          const imagesWithOnlyThisClass = paginatedImages.filter(image => {
+                            const imageClasses = classifications[image.id] || [];
+                            return imageClasses.length === 1 && imageClasses[0] === selectedClass;
+                          });
+                          
+                          const shouldShowRemove = imagesWithOnlyThisClass.length > 0 && unclassifiedImages.length === 0;
+                          
+                          return (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => handleAssignWithoutClasses(selectedClass)}
+                              title={shouldShowRemove
+                                ? "Remove from previously assigned, making them unclassified (Ctrl+U)"
+                                : "Assign to unclassified images on page (Ctrl+U)"
+                              }
+                            >
+                              {shouldShowRemove ? "AU - Remove & Unclassify" : "AU - Assign Unclassified"}
+                              <span className="ml-2 text-xs opacity-60">Ctrl+U</span>
+                            </Button>
+                          );
+                        })()}
                       </div>
                     </Card>
                   </div>
@@ -996,6 +1734,74 @@ export default function Classification() {
           </div>
         </div>
       </main>
+
+      {/* Save Dialog */}
+      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save Classification Annotations</DialogTitle>
+            <DialogDescription>
+              Enter a name for your classification annotation file to save it to the dataset.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              placeholder="Enter annotation file name..."
+              value={uploadFileName}
+              onChange={(e) => setUploadFileName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && uploadFileName.trim()) {
+                  handleUpload();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpload} disabled={!uploadFileName.trim()}>
+              <Save className="h-4 w-4 mr-2" />
+              Save to Dataset
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmDialog.isOpen} onOpenChange={(open) => 
+        !open && setDeleteConfirmDialog({ isOpen: false, className: '', annotationCount: 0 })
+      }>
+        <DialogContent className="bg-gray-900 text-white border-gray-700">
+          <DialogHeader>
+            <DialogTitle>Delete Class</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Are you sure you want to delete the class "{deleteConfirmDialog.className}"?
+              {deleteConfirmDialog.annotationCount > 0 && (
+                <span className="block mt-2 font-medium text-red-400">
+                  This will also delete {deleteConfirmDialog.annotationCount} annotation{deleteConfirmDialog.annotationCount !== 1 ? 's' : ''}.
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteConfirmDialog({ isOpen: false, className: '', annotationCount: 0 })}
+              className="border-gray-600 text-gray-300 hover:bg-gray-800"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDeleteClass}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
