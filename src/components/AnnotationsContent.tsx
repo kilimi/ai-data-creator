@@ -1458,24 +1458,36 @@ export function AnnotationsContent({
                        <div className="font-medium">{file.name}</div>
                         <div className="text-xs text-muted-foreground mt-1">
                           {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
-                          {(file.type || (file as any).type) && (
+                          {(() => {
+                            // Debug: Show file type info
+                            console.log('File type debug:', file.name, 'type:', file.type, 'as any type:', (file as any).type);
+                            return null;
+                          })()}
+                          {(file.type || (file as any).type || 
+                            // Auto-detect if type is missing but filename suggests classification
+                            (file.name && file.name.toLowerCase().includes('classification'))
+                          ) && (
                             <Badge 
                               variant="secondary" 
                               className={`ml-2 text-xs capitalize ${
-                                (file.type === 'classification' || (file as any).type === 'classification') 
+                                (file.type === 'classification' || (file as any).type === 'classification' || 
+                                 (file.name && file.name.toLowerCase().includes('classification'))) 
                                   ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors' 
                                   : ''
                               }`}
                               onClick={(e) => {
-                                if (file.type === 'classification' || (file as any).type === 'classification') {
+                                if (file.type === 'classification' || (file as any).type === 'classification' ||
+                                    (file.name && file.name.toLowerCase().includes('classification'))) {
                                   handleEditClassificationAnnotation(file.id, e);
                                 }
                               }}
-                              title={(file.type === 'classification' || (file as any).type === 'classification') 
+                              title={(file.type === 'classification' || (file as any).type === 'classification' ||
+                                     (file.name && file.name.toLowerCase().includes('classification'))) 
                                 ? 'Click to edit classification annotations' 
-                                : undefined}
+                                : `Type: ${file.type || (file as any).type || 'unknown'}`}
                             >
-                              {file.type || (file as any).type}
+                              {file.type || (file as any).type || 
+                               (file.name && file.name.toLowerCase().includes('classification') ? 'classification' : 'annotation')}
                             </Badge>
                           )}
                         </div>
