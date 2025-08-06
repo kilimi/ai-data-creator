@@ -51,7 +51,7 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics, se
         ))}
       </div>
       
-      <div className="pt-2 space-y-3">
+      <div className="pt-2">
         <div className="h-2 w-full flex rounded-full overflow-hidden">
           {sortedStats.map((stat) => (
             <div
@@ -61,26 +61,6 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics, se
                 width: `${(stat.count / totalInstances) * 100}%`,
               }}
             />
-          ))}
-        </div>
-        
-        <div className="space-y-3">
-          {sortedStats.map((stat) => (
-            <div key={stat.className} className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="font-medium">{stat.className}</span>
-                <span className="text-muted-foreground">
-                  {stat.count} instances
-                </span>
-              </div>
-              <Progress
-                value={(stat.count / totalInstances) * 100}
-                className="h-2"
-                style={{
-                  ["--progress-background" as any]: stat.color,
-                }}
-              />
-            </div>
           ))}
         </div>
       </div>

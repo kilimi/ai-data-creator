@@ -54,6 +54,12 @@
   .nav-blur {
     @apply bg-background/80 backdrop-blur-md border-b border-border/40;
   }
+  
+  /* Optimized animations to reduce flickering */
+  .smooth-appear {
+    opacity: 0;
+    animation: smooth-fade-in 0.3s ease-out forwards;
+  }
 }
 
 /* Modern animations */
@@ -65,6 +71,15 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes smooth-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

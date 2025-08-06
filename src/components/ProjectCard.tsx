@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useState } from "react";
+import { useState, memo } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { createApiClient } from "@/utils/api";
 import { API_CONFIG } from "@/config/api";
@@ -350,3 +350,6 @@ export function ProjectCardSkeleton() {
     </Card>
   );
 }
+
+// Optimize with React.memo to prevent unnecessary re-renders
+export const MemoizedProjectCard = memo(ProjectCard);

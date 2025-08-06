@@ -18,25 +18,37 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useApi } from "@/hooks/use-api";
+import { useStableLoading } from "@/hooks/useStableLoading";
 
 export default function Index() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { api, isConfigured } = useApi();
+  const { api, isConfigured, isConnected } = useApi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
+  
+  // Use stable loading to prevent flickering
+  const stableLoading = useStableLoading(loading, 250);
 
   useEffect(() => {
     const fetchProjects = async () => {
-      if (!isConfigured || !api) {
+      // Wait for API configuration and connection to be established
+      if (!isConfigured || !api || isConnected === null) {
+        return;
+      }
+
+      // If connection failed, set loading to false and return
+      if (isConnected === false) {
         setLoading(false);
+        setError('API connection failed');
         return;
       }
 
       try {
+        setError(null); // Clear any previous errors
         const response = await api.getProjects();
         
         if (response.success && response.data) {
@@ -70,7 +82,7 @@ export default function Index() {
     };
 
     fetchProjects();
-  }, [api, isConfigured, toast]);
+  }, [api, isConfigured, isConnected, toast]);
 
   const filteredAndSortedProjects = () => {
     let result = [...projects];
@@ -108,7 +120,7 @@ export default function Index() {
       
       <main className="container max-w-7xl mx-auto px-4 pt-32">
         {/* Hero Section */}
-        <div className="relative mb-8 text-center animate-fade-in">
+        <div className="relative mb-8 text-center">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-accent/10 to-secondary/10 rounded-2xl blur-3xl -z-10" />
           <div className="relative bg-card/80 backdrop-blur-sm border rounded-2xl p-6">
             {/* Stats Cards */}
@@ -164,7 +176,7 @@ export default function Index() {
         {/* Projects Section */}
         <div className="mb-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-            <div className="animate-fade-in delay-300">
+            <div>
               <h2 className="text-2xl font-bold flex items-center gap-2">
                 <TrendingUp className="w-6 h-6 text-primary" />
                 Your Projects
@@ -173,7 +185,7 @@ export default function Index() {
             </div>
           </div>
           
-          <div className="flex flex-col sm:flex-row gap-4 mb-6 animate-fade-in delay-500">
+          <div className="flex flex-col sm:flex-row gap-4 mb-6">
             <div className="flex-1 flex items-center gap-4">
               <div className="relative flex-1 max-w-md">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -199,14 +211,14 @@ export default function Index() {
         </div>
 
         {/* Projects Grid */}
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-700">
+        {stableLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Array(6).fill(0).map((_, i) => (
               <ProjectCardSkeleton key={i} />
             ))}
           </div>
         ) : error ? (
-          <Card className="p-8 text-center animate-fade-in delay-700">
+          <Card className="p-8 text-center">
             <div className="text-destructive mb-4">
               <Zap className="w-12 h-12 mx-auto mb-2 opacity-50" />
               <h3 className="text-lg font-medium">Connection Error</h3>
@@ -217,7 +229,7 @@ export default function Index() {
             </Button>
           </Card>
         ) : filteredAndSortedProjects().length === 0 ? (
-          <Card className="p-12 text-center animate-fade-in delay-700">
+          <Card className="p-12 text-center">
             <div className="mb-6">
               <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center">
                 <Brain className="w-12 h-12 text-primary" />
@@ -247,11 +259,9 @@ export default function Index() {
             </div>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-700">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredAndSortedProjects().map((project, index) => (
-              <div key={project.id} className="animate-fade-up" style={{ animationDelay: `${index * 100}ms` }}>
-                <ProjectCard project={project} />
-              </div>
+              <ProjectCard key={project.id} project={project} />
             ))}
           </div>
         )}

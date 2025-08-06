@@ -36,7 +36,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { project: originalProject, loading, error } = useProject(id || '');
-  const { api } = useApi();
+  const { api, isConnected } = useApi();
   const { toast } = useToast();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -141,12 +141,19 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   // Add useEffect to fetch individual dataset data when not in project mode
   useEffect(() => {
     const fetchDataset = async () => {
-      if (!projectMode && id && api) {
+      if (!projectMode && id && api && isConnected === true) {
         try {
           setIsLoading(true);
           const response = await api.getDataset(id);
           if (response.success && response.data) {
             setDatasets([response.data]);
+          } else {
+            console.error('Failed to fetch dataset:', response.error);
+            toast({
+              title: "Error",
+              description: "Failed to load dataset details",
+              variant: "destructive",
+            });
           }
         } catch (error) {
           console.error('Error fetching dataset:', error);
@@ -158,11 +165,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         } finally {
           setIsLoading(false);
         }
+      } else if (!projectMode && isConnected === false) {
+        setIsLoading(false);
       }
     };
 
     fetchDataset();
-  }, [id, projectMode, api]);
+  }, [id, projectMode, api, isConnected]);
 
   // Get all unique tags from datasets
   const allTags = Array.from(
@@ -334,7 +343,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         </div>
         
         {/* Search and Filter Controls */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-4 animate-fade-in delay-150">
+        <div className="flex flex-col sm:flex-row gap-4 mb-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
             <Input
@@ -400,7 +409,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         
         {/* Tag Filter */}
         {allTags.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-6 animate-fade-in delay-200">
+          <div className="flex flex-wrap gap-2 mb-6">
             <Button
               variant={selectedTag === null ? "default" : "outline"}
               size="sm"
@@ -439,7 +448,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             <p>Project not found</p>
           </Card>
         ) : filteredAndSortedDatasets().length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in delay-300">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredAndSortedDatasets().map(dataset => (
               <DatasetCard 
                 key={dataset.id} 

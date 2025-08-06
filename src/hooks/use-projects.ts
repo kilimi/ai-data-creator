@@ -7,17 +7,24 @@ import { Project } from '@/types';
  * Hook to fetch projects with their datasets
  */
 export const useProjects = () => {
-  const { api, isConfigured } = useApi();
+  const { api, isConfigured, isConnected } = useApi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isConfigured || !api) return;
+    if (!isConfigured || !api || isConnected === null) return;
+
+    // If connection failed, set loading to false and return
+    if (isConnected === false) {
+      setLoading(false);
+      setError('API connection failed');
+      return;
+    }
 
     const fetchProjects = async () => {
-      setLoading(true);
       try {
+        setError(null); // Clear any previous errors
         const response = await api.getProjects();
         
         if (response.success && response.data) {
@@ -34,7 +41,7 @@ export const useProjects = () => {
     };
 
     fetchProjects();
-  }, [api, isConfigured]);
+  }, [api, isConfigured, isConnected]);
 
   return { projects, loading, error };
 };
@@ -43,17 +50,26 @@ export const useProjects = () => {
  * Hook to fetch a single project with its datasets
  */
 export const useProject = (projectId: string) => {
-  const { api, isConfigured } = useApi();
+  const { api, isConfigured, isConnected } = useApi();
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isConfigured || !api || !projectId) return;
+    if (!isConfigured || !api || !projectId || isConnected === null) {
+      return;
+    }
+
+    // If connection failed, set loading to false and return
+    if (isConnected === false) {
+      setLoading(false);
+      setError('API connection failed');
+      return;
+    }
 
     const fetchProject = async () => {
-      setLoading(true);
       try {
+        setError(null); // Clear any previous errors
         const response = await api.getProject(projectId);
         
         if (response.success && response.data) {
@@ -70,7 +86,7 @@ export const useProject = (projectId: string) => {
     };
 
     fetchProject();
-  }, [api, isConfigured, projectId]);
+  }, [api, isConfigured, isConnected, projectId]);
 
   return { project, loading, error };
 };

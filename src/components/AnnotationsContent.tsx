@@ -1696,7 +1696,7 @@ export function AnnotationsContent({
                     <div className="p-4">
                       <div className="flex items-center justify-between mb-4">
                         <h4 className="text-sm font-medium">
-                          {detectAnnotationType(file) === 'classification' ? 'JSON Content' : 'Statistics & Configuration'}
+                          Statistics & Configuration
                         </h4>
                         {dirtyAnnotationIds.has(file.id) && (
                           <Button size="sm" className="ml-2" onClick={() => handleSaveAnnotationFile(file.id)}>
@@ -1705,47 +1705,32 @@ export function AnnotationsContent({
                         )}
                       </div>
                       
-                      {/* Classification JSON Content */}
-                      {detectAnnotationType(file) === 'classification' ? (
-                        <div className="mb-6">
-                          <h5 className="text-xs font-medium mb-3 text-gray-400">Classification Data</h5>
-                          <div className="bg-gray-900 rounded border border-gray-600 p-4">
-                            <pre className="text-xs text-gray-300 whitespace-pre-wrap overflow-x-auto">
-                              {JSON.stringify((file as any).content, null, 2)}
-                            </pre>
-                          </div>
+                      {/* Statistics section - now shown for all annotation types including classification */}
+                      <div className="mb-6">
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="text-xs ml-2 bg-yellow-400 text-black hover:bg-yellow-300 border-yellow-400"
+                            onClick={() => setMergeDialogOpen(true)}
+                          >
+                            Merge Classes
+                          </Button>
                         </div>
-                      ) : (
-                        <>
-                          {/* Statistics section */}
-                          <div className="mb-6">
-                            <div className="flex items-center justify-between mb-2">
-                              <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                className="text-xs ml-2 bg-yellow-400 text-black hover:bg-yellow-300 border-yellow-400"
-                                onClick={() => setMergeDialogOpen(true)}
-                              >
-                                Merge Classes
-                              </Button>
-                            </div>
-                            <ClassStatistics
-                              statistics={file.classStats || []}
-                              selectedClass={selectedClass}
-                              onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
-                            />
-                          </div>
-                        </>
-                      )}
+                        <ClassStatistics
+                          statistics={file.classStats || []}
+                          selectedClass={selectedClass}
+                          onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
+                        />
+                      </div>
                       
-                      {/* Class Configuration section - only for non-classification annotations */}
-                      {detectAnnotationType(file) !== 'classification' && (
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-4">
-                            Click a class color icon in the statistics above to customize its appearance
-                          </p>
-                          {selectedClass && file.classStats && (
+                      {/* Class Configuration section - now available for all annotation types */}
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-4">
+                          Click a class color icon in the statistics above to customize its appearance
+                        </p>
+                        {selectedClass && file.classStats && (
                             <div className="mt-4 pt-4 border-t border-gray-700">
                               <ClassColorOpacityPicker
                                 annotationId={file.id}
@@ -1767,8 +1752,7 @@ export function AnnotationsContent({
                             onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
                           />
                         </div>
-                      )}
-                    </div>
+                      </div>
                   </div>
                 )}
               </div>

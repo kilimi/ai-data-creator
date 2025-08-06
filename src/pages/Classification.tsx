@@ -9,8 +9,9 @@ import { Navbar } from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { Image } from "@/types";
-import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2, Save, Upload, Download } from "lucide-react";
+import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2, Save, Upload, Download, Settings, BarChart3, Database } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { PaginationControls } from "@/components/PaginationControls";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
@@ -61,6 +62,7 @@ export default function Classification() {
     className: string;
     annotationCount: number;
   }>({ isOpen: false, className: '', annotationCount: 0 });
+  const [activeTab, setActiveTab] = useState("class-management");
   
   // Color utility functions
   const generateRandomColor = () => {
@@ -1448,11 +1450,37 @@ export default function Classification() {
             <ScrollArea className="h-full">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-semibold mb-2">Class Management</h3>
+                  <h3 className="text-lg font-semibold mb-2">Annotation Tools</h3>
                   <p className="text-xs text-muted-foreground mb-4">
-                    Use keys 1-9 to quickly select classes
+                    Manage classes, view statistics, and configure storage
                   </p>
                   
+                  <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                    <TabsList className="grid w-full grid-cols-3 bg-gray-800/50 border border-gray-700">
+                      <TabsTrigger 
+                        value="class-management"
+                        className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-sm"
+                      >
+                        <Settings className="h-4 w-4 mr-2" />
+                        Classes
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="statistics"
+                        className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-sm"
+                      >
+                        <BarChart3 className="h-4 w-4 mr-2" />
+                        Stats
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="storage"
+                        className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-sm"
+                      >
+                        <Database className="h-4 w-4 mr-2" />
+                        Storage
+                      </TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="class-management" className="mt-4 space-y-4">
                   {/* Add new class */}
                   <div className="flex gap-2 mb-4">
                     <Input
@@ -1544,196 +1572,200 @@ export default function Classification() {
                       );
                     })}
                   </div>
-                </div>
 
-                {/* Bulk operations */}
-                {selectedClass && (
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-3">
-                      Bulk Operations
-                    </h4>
-                    <Card className="p-3">
-                      <p className="text-sm mb-3">Selected: {selectedClass}</p>
-                      <div className="space-y-2">
-                        {(() => {
-                          // Check if all images on page have the selected class
-                          const allImagesHaveClass = paginatedImages.every(image => {
-                            const imageClasses = classifications[image.id] || [];
-                            return imageClasses.includes(selectedClass);
-                          });
-                          
-                          return (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full"
-                              onClick={() => handleAssignToAllOnPage(selectedClass)}
-                              title={allImagesHaveClass 
-                                ? "Remove from all images on page (Ctrl+A)" 
-                                : "Assign to all images on page (Ctrl+A)"
-                              }
-                            >
-                              {allImagesHaveClass ? "AP - Remove from All" : "AP - Assign to All"}
-                              <span className="ml-2 text-xs opacity-60">Ctrl+A</span>
-                            </Button>
-                          );
-                        })()}
-                        {(() => {
-                          // Check for unclassified images and images with only this class
-                          const unclassifiedImages = paginatedImages.filter(image => {
-                            const imageClasses = classifications[image.id] || [];
-                            return imageClasses.length === 0;
-                          });
-                          
-                          const imagesWithOnlyThisClass = paginatedImages.filter(image => {
-                            const imageClasses = classifications[image.id] || [];
-                            return imageClasses.length === 1 && imageClasses[0] === selectedClass;
-                          });
-                          
-                          const shouldShowRemove = imagesWithOnlyThisClass.length > 0 && unclassifiedImages.length === 0;
-                          
-                          return (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full"
-                              onClick={() => handleAssignWithoutClasses(selectedClass)}
-                              title={shouldShowRemove
-                                ? "Remove from previously assigned, making them unclassified (Ctrl+U)"
-                                : "Assign to unclassified images on page (Ctrl+U)"
-                              }
-                            >
-                              {shouldShowRemove ? "AU - Remove & Unclassify" : "AU - Assign Unclassified"}
-                              <span className="ml-2 text-xs opacity-60">Ctrl+U</span>
-                            </Button>
-                          );
-                        })()}
-                      </div>
-                    </Card>
-                  </div>
-                )}
+                  {/* Bulk operations */}
+                  {selectedClass && (
+                    <div className="mt-4">
+                      <h4 className="text-sm font-medium text-muted-foreground mb-3">
+                        Bulk Operations
+                      </h4>
+                      <Card className="p-3">
+                        <p className="text-sm mb-3">Selected: {selectedClass}</p>
+                        <div className="space-y-2">
+                          {(() => {
+                            // Check if all images on page have the selected class
+                            const allImagesHaveClass = paginatedImages.every(image => {
+                              const imageClasses = classifications[image.id] || [];
+                              return imageClasses.includes(selectedClass);
+                            });
+                            
+                            return (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => handleAssignToAllOnPage(selectedClass)}
+                                title={allImagesHaveClass 
+                                  ? "Remove from all images on page (Ctrl+A)" 
+                                  : "Assign to all images on page (Ctrl+A)"
+                                }
+                              >
+                                {allImagesHaveClass ? "AP - Remove from All" : "AP - Assign to All"}
+                                <span className="ml-2 text-xs opacity-60">Ctrl+A</span>
+                              </Button>
+                            );
+                          })()}
+                          {(() => {
+                            // Check for unclassified images and images with only this class
+                            const unclassifiedImages = paginatedImages.filter(image => {
+                              const imageClasses = classifications[image.id] || [];
+                              return imageClasses.length === 0;
+                            });
+                            
+                            const imagesWithOnlyThisClass = paginatedImages.filter(image => {
+                              const imageClasses = classifications[image.id] || [];
+                              return imageClasses.length === 1 && imageClasses[0] === selectedClass;
+                            });
+                            
+                            const shouldShowRemove = imagesWithOnlyThisClass.length > 0 && unclassifiedImages.length === 0;
+                            
+                            return (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => handleAssignWithoutClasses(selectedClass)}
+                                title={shouldShowRemove
+                                  ? "Remove from previously assigned, making them unclassified (Ctrl+U)"
+                                  : "Assign to unclassified images on page (Ctrl+U)"
+                                }
+                              >
+                                {shouldShowRemove ? "AU - Remove & Unclassify" : "AU - Assign Unclassified"}
+                                <span className="ml-2 text-xs opacity-60">Ctrl+U</span>
+                              </Button>
+                            );
+                          })()}
+                        </div>
+                      </Card>
+                    </div>
+                  )}
+                    </TabsContent>
 
-                {/* Statistics */}
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-3">
-                    Statistics
-                  </h4>
-                  <Card className="p-3">
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span>Total Images:</span>
-                        <span>{images.length}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Total Classes:</span>
-                        <span>{classes.length}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Classified Images:</span>
-                        <span>
-                          {Object.keys(classifications).filter(
-                            imageId => classifications[imageId].length > 0
-                          ).length}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Unclassified Images:</span>
-                        <span>
-                          {images.length - Object.keys(classifications).filter(
-                            imageId => classifications[imageId].length > 0
-                          ).length}
-                        </span>
-                      </div>
-                      <hr className="my-2" />
-                      <div className="flex justify-between text-xs">
-                        <span>Storage Mode:</span>
-                        <span className={sessionOnly ? 'text-orange-600' : 'text-green-600'}>
-                          {sessionOnly ? 'Session Only' : 'Persistent'}
-                        </span>
-                      </div>
-                      {storage && (() => {
-                        const stats = storage.getStorageStats();
-                        return (
-                          <>
-                            <div className="flex justify-between text-xs">
-                              <span>Storage Used:</span>
-                              <span>{(stats.totalSize / 1024).toFixed(1)} KB</span>
+                    <TabsContent value="statistics" className="mt-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-muted-foreground mb-3">
+                          Statistics
+                        </h4>
+                        <Card className="p-3">
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span>Total Images:</span>
+                              <span>{images.length}</span>
                             </div>
-                            {stats.savings > 0 && (
-                              <div className="flex justify-between text-xs text-green-600">
-                                <span>Space Saved:</span>
-                                <span>{stats.savings.toFixed(1)}%</span>
+                            <div className="flex justify-between">
+                              <span>Total Classes:</span>
+                              <span>{classes.length}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Classified Images:</span>
+                              <span>
+                                {Object.keys(classifications).filter(
+                                  imageId => classifications[imageId].length > 0
+                                ).length}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Unclassified Images:</span>
+                              <span>
+                                {images.length - Object.keys(classifications).filter(
+                                  imageId => classifications[imageId].length > 0
+                                ).length}
+                              </span>
+                            </div>
+                            <hr className="my-2" />
+                            <div className="flex justify-between text-xs">
+                              <span>Storage Mode:</span>
+                              <span className={sessionOnly ? 'text-orange-600' : 'text-green-600'}>
+                                {sessionOnly ? 'Session Only' : 'Persistent'}
+                              </span>
+                            </div>
+                            {storage && (() => {
+                              const stats = storage.getStorageStats();
+                              return (
+                                <>
+                                  <div className="flex justify-between text-xs">
+                                    <span>Storage Used:</span>
+                                    <span>{(stats.totalSize / 1024).toFixed(1)} KB</span>
+                                  </div>
+                                  {stats.savings > 0 && (
+                                    <div className="flex justify-between text-xs text-green-600">
+                                      <span>Space Saved:</span>
+                                      <span>{stats.savings.toFixed(1)}%</span>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                            {sessionOnly && (
+                              <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-800">
+                                ⚠️ Session mode: Data won't persist after reload. Save before leaving!
                               </div>
                             )}
-                          </>
-                        );
-                      })()}
-                      {sessionOnly && (
-                        <div className="mt-2 p-2 bg-orange-50 border border-orange-200 rounded text-xs text-orange-800">
-                          ⚠️ Session mode: Data won't persist after reload. Save before leaving!
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                </div>
+                          </div>
+                        </Card>
+                      </div>
+                    </TabsContent>
 
-                {/* Storage Management */}
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-3">
-                    Storage Management
-                  </h4>
-                  <Card className="p-3">
-                    <div className="space-y-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => {
-                          const cleanedCount = LocalStorageCleanup.cleanupClassificationData(2);
-                          toast({
-                            title: "Storage cleaned",
-                            description: `Removed ${cleanedCount} old classification datasets`,
-                          });
-                        }}
-                      >
-                        Clean Old Data
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => {
-                          const analysis = LocalStorageCleanup.analyzeUsage();
-                          const totalMB = (analysis.totalSize / (1024 * 1024)).toFixed(2);
-                          toast({
-                            title: "Storage Analysis",
-                            description: `Total usage: ${totalMB} MB. Check console for details.`,
-                          });
-                          console.log('Storage Analysis:', analysis);
-                        }}
-                      >
-                        Analyze Storage
-                      </Button>
-                      {storage && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => {
-                            storage.clearData();
-                            setClassifications({});
-                            setClasses([]);
-                            toast({
-                              title: "Data cleared",
-                              description: "All classification data has been cleared",
-                            });
-                          }}
-                        >
-                          Clear Current Data
-                        </Button>
-                      )}
-                    </div>
-                  </Card>
+                    <TabsContent value="storage" className="mt-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-muted-foreground mb-3">
+                          Storage Management
+                        </h4>
+                        <Card className="p-3">
+                          <div className="space-y-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => {
+                                const cleanedCount = LocalStorageCleanup.cleanupClassificationData(2);
+                                toast({
+                                  title: "Storage cleaned",
+                                  description: `Removed ${cleanedCount} old classification datasets`,
+                                });
+                              }}
+                            >
+                              Clean Old Data
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => {
+                                const analysis = LocalStorageCleanup.analyzeUsage();
+                                const totalMB = (analysis.totalSize / (1024 * 1024)).toFixed(2);
+                                toast({
+                                  title: "Storage Analysis",
+                                  description: `Total usage: ${totalMB} MB. Check console for details.`,
+                                });
+                                console.log('Storage Analysis:', analysis);
+                              }}
+                            >
+                              Analyze Storage
+                            </Button>
+                            {storage && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => {
+                                  storage.clearData();
+                                  setClassifications({});
+                                  setClasses([]);
+                                  toast({
+                                    title: "Data cleared",
+                                    description: "All classification data has been cleared",
+                                  });
+                                }}
+                              >
+                                Clear Current Data
+                              </Button>
+                            )}
+                          </div>
+                        </Card>
+                      </div>
+                    </TabsContent>
+                  </Tabs>
                 </div>
               </div>
             </ScrollArea>

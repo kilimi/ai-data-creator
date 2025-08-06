@@ -26,7 +26,7 @@ export const useApi = (config?: Partial<ApiConfig>) => {
     setApiClient(client);
     setIsConfigured(true);
 
-    // Test connection
+    // Test connection with reduced error handling to prevent toast spam
     const checkConnection = async () => {
       try {
         const result = await client.testConnection();
@@ -34,11 +34,14 @@ export const useApi = (config?: Partial<ApiConfig>) => {
         
         if (!result.success) {
           console.warn('API connection failed:', result.error);
-          toast({
-            title: "API Connection Issue",
-            description: "Could not connect to the FastAPI server. Check API settings.",
-            variant: "destructive",
-          });
+          // Only show toast for critical connection errors, not on every page load
+          if (result.error && !result.error.includes('Connection refused')) {
+            toast({
+              title: "API Connection Issue",
+              description: "Could not connect to the FastAPI server. Check API settings.",
+              variant: "destructive",
+            });
+          }
         }
       } catch (error) {
         console.error('Error checking API connection:', error);
@@ -47,7 +50,7 @@ export const useApi = (config?: Partial<ApiConfig>) => {
     };
     
     checkConnection();
-  }, [config?.baseUrl, toast]);
+  }, [config?.baseUrl]); // Removed toast dependency to prevent re-renders
 
   return {
     api: apiClient,
