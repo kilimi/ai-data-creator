@@ -1456,14 +1456,29 @@ export function AnnotationsContent({
                    <div className="flex items-center justify-between">
                      <div className="flex-1">
                        <div className="font-medium">{file.name}</div>
-                       <div className="text-xs text-muted-foreground mt-1">
-                         {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
-                         {(file.type || (file as any).type) && (
-                           <Badge variant="secondary" className="ml-2 text-xs capitalize">
-                             {file.type || (file as any).type}
-                           </Badge>
-                         )}
-                       </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
+                          {(file.type || (file as any).type) && (
+                            <Badge 
+                              variant="secondary" 
+                              className={`ml-2 text-xs capitalize ${
+                                (file.type === 'classification' || (file as any).type === 'classification') 
+                                  ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors' 
+                                  : ''
+                              }`}
+                              onClick={(e) => {
+                                if (file.type === 'classification' || (file as any).type === 'classification') {
+                                  handleEditClassificationAnnotation(file.id, e);
+                                }
+                              }}
+                              title={(file.type === 'classification' || (file as any).type === 'classification') 
+                                ? 'Click to edit classification annotations' 
+                                : undefined}
+                            >
+                              {file.type || (file as any).type}
+                            </Badge>
+                          )}
+                        </div>
                      </div>
                     <div className="flex items-center gap-4">                      {/* Images count */}
                       <div className="flex items-center gap-2 text-sm">
