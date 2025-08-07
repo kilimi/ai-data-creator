@@ -55,6 +55,7 @@ class Dataset(Base):
     logo = Column(LargeBinary, nullable=True)
     logo_url = Column(String, nullable=True)
     thumbnailUrl = Column(String, nullable=True)
+    url = Column(String, nullable=True)
 
     project = relationship("Project", back_populates="datasets")
     # Add relationships with cascade delete
@@ -191,3 +192,49 @@ class Augmentation(Base):
 
     task = relationship("Task", back_populates="augmentation")
     target_dataset = relationship("Dataset")
+
+
+class DatasetGroup(Base):
+    __tablename__ = "dataset_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    description = Column(Text, nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id"))
+    dataset_ids = Column(JSON, default=list)  # List of dataset IDs in this group
+    url = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project")
+
+    @property
+    def dataset_count(self):
+        """Get the number of datasets in this group"""
+        if isinstance(self.dataset_ids, str):
+            try:
+                ids = json.loads(self.dataset_ids)
+                return len(ids) if ids else 0
+            except json.JSONDecodeError:
+                return 0
+        return len(self.dataset_ids) if self.dataset_ids else 0
+
+    @property
+    def datasets_list(self):
+        """Get the dataset IDs as a list"""
+        if isinstance(self.dataset_ids, str):
+            try:
+                return json.loads(self.dataset_ids)
+            except json.JSONDecodeError:
+                return []
+        return self.dataset_ids or []
+
+    @datasets_list.setter
+    def datasets_list(self, value):
+        """Set the dataset IDs, ensuring they're stored as JSON"""
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                value = []
+        self.dataset_ids = value

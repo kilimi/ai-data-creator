@@ -9,11 +9,14 @@ import { useProject } from '@/hooks/use-projects';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { DatasetCard, DatasetCardSkeleton } from '@/components/DatasetCard';
+import { DatasetGroupCard } from '@/components/DatasetGroupCard';
+import { AddGroupModal } from '@/components/AddGroupModal';
+import { EditGroupModal } from '@/components/EditGroupModal';
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
-import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown } from "lucide-react";
+import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { Dataset, Project } from '@/types';
+import { Dataset, Project, DatasetGroup } from '@/types';
 import {
   Select,
   SelectContent,
@@ -45,6 +48,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   const [showAugmentedModal, setShowAugmentedModal] = useState(false);
+  
+  // Dataset groups state
+  const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  const [showAddGroupModal, setShowAddGroupModal] = useState(false);
+  const [showEditGroupModal, setShowEditGroupModal] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<DatasetGroup | null>(null);
 
   // Update local project state when original project changes
   useEffect(() => {
@@ -52,6 +62,79 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       setProject(originalProject);
     }
   }, [originalProject]);
+
+  // Fetch dataset groups for the project
+  const fetchDatasetGroups = async () => {
+    if (!id) return;
+    
+    try {
+      const response = await fetch(`http://localhost:9999/projects/${id}/dataset-groups/`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setDatasetGroups(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching dataset groups:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (projectMode && id) {
+      fetchDatasetGroups();
+    }
+  }, [projectMode, id]);
+
+  const handleToggleGroupExpanded = (groupId: number) => {
+    setExpandedGroups(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(groupId)) {
+        newSet.delete(groupId);
+      } else {
+        newSet.add(groupId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleEditGroup = (group: DatasetGroup) => {
+    setEditingGroup(group);
+    setShowEditGroupModal(true);
+  };
+
+  const handleDeleteGroup = async (group: DatasetGroup) => {
+    try {
+      const response = await fetch(`http://localhost:9999/dataset-groups/${group.id}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        toast({
+          title: "Success",
+          description: `Group "${group.name}" deleted successfully`,
+        });
+        fetchDatasetGroups(); // Refresh groups
+      } else {
+        throw new Error('Failed to delete group');
+      }
+    } catch (error) {
+      console.error('Error deleting group:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete group",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleGroupCreated = () => {
+    fetchDatasetGroups(); // Refresh groups when a new one is created
+  };
+
+  const handleGroupUpdated = () => {
+    fetchDatasetGroups(); // Refresh groups when one is updated
+  };
 
   // Debug logging to track project ID
   console.log("Project Detail - Current Project ID:", id);
@@ -180,11 +263,21 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     )
   ).sort() as string[];
 
-  // Filter and sort datasets
-  const filteredAndSortedDatasets = () => {
+  // Filter and sort datasets (only show ungrouped datasets)
+  const getUngroupedDatasets = () => {
     if (!project?.datasets) return [];
     
-    let result = [...project.datasets];
+    // Get all dataset IDs that are in groups
+    const groupedDatasetIds = new Set(
+      datasetGroups.flatMap(group => group.dataset_ids || [])
+    );
+    
+    // Return only datasets that are not in any group
+    return project.datasets.filter(dataset => !groupedDatasetIds.has(dataset.id));
+  };
+
+  const filteredAndSortedDatasets = () => {
+    let result = getUngroupedDatasets();
     
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -216,6 +309,62 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       default:
         return result;
     }
+  };
+
+  // Filter and sort dataset groups
+  const filteredAndSortedGroups = () => {
+    let result = [...datasetGroups];
+    
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(group => {
+        // Check group name and description
+        if (group.name.toLowerCase().includes(query) || 
+            (group.description && group.description.toLowerCase().includes(query))) {
+          return true;
+        }
+        
+        // Check if any dataset in the group matches
+        return group.datasets.some(dataset =>
+          dataset.name.toLowerCase().includes(query) || 
+          (dataset.description && dataset.description.toLowerCase().includes(query)) ||
+          (dataset.tags && dataset.tags.some(tag => tag.toLowerCase().includes(query)))
+        );
+      });
+    }
+    
+    if (selectedTag) {
+      result = result.filter(group =>
+        group.datasets.some(dataset => 
+          dataset.tags && dataset.tags.includes(selectedTag)
+        )
+      );
+    }
+    
+    // Auto-expand groups that contain matching datasets when searching
+    if (searchQuery || selectedTag) {
+      const groupsWithMatches = result.filter(group =>
+        group.datasets.some(dataset => {
+          let matches = false;
+          if (searchQuery) {
+            const query = searchQuery.toLowerCase();
+            matches = dataset.name.toLowerCase().includes(query) || 
+                     (dataset.description && dataset.description.toLowerCase().includes(query)) ||
+                     (dataset.tags && dataset.tags.some(tag => tag.toLowerCase().includes(query)));
+          }
+          if (selectedTag && dataset.tags) {
+            matches = matches || dataset.tags.includes(selectedTag);
+          }
+          return matches;
+        })
+      );
+      
+      const expandedGroupIds = new Set(expandedGroups);
+      groupsWithMatches.forEach(group => expandedGroupIds.add(group.id));
+      setExpandedGroups(expandedGroupIds);
+    }
+    
+    return result;
   };
 
   if (!projectMode) {
@@ -338,8 +487,14 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
           <Database className="h-5 w-5 text-primary" />
           <h3 className="text-xl font-semibold">Project Datasets</h3>
           <Badge variant="secondary" className="ml-2">
-            {project?.datasets?.length || 0} datasets
+            {(project?.datasets?.length || 0) + datasetGroups.length} items
           </Badge>
+          {datasetGroups.length > 0 && (
+            <Badge variant="outline" className="ml-1">
+              <Users className="h-3 w-3 mr-1" />
+              {datasetGroups.length} groups
+            </Badge>
+          )}
         </div>
         
         {/* Search and Filter Controls */}
@@ -383,6 +538,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                <DropdownMenuItem 
+                  onClick={() => setShowAddGroupModal(true)}
+                  className="flex items-center cursor-pointer"
+                >
+                  <Users className="w-4 h-4 mr-2 text-blue-600" />
+                  <span className="text-blue-600">Dataset Group</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link 
                     to="/projects/new/dataset" 
@@ -447,16 +609,49 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
           <Card className="p-6 text-center">
             <p>Project not found</p>
           </Card>
-        ) : filteredAndSortedDatasets().length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredAndSortedDatasets().map(dataset => (
-              <DatasetCard 
-                key={dataset.id} 
-                dataset={dataset}
-                onDelete={handleDeleteDataset}
-                onDatasetUpdated={handleDatasetUpdated}
-              />
-            ))}
+        ) : filteredAndSortedGroups().length > 0 || filteredAndSortedDatasets().length > 0 ? (
+          <div className="space-y-6">
+            {/* Dataset Groups */}
+            {filteredAndSortedGroups().length > 0 && (
+              <div>
+                <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
+                  <Users className="h-5 w-5 text-primary" />
+                  Dataset Groups
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredAndSortedGroups().map(group => (
+                    <DatasetGroupCard 
+                      key={group.id} 
+                      group={group}
+                      expanded={expandedGroups.has(group.id)}
+                      onToggleExpanded={() => handleToggleGroupExpanded(group.id)}
+                      onEdit={handleEditGroup}
+                      onDelete={handleDeleteGroup}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Individual Datasets */}
+            {filteredAndSortedDatasets().length > 0 && (
+              <div>
+                <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
+                  <Database className="h-5 w-5 text-primary" />
+                  Individual Datasets
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredAndSortedDatasets().map(dataset => (
+                    <DatasetCard 
+                      key={dataset.id} 
+                      dataset={dataset}
+                      onDelete={handleDeleteDataset}
+                      onDatasetUpdated={handleDatasetUpdated}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="text-center py-16">
@@ -479,6 +674,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="center">
+                <DropdownMenuItem 
+                  onClick={() => setShowAddGroupModal(true)}
+                  className="flex items-center cursor-pointer"
+                >
+                  <Users className="w-4 h-4 mr-2 text-blue-600" />
+                  <span className="text-blue-600">Dataset Group</span>
+                </DropdownMenuItem>
                 <DropdownMenuItem asChild>
                   <Link 
                     to="/projects/new/dataset" 
@@ -504,14 +706,32 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         )}
       </section>
       
-      {/* Augmented Dataset Modal */}
+      {/* Modals */}
       {project && (
-        <CreateAugmentedDatasetModal
-          open={showAugmentedModal}
-          onOpenChange={setShowAugmentedModal}
-          projectId={id || ''}
-          datasets={project.datasets || []}
-        />
+        <>
+          <CreateAugmentedDatasetModal
+            open={showAugmentedModal}
+            onOpenChange={setShowAugmentedModal}
+            projectId={id || ''}
+            datasets={project.datasets || []}
+          />
+          
+          <AddGroupModal
+            open={showAddGroupModal}
+            onOpenChange={setShowAddGroupModal}
+            projectId={id || ''}
+            datasets={project.datasets || []}
+            onGroupCreated={handleGroupCreated}
+          />
+          
+          <EditGroupModal
+            open={showEditGroupModal}
+            onOpenChange={setShowEditGroupModal}
+            group={editingGroup}
+            availableDatasets={project.datasets || []}
+            onGroupUpdated={handleGroupUpdated}
+          />
+        </>
       )}
     </div>
   );

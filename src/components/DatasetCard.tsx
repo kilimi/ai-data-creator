@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, ScanEye, Eye, SquareStack } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useImageLoad } from "@/utils/animations";
@@ -137,6 +137,22 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
           <p className="text-sm text-muted-foreground line-clamp-2">
             {dataset.description || "No description provided"}
           </p>
+          
+          {/* URL display */}
+          {dataset.url && (
+            <div className="flex items-center gap-1 text-xs pt-1">
+              <ExternalLink className="h-3 w-3 text-muted-foreground" />
+              <a 
+                href={dataset.url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary hover:underline truncate"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {dataset.url}
+              </a>
+            </div>
+          )}
           
           {/* Display tags if available */}
           {dataset.tags && dataset.tags.length > 0 && (

@@ -11,6 +11,20 @@ export interface Dataset {
   project_id: number;
   thumbnailUrl?: string;
   logo_url?: string;
+  url?: string;
+}
+
+export interface DatasetGroup {
+  id: number;
+  name: string;
+  description: string;
+  project_id: number;
+  dataset_ids: number[];
+  dataset_count: number;
+  datasets: Dataset[];
+  created_at: string;
+  updated_at: string;
+  url?: string;
 }
 
 export interface Project {
@@ -21,6 +35,7 @@ export interface Project {
   updated_at: string;
   is_project: boolean;
   datasets: Dataset[];
+  dataset_groups?: DatasetGroup[];
   thumbnailUrl?: string; // Adding this property as optional
   logo_url?: string;
   tags?: string[];
