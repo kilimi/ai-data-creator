@@ -147,6 +147,47 @@ class AugmentationCreate(AugmentationBase):
     task_id: int
     target_dataset_id: int
 
+class AnnotationFileBase(BaseModel):
+    name: str
+    format: str = 'COCO'
+    type: Optional[str] = None
+    tags: List[str] = []
+
+    @validator('tags', pre=True)
+    def validate_tags(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except:
+                return []
+        return v or []
+
+class AnnotationFileCreate(AnnotationFileBase):
+    id: str
+    dataset_id: int
+    file_path: str
+    file_size: Optional[int] = None
+    annotation_count: int = 0
+    image_count: int = 0
+    category_count: int = 0
+
+class AnnotationFile(AnnotationFileBase):
+    id: str
+    dataset_id: int
+    file_path: str
+    file_size: Optional[int] = None
+    annotation_count: int = 0
+    image_count: int = 0
+    category_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
 class Augmentation(AugmentationBase):
     id: int
     task_id: int

@@ -28,6 +28,7 @@ export interface AnnotationFile {
   isVisible?: boolean;
   classColors?: { [className: string]: string }; // Add class color mapping
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
+  tags?: string[]; // Add tags for categorization and search
 }
 
 // Generate distinct random colors for classes

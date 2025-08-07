@@ -134,3 +134,5 @@ convert_scripts/*.json
 *.pt
 *.json
 backend/ai_models/
+
+.sh

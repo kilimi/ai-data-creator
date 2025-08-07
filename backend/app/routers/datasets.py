@@ -450,6 +450,30 @@ async def import_annotations(
             # For now, just save the file and return success
             print(f"Non-JSON annotation file saved: {annotation_file_path}")
         
+        # Create database record for the annotation file
+        try:
+            annotation_file_record = models.AnnotationFile(
+                id=random_id,
+                dataset_id=dataset_id,
+                name=file.filename,
+                file_path=str(annotation_file_path),
+                format='COCO' if file_extension.lower() == '.json' else 'Unknown',
+                tags=[],  # Initialize with empty tags
+                file_size=len(contents),
+                annotation_count=imported_count,
+                image_count=image_count,
+                category_count=category_count
+            )
+            
+            db.add(annotation_file_record)
+            db.commit()
+            db.refresh(annotation_file_record)
+            print(f"Created database record for annotation file: {random_id}")
+            
+        except Exception as db_error:
+            print(f"Warning: Could not create database record for annotation file: {db_error}")
+            # Continue without failing the import if database record creation fails
+        
         return {
             "success": True,
             "data": {
@@ -530,6 +554,22 @@ async def delete_dataset_annotation(
             found_file.unlink()
             print(f"Deleted annotation file: {found_file}")
             
+            # Also delete the database record if it exists
+            try:
+                db_annotation_file = db.query(models.AnnotationFile).filter(
+                    models.AnnotationFile.id == annotation_id,
+                    models.AnnotationFile.dataset_id == dataset_id
+                ).first()
+                
+                if db_annotation_file:
+                    db.delete(db_annotation_file)
+                    db.commit()
+                    print(f"Deleted database record for annotation file: {annotation_id}")
+                
+            except Exception as db_error:
+                print(f"Warning: Could not delete database record for annotation file: {db_error}")
+                # Continue without failing the deletion if database cleanup fails
+            
             # If the annotations directory is empty, we can remove it
             try:
                 remaining_files = list(annotations_dir.glob('*'))
@@ -538,9 +578,6 @@ async def delete_dataset_annotation(
                     print(f"Removed empty annotations directory: {annotations_dir}")
             except Exception as e:
                 print(f"Warning: Could not remove empty annotations directory: {e}")
-            
-            # Note: We don't delete database annotation records since we don't create them anymore
-            # The annotation data is only stored in the JSON files
             
             return {
                 "success": True,
@@ -604,6 +641,15 @@ async def get_dataset_annotations(
         
         # Get all annotation files
         annotation_files = []
+        
+        # First, get all annotation file records from database
+        db_annotation_files = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.dataset_id == dataset_id
+        ).all()
+        
+        # Create a lookup dictionary for database records
+        db_files_by_id = {af.id: af for af in db_annotation_files}
+        
         for file_path in annotations_dir.glob("*"):
             if file_path.is_file():
                 try:
@@ -629,11 +675,26 @@ async def get_dataset_annotations(
                         "path": str(file_path),
                         "size": file_stats.st_size,
                         "created_at": datetime.fromtimestamp(file_stats.st_ctime).isoformat(),
-                        "modified_at": datetime.fromtimestamp(file_stats.st_mtime).isoformat()
+                        "modified_at": datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                        "tags": []  # Default empty tags
                     }
                     
-                    # Try to read and parse JSON files to get additional info
-                    if file_path.suffix.lower() == '.json':
+                    # Check if we have a database record for this file
+                    if file_id in db_files_by_id:
+                        db_file = db_files_by_id[file_id]
+                        file_info["tags"] = db_file.tags
+                        # Use database metadata if available
+                        if db_file.annotation_count:
+                            file_info['annotation_count'] = db_file.annotation_count
+                        if db_file.image_count:
+                            file_info['image_count'] = db_file.image_count
+                        if db_file.category_count:
+                            file_info['category_count'] = db_file.category_count
+                        if db_file.format:
+                            file_info['format'] = db_file.format
+                    
+                    # Try to read and parse JSON files to get additional info (if not from database)
+                    if file_path.suffix.lower() == '.json' and 'annotation_count' not in file_info:
                         try:
                             with open(file_path, 'r', encoding='utf-8') as f:
                                 content = json.load(f)
@@ -648,7 +709,7 @@ async def get_dataset_annotations(
                         except (json.JSONDecodeError, UnicodeDecodeError) as e:
                             print(f"Could not parse JSON file {file_path}: {e}")
                             file_info['format'] = 'Unknown'
-                    else:
+                    elif 'format' not in file_info:
                         file_info['format'] = 'Unknown'
                     
                     annotation_files.append(file_info)
@@ -895,6 +956,112 @@ async def rename_annotation_file(
     except Exception as e:
         print(f"Error in rename_annotation_file: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to rename annotation file: {str(e)}")
+
+
+@router.put("/datasets/{dataset_id}/annotations/{annotation_id}/tags")
+async def update_annotation_tags(
+    dataset_id: int,
+    annotation_id: str,
+    tags: List[str] = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Update tags for an annotation file"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Try to find existing annotation file record in database
+        annotation_file = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        
+        if annotation_file:
+            # Update existing database record
+            annotation_file.tags = tags
+            annotation_file.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(annotation_file)
+        else:
+            # If no database record exists, check if the physical file exists and create a database record
+            project_id = dataset.project_id
+            annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+            
+            if not annotations_dir.exists():
+                raise HTTPException(status_code=404, detail="Annotations directory not found")
+            
+            # Look for the physical file
+            found_file = None
+            for file_path in annotations_dir.glob("*"):
+                if file_path.is_file():
+                    filename = file_path.name
+                    if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
+                        found_file = file_path
+                        break
+            
+            if not found_file:
+                raise HTTPException(status_code=404, detail=f"Annotation file with ID '{annotation_id}' not found")
+            
+            # Extract original name from filename
+            filename = found_file.name
+            if '_' in filename:
+                original_name = filename.split('_', 1)[1]
+            else:
+                original_name = filename
+            
+            # Get file metadata
+            file_stats = found_file.stat()
+            file_size = file_stats.st_size
+            
+            # Try to parse the annotation file to get counts
+            annotation_count = 0
+            image_count = 0
+            category_count = 0
+            file_format = 'COCO'
+            
+            try:
+                if found_file.suffix.lower() == '.json':
+                    with open(found_file, 'r', encoding='utf-8') as f:
+                        content = json.load(f)
+                        if 'annotations' in content:
+                            annotation_count = len(content['annotations'])
+                        if 'images' in content:
+                            image_count = len(content['images'])
+                        if 'categories' in content:
+                            category_count = len(content['categories'])
+            except Exception as parse_error:
+                print(f"Could not parse annotation file for metadata: {parse_error}")
+            
+            # Create new database record
+            annotation_file = models.AnnotationFile(
+                id=annotation_id,
+                dataset_id=dataset_id,
+                name=original_name,
+                file_path=str(found_file),
+                format=file_format,
+                tags=tags,
+                file_size=file_size,
+                annotation_count=annotation_count,
+                image_count=image_count,
+                category_count=category_count
+            )
+            
+            db.add(annotation_file)
+            db.commit()
+            db.refresh(annotation_file)
+        
+        return {
+            "success": True,
+            "message": f"Tags updated for annotation file '{annotation_file.name}'",
+            "tags": annotation_file.tags
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in update_annotation_tags: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update annotation tags: {str(e)}")
 
 
 @router.put("/datasets/{dataset_id}/annotations/{annotation_id}/content")

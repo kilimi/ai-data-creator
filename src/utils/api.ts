@@ -263,6 +263,15 @@ export class ApiClient {
     });
   }
 
+  async updateAnnotationTags(datasetId: string | number, annotationId: string, tags: string[]): Promise<ApiResponse<any>> {
+    const formData = new FormData();
+    tags.forEach(tag => formData.append('tags', tag));
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}/tags`, {
+      method: 'PUT',
+      body: formData
+    });
+  }
+
   async importAnnotations(datasetId: string | number, file: File, annotationType?: string): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('file', file);

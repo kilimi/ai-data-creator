@@ -65,6 +65,7 @@ type AnnotationFile = {
   classStats?: { className: string; count: number; color: string }[];
   samples?: AnnotationSample[];
   matchedImageCount?: number;
+  tags?: string[];
 };
 
 interface EditDatasetProps {
@@ -186,7 +187,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             classStats: [], // Will be populated from actual data
             samples: [], // Will be populated from actual data
             matchedImageCount: imported,
-            datasetId: id
+            datasetId: id,
+            tags: [] // Initialize with empty tags array
           };
           
           setAnnotations(prevAnnotations => [...prevAnnotations, annotationFile]);
@@ -734,6 +736,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                             <TableHead className="text-gray-300">Filename</TableHead>
                             <TableHead className="text-gray-300">Size</TableHead>
                             <TableHead className="text-gray-300">Date</TableHead>
+                            <TableHead className="text-gray-300">Tags</TableHead>
                             <TableHead className="text-gray-300">Images</TableHead>
                             <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
                           </TableRow>
@@ -753,6 +756,34 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                               </TableCell>
                               <TableCell className="text-gray-300">
                                 {new Date(annotation.uploadedAt).toLocaleDateString()}
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                <div className="flex flex-wrap gap-1">
+                                  {annotation.tags && annotation.tags.length > 0 ? (
+                                    <>
+                                      {annotation.tags.slice(0, 2).map((tag) => (
+                                        <Badge
+                                          key={tag}
+                                          variant="secondary"
+                                          className="text-xs bg-blue-600/20 text-blue-300 border-blue-600/30"
+                                        >
+                                          <Tag className="h-3 w-3 mr-1" />
+                                          {tag}
+                                        </Badge>
+                                      ))}
+                                      {annotation.tags.length > 2 && (
+                                        <Badge
+                                          variant="secondary"
+                                          className="text-xs bg-gray-600/20 text-gray-400 border-gray-600/30"
+                                        >
+                                          +{annotation.tags.length - 2}
+                                        </Badge>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <span className="text-gray-500 text-xs">No tags</span>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell className="text-gray-300">
                                 {annotation.matchedImageCount ? (

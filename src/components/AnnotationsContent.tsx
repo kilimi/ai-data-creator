@@ -13,6 +13,8 @@ import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { ClassColorPicker } from "@/components/ClassColorPicker";
 import { ClassColorOpacityPicker } from "@/components/ClassColorOpacityPicker";
 import { RenameClassDialog } from "./RenameClassDialog";
+import { AnnotationTagsDialog } from "./AnnotationTagsDialog";
+import { AnnotationFilters } from "./AnnotationFilters";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -97,12 +99,15 @@ export function AnnotationsContent({
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
+  const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingFromBackend, setIsLoadingFromBackend] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [renameClassDialog, setRenameClassDialog] = useState<{ isOpen: boolean; className: string; annotationId: string }>({ isOpen: false, className: '', annotationId: '' });
   const [dirtyAnnotationIds, setDirtyAnnotationIds] = useState<Set<string>>(new Set());
+  const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
+  const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
   // Handler for renaming a class in an annotation file
   const markDirty = (annotationId: string) => {
     setDirtyAnnotationIds(prev => new Set(prev).add(annotationId));
@@ -249,6 +254,148 @@ export function AnnotationsContent({
   const { api } = useApi();
   const { toast } = useToast();
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+
+  // Handler for managing tags
+  const handleTagsClick = (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (file) {
+      setTagsDialog({
+        isOpen: true,
+        annotationId: annotationId,
+        annotationName: file.name,
+        currentTags: file.tags || []
+      });
+    }
+  };
+
+  const handleSaveTags = async (tags: string[]) => {
+    const annotationId = tagsDialog.annotationId;
+    const updatedFiles = annotationFiles.map(file => 
+      file.id === annotationId 
+        ? { 
+            ...file, 
+            tags: tags,
+            // Update all samples to reflect the new tags
+            samples: file.samples?.map(sample => ({
+              ...sample,
+              annotationFileName: file.name
+            }))
+          }
+        : file
+    );
+
+    try {
+      let success = true;
+      if (api) {
+        // Call the API to update tags in the database
+        console.log(`Saving tags for annotation ${annotationId}:`, tags);
+        const response = await api.updateAnnotationTags(id, annotationId, tags);
+        if (!response.success) {
+          success = false;
+          throw new Error(response.error || "Failed to save tags on server");
+        }
+      } else {
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+
+      if (success) {
+        setAnnotationFiles(updatedFiles);
+        // Also update localStorage for local persistence (backup)
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+    } catch (error) {
+      throw error; // Re-throw to be handled by the dialog
+    }
+  };
+
+  // Handler for inline name editing
+  const handleStartEditName = (annotationId: string, currentName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingName({ annotationId, newName: currentName });
+  };
+
+  const handleSaveEditName = async () => {
+    if (!editingName || !editingName.newName.trim()) return;
+
+    const { annotationId, newName } = editingName;
+    const trimmedName = newName.trim();
+
+    // Check if name already exists
+    if (annotationFiles.some(f => f.id !== annotationId && f.name === trimmedName)) {
+      toast({
+        title: "Name already exists",
+        description: "An annotation file with this name already exists.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const updatedFiles = annotationFiles.map(file => 
+        file.id === annotationId 
+          ? { 
+              ...file, 
+              name: trimmedName,
+              samples: file.samples?.map(sample => ({
+                ...sample,
+                annotationFileName: trimmedName
+              }))
+            }
+          : file
+      );
+
+      let success = true;
+      if (api) {
+        try {
+          const response = await api.renameAnnotation(id, annotationId, trimmedName);
+          if (!response.success) {
+            success = false;
+            throw new Error(response.error || "Failed to rename annotation file on server");
+          }
+        } catch (error) {
+          success = false;
+          throw error;
+        }
+      } else {
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
+
+      if (success) {
+        setAnnotationFiles(updatedFiles);
+        setEditingName(null);
+        toast({
+          title: "Annotation renamed",
+          description: `Successfully renamed to "${trimmedName}".`,
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Rename failed",
+        description: error instanceof Error ? error.message : "Failed to rename annotation file.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleCancelEditName = () => {
+    setEditingName(null);
+  };
+
+  const handleNameKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSaveEditName();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      handleCancelEditName();
+    }
+  };
+
+  // Sync filtered annotations with annotation files when they change
+  useEffect(() => {
+    setFilteredAnnotationFiles(annotationFiles);
+  }, [annotationFiles]);
 
   const handleMergeClasses = (annotationId: string, sources: string[], mergedName: string) => {
     const updatedFiles = annotationFiles.map(file => {
@@ -974,7 +1121,8 @@ export function AnnotationsContent({
             samples: samples,
             isVisible: false, // Set visibility to false by default
             classColors: result.classColors,
-            imageMapping: result.imageMapping
+            imageMapping: result.imageMapping,
+            tags: [] // Initialize with empty tags array
           };              console.log(`Creating annotation file with ID: ${fileId} for file: ${file.name}`);
           
           // If API is available, we'll refresh from backend after all uploads
@@ -1110,7 +1258,8 @@ export function AnnotationsContent({
                 samples: samples,
                 isVisible: false,
                 classColors: result.classColors,
-                imageMapping: result.imageMapping
+                imageMapping: result.imageMapping,
+                tags: file.tags || [] // Use tags from backend response
               };
               
               processedFiles.push(annotationFile);
@@ -1133,7 +1282,8 @@ export function AnnotationsContent({
                 samples: [],
                 isVisible: false,
                 classColors: {},
-                imageMapping: {}
+                imageMapping: {},
+                tags: file.tags || [] // Use tags from backend response
               };
               
               processedFiles.push(annotationFile);
@@ -1159,7 +1309,8 @@ export function AnnotationsContent({
               samples: [],
               isVisible: false,
               classColors: {},
-              imageMapping: {}
+              imageMapping: {},
+              tags: file.tags || [] // Use tags from backend response
             };
             
             processedFiles.push(annotationFile);
@@ -1287,7 +1438,8 @@ export function AnnotationsContent({
             classColors: {},
             imageMapping: {},
             type: 'classification',
-            content: annotation.content
+            content: annotation.content,
+            tags: annotation.tags || [] // Load tags from saved data or initialize empty
           };
         });
         
@@ -1524,7 +1676,10 @@ export function AnnotationsContent({
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
           <p className="text-sm text-muted-foreground">
-            {annotationFiles.length} annotation files • {visibleAnnotations.size} visible on images
+            {filteredAnnotationFiles.length === annotationFiles.length 
+              ? `${annotationFiles.length} annotation files` 
+              : `${filteredAnnotationFiles.length} of ${annotationFiles.length} annotation files`
+            } • {visibleAnnotations.size} visible on images
           </p>
         </div>
         <div className="flex gap-2">
@@ -1541,8 +1696,16 @@ export function AnnotationsContent({
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* Search and filter controls */}
+        <div className="mb-4">
+          <AnnotationFilters
+            annotations={annotationFiles}
+            onFilterChange={setFilteredAnnotationFiles}
+          />
+        </div>
+
         <div className="space-y-2">
-        {annotationFiles
+        {filteredAnnotationFiles
           .sort((a, b) => {
             // Sort by date (newest first)
             const dateA = new Date(a.date);
@@ -1558,12 +1721,67 @@ export function AnnotationsContent({
                 >
                    <div className="flex items-center justify-between">
                      <div className="flex-1">
-                       <div className="font-medium">{file.name}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
+                       <div className="flex items-center gap-2 group">
+                         {editingName?.annotationId === file.id ? (
+                           <div className="flex items-center gap-2 flex-1">
+                             <Input
+                               value={editingName.newName}
+                               onChange={(e) => setEditingName({ ...editingName, newName: e.target.value })}
+                               onKeyDown={handleNameKeyDown}
+                               onBlur={handleSaveEditName}
+                               className="font-medium bg-gray-800 border-gray-600 text-white h-6 px-2 text-sm"
+                               autoFocus
+                               onClick={(e) => e.stopPropagation()}
+                             />
+                             <Button
+                               variant="ghost"
+                               size="sm"
+                               className="h-6 w-6 p-0 text-green-400 hover:text-green-300"
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleSaveEditName();
+                               }}
+                             >
+                               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                               </svg>
+                             </Button>
+                             <Button
+                               variant="ghost"
+                               size="sm"
+                               className="h-6 w-6 p-0 text-gray-400 hover:text-gray-300"
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handleCancelEditName();
+                               }}
+                             >
+                               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                               </svg>
+                             </Button>
+                           </div>
+                         ) : (
+                           <>
+                             <div className="font-medium">{file.name}</div>
+                             <Button
+                               variant="ghost"
+                               size="sm"
+                               className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-300"
+                               onClick={(e) => handleStartEditName(file.id, file.name, e)}
+                               title="Edit annotation name"
+                             >
+                               <Edit className="h-3 w-3" />
+                             </Button>
+                           </>
+                         )}
+                       </div>
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                          <span>
+                            {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
+                          </span>
                           <Badge 
                             variant="secondary" 
-                            className={`ml-2 text-xs capitalize ${
+                            className={`text-xs capitalize ${
                               detectAnnotationType(file) === 'classification'
                                 ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors bg-blue-500/20 text-blue-300 border-blue-500' 
                                 : detectAnnotationType(file) === 'segmentation'
@@ -1584,6 +1802,29 @@ export function AnnotationsContent({
                             {detectAnnotationType(file)}
                           </Badge>
                         </div>
+                        {/* Tags display */}
+                        {file.tags && file.tags.length > 0 && (
+                          <div className="flex items-center gap-1 mt-2">
+                            {file.tags.slice(0, 3).map((tag) => (
+                              <Badge
+                                key={tag}
+                                variant="secondary"
+                                className="text-xs bg-blue-600/20 text-blue-300 border-blue-600/30"
+                              >
+                                <Tag className="h-3 w-3 mr-1" />
+                                {tag}
+                              </Badge>
+                            ))}
+                            {file.tags.length > 3 && (
+                              <Badge
+                                variant="secondary"
+                                className="text-xs bg-gray-600/20 text-gray-400 border-gray-600/30"
+                              >
+                                +{file.tags.length - 3} more
+                              </Badge>
+                            )}
+                          </div>
+                        )}
                      </div>
                     <div className="flex items-center gap-4">                      {/* Images count */}
                       <div className="flex items-center gap-2 text-sm">
@@ -1634,6 +1875,16 @@ export function AnnotationsContent({
                       </Button>
                        {/* Actions */}
                        <div className="flex gap-2">
+                         {/* Tags button */}
+                         <Button 
+                           variant="ghost" 
+                           size="icon" 
+                           className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                           onClick={(e) => handleTagsClick(file.id, e)}
+                           title="Manage tags"
+                         >
+                           <Tag className="h-4 w-4" />
+                         </Button>
                          {detectAnnotationType(file) === 'classification' ? (
                            <Button 
                              variant="ghost" 
@@ -1650,8 +1901,8 @@ export function AnnotationsContent({
                                variant="ghost" 
                                size="icon" 
                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                               onClick={(e) => handleEditAnnotation(file.id, e)}
-                               title="Edit annotation file"
+                               onClick={(e) => handleStartEditName(file.id, file.name, e)}
+                               title="Edit annotation name"
                              >
                                <Edit className="h-4 w-4" />
                              </Button>
@@ -1769,6 +2020,17 @@ export function AnnotationsContent({
             </p>
           </div>
         )}
+        {annotationFiles.length > 0 && filteredAnnotationFiles.length === 0 && (
+          <div className="flex flex-col items-center justify-center text-center p-8">
+            <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
+              <Tag className="h-6 w-6 text-gray-400" />
+            </div>
+            <h3 className="text-lg font-medium mb-2">No matching annotations</h3>
+            <p className="text-sm text-muted-foreground max-w-xs">
+              Try adjusting your search query or filters to find annotation files
+            </p>
+          </div>
+        )}
         </div>
       </div>
 
@@ -1856,6 +2118,15 @@ export function AnnotationsContent({
           </div>
         </DialogContent>
       </Dialog>
+      
+      <AnnotationTagsDialog
+        open={tagsDialog.isOpen}
+        onOpenChange={(open) => setTagsDialog(prev => ({ ...prev, isOpen: open }))}
+        annotationFileName={tagsDialog.annotationName}
+        initialTags={tagsDialog.currentTags}
+        onSaveTags={handleSaveTags}
+      />
+      
       <MergeClassesDialog
         open={mergeDialogOpen}
         onOpenChange={setMergeDialogOpen}
