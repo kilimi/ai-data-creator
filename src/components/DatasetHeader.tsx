@@ -1,6 +1,6 @@
 
 import { Link } from "react-router-dom";
-import { ArrowLeft, Pencil } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { Dataset } from "@/types";
@@ -12,9 +12,10 @@ interface DatasetHeaderProps {
   onLayoutChange?: (layout: LayoutType) => void;
   dataset?: Dataset;
   onEditDataset?: () => void;
+  onDeleteDataset?: () => void;
 }
 
-export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset }: DatasetHeaderProps) {
+export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset }: DatasetHeaderProps) {
   return (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-2">
@@ -46,6 +47,18 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
           </Button>
         )}
         
+        {dataset && onDeleteDataset && (
+          <Button 
+            variant="destructive" 
+            size="sm"
+            onClick={onDeleteDataset}
+            className="h-9"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete Dataset
+          </Button>
+        )}
+
         {currentLayout && onLayoutChange && (
           <div className="flex-shrink-0">
             <LayoutControls 

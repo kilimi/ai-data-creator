@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
@@ -12,15 +12,27 @@ import { AnnotationSample } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function Dataset() {
   const { id } = useParams<{ id: string }>();
   const { api } = useApi();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [dataset, setDataset] = useState<DatasetType | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -374,6 +386,42 @@ export default function Dataset() {
   const handleEditDataset = () => {
     setIsEditDialogOpen(true);
   };
+
+  // Handle opening delete confirmation dialog
+  const handleDeleteDataset = () => {
+    setShowDeleteDialog(true);
+  };
+
+  // Handle confirmed dataset deletion
+  const handleConfirmDeleteDataset = async () => {
+    if (!id || !api) return;
+
+    try {
+      const response = await api.deleteDataset(parseInt(id));
+      
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to delete dataset');
+      }
+
+      toast({
+        title: "Dataset deleted",
+        description: `Dataset has been deleted successfully.`,
+      });
+
+      // Navigate back to datasets page
+      navigate('/datasets');
+    } catch (error) {
+      console.error('Error deleting dataset:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete dataset. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setShowDeleteDialog(false);
+    }
+  };
+
   // Updated function to handle annotation imports with better error handling
   const handleImportAnnotations = async (files: File[]) => {
     if (!id) return;
@@ -519,6 +567,7 @@ export default function Dataset() {
                   onLayoutChange={updateLayout}
                   dataset={dataset}
                   onEditDataset={handleEditDataset}
+                  onDeleteDataset={handleDeleteDataset}
                 />
               </div>
             </div>
@@ -559,6 +608,27 @@ export default function Dataset() {
             onDatasetUpdated={handleDatasetUpdated}
           />
         )}
+
+        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete the dataset "{dataset?.name}" and all its associated images and annotations.
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={handleConfirmDeleteDataset}
+                className="bg-destructive hover:bg-destructive/90"
+              >
+                Delete Dataset
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         {isUploading && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
             <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border">
