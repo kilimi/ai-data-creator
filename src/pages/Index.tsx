@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Settings, Sparkles, Database, Brain, Zap, TrendingUp, Activity } from "lucide-react";
+import { Plus, Search, Settings, Sparkles, Database, Brain, Zap, TrendingUp, Activity, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,7 @@ export default function Index() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
   
   // Use stable loading to prevent flickering
@@ -90,9 +91,19 @@ export default function Index() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(
-        project => 
-          project.name.toLowerCase().includes(query) || 
-          project.description.toLowerCase().includes(query)
+        project => {
+          const nameMatch = project.name.toLowerCase().includes(query);
+          const descMatch = (project.description || '').toLowerCase().includes(query);
+          const tagMatch = project.tags && project.tags.some(tag => tag.toLowerCase().includes(query));
+          
+          return nameMatch || descMatch || tagMatch;
+        }
+      );
+    }
+    
+    if (selectedTag) {
+      result = result.filter(project => 
+        project.tags && project.tags.includes(selectedTag)
       );
     }
     
@@ -107,6 +118,13 @@ export default function Index() {
         return result;
     }
   };
+
+  // Get all unique tags from projects
+  const allTags = Array.from(
+    new Set(
+      projects.flatMap(project => project.tags || [])
+    )
+  ).sort();
 
   const stats = {
     totalProjects: projects.length,
@@ -208,6 +226,32 @@ export default function Index() {
               </Select>
             </div>
           </div>
+          
+          {/* Tag Filter */}
+          {allTags.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-6">
+              <Button
+                variant={selectedTag === null ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedTag(null)}
+                className="gap-1"
+              >
+                All Tags
+              </Button>
+              {allTags.map(tag => (
+                <Button
+                  key={tag}
+                  variant={selectedTag === tag ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSelectedTag(tag)}
+                  className="gap-1"
+                >
+                  <Tag className="w-3 h-3" />
+                  {tag}
+                </Button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Projects Grid */}
@@ -235,11 +279,11 @@ export default function Index() {
                 <Brain className="w-12 h-12 text-primary" />
               </div>
               <h3 className="text-xl font-semibold mb-2">
-                {searchQuery ? "No matching projects" : "Ready to start your AI journey?"}
+                {searchQuery || selectedTag ? "No matching projects" : "Ready to start your AI journey?"}
               </h3>
               <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                {searchQuery
-                  ? "No projects matching your search criteria. Try adjusting your search terms."
+                {searchQuery || selectedTag
+                  ? "No projects matching your search criteria. Try adjusting your search terms or clearing filters."
                   : "Create your first project to begin annotating data, training models, and building intelligent applications."
                 }
               </p>
@@ -251,9 +295,12 @@ export default function Index() {
                   Create Your First Project
                 </Link>
               </Button>
-              {searchQuery && (
-                <Button variant="outline" size="lg" onClick={() => setSearchQuery("")}>
-                  Clear Search
+              {(searchQuery || selectedTag) && (
+                <Button variant="outline" size="lg" onClick={() => {
+                  setSearchQuery("");
+                  setSelectedTag(null);
+                }}>
+                  Clear Filters
                 </Button>
               )}
             </div>

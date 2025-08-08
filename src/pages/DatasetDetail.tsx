@@ -254,7 +254,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     };
 
     fetchDataset();
-  }, [id, projectMode, api, isConnected]);
+  }, [id, projectMode, api, isConnected]); // Removed toast from dependencies
 
   // Get all unique tags from datasets
   const allTags = Array.from(
@@ -341,9 +341,39 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       );
     }
     
-    // Auto-expand groups that contain matching datasets when searching
+    return result;
+  };
+
+  // Auto-expand groups when searching or filtering - moved to useEffect
+  useEffect(() => {
     if (searchQuery || selectedTag) {
-      const groupsWithMatches = result.filter(group =>
+      const result = [...datasetGroups];
+      let filteredResult = result;
+      
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        filteredResult = filteredResult.filter(group => {
+          if (group.name.toLowerCase().includes(query) || 
+              (group.description && group.description.toLowerCase().includes(query))) {
+            return true;
+          }
+          return group.datasets.some(dataset =>
+            dataset.name.toLowerCase().includes(query) || 
+            (dataset.description && dataset.description.toLowerCase().includes(query)) ||
+            (dataset.tags && dataset.tags.some(tag => tag.toLowerCase().includes(query)))
+          );
+        });
+      }
+      
+      if (selectedTag) {
+        filteredResult = filteredResult.filter(group =>
+          group.datasets.some(dataset => 
+            dataset.tags && dataset.tags.includes(selectedTag)
+          )
+        );
+      }
+      
+      const groupsWithMatches = filteredResult.filter(group =>
         group.datasets.some(dataset => {
           let matches = false;
           if (searchQuery) {
@@ -363,9 +393,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       groupsWithMatches.forEach(group => expandedGroupIds.add(group.id));
       setExpandedGroups(expandedGroupIds);
     }
-    
-    return result;
-  };
+  }, [searchQuery, selectedTag, datasetGroups, expandedGroups]);
 
   if (!projectMode) {
     return (
