@@ -11,6 +11,8 @@ interface AnnotationVisualizerProps {
   showFileName?: boolean;
   zoom?: number;
   pan?: { x: number; y: number };
+  globalShowBboxes?: boolean;
+  globalShowMasks?: boolean;
 }
 
 export const AnnotationVisualizer = ({ 
@@ -20,7 +22,9 @@ export const AnnotationVisualizer = ({
   className,
   showFileName = true,
   zoom = 1,
-  pan = { x: 0, y: 0 }
+  pan = { x: 0, y: 0 },
+  globalShowBboxes = false,
+  globalShowMasks = true
 }: AnnotationVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -110,13 +114,13 @@ export const AnnotationVisualizer = ({
     ctx.clearRect(0, 0, containerDimensions.width, containerDimensions.height);
 
     const { scale, offsetX, offsetY } = calculateImageScaling();
-
+    
     // Draw each annotation
     visibleAnnotations.forEach((annotation, index) => {
       const color = annotation.color || "#ea384c";
       
-      // Draw segmentation mask if available
-      if (annotation.segmentation && annotation.segmentation.length > 0) {
+      // Draw segmentation mask if available and masks are enabled
+      if (globalShowMasks && annotation.segmentation && annotation.segmentation.length > 0) {
         annotation.segmentation.forEach((segment, segIndex) => {
           if (!Array.isArray(segment) || segment.length < 6) { 
             return; 
@@ -159,8 +163,40 @@ export const AnnotationVisualizer = ({
           ctx.stroke();
         });
       }
+      
+      // Draw bounding box if available and individual bbox is enabled
+      if (annotation.showBboxes && annotation.bbox && annotation.bbox.length === 4) {
+        const [x, y, width, height] = annotation.bbox;
+        
+        // Transform to canvas coordinates
+        const canvasX = offsetX + (x * scale);
+        const canvasY = offsetY + (y * scale);
+        const canvasWidth = width * scale;
+        const canvasHeight = height * scale;
+        
+        const hexColor = color.startsWith('#') ? color : `#${color}`;
+        
+        ctx.strokeStyle = hexColor;
+        ctx.lineWidth = Math.max(3, scale * 4); // Make it thicker
+        ctx.setLineDash([]);
+        
+        // Draw the rectangle
+        ctx.strokeRect(canvasX, canvasY, canvasWidth, canvasHeight);
+        
+        // Draw corner markers to make bbox more visible
+        ctx.fillStyle = hexColor;
+        const markerSize = 8;
+        // Top-left
+        ctx.fillRect(canvasX - markerSize/2, canvasY - markerSize/2, markerSize, markerSize);
+        // Top-right  
+        ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY - markerSize/2, markerSize, markerSize);
+        // Bottom-left
+        ctx.fillRect(canvasX - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
+        // Bottom-right
+        ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
+      }
     });
-  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan]);
+  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks]);
 
   return (
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>

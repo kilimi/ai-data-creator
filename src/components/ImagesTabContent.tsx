@@ -29,6 +29,7 @@ interface ImagesTabContentProps {
   onImportAnnotations?: (files: File[]) => void;
   selectedImageIndex: number | null;
   setSelectedImageIndex: (idx: number | null) => void;
+  globalShowBboxes?: boolean;
 }
 
 function getAnnotationFileName(annotation, annotationFiles) {
@@ -56,6 +57,7 @@ export function ImagesTabContent({
   annotationFiles = [], // <-- add this prop for file name lookup
   selectedImageIndex,
   setSelectedImageIndex,
+  globalShowBboxes = false,
 }: ImagesTabContentProps & { annotationFiles?: any[] }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAnnotationChoiceModalOpen, setIsAnnotationChoiceModalOpen] = useState(false);
@@ -168,6 +170,7 @@ export function ImagesTabContent({
             onImageClick={handleImageClick}
             annotations={annotationsWithFileName}
             annotationFiles={annotationFiles}
+            globalShowBboxes={globalShowBboxes}
           />
         </ScrollArea>
       </div>

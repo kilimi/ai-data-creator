@@ -56,6 +56,9 @@ export function ResizableDatasetLayout({
   // Memoize images to prevent new array reference on every render
   const imagesMemo = useMemo(() => images, [JSON.stringify(images)]);
   const [annotationFiles, setAnnotationFiles] = useState<any[]>([]);
+  
+  // Global bbox visibility state
+  const [globalShowBboxes, setGlobalShowBboxes] = useState(false);
 
   // Handle annotation changes and store annotation files
   const handleShowAnnotationsChange = (show: boolean, annots: AnnotationSample[], files?: any[]) => {
@@ -86,6 +89,7 @@ export function ResizableDatasetLayout({
           onImportAnnotations={onImportAnnotations}
           selectedImageIndex={selectedImageIndex}
           setSelectedImageIndex={setSelectedImageIndex}
+          globalShowBboxes={globalShowBboxes}
         />
       </div>
     </ScrollArea>
@@ -103,6 +107,8 @@ export function ResizableDatasetLayout({
           showAllAnnotationsOnGrid
           // Pass the dataset images
           images={imagesMemo}
+          // Pass global bbox visibility callback
+          onGlobalBboxVisibilityChange={setGlobalShowBboxes}
         />
       </div>
     </ScrollArea>

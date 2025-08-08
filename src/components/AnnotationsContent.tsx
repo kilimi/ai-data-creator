@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
@@ -29,6 +29,7 @@ interface AnnotationsContentProps {
   onImportAnnotations?: (files: File[]) => void;
   showAllAnnotationsOnGrid?: boolean;
   images?: Image[];
+  onGlobalBboxVisibilityChange?: (showBboxes: boolean) => void;
 }
 
 // Helper to convert AnnotationFile to COCO format
@@ -93,11 +94,13 @@ export function AnnotationsContent({
   onShowAnnotationsChange,
   onImportAnnotations,
   showAllAnnotationsOnGrid = false, // NEW PROP
-  images = [] // NEW PROP
+  images = [], // NEW PROP
+  onGlobalBboxVisibilityChange
 }: AnnotationsContentProps) {
   const navigate = useNavigate();
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
+  const [globalShowBboxes, setGlobalShowBboxes] = useState(false);
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
@@ -456,7 +459,7 @@ export function AnnotationsContent({
   // Save annotations to localStorage only when no API is available
   useEffect(() => {
     if (annotationFiles.length > 0 && !api) {
-      localStorage.setItem(`annotations_${id}`, JSON.stringify(annotationFiles));
+      saveAnnotationFilesToLocalStorage(annotationFiles);
     }
   }, [annotationFiles, id, api]);
   
@@ -565,7 +568,63 @@ export function AnnotationsContent({
   // Update visible annotations whenever visibility, annotation files, or images change
   useEffect(() => {
     updateVisibleAnnotations();
-  }, [annotationFiles, visibleAnnotations, imagesMemo, showAllAnnotationsOnGrid, updateVisibleAnnotations]); // REMOVE onShowAnnotationsChange
+  }, [annotationFiles, visibleAnnotations, imagesMemo, showAllAnnotationsOnGrid]); // REMOVE updateVisibleAnnotations from deps to prevent infinite loop
+
+  // Load full annotation data for a specific file (when user needs more than preview)
+  const loadFullAnnotationData = async (annotationId: string) => {
+    if (!api) {
+      toast({
+        title: "Backend required",
+        description: "Full data loading requires backend connection.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const contentResponse = await api.getAnnotationContent(id, annotationId);
+      if (contentResponse && contentResponse.success && contentResponse.data.content) {
+        // Create a mock File object to process the COCO data
+        const mockFile = new File([contentResponse.data.content], `annotation_${annotationId}.json`, { type: 'application/json' });
+        
+        // Re-process the full COCO annotation file
+        const result = await processCOCOAnnotations(mockFile, id);
+        
+        // Update the specific file with full data
+        setAnnotationFiles(prevFiles => {
+          return prevFiles.map(file => {
+            if (file.id === annotationId) {
+              return {
+                ...file,
+                samples: result.samples.map(sample => ({
+                  ...sample,
+                  isVisible: file.isVisible,
+                  showBboxes: file.showBboxes,
+                  annotationFileName: file.name
+                })),
+                totalSampleCount: result.samples.length,
+                previewOnly: false, // No longer in preview mode
+                isLargeDataset: false
+              };
+            }
+            return file;
+          });
+        });
+
+        toast({
+          title: "Full data loaded",
+          description: `Loaded ${result.samples.length} annotations for ${annotationFiles.find(f => f.id === annotationId)?.name}`,
+        });
+      }
+    } catch (error) {
+      console.error('Error loading full annotation data:', error);
+      toast({
+        title: "Error loading full data",
+        description: error instanceof Error ? error.message : "Failed to load full annotation data",
+        variant: "destructive"
+      });
+    }
+  };
 
   // Handle restoration notification after both annotation files and visibility are loaded
   useEffect(() => {
@@ -670,7 +729,152 @@ export function AnnotationsContent({
   const handleAnnotationClick = (annotationId: string) => {
     const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
     setSelectedAnnotation(newSelectedAnnotation);
-  };  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
+  };  // Helper function to safely save annotation files to localStorage with smart pagination
+  const saveAnnotationFilesToLocalStorage = (files: AnnotationFile[]) => {
+    // Only save if no API is available (localStorage is fallback)
+    if (api) return;
+    
+    // Check if dataset is too large for localStorage (estimate size)
+    const totalSamples = files.reduce((sum, file) => sum + (file.samples?.length || 0), 0);
+    
+    try {
+      if (totalSamples > 1000) {
+        // For large datasets: Only store metadata + first 20 samples per file for preview
+        console.log(`Large dataset detected (${totalSamples} samples), storing metadata + preview only`);
+        
+        const previewFiles = files.map(file => ({
+          id: file.id,
+          name: file.name,
+          date: file.date,
+          format: file.format,
+          type: file.type,
+          classCount: file.classCount,
+          imageCount: file.imageCount,
+          matchedImageCount: file.matchedImageCount,
+          datasetId: file.datasetId,
+          isVisible: file.isVisible,
+          showBboxes: file.showBboxes,
+          classColors: file.classColors,
+          imageMapping: file.imageMapping, // IMPORTANT: Preserve full image mapping for present/missing counts
+          tags: file.tags,
+          classStats: file.classStats,
+          // Store total count but only preview samples
+          totalSampleCount: file.samples?.length || 0,
+          samples: file.samples?.slice(0, 20), // Only first 20 for preview
+          isLargeDataset: true, // Flag to indicate this is a partial dataset
+          previewOnly: true
+        }));
+        
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(previewFiles));
+        localStorage.setItem(`annotations_${id}_large_dataset_flag`, 'true');
+        
+        // Store pagination info
+        localStorage.setItem(`annotations_${id}_pagination`, JSON.stringify({
+          totalFiles: files.length,
+          totalSamples: totalSamples,
+          previewSize: 20,
+          currentPage: 1,
+          lastUpdate: Date.now()
+        }));
+        
+      } else {
+        // For small datasets: Store everything as before
+        const lightweightFiles = files.map(file => ({
+          id: file.id,
+          name: file.name,
+          date: file.date,
+          format: file.format,
+          type: file.type,
+          classCount: file.classCount,
+          imageCount: file.imageCount,
+          matchedImageCount: file.matchedImageCount,
+          datasetId: file.datasetId,
+          isVisible: file.isVisible,
+          showBboxes: file.showBboxes,
+          classColors: file.classColors,
+          imageMapping: file.imageMapping, // Preserve image mapping for present/missing counts
+          tags: file.tags,
+          classStats: file.classStats,
+          samples: file.samples,
+          totalSampleCount: file.samples?.length || 0,
+          isLargeDataset: false
+        }));
+        
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(lightweightFiles));
+        localStorage.removeItem(`annotations_${id}_large_dataset_flag`);
+      }
+      
+    } catch (error) {
+      if (error instanceof Error && error.name === 'QuotaExceededError') {
+        console.warn('LocalStorage quota exceeded even with preview mode, storing absolute minimum...');
+        
+        // Emergency fallback: Store only the most essential metadata
+        try {
+          const emergencyFiles = files.map(file => ({
+            id: file.id,
+            name: file.name,
+            isVisible: file.isVisible,
+            showBboxes: file.showBboxes,
+            classCount: file.classCount,
+            imageCount: file.imageCount, // Total image count for display
+            totalSampleCount: file.samples?.length || 0,
+            imageMapping: file.imageMapping, // Try to preserve for present/missing counts
+            emergency: true
+          }));
+          
+          localStorage.setItem(`annotations_${id}`, JSON.stringify(emergencyFiles));
+          localStorage.setItem(`annotations_${id}_emergency_mode`, 'true');
+          
+          toast({
+            title: "Large dataset detected",
+            description: "Storing minimal data locally. Full features available with backend connection.",
+            variant: "default"
+          });
+          
+        } catch (emergencyError) {
+          console.error('Failed to save even emergency annotation data:', emergencyError);
+          
+          // Try one more time without imageMapping if it's too large
+          try {
+            const minimalFiles = files.map(file => ({
+              id: file.id,
+              name: file.name,
+              isVisible: file.isVisible,
+              showBboxes: file.showBboxes,
+              classCount: file.classCount,
+              imageCount: file.imageCount || 0, // At least preserve total count
+              totalSampleCount: file.samples?.length || 0,
+              emergency: true,
+              noImageMapping: true // Flag to indicate imageMapping was omitted
+            }));
+            
+            localStorage.setItem(`annotations_${id}`, JSON.stringify(minimalFiles));
+            localStorage.setItem(`annotations_${id}_emergency_mode`, 'true');
+            
+            toast({
+              title: "Minimal data stored",
+              description: "Image matching unavailable locally. Connect to backend for full features.",
+              variant: "default"
+            });
+            
+          } catch (finalError) {
+            // Clear localStorage completely and show warning
+            localStorage.removeItem(`annotations_${id}`);
+            
+            toast({
+              title: "Dataset too large for local storage",
+              description: "Please use backend database for large annotation datasets.",
+              variant: "destructive"
+            });
+          }
+        }
+      } else {
+        console.error('Failed to save annotation files to localStorage:', error);
+      }
+    }
+  };
+
+  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
     const file = annotationFiles.find(f => f.id === annotationId);
@@ -720,8 +924,55 @@ export function AnnotationsContent({
     
     setAnnotationFiles(updatedFiles);
     
-    // Save updated files to localStorage
-    localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+    // Save updated files to localStorage with quota handling
+    saveAnnotationFilesToLocalStorage(updatedFiles);
+  };
+
+  const handleToggleGlobalBboxes = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newValue = !globalShowBboxes;
+    setGlobalShowBboxes(newValue);
+    
+    // Save to localStorage
+    localStorage.setItem(`global_bbox_visibility_${id}`, JSON.stringify(newValue));
+    
+    // Notify parent component
+    onGlobalBboxVisibilityChange?.(newValue);
+  };
+
+  const handleToggleAnnotationBboxes = (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (!file) return;
+    
+    // Toggle individual bbox visibility for this annotation file
+    const newBboxVisibility = !file.showBboxes;
+    
+    // Update the annotation files to toggle bbox visibility for all samples in this file
+    const updatedFiles = annotationFiles.map(f => 
+      f.id === annotationId 
+        ? { 
+            ...f, 
+            showBboxes: newBboxVisibility,
+            samples: f.samples?.map(sample => ({
+              ...sample,
+              showBboxes: newBboxVisibility,
+              annotationFileName: f.name
+            }))
+          }
+        : f
+    );
+    
+    setAnnotationFiles(updatedFiles);
+    
+    // Save updated files to localStorage with quota handling
+    saveAnnotationFilesToLocalStorage(updatedFiles);
+    
+    toast({
+      title: newBboxVisibility ? "Bounding boxes shown" : "Bounding boxes hidden",
+      description: `Bounding boxes ${newBboxVisibility ? 'enabled' : 'disabled'} for ${file.name}`,
+    });
   };
 
   const handleDeleteAnnotation = async (annotationId: string, e: React.MouseEvent) => {
@@ -1004,12 +1255,15 @@ export function AnnotationsContent({
     setShowUploadDialog(true);
   };  // Get present and missing image file names for an annotation file
   const getImageFileLists = (file: AnnotationFile) => {
-    if (!file.samples || !file.imageMapping) {
+    if (!file.imageMapping) {
+      // Fallback for emergency mode without imageMapping or files without image data
       return { presentFiles: [], missingFiles: [] };
     }
     
-    // Get all unique image IDs from the annotation samples
-    const annotationImageIds = new Set(file.samples.map(sample => sample.imageId));
+    // For large datasets in preview mode, we should use the full imageMapping
+    // instead of only the samples (which might be limited to first 20)
+    // Get all unique image IDs from the complete imageMapping
+    const allImageIds = Object.keys(file.imageMapping);
     
     // Create a set of uploaded image file names for quick lookup
     const uploadedImageNames = new Set(imagesMemo.map(img => img.fileName));
@@ -1017,7 +1271,7 @@ export function AnnotationsContent({
     const presentFiles: string[] = [];
     const missingFiles: string[] = [];
     
-    annotationImageIds.forEach(imageId => {
+    allImageIds.forEach(imageId => {
       // Get the actual filename from the COCO images array
       const fileName = file.imageMapping![imageId];
       
@@ -1080,6 +1334,7 @@ export function AnnotationsContent({
           const samples = result.samples.map(sample => ({
             ...sample,
             isVisible: false,
+            showBboxes: false, // Individual bbox visibility disabled by default
             annotationFileName: file.name
           }));
           
@@ -1120,6 +1375,7 @@ export function AnnotationsContent({
             classStats: result.stats,
             samples: samples,
             isVisible: false, // Set visibility to false by default
+            showBboxes: false, // Individual bbox visibility disabled by default
             classColors: result.classColors,
             imageMapping: result.imageMapping,
             tags: [] // Initialize with empty tags array
@@ -1222,6 +1478,7 @@ export function AnnotationsContent({
               const samples = result.samples.map(sample => ({
                 ...sample,
                 isVisible: false,
+                showBboxes: false, // Individual bbox visibility disabled by default
                 annotationFileName: file.name
               }));
               
@@ -1244,6 +1501,9 @@ export function AnnotationsContent({
                 }
               })() : (file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class')));
               
+              // For large datasets from backend, also implement preview mode
+              const isLargeDataset = samples.length > 1000;
+              
               const annotationFile: AnnotationFile = {
                 id: file.id, // Use the backend-provided ID
                 name: file.name || file.filename,
@@ -1255,11 +1515,18 @@ export function AnnotationsContent({
                 matchedImageCount: result.matchedImageCount,
                 datasetId: id,
                 classStats: result.stats,
-                samples: samples,
+                samples: isLargeDataset ? samples.slice(0, 20) : samples, // Preview mode for large datasets
                 isVisible: false,
+                showBboxes: false, // Individual bbox visibility disabled by default
                 classColors: result.classColors,
                 imageMapping: result.imageMapping,
-                tags: file.tags || [] // Use tags from backend response
+                tags: file.tags || [], // Use tags from backend response
+                // Add preview mode indicators for large datasets
+                ...(isLargeDataset && {
+                  totalSampleCount: samples.length,
+                  previewOnly: true,
+                  isLargeDataset: true
+                })
               };
               
               processedFiles.push(annotationFile);
@@ -1281,6 +1548,7 @@ export function AnnotationsContent({
                 classStats: [],
                 samples: [],
                 isVisible: false,
+                showBboxes: false, // Individual bbox visibility disabled by default
                 classColors: {},
                 imageMapping: {},
                 tags: file.tags || [] // Use tags from backend response
@@ -1308,6 +1576,7 @@ export function AnnotationsContent({
               classStats: [],
               samples: [],
               isVisible: false,
+              showBboxes: false, // Individual bbox visibility disabled by default
               classColors: {},
               imageMapping: {},
               tags: file.tags || [] // Use tags from backend response
@@ -1348,6 +1617,16 @@ export function AnnotationsContent({
         setAnnotationFiles(combined);
         console.log(`Loaded and processed ${processedFiles.length} annotation files from backend and ${filteredSavedClassifications.length} classifications from localStorage`);
         
+        // Check if any files were loaded in preview mode and notify user
+        const previewFiles = processedFiles.filter(file => file.previewOnly);
+        if (previewFiles.length > 0) {
+          const fileNames = previewFiles.map(file => file.name).join(', ');
+          toast({
+            title: "Large datasets loaded in preview mode",
+            description: `${previewFiles.length} file(s) (${fileNames}) show first 20 annotations only. Click "Load Full Data" to see all annotations.`,
+          });
+        }
+        
         // Clear localStorage to prevent conflicts with backend data
         localStorage.removeItem(`annotations_${id}`);
         console.log(`Cleared localStorage for dataset ${id} to prevent conflicts`);
@@ -1361,31 +1640,104 @@ export function AnnotationsContent({
     }
   };
 
-  // Load existing annotations from localStorage (fallback)
+  // Load existing annotations from localStorage (fallback) with smart loading
   const loadAnnotationFilesFromLocalStorage = () => {
     const savedAnnotations = localStorage.getItem(`annotations_${id}`);
+    const isLargeDatasetFlag = localStorage.getItem(`annotations_${id}_large_dataset_flag`);
+    const isEmergencyMode = localStorage.getItem(`annotations_${id}_emergency_mode`);
+    
     if (savedAnnotations) {
       try {
         const parsed = JSON.parse(savedAnnotations);
-        // Ensure all annotation samples have annotationFileName property
-        const annotationsWithFileNames = parsed.map((file: AnnotationFile) => {
-          return {
+        
+        if (isEmergencyMode) {
+          // Emergency mode: Very minimal data, show warning
+          console.warn('Loading in emergency mode - minimal data available');
+          
+          const emergencyFiles = parsed.map((file: any) => ({
+            id: file.id,
+            name: file.name,
+            date: new Date().toISOString().split('T')[0],
+            format: 'COCO',
+            type: undefined,
+            classCount: file.classCount || 0,
+            imageCount: 0,
+            matchedImageCount: 0,
+            datasetId: id,
+            isVisible: file.isVisible || false,
+            showBboxes: file.showBboxes || false,
+            classColors: {},
+            tags: [],
+            classStats: [],
+            samples: [],
+            totalSampleCount: file.totalSampleCount || 0,
+            emergencyMode: true
+          }));
+          
+          setAnnotationFiles(emergencyFiles);
+          
+          toast({
+            title: "Limited local data",
+            description: "Only metadata available. Connect to backend for full annotation features.",
+            variant: "default"
+          });
+          
+          return;
+        }
+        
+        if (isLargeDatasetFlag) {
+          // Large dataset mode: Preview data with pagination info
+          console.log('Loading large dataset in preview mode');
+          
+          const paginationInfo = localStorage.getItem(`annotations_${id}_pagination`);
+          if (paginationInfo) {
+            const pagination = JSON.parse(paginationInfo);
+            console.log(`Large dataset: ${pagination.totalSamples} total samples, showing preview of ${pagination.previewSize} per file`);
+          }
+          
+          const previewFiles = parsed.map((file: any) => ({
             ...file,
-            samples: file.samples?.map(sample => ({
+            samples: file.samples?.map((sample: any) => ({
               ...sample,
-              annotationFileName: (sample as any).annotationFileName || file.name
-            }))
-          };
-        });
+              showBboxes: sample.showBboxes ?? false,
+              annotationFileName: sample.annotationFileName || file.name
+            })) || []
+          }));
+          
+          setAnnotationFiles(previewFiles);
+          
+          toast({
+            title: "Large dataset loaded",
+            description: `Showing preview data. ${parsed.reduce((sum: number, f: any) => sum + (f.totalSampleCount || 0), 0)} total annotations available.`,
+            variant: "default"
+          });
+          
+        } else {
+          // Normal mode: Complete data for small datasets
+          const annotationsWithFileNames = parsed.map((file: AnnotationFile) => {
+            return {
+              ...file,
+              showBboxes: file.showBboxes ?? false,
+              samples: file.samples?.map(sample => ({
+                ...sample,
+                showBboxes: (sample as any).showBboxes ?? false,
+                annotationFileName: (sample as any).annotationFileName || file.name
+              }))
+            };
+          });
+          
+          setAnnotationFiles(annotationsWithFileNames);
+        }
         
         // Sort by date (newest first) before setting
-        annotationsWithFileNames.sort((a, b) => {
-          const dateA = new Date(a.date);
-          const dateB = new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
+        setAnnotationFiles(prev => {
+          const sorted = [...prev].sort((a, b) => {
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+            return dateB.getTime() - dateA.getTime();
+          });
+          return sorted;
         });
-        
-        setAnnotationFiles(annotationsWithFileNames);
         
         // Restore visibility state with proper typing
         const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
@@ -1394,8 +1746,22 @@ export function AnnotationsContent({
           const visibilitySet = new Set(visibilityArray);
           setVisibleAnnotations(visibilitySet);
         }
+        
+        // Restore global bbox visibility state
+        const savedBboxVisibility = localStorage.getItem(`global_bbox_visibility_${id}`);
+        if (savedBboxVisibility) {
+          const bboxVisibility = JSON.parse(savedBboxVisibility);
+          setGlobalShowBboxes(bboxVisibility);
+          onGlobalBboxVisibilityChange?.(bboxVisibility);
+        }
+        
       } catch (error) {
         console.error('Error loading annotations from localStorage:', error);
+        // Clear corrupted data
+        localStorage.removeItem(`annotations_${id}`);
+        localStorage.removeItem(`annotations_${id}_large_dataset_flag`);
+        localStorage.removeItem(`annotations_${id}_emergency_mode`);
+        localStorage.removeItem(`annotations_${id}_pagination`);
       }
     }
   };
@@ -1762,7 +2128,28 @@ export function AnnotationsContent({
                            </div>
                          ) : (
                            <>
-                             <div className="font-medium">{file.name}</div>
+                             <div className="flex items-center gap-2">
+                               <div className="font-medium">{file.name}</div>
+                               {/* Show preview indicator for large datasets */}
+                               {(file as any).previewOnly && (
+                                 <Badge
+                                   variant="secondary"
+                                   className="text-xs bg-orange-500/20 text-orange-300 border-orange-500"
+                                   title={`Preview mode: Showing first 20 of ${(file as any).totalSampleCount || 0} annotations`}
+                                 >
+                                   Preview
+                                 </Badge>
+                               )}
+                               {(file as any).emergencyMode && (
+                                 <Badge
+                                   variant="secondary"
+                                   className="text-xs bg-red-500/20 text-red-300 border-red-500"
+                                   title="Emergency mode: Minimal data only"
+                                 >
+                                   Limited
+                                 </Badge>
+                               )}
+                             </div>
                              <Button
                                variant="ghost"
                                size="sm"
@@ -1778,6 +2165,10 @@ export function AnnotationsContent({
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
                           <span>
                             {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.format}
+                            {/* Show total annotation count for preview mode */}
+                            {(file as any).totalSampleCount && (file as any).previewOnly && (
+                              <> • {(file as any).totalSampleCount} annotations</>
+                            )}
                           </span>
                           <Badge 
                             variant="secondary" 
@@ -1828,7 +2219,24 @@ export function AnnotationsContent({
                      </div>
                     <div className="flex items-center gap-4">                      {/* Images count */}
                       <div className="flex items-center gap-2 text-sm">
-                        {(() => {                          const { presentFiles, missingFiles } = getImageFileLists(file);
+                        {(() => {
+                          // Check if this is emergency mode without imageMapping
+                          if ((file as any).noImageMapping || ((file as any).emergency && !file.imageMapping)) {
+                            // Emergency mode without image mapping - show total count only
+                            const totalCount = file.imageCount || 0;
+                            return (
+                              <>
+                                <span className="text-gray-400" title="Image matching unavailable in emergency mode">
+                                  ? / {totalCount}
+                                </span>
+                                <span className="text-xs text-amber-300" title="Connect to backend for image matching">
+                                  (no matching data)
+                                </span>
+                              </>
+                            );
+                          }
+                          
+                          const { presentFiles, missingFiles } = getImageFileLists(file);
                           const currentPresentCount = presentFiles.length;
                           const currentMissingCount = missingFiles.length;
                           const totalCount = currentPresentCount + currentMissingCount;
@@ -1863,18 +2271,50 @@ export function AnnotationsContent({
                           );
                         })()}
                       </div>
-                      {/* Visibility toggle */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
-                        onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
-                        title={visibleAnnotations.has(file.id) ? "Hide annotations" : "Show annotations"}
-                      >
-                        {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                      </Button>
+                      {/* Visibility toggles */}
+                      <div className="flex gap-1">
+                        {/* Individual segmentation masks toggle */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
+                          onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
+                          title={visibleAnnotations.has(file.id) ? "Hide segmentation masks" : "Show segmentation masks"}
+                        >
+                          {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                        </Button>
+                        
+                        {/* Individual bounding boxes toggle */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-8 w-8 ${file.showBboxes ? 'text-blue-400' : 'text-gray-500'}`}
+                          onClick={(e) => handleToggleAnnotationBboxes(file.id, e)}
+                          title={file.showBboxes ? "Hide bounding boxes" : "Show bounding boxes"}
+                        >
+                          <Square className="h-4 w-4" />
+                        </Button>
+                      </div>
                        {/* Actions */}
                        <div className="flex gap-2">
+                         {/* Load Full Data button for preview mode */}
+                         {(file as any).previewOnly && api && (
+                           <Button 
+                             variant="ghost" 
+                             size="icon" 
+                             className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               loadFullAnnotationData(file.id);
+                             }}
+                             title={`Load all ${(file as any).totalSampleCount || 0} annotations (currently showing preview)`}
+                           >
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                             </svg>
+                           </Button>
+                         )}
+                         
                          {/* Tags button */}
                          <Button 
                            variant="ghost" 

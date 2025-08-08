@@ -9,7 +9,8 @@ export interface AnnotationSample {
   confidence?: number;        // Optional confidence score
   color?: string;             // Optional color for display
   opacity?: number;           // Optional opacity for display
-  isVisible?: boolean;        // Optional visibility for toggling in UI
+  isVisible?: boolean;        // Optional visibility for toggling in UI (for segmentation masks)
+  showBboxes?: boolean;       // Optional individual bbox visibility control
   annotationFileName?: string; // Optional annotation file name for grouping
 }
 
@@ -26,6 +27,7 @@ export interface AnnotationFile {
   classStats?: { className: string; count: number; color: string; opacity?: number }[];
   samples?: AnnotationSample[];
   isVisible?: boolean;
+  showBboxes?: boolean; // Add individual bbox visibility control for the annotation file
   classColors?: { [className: string]: string }; // Add class color mapping
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
   tags?: string[]; // Add tags for categorization and search
