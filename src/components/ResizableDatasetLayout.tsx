@@ -109,6 +109,8 @@ export function ResizableDatasetLayout({
           images={imagesMemo}
           // Pass global bbox visibility callback
           onGlobalBboxVisibilityChange={setGlobalShowBboxes}
+          // Pass current page image IDs for smart annotation loading
+          currentPageImageIds={paginatedImages.map(img => img.id)}
         />
       </div>
     </ScrollArea>

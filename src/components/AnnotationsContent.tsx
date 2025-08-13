@@ -30,6 +30,7 @@ interface AnnotationsContentProps {
   showAllAnnotationsOnGrid?: boolean;
   images?: Image[];
   onGlobalBboxVisibilityChange?: (showBboxes: boolean) => void;
+  currentPageImageIds?: string[]; // NEW: Current page image IDs
 }
 
 // Helper to convert AnnotationFile to COCO format
@@ -95,7 +96,8 @@ export function AnnotationsContent({
   onImportAnnotations,
   showAllAnnotationsOnGrid = false, // NEW PROP
   images = [], // NEW PROP
-  onGlobalBboxVisibilityChange
+  onGlobalBboxVisibilityChange,
+  currentPageImageIds = [] // NEW
 }: AnnotationsContentProps) {
   const navigate = useNavigate();
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
@@ -626,6 +628,117 @@ export function AnnotationsContent({
     }
   };
 
+  // New function to load annotations for current page images
+  const loadAnnotationsForCurrentPage = useCallback(async (annotationId: string, currentPageImageIds: string[]) => {
+    console.log(`Loading annotations for file ${annotationId} with ${currentPageImageIds.length} current page images`);
+    
+    if (!api) {
+      toast({
+        title: "Backend required",
+        description: "Page-specific annotation loading requires backend connection.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      const contentResponse = await api.getAnnotationContent(id, annotationId);
+      if (contentResponse && contentResponse.success && contentResponse.data.content) {
+        // Create a mock File object to process the COCO data
+        const mockFile = new File([contentResponse.data.content], `annotation_${annotationId}.json`, { type: 'application/json' });
+        
+        // Re-process the full COCO annotation file
+        const result = await processCOCOAnnotations(mockFile, id);
+        
+        // Filter annotations to only include those for current page images
+        const currentPageSamples = result.samples.filter(sample => {
+          // Map annotation image ID to actual image ID using imageMapping
+          const file = annotationFiles.find(f => f.id === annotationId);
+          if (!file?.imageMapping) return false;
+          
+          const filename = file.imageMapping[sample.imageId];
+          if (!filename) return false;
+          
+          // Find the actual image ID for this filename
+          const image = imagesMemo.find(img => img.fileName === filename);
+          return image && currentPageImageIds.includes(image.id);
+        });
+        
+        // Update the specific file with current page data
+        setAnnotationFiles(prevFiles => {
+          return prevFiles.map(file => {
+            if (file.id === annotationId) {
+              // Merge current page samples with existing samples, avoiding duplicates
+              const existingSamples = file.samples || [];
+              const existingImageIds = new Set(existingSamples.map(s => s.imageId));
+              
+              const newSamples = currentPageSamples.filter(sample => {
+                // Map to actual image ID for comparison
+                const filename = file.imageMapping?.[sample.imageId];
+                if (!filename) return false;
+                const image = imagesMemo.find(img => img.fileName === filename);
+                return image && !existingImageIds.has(image.id);
+              });
+              
+              const mergedSamples = [
+                ...existingSamples,
+                ...newSamples.map(sample => ({
+                  ...sample,
+                  isVisible: file.isVisible,
+                  showBboxes: file.showBboxes,
+                  annotationFileName: file.name
+                }))
+              ];
+              
+              return {
+                ...file,
+                samples: mergedSamples,
+                // Keep preview mode but indicate we have current page data
+                currentPageLoaded: true
+              };
+            }
+            return file;
+          });
+        });
+
+        if (currentPageSamples.length > 0) {
+          toast({
+            title: "Current page annotations loaded",
+            description: `Loaded ${currentPageSamples.length} annotations for current page images`,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error loading current page annotations:', error);
+      toast({
+        title: "Error loading current page data",
+        description: error instanceof Error ? error.message : "Failed to load annotations for current page",
+        variant: "destructive"
+      });
+    }
+  }, [api, id, annotationFiles, imagesMemo, toast]);
+
+  // Auto-load annotations for current page when page changes
+  useEffect(() => {
+    if (currentPageImageIds.length > 0 && api) {
+      // Find annotation files that are in preview mode and visible
+      const previewFilesNeedingLoad = annotationFiles.filter(file => 
+        (file as any).previewOnly && 
+        visibleAnnotations.has(file.id) &&
+        !(file as any).currentPageLoaded
+      );
+      
+      if (previewFilesNeedingLoad.length > 0) {
+        console.log(`Auto-loading annotations for ${previewFilesNeedingLoad.length} preview files. Current page has ${currentPageImageIds.length} images.`);
+      }
+      
+      // Load annotations for each preview file
+      previewFilesNeedingLoad.forEach(file => {
+        loadAnnotationsForCurrentPage(file.id, currentPageImageIds);
+      });
+    }
+  }, [currentPageImageIds, annotationFiles, visibleAnnotations, api, loadAnnotationsForCurrentPage]);
+
   // Handle restoration notification after both annotation files and visibility are loaded
   useEffect(() => {
     if (annotationFiles.length > 0 && onShowAnnotationsChange) {
@@ -739,31 +852,46 @@ export function AnnotationsContent({
     
     try {
       if (totalSamples > 1000) {
-        // For large datasets: Only store metadata + first 20 samples per file for preview
-        console.log(`Large dataset detected (${totalSamples} samples), storing metadata + preview only`);
+        // For large datasets: Store metadata + samples for images that are present in the dataset
+        console.log(`Large dataset detected (${totalSamples} samples), storing metadata + relevant samples only`);
         
-        const previewFiles = files.map(file => ({
-          id: file.id,
-          name: file.name,
-          date: file.date,
-          format: file.format,
-          type: file.type,
-          classCount: file.classCount,
-          imageCount: file.imageCount,
-          matchedImageCount: file.matchedImageCount,
-          datasetId: file.datasetId,
-          isVisible: file.isVisible,
-          showBboxes: file.showBboxes,
-          classColors: file.classColors,
-          imageMapping: file.imageMapping, // IMPORTANT: Preserve full image mapping for present/missing counts
-          tags: file.tags,
-          classStats: file.classStats,
-          // Store total count but only preview samples
-          totalSampleCount: file.samples?.length || 0,
-          samples: file.samples?.slice(0, 20), // Only first 20 for preview
-          isLargeDataset: true, // Flag to indicate this is a partial dataset
-          previewOnly: true
-        }));
+        const previewFiles = files.map(file => {
+          // Filter samples to only include those for images present in the current dataset
+          const relevantSamples = file.samples?.filter(sample => {
+            if (!file.imageMapping) return false;
+            const filename = file.imageMapping[sample.imageId];
+            if (!filename) return false;
+            // Check if this image file exists in the current dataset
+            return imagesMemo.some(img => img.fileName === filename);
+          }) || [];
+          
+          // Take up to 50 relevant samples instead of just first 20
+          const limitedSamples = relevantSamples.slice(0, 50);
+          
+          return {
+            id: file.id,
+            name: file.name,
+            date: file.date,
+            format: file.format,
+            type: file.type,
+            classCount: file.classCount,
+            imageCount: file.imageCount,
+            matchedImageCount: file.matchedImageCount,
+            datasetId: file.datasetId,
+            isVisible: file.isVisible,
+            showBboxes: file.showBboxes,
+            classColors: file.classColors,
+            imageMapping: file.imageMapping, // IMPORTANT: Preserve full image mapping for present/missing counts
+            tags: file.tags,
+            classStats: file.classStats,
+            // Store total count but only relevant samples
+            totalSampleCount: file.samples?.length || 0,
+            samples: limitedSamples,
+            isLargeDataset: true, // Flag to indicate this is a partial dataset
+            previewOnly: true,
+            relevantSamplesCount: relevantSamples.length // Track how many samples are relevant to current dataset
+          };
+        });
         
         localStorage.setItem(`annotations_${id}`, JSON.stringify(previewFiles));
         localStorage.setItem(`annotations_${id}_large_dataset_flag`, 'true');
@@ -772,7 +900,7 @@ export function AnnotationsContent({
         localStorage.setItem(`annotations_${id}_pagination`, JSON.stringify({
           totalFiles: files.length,
           totalSamples: totalSamples,
-          previewSize: 20,
+          previewSize: 50, // Increased from 20
           currentPage: 1,
           lastUpdate: Date.now()
         }));
@@ -2297,22 +2425,48 @@ export function AnnotationsContent({
                       </div>
                        {/* Actions */}
                        <div className="flex gap-2">
-                         {/* Load Full Data button for preview mode */}
+                         {/* Load buttons for preview mode */}
                          {(file as any).previewOnly && api && (
-                           <Button 
-                             variant="ghost" 
-                             size="icon" 
-                             className="h-8 w-8 text-muted-foreground hover:text-green-400"
-                             onClick={(e) => {
-                               e.stopPropagation();
-                               loadFullAnnotationData(file.id);
-                             }}
-                             title={`Load all ${(file as any).totalSampleCount || 0} annotations (currently showing preview)`}
-                           >
-                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                             </svg>
-                           </Button>
+                           <>
+                             <Button 
+                               variant="ghost" 
+                               size="icon" 
+                               className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 if (currentPageImageIds.length > 0) {
+                                   console.log(`Manual loading annotations for current page. Page has ${currentPageImageIds.length} images.`);
+                                   loadAnnotationsForCurrentPage(file.id, currentPageImageIds);
+                                 } else {
+                                   toast({
+                                     title: "No images on current page",
+                                     description: "Navigate to a page with images to load relevant annotations.",
+                                     variant: "default"
+                                   });
+                                 }
+                               }}
+                               title={`Load annotations for current page images (${currentPageImageIds.length} images)`}
+                             >
+                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                               </svg>
+                             </Button>
+                             <Button 
+                               variant="ghost" 
+                               size="icon" 
+                               className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 loadFullAnnotationData(file.id);
+                               }}
+                               title={`Load all ${(file as any).totalSampleCount || 0} annotations`}
+                             >
+                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                               </svg>
+                             </Button>
+                           </>
                          )}
                          
                          {/* Tags button */}
