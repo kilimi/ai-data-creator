@@ -1063,8 +1063,28 @@ export function AnnotationsContent({
     const file = annotationFiles.find(f => f.id === annotationId);
     if (!file) return;
     
+    // Get the present files count
+    const { presentFiles } = getImageFileLists(file);
+    
+    // If trying to show bboxes but there are no present images, show a warning
+    if (!file.showBboxes && presentFiles.length === 0) {
+      toast({
+        title: "Cannot show bounding boxes",
+        description: "There are no matching images in the dataset for these annotations.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     // Toggle individual bbox visibility for this annotation file
     const newBboxVisibility = !file.showBboxes;
+    
+    // If enabling bboxes, also make the annotations visible
+    // If disabling bboxes, don't automatically hide annotations (user might want masks visible)
+    const newVisibleAnnotations = new Set(visibleAnnotations);
+    if (newBboxVisibility) {
+      newVisibleAnnotations.add(annotationId);
+    }
     
     // Update the annotation files to toggle bbox visibility for all samples in this file
     const updatedFiles = annotationFiles.map(f => 
@@ -1072,9 +1092,13 @@ export function AnnotationsContent({
         ? { 
             ...f, 
             showBboxes: newBboxVisibility,
+            // Only set isVisible to true when enabling bboxes, don't change it when disabling
+            isVisible: newBboxVisibility || f.isVisible,
             samples: f.samples?.map(sample => ({
               ...sample,
               showBboxes: newBboxVisibility,
+              // Only set isVisible to true when enabling bboxes, don't change it when disabling
+              isVisible: newBboxVisibility || sample.isVisible,
               annotationFileName: f.name
             }))
           }
@@ -1082,6 +1106,10 @@ export function AnnotationsContent({
     );
     
     setAnnotationFiles(updatedFiles);
+    setVisibleAnnotations(newVisibleAnnotations);
+    
+    // Save visibility state to localStorage
+    localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
     
     // Save updated files to localStorage with quota handling
     saveAnnotationFilesToLocalStorage(updatedFiles);

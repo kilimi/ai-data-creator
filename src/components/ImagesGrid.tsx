@@ -146,6 +146,21 @@ export function ImagesGrid({
       console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId}:`);
       imageAnnotations.forEach((ann, idx) => {
         console.log(`  ${idx + 1}. Class: ${ann.className}, File: ${ann.annotationFileName || 'NOT SET'}, Color: ${ann.color}`);
+        console.log(`      bbox: ${JSON.stringify(ann.bbox)}, showBboxes: ${ann.showBboxes}, isVisible: ${ann.isVisible}`);
+        
+        // Add debugging for bbox format
+        if (ann.bbox && ann.bbox.length === 4) {
+          const [x, y, w, h] = ann.bbox;
+          const seemsNormalized = x <= 1 && y <= 1 && w <= 1 && h <= 1;
+          console.log(`      bbox format: ${seemsNormalized ? 'NORMALIZED' : 'PIXEL'} coordinates`);
+        }
+        
+        // Add debugging for segmentation data
+        if (ann.segmentation && ann.segmentation.length > 0) {
+          console.log(`      has segmentation: ${ann.segmentation.length} segments`);
+        } else {
+          console.log(`      no segmentation data`);
+        }
       });
     }
     

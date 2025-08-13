@@ -117,12 +117,25 @@ export const AnnotationVisualizer = ({
     visibleAnnotations.forEach((annotation, index) => {
       const color = annotation.color || "#ea384c";
       
+      console.log(`Processing annotation ${index}:`, {
+        className: annotation.className,
+        hasSegmentation: !!(annotation.segmentation && annotation.segmentation.length > 0),
+        segmentationLength: annotation.segmentation?.length || 0,
+        globalShowMasks,
+        isVisible: annotation.isVisible,
+        showBboxes: annotation.showBboxes
+      });
+      
       // Draw segmentation mask if available and masks are enabled
       if (globalShowMasks && annotation.segmentation && annotation.segmentation.length > 0) {
+        console.log(`Drawing segmentation for ${annotation.className} with ${annotation.segmentation.length} segments`);
         annotation.segmentation.forEach((segment, segIndex) => {
           if (!Array.isArray(segment) || segment.length < 6) { 
+            console.log(`Skipping invalid segment ${segIndex} - not array or too short:`, segment);
             return; 
           }
+          
+          console.log(`Drawing segment ${segIndex} with ${segment.length} points`);
           
           ctx.beginPath();
           
@@ -166,11 +179,34 @@ export const AnnotationVisualizer = ({
       if (annotation.showBboxes && annotation.bbox && annotation.bbox.length === 4) {
         const [x, y, width, height] = annotation.bbox;
         
-        // Convert normalized coordinates (0-1) to pixel coordinates, then to canvas coordinates
-        const pixelX = x * imageWidth;
-        const pixelY = y * imageHeight;
-        const pixelWidth = width * imageWidth;
-        const pixelHeight = height * imageHeight;
+        console.log('AnnotationVisualizer bbox processing:', {
+          annotation: annotation.className,
+          bboxRaw: annotation.bbox,
+          imageWidth,
+          imageHeight,
+          isNormalized: x <= 1 && y <= 1 && width <= 1 && height <= 1
+        });
+        
+        // Check if coordinates are already in pixel format vs normalized
+        let pixelX, pixelY, pixelWidth, pixelHeight;
+        
+        if (x <= 1 && y <= 1 && width <= 1 && height <= 1) {
+          // Coordinates are normalized (0-1), convert to pixels
+          pixelX = x * imageWidth;
+          pixelY = y * imageHeight;
+          pixelWidth = width * imageWidth;
+          pixelHeight = height * imageHeight;
+          console.log('Bbox coordinates appear normalized, converting to pixels');
+        } else {
+          // Coordinates are already in pixels
+          pixelX = x;
+          pixelY = y;
+          pixelWidth = width;
+          pixelHeight = height;
+          console.log('Bbox coordinates appear to be in pixels already');
+        }
+        
+        console.log('Final pixel coordinates:', { pixelX, pixelY, pixelWidth, pixelHeight });
         
         // Transform to canvas coordinates
         const canvasX = offsetX + (pixelX * scale);
