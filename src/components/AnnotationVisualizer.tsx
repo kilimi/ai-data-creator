@@ -164,8 +164,8 @@ export const AnnotationVisualizer = ({
         });
       }
       
-      // Draw bounding box if available and individual bbox is enabled
-      if (annotation.showBboxes && annotation.bbox && annotation.bbox.length === 4) {
+      // Draw bounding box if available and either individual bbox is enabled OR global bboxes are enabled
+      if ((annotation.showBboxes || globalShowBboxes) && annotation.bbox && annotation.bbox.length === 4) {
         const [x, y, width, height] = annotation.bbox;
         
         // Transform to canvas coordinates
@@ -196,7 +196,7 @@ export const AnnotationVisualizer = ({
         ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
       }
     });
-  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks]);
+  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks, globalShowBboxes]);
 
   return (
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>
