@@ -164,6 +164,14 @@ export const AnnotationVisualizer = ({
       
       // Draw bounding box if available and individual bbox is enabled
       if (annotation.showBboxes && annotation.bbox && annotation.bbox.length === 4) {
+        console.log('Drawing bbox for annotation:', {
+          showBboxes: annotation.showBboxes,
+          bbox: annotation.bbox,
+          color,
+          scale,
+          offsetX,
+          offsetY
+        });
         const [x, y, width, height] = annotation.bbox;
         
         // Transform to canvas coordinates
@@ -192,6 +200,11 @@ export const AnnotationVisualizer = ({
         ctx.fillRect(canvasX - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
         // Bottom-right
         ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
+      } else if (annotation.bbox && annotation.bbox.length === 4) {
+        console.log('Bbox not shown due to showBboxes=false:', {
+          showBboxes: annotation.showBboxes,
+          bbox: annotation.bbox
+        });
       }
     });
   }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks]);
