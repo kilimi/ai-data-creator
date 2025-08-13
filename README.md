@@ -8,6 +8,37 @@ Variant: TypeScript
 npm install 
 npm run dev
 
+### Database Setup
+
+**If database doesn't exist:**
+```bash
+# Connect to PostgreSQL as the postgres superuser
+docker-compose exec db psql -U postgres
+
+# Create the database
+CREATE DATABASE lai_db;
+
+# Grant permissions (optional but recommended)
+GRANT ALL PRIVILEGES ON DATABASE lai_db TO postgres;
+
+# Exit PostgreSQL
+\q
+```
+
+**Fresh database setup:**
+```bash
+# Option 1: Use reset script
+docker-compose exec backend python reset_database.py
+# Choose option 3 for fresh Alembic reset
+
+# Option 2: Manual fresh setup (if migration conflicts occur)
+# Remove migration files and clear database
+Remove-Item "backend\migrations\versions\*.py" -Force
+docker-compose exec db psql -U postgres lai_db -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker-compose exec backend alembic revision --autogenerate -m "Initial migration"
+docker-compose exec backend alembic upgrade head
+```
+
 ### Backend
 ```bash
 # Navigate to backend directory
@@ -68,6 +99,27 @@ docker-compose logs db
 # Restart with fresh database
 docker-compose down -v
 docker-compose up -d --build
+docker-compose exec backend alembic upgrade head
+```
+
+**Alembic Migration Issues:**
+
+*"Target database is not up to date" error with empty database:*
+```bash
+# Complete fresh setup (removes migration conflicts)
+Remove-Item "backend\migrations\versions\*.py" -Force
+docker-compose exec db psql -U postgres lai_db -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker-compose exec backend alembic revision --autogenerate -m "Initial migration"
+docker-compose exec backend alembic upgrade head
+```
+
+*"Relation does not exist" errors during migrations:*
+```bash
+# This usually means migration files are out of sync with database state
+# Solution: Fresh migration setup
+Remove-Item "backend\migrations\versions\*.py" -Force
+docker-compose exec db psql -U postgres lai_db -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+docker-compose exec backend alembic revision --autogenerate -m "Fresh migration"
 docker-compose exec backend alembic upgrade head
 ```
 

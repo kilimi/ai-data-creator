@@ -113,17 +113,169 @@ export function AnnotationsContent({
   const [dirtyAnnotationIds, setDirtyAnnotationIds] = useState<Set<string>>(new Set());
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
+  
+  // New state for smart annotation loading
+  const [loadingAnnotations, setLoadingAnnotations] = useState<Set<string>>(new Set());
+  const [currentPageAnnotations, setCurrentPageAnnotations] = useState<{ [fileId: string]: AnnotationSample[] }>({});
+  const [lastLoadedPageIds, setLastLoadedPageIds] = useState<string[]>([]);
   // Handler for renaming a class in an annotation file
   const markDirty = (annotationId: string) => {
     setDirtyAnnotationIds(prev => new Set(prev).add(annotationId));
   };
   const clearDirty = (annotationId: string) => {
     setDirtyAnnotationIds(prev => {
-      const next = new Set(prev);
-      next.delete(annotationId);
-      return next;
+      const newSet = new Set(prev);
+      newSet.delete(annotationId);
+      return newSet;
     });
   };
+
+  const { api } = useApi();
+  const { toast } = useToast();
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+
+  // Smart annotation loading for current page
+  const loadAnnotationsForCurrentPage = async (fileId: string, force = false) => {
+    const file = annotationFiles.find(f => f.id === fileId);
+    if (!file || !api) return null;
+
+    // Check if we need to load annotations for current page
+    const currentPageString = currentPageImageIds.join(',');
+    const lastPageString = lastLoadedPageIds.join(',');
+    
+    // Skip if already loaded for this page (unless forced)
+    if (!force && currentPageString === lastPageString && currentPageAnnotations[fileId]) {
+      return currentPageAnnotations[fileId];
+    }
+
+    // Check if this is a large file (preview mode) that needs smart loading
+    const isLargeFile = (file as any).previewOnly || (file.samples?.length || 0) > 100;
+    
+    if (!isLargeFile) {
+      // For small files, return all samples
+      return file.samples || [];
+    }
+
+    try {
+      setLoadingAnnotations(prev => new Set(prev).add(fileId));
+      
+      console.log(`Loading annotations for file ${file.name} for current page with ${currentPageImageIds.length} images`);
+      
+      // Load full annotation data from backend
+      const contentResponse = await api.getAnnotationContent(id, fileId);
+      if (!contentResponse.success || !contentResponse.data.content) {
+        console.warn(`Failed to load annotation content for file ${file.name}:`, contentResponse);
+        // Mark as loaded to prevent retries
+        setAnnotationFiles(prevFiles => 
+          prevFiles.map(f => f.id === fileId ? { ...f, currentPageLoaded: true } : f)
+        );
+        return [];
+      }
+
+      const cocoData = JSON.parse(contentResponse.data.content);
+      
+      // Filter annotations for current page images only
+      const currentPageAnnotations = [];
+      
+      if (cocoData.annotations && Array.isArray(cocoData.annotations)) {
+        // Create image ID mapping
+        const imageMap = new Map();
+        if (cocoData.images && Array.isArray(cocoData.images)) {
+          cocoData.images.forEach((img: any) => {
+            imageMap.set(img.id, img.file_name);
+          });
+        }
+
+        // Filter annotations for current page
+        for (const anno of cocoData.annotations) {
+          const imageName = imageMap.get(anno.image_id);
+          if (!imageName) continue;
+          
+          // Check if this image is in current page
+          const matchingImage = images.find(img => 
+            img.fileName === imageName || 
+            img.fileName === imageName.replace(/\.[^/.]+$/, '') || // without extension
+            imageName.includes(img.fileName.replace(/\.[^/.]+$/, ''))
+          );
+          
+          if (matchingImage && currentPageImageIds.includes(matchingImage.id)) {
+            // Convert COCO annotation to our format
+            const category = cocoData.categories?.find((cat: any) => cat.id === anno.category_id);
+            const className = category ? category.name : `category_${anno.category_id}`;
+            
+            // Get image dimensions for bbox normalization
+            const imageInfo = cocoData.images?.find((img: any) => img.id === anno.image_id);
+            const imageWidth = imageInfo?.width || 1;
+            const imageHeight = imageInfo?.height || 1;
+            
+            let bbox: [number, number, number, number] = [0, 0, 0, 0];
+            if (anno.bbox && Array.isArray(anno.bbox) && anno.bbox.length === 4) {
+              bbox = [
+                anno.bbox[0] / imageWidth,
+                anno.bbox[1] / imageHeight,
+                anno.bbox[2] / imageWidth,
+                anno.bbox[3] / imageHeight
+              ] as [number, number, number, number];
+            }
+
+            const annotationSample: AnnotationSample = {
+              id: `${fileId}_${anno.id}`,
+              imageId: matchingImage.id,
+              className,
+              bbox,
+              segmentation: anno.segmentation || undefined,
+              area: anno.area,
+              confidence: 1.0,
+              color: file.classColors?.[className] || '#ea384c',
+              isVisible: true,
+              showBboxes: file.showBboxes || false,
+              annotationFileName: file.name
+            };
+            
+            currentPageAnnotations.push(annotationSample);
+          }
+        }
+      }
+
+      console.log(`Loaded ${currentPageAnnotations.length} annotations for current page from ${file.name}`);
+      
+      // Cache the loaded annotations
+      setCurrentPageAnnotations(prev => ({
+        ...prev,
+        [fileId]: currentPageAnnotations
+      }));
+      
+      setLastLoadedPageIds([...currentPageImageIds]);
+      
+      return currentPageAnnotations;
+      
+    } catch (error) {
+      console.error('Error loading annotations for current page:', error);
+      
+      // Mark as loaded to prevent endless retries on error
+      setAnnotationFiles(prevFiles => 
+        prevFiles.map(f => f.id === fileId ? { ...f, currentPageLoaded: true } : f)
+      );
+      
+      // Only show toast if it's not a network error (to avoid spam)
+      if (!(error instanceof TypeError && error.message.includes('Failed to fetch'))) {
+        toast({
+          title: "Error loading annotations",
+          description: `Failed to load annotations for ${file?.name || 'file'}`,
+          variant: "destructive"
+        });
+      }
+      
+      return [];
+    } finally {
+      setLoadingAnnotations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(fileId);
+        return newSet;
+      });
+    }
+  };
+
   const handleRenameClass = async (annotationId: string, oldClassName: string, newClassName: string) => {
     try {
       const updatedFiles = annotationFiles.map(file => {
@@ -255,10 +407,6 @@ export function AnnotationsContent({
     // Default fallback - if we can't determine, assume depth
     return 'depth';
   };
-
-  const { api } = useApi();
-  const { toast } = useToast();
-  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
 
   // Handler for managing tags
   const handleTagsClick = (annotationId: string, e: React.MouseEvent) => {
@@ -628,96 +776,6 @@ export function AnnotationsContent({
     }
   };
 
-  // New function to load annotations for current page images
-  const loadAnnotationsForCurrentPage = useCallback(async (annotationId: string, currentPageImageIds: string[]) => {
-    console.log(`Loading annotations for file ${annotationId} with ${currentPageImageIds.length} current page images`);
-    
-    if (!api) {
-      toast({
-        title: "Backend required",
-        description: "Page-specific annotation loading requires backend connection.",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    try {
-      const contentResponse = await api.getAnnotationContent(id, annotationId);
-      if (contentResponse && contentResponse.success && contentResponse.data.content) {
-        // Create a mock File object to process the COCO data
-        const mockFile = new File([contentResponse.data.content], `annotation_${annotationId}.json`, { type: 'application/json' });
-        
-        // Re-process the full COCO annotation file
-        const result = await processCOCOAnnotations(mockFile, id);
-        
-        // Filter annotations to only include those for current page images
-        const currentPageSamples = result.samples.filter(sample => {
-          // Map annotation image ID to actual image ID using imageMapping
-          const file = annotationFiles.find(f => f.id === annotationId);
-          if (!file?.imageMapping) return false;
-          
-          const filename = file.imageMapping[sample.imageId];
-          if (!filename) return false;
-          
-          // Find the actual image ID for this filename
-          const image = imagesMemo.find(img => img.fileName === filename);
-          return image && currentPageImageIds.includes(image.id);
-        });
-        
-        // Update the specific file with current page data
-        setAnnotationFiles(prevFiles => {
-          return prevFiles.map(file => {
-            if (file.id === annotationId) {
-              // Merge current page samples with existing samples, avoiding duplicates
-              const existingSamples = file.samples || [];
-              const existingImageIds = new Set(existingSamples.map(s => s.imageId));
-              
-              const newSamples = currentPageSamples.filter(sample => {
-                // Map to actual image ID for comparison
-                const filename = file.imageMapping?.[sample.imageId];
-                if (!filename) return false;
-                const image = imagesMemo.find(img => img.fileName === filename);
-                return image && !existingImageIds.has(image.id);
-              });
-              
-              const mergedSamples = [
-                ...existingSamples,
-                ...newSamples.map(sample => ({
-                  ...sample,
-                  isVisible: file.isVisible,
-                  showBboxes: file.showBboxes,
-                  annotationFileName: file.name
-                }))
-              ];
-              
-              return {
-                ...file,
-                samples: mergedSamples,
-                // Keep preview mode but indicate we have current page data
-                currentPageLoaded: true
-              };
-            }
-            return file;
-          });
-        });
-
-        if (currentPageSamples.length > 0) {
-          toast({
-            title: "Current page annotations loaded",
-            description: `Loaded ${currentPageSamples.length} annotations for current page images`,
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error loading current page annotations:', error);
-      toast({
-        title: "Error loading current page data",
-        description: error instanceof Error ? error.message : "Failed to load annotations for current page",
-        variant: "destructive"
-      });
-    }
-  }, [api, id, annotationFiles, imagesMemo, toast]);
-
   // Auto-load annotations for current page when page changes
   useEffect(() => {
     if (currentPageImageIds.length > 0 && api) {
@@ -725,19 +783,22 @@ export function AnnotationsContent({
       const previewFilesNeedingLoad = annotationFiles.filter(file => 
         (file as any).previewOnly && 
         visibleAnnotations.has(file.id) &&
-        !(file as any).currentPageLoaded
+        !(file as any).currentPageLoaded &&
+        !loadingAnnotations.has(file.id) // Don't load if already loading
       );
       
       if (previewFilesNeedingLoad.length > 0) {
         console.log(`Auto-loading annotations for ${previewFilesNeedingLoad.length} preview files. Current page has ${currentPageImageIds.length} images.`);
+        
+        // Load annotations for each preview file with a small delay to prevent overwhelming the server
+        previewFilesNeedingLoad.forEach((file, index) => {
+          setTimeout(() => {
+            loadAnnotationsForCurrentPage(file.id, true);
+          }, index * 100); // 100ms delay between requests
+        });
       }
-      
-      // Load annotations for each preview file
-      previewFilesNeedingLoad.forEach(file => {
-        loadAnnotationsForCurrentPage(file.id, currentPageImageIds);
-      });
     }
-  }, [currentPageImageIds, annotationFiles, visibleAnnotations, api, loadAnnotationsForCurrentPage]);
+  }, [currentPageImageIds, annotationFiles, visibleAnnotations, api]); // Removed loadAnnotationsForCurrentPage from dependencies
 
   // Handle restoration notification after both annotation files and visibility are loaded
   useEffect(() => {
@@ -1002,7 +1063,7 @@ export function AnnotationsContent({
     }
   };
 
-  const handleToggleAnnotationVisibility = (annotationId: string, e: React.MouseEvent) => {
+  const handleToggleAnnotationVisibility = async (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
     const file = annotationFiles.find(f => f.id === annotationId);
@@ -1023,6 +1084,29 @@ export function AnnotationsContent({
     
     const newVisibleAnnotations = new Set(visibleAnnotations);
     const isVisible = !visibleAnnotations.has(annotationId);
+    
+    // If making visible and it's a large file, show loading state
+    if (isVisible && (file as any).previewOnly && api) {
+      setLoadingAnnotations(prev => new Set(prev).add(annotationId));
+      
+      try {
+        // Load full annotations for current page
+        await loadFullAnnotationData(annotationId);
+      } catch (error) {
+        console.error('Error loading full annotations:', error);
+        toast({
+          title: "Loading failed",
+          description: "Failed to load full annotation data. Showing preview data instead.",
+          variant: "destructive"
+        });
+      } finally {
+        setLoadingAnnotations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(annotationId);
+          return newSet;
+        });
+      }
+    }
     
     if (visibleAnnotations.has(annotationId)) {
       newVisibleAnnotations.delete(annotationId);
@@ -1057,7 +1141,7 @@ export function AnnotationsContent({
   };
 
 
-  const handleToggleAnnotationBboxes = (annotationId: string, e: React.MouseEvent) => {
+  const handleToggleAnnotationBboxes = async (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
     const file = annotationFiles.find(f => f.id === annotationId);
@@ -1078,6 +1162,29 @@ export function AnnotationsContent({
     
     // Toggle individual bbox visibility for this annotation file
     const newBboxVisibility = !file.showBboxes;
+    
+    // If enabling bboxes and it's a large file, show loading state
+    if (newBboxVisibility && (file as any).previewOnly && api) {
+      setLoadingAnnotations(prev => new Set(prev).add(annotationId));
+      
+      try {
+        // Load full annotations for current page
+        await loadFullAnnotationData(annotationId);
+      } catch (error) {
+        console.error('Error loading full annotations:', error);
+        toast({
+          title: "Loading failed",
+          description: "Failed to load full annotation data. Showing preview data instead.",
+          variant: "destructive"
+        });
+      } finally {
+        setLoadingAnnotations(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(annotationId);
+          return newSet;
+        });
+      }
+    }
     
     // If enabling bboxes, also make the annotations visible
     // If disabling bboxes, don't automatically hide annotations (user might want masks visible)
@@ -2418,8 +2525,13 @@ export function AnnotationsContent({
                           className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
                           onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
                           title={visibleAnnotations.has(file.id) ? "Hide segmentation masks" : "Show segmentation masks"}
+                          disabled={loadingAnnotations.has(file.id)}
                         >
-                          {visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                          {loadingAnnotations.has(file.id) ? (
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
+                          ) : (
+                            visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />
+                          )}
                         </Button>
                         
                         {/* Individual bounding boxes toggle */}
@@ -2429,8 +2541,13 @@ export function AnnotationsContent({
                           className={`h-8 w-8 ${file.showBboxes ? 'text-blue-400' : 'text-gray-500'}`}
                           onClick={(e) => handleToggleAnnotationBboxes(file.id, e)}
                           title={file.showBboxes ? "Hide bounding boxes" : "Show bounding boxes"}
+                          disabled={loadingAnnotations.has(file.id)}
                         >
-                          <Square className="h-4 w-4" />
+                          {loadingAnnotations.has(file.id) ? (
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
+                          ) : (
+                            <Square className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
                        {/* Actions */}
@@ -2446,7 +2563,7 @@ export function AnnotationsContent({
                                  e.stopPropagation();
                                  if (currentPageImageIds.length > 0) {
                                    console.log(`Manual loading annotations for current page. Page has ${currentPageImageIds.length} images.`);
-                                   loadAnnotationsForCurrentPage(file.id, currentPageImageIds);
+                                   loadAnnotationsForCurrentPage(file.id, true);
                                  } else {
                                    toast({
                                      title: "No images on current page",

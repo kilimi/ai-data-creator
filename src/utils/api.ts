@@ -272,13 +272,109 @@ export class ApiClient {
     });
   }
 
-  async importAnnotations(datasetId: string | number, file: File, annotationType?: string): Promise<ApiResponse<any>> {
+  async importAnnotations(datasetId: string | number, file: File, annotationType?: string, useDatabase: boolean = true): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('use_database', useDatabase.toString());
     if (annotationType && annotationType !== 'any') {
       formData.append('annotation_type', annotationType);
     }
     return this.request(`/datasets/${datasetId}/import-annotations`, {
+      method: 'POST',
+      body: formData
+    });
+  }
+
+  // Database-based annotation methods
+  async getAnnotationData(
+    datasetId: string | number, 
+    annotationFileId: string, 
+    params?: {
+      imageIds?: string[];
+      page?: number;
+      limit?: number;
+      className?: string;
+    }
+  ): Promise<ApiResponse<{
+    annotations: any[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      pages: number;
+    };
+  }>> {
+    const searchParams = new URLSearchParams();
+    if (params?.imageIds?.length) {
+      searchParams.append('image_ids', params.imageIds.join(','));
+    }
+    if (params?.page) searchParams.append('page', params.page.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.className) searchParams.append('class_name', params.className);
+    
+    const queryString = searchParams.toString();
+    const endpoint = `/datasets/${datasetId}/annotations/${annotationFileId}/data${queryString ? `?${queryString}` : ''}`;
+    
+    return this.request(endpoint);
+  }
+
+  async getAnnotationClasses(
+    datasetId: string | number, 
+    annotationFileId: string
+  ): Promise<ApiResponse<{
+    classes: Array<{
+      className: string;
+      count: number;
+      color: string;
+      opacity: number;
+      categoryId?: number;
+    }>;
+    totalClasses: number;
+    totalAnnotations: number;
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/classes`);
+  }
+
+  async getAnnotationProcessingStatus(
+    datasetId: string | number, 
+    annotationFileId: string
+  ): Promise<ApiResponse<{
+    status: string;
+    isProcessed: boolean;
+    errorMessage?: string;
+    annotationCount: number;
+    imageCount: number;
+    categoryCount: number;
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/status`);
+  }
+
+  async updateAnnotation(
+    datasetId: string | number,
+    annotationFileId: string,
+    annotationId: number,
+    updateData: {
+      className?: string;
+      confidence?: number;
+    }
+  ): Promise<ApiResponse<{ success: boolean; message: string }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/annotation/${annotationId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updateData)
+    });
+  }
+
+  async uploadCocoAnnotationFile(
+    datasetId: string | number,
+    file: File
+  ): Promise<ApiResponse<{
+    success: boolean;
+    annotation_file_id: string;
+    message: string;
+  }>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request(`/datasets/${datasetId}/annotations/upload-coco`, {
       method: 'POST',
       body: formData
     });

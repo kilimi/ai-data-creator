@@ -399,7 +399,9 @@ async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get
 @router.post("/datasets/{dataset_id}/import-annotations")
 async def import_annotations(
     dataset_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    use_database: bool = Form(True),  # Default to database storage
     db: Session = Depends(get_db)
 ):
     """Import annotations from a file (COCO format, YOLO format, etc.)"""
@@ -408,11 +410,6 @@ async def import_annotations(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Create annotations directory using projects/{project_id}/{dataset_id}/annotations/ structure
-        project_id = dataset.project_id
-        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
-        annotations_dir.mkdir(parents=True, exist_ok=True)
-        
         # Read the uploaded file
         contents = await file.read()
         
@@ -420,74 +417,119 @@ async def import_annotations(
         import uuid
         random_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID
         file_extension = Path(file.filename).suffix or '.json'
-        safe_filename = f"{random_id}_{file.filename}"
-        
-        # Save the annotation file physically with random ID prefix
-        annotation_file_path = annotations_dir / safe_filename
-        with open(annotation_file_path, 'wb') as f:
-            f.write(contents)
         
         # Try to parse as JSON (COCO format) to get statistics
         imported_count = 0
         image_count = 0
         category_count = 0
+        coco_data = None
         
         try:
-            annotations_data = json.loads(contents.decode('utf-8'))
+            coco_data = json.loads(contents.decode('utf-8'))
             
-            # Basic COCO format processing - just count, don't save to database
-            if 'annotations' in annotations_data:
-                imported_count = len(annotations_data['annotations'])
+            # Basic COCO format processing - just count
+            if 'annotations' in coco_data:
+                imported_count = len(coco_data['annotations'])
             
-            if 'images' in annotations_data:
-                image_count = len(annotations_data['images'])
+            if 'images' in coco_data:
+                image_count = len(coco_data['images'])
                 
-            if 'categories' in annotations_data:
-                category_count = len(annotations_data['categories'])
+            if 'categories' in coco_data:
+                category_count = len(coco_data['categories'])
                 
         except json.JSONDecodeError:
             # Handle non-JSON files (like YOLO format)
-            # For now, just save the file and return success
-            print(f"Non-JSON annotation file saved: {annotation_file_path}")
+            print(f"Non-JSON annotation file: {file.filename}")
+            use_database = False  # Force file-based storage for non-JSON files
         
-        # Create database record for the annotation file
-        try:
+        if use_database and coco_data:
+            # Use new database-based storage
+            from .annotation_db import process_coco_annotation_file
+            
+            # Create database record for the annotation file
+            annotation_file_record = models.AnnotationFile(
+                id=random_id,
+                dataset_id=dataset_id,
+                name=file.filename,
+                file_path=None,  # No physical file needed
+                format='COCO',
+                file_size=len(contents),
+                annotation_count=0,  # Will be updated by processing
+                image_count=0,
+                category_count=0,
+                is_processed=False,
+                processing_status="pending"
+            )
+            
+            db.add(annotation_file_record)
+            db.commit()
+            
+            # Process the file in the background
+            background_tasks.add_task(
+                process_coco_annotation_file,
+                random_id,
+                coco_data,
+                db
+            )
+            
+            return {
+                "success": True,
+                "data": {
+                    "message": f"Annotation file '{file.filename}' uploaded and processing started",
+                    "file_id": random_id,
+                    "original_filename": file.filename,
+                    "processing_status": "pending",
+                    "use_database": True,
+                    "estimated_annotations": imported_count,
+                    "estimated_images": image_count,
+                    "estimated_categories": category_count
+                }
+            }
+        else:
+            # Use legacy file-based storage
+            project_id = dataset.project_id
+            annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+            annotations_dir.mkdir(parents=True, exist_ok=True)
+            
+            safe_filename = f"{random_id}_{file.filename}"
+            annotation_file_path = annotations_dir / safe_filename
+            
+            with open(annotation_file_path, 'wb') as f:
+                f.write(contents)
+            
+            # Create database record for the annotation file
             annotation_file_record = models.AnnotationFile(
                 id=random_id,
                 dataset_id=dataset_id,
                 name=file.filename,
                 file_path=str(annotation_file_path),
                 format='COCO' if file_extension.lower() == '.json' else 'Unknown',
-                tags=[],  # Initialize with empty tags
                 file_size=len(contents),
                 annotation_count=imported_count,
                 image_count=image_count,
-                category_count=category_count
+                category_count=category_count,
+                is_processed=True,  # File-based is considered "processed"
+                processing_status="completed"
             )
             
             db.add(annotation_file_record)
             db.commit()
-            db.refresh(annotation_file_record)
-            print(f"Created database record for annotation file: {random_id}")
             
-        except Exception as db_error:
-            print(f"Warning: Could not create database record for annotation file: {db_error}")
-            # Continue without failing the import if database record creation fails
-        
-        return {
-            "success": True,
-            "data": {
-                "message": f"Annotation file saved as {safe_filename}",
-                "imported": imported_count,
-                "skipped": 0,
-                "file_path": str(annotation_file_path),
-                "file_id": random_id,  # Return the ID for frontend reference
-                "original_filename": file.filename,
-                "annotation_count": imported_count,
-                "image_count": image_count,
-                "category_count": category_count
+            return {
+                "success": True,
+                "data": {
+                    "message": f"Annotation file saved as {safe_filename}",
+                    "imported": imported_count,
+                    "skipped": 0,
+                    "file_path": str(annotation_file_path),
+                    "file_id": random_id,
+                    "original_filename": file.filename,
+                    "annotation_count": imported_count,
+                    "image_count": image_count,
+                    "category_count": category_count,
+                    "use_database": False
+                }
             }
-        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to import annotations: {str(e)}")
@@ -807,61 +849,173 @@ async def get_dataset_annotation_content(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Get the project ID from the dataset
-        project_id = dataset.project_id
+        # Check if annotation file exists in database
+        annotation_file = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
         
-        # Construct the path to the annotations directory
-        annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+        if not annotation_file:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
         
-        # Check if annotations directory exists
-        if not annotations_dir.exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Annotations directory not found for dataset {dataset_id}"
-            )
-        
-        # Look for annotation file that starts with the annotation_id
-        found_file = None
-        for file_path in annotations_dir.glob("*"):
-            if file_path.is_file():
-                filename = file_path.name
-                # Check if filename starts with the annotation_id
-                if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
-                    found_file = file_path
-                    break
-        
-        if not found_file:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Annotation file with ID '{annotation_id}' not found in dataset {dataset_id}"
-            )
-        
-        # Read and return the file content
-        try:
-            with open(found_file, 'r', encoding='utf-8') as f:
-                content = f.read()
+        # Check if this is a database-stored annotation file (no file_path or is_processed)
+        if annotation_file.is_processed and annotation_file.file_path is None:
+            # Generate COCO format from database
+            from .annotation_db import get_annotation_data, get_annotation_classes
             
-            # Try to parse as JSON to validate
-            try:
-                json.loads(content)
-                file_format = 'COCO'
-            except json.JSONDecodeError:
-                file_format = 'Unknown'
+            # Get all annotations and classes
+            annotations_response = await get_annotation_data(
+                dataset_id, annotation_id, None, 1, 10000, None, db
+            )
+            classes_response = await get_annotation_classes(
+                dataset_id, annotation_id, db
+            )
+            
+            if not annotations_response["success"] or not classes_response["success"]:
+                raise HTTPException(status_code=500, detail="Failed to retrieve annotation data")
+            
+            # Build COCO format
+            coco_data = {
+                "info": {
+                    "description": f"Annotations for dataset {dataset_id}",
+                    "version": "1.0",
+                    "year": 2025,
+                    "contributor": "AI Data Creator",
+                    "date_created": annotation_file.created_at.isoformat() if annotation_file.created_at else None
+                },
+                "categories": [],
+                "images": [],
+                "annotations": []
+            }
+            
+            # Add categories
+            category_id_map = {}
+            for i, cls in enumerate(classes_response["data"]["classes"]):
+                category_id = cls.get("categoryId", i + 1)
+                category_id_map[cls["className"]] = category_id
+                coco_data["categories"].append({
+                    "id": category_id,
+                    "name": cls["className"],
+                    "supercategory": ""
+                })
+            
+            # Get image information
+            image_id_map = {}
+            for ann in annotations_response["data"]["annotations"]:
+                image_id = ann["imageId"]
+                if image_id not in image_id_map:
+                    # Get image details
+                    image = db.query(models.Image).filter(models.Image.id == image_id).first()
+                    if image:
+                        coco_image_id = ann.get("cocoImageId", len(image_id_map) + 1)
+                        image_id_map[image_id] = coco_image_id
+                        coco_data["images"].append({
+                            "id": coco_image_id,
+                            "file_name": image.file_name,
+                            "width": image.width or 1,
+                            "height": image.height or 1
+                        })
+            
+            # Add annotations
+            for ann in annotations_response["data"]["annotations"]:
+                if ann["bbox"] and len(ann["bbox"]) == 4:
+                    # Convert normalized bbox back to pixel coordinates
+                    image_id = ann["imageId"]
+                    image = db.query(models.Image).filter(models.Image.id == image_id).first()
+                    if image:
+                        width = image.width or 1
+                        height = image.height or 1
+                        bbox = [
+                            ann["bbox"][0] * width,   # x
+                            ann["bbox"][1] * height,  # y  
+                            ann["bbox"][2] * width,   # width
+                            ann["bbox"][3] * height   # height
+                        ]
+                        
+                        coco_ann = {
+                            "id": ann.get("cocoAnnotationId", ann["id"]),
+                            "image_id": image_id_map.get(image_id, 1),
+                            "category_id": category_id_map.get(ann["className"], 1),
+                            "bbox": bbox,
+                            "area": ann.get("area", bbox[2] * bbox[3]),
+                            "iscrowd": 0
+                        }
+                        
+                        if ann.get("segmentation"):
+                            coco_ann["segmentation"] = ann["segmentation"]
+                            
+                        coco_data["annotations"].append(coco_ann)
+            
+            content = json.dumps(coco_data, indent=2)
             
             return {
                 "success": True,
                 "data": {
                     "content": content,
-                    "filename": found_file.name,
-                    "format": file_format,
-                    "size": len(content)
+                    "filename": annotation_file.name,
+                    "format": "COCO",
+                    "size": len(content),
+                    "source": "database"
                 }
             }
+        
+        elif annotation_file.file_path:
+            # Legacy file-based storage
+            file_path = Path(annotation_file.file_path)
             
-        except Exception as read_error:
+            if not file_path.exists():
+                # Fallback: look in the old location structure
+                project_id = dataset.project_id
+                annotations_dir = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
+                
+                found_file = None
+                if annotations_dir.exists():
+                    for file_path in annotations_dir.glob("*"):
+                        if file_path.is_file():
+                            filename = file_path.name
+                            if filename.startswith(f"{annotation_id}_") or filename == annotation_id:
+                                found_file = file_path
+                                break
+                
+                if not found_file:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Annotation file with ID '{annotation_id}' not found"
+                    )
+                file_path = found_file
+            
+            # Read and return the file content
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Try to parse as JSON to validate
+                try:
+                    json.loads(content)
+                    file_format = 'COCO'
+                except json.JSONDecodeError:
+                    file_format = 'Unknown'
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "content": content,
+                        "filename": file_path.name,
+                        "format": file_format,
+                        "size": len(content),
+                        "source": "file"
+                    }
+                }
+                
+            except Exception as read_error:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to read annotation file: {str(read_error)}"
+                )
+        else:
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to read annotation file: {str(read_error)}"
+                status_code=404,
+                detail="Annotation file data not available"
             )
         
     except HTTPException:

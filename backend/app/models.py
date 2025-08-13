@@ -104,16 +104,26 @@ class Annotation(Base):
     __tablename__ = "annotations"
 
     id = Column(Integer, primary_key=True, index=True)
+    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), nullable=True)  # Link to annotation file
     image_id = Column(Integer, ForeignKey("images.id"))
     dataset_id = Column(Integer, ForeignKey("datasets.id"))
-    category = Column(String)
-    bbox = Column(JSON, nullable=True)  # [x, y, width, height]
+    coco_image_id = Column(Integer, nullable=True)  # Original COCO image ID
+    coco_annotation_id = Column(Integer, nullable=True)  # Original COCO annotation ID
+    category_id = Column(Integer, nullable=True)  # COCO category ID
+    category = Column(String)  # Class name
+    bbox_x = Column(Float, nullable=True)  # Normalized bbox coordinates
+    bbox_y = Column(Float, nullable=True)
+    bbox_width = Column(Float, nullable=True) 
+    bbox_height = Column(Float, nullable=True)
+    bbox = Column(JSON, nullable=True)  # [x, y, width, height] - keep for backward compatibility
     segmentation = Column(JSON, nullable=True)  # COCO format segmentation
     area = Column(Float, nullable=True)
+    confidence = Column(Float, default=1.0)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
     dataset = relationship("Dataset", back_populates="annotations")
     image = relationship("Image", back_populates="annotations")
+    annotation_file = relationship("AnnotationFile", back_populates="annotations")
 
 
 class Task(Base):
@@ -142,7 +152,7 @@ class AnnotationFile(Base):
     id = Column(String, primary_key=True, index=True)  # Use string ID to match frontend
     dataset_id = Column(Integer, ForeignKey("datasets.id"))
     name = Column(String, index=True)
-    file_path = Column(String)  # Physical file path on disk
+    file_path = Column(String, nullable=True)  # Physical file path on disk (optional for DB-only storage)
     format = Column(String, default='COCO')  # COCO, YOLO, etc.
     type = Column(String, nullable=True)  # classification, segmentation, depth
     _tags = Column('tags', JSON, default=list)  # Store tags as JSON
@@ -150,10 +160,15 @@ class AnnotationFile(Base):
     annotation_count = Column(Integer, default=0)
     image_count = Column(Integer, default=0)
     category_count = Column(Integer, default=0)
+    is_processed = Column(Boolean, default=False)  # Whether file has been processed into DB
+    processing_status = Column(String, default='pending')  # pending, processing, completed, failed
+    error_message = Column(Text, nullable=True)  # Error message if processing failed
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     dataset = relationship("Dataset", back_populates="annotation_files")
+    annotations = relationship("Annotation", back_populates="annotation_file", cascade="all, delete-orphan")
+    annotation_classes = relationship("AnnotationClass", back_populates="annotation_file", cascade="all, delete-orphan")
 
     @property
     def tags(self):
@@ -174,6 +189,22 @@ class AnnotationFile(Base):
             except json.JSONDecodeError:
                 value = []
         self._tags = value
+
+
+class AnnotationClass(Base):
+    __tablename__ = "annotation_classes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    annotation_file_id = Column(String, ForeignKey("annotation_files.id"))
+    class_name = Column(String, index=True)
+    category_id = Column(Integer, nullable=True)  # COCO category ID
+    count = Column(Integer, default=0)
+    color = Column(String, default='#ea384c')  # Hex color
+    opacity = Column(Float, default=0.25)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    annotation_file = relationship("AnnotationFile", back_populates="annotation_classes")
 
 
 class Augmentation(Base):
