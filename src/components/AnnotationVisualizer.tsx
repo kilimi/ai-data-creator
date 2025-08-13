@@ -164,21 +164,32 @@ export const AnnotationVisualizer = ({
       
       // Draw bounding box if available and individual bbox is enabled
       if (annotation.showBboxes && annotation.bbox && annotation.bbox.length === 4) {
+        const [x, y, width, height] = annotation.bbox;
+        
+        // Convert normalized coordinates (0-1) to pixel coordinates, then to canvas coordinates
+        const pixelX = x * imageWidth;
+        const pixelY = y * imageHeight;
+        const pixelWidth = width * imageWidth;
+        const pixelHeight = height * imageHeight;
+        
+        // Transform to canvas coordinates
+        const canvasX = offsetX + (pixelX * scale);
+        const canvasY = offsetY + (pixelY * scale);
+        const canvasWidth = pixelWidth * scale;
+        const canvasHeight = pixelHeight * scale;
+        
         console.log('Drawing bbox for annotation:', {
           showBboxes: annotation.showBboxes,
           bbox: annotation.bbox,
           color,
           scale,
           offsetX,
-          offsetY
+          offsetY,
+          imageWidth,
+          imageHeight,
+          pixelCoords: { x: pixelX, y: pixelY, w: pixelWidth, h: pixelHeight },
+          canvasCoords: { x: canvasX, y: canvasY, w: canvasWidth, h: canvasHeight }
         });
-        const [x, y, width, height] = annotation.bbox;
-        
-        // Transform to canvas coordinates
-        const canvasX = offsetX + (x * scale);
-        const canvasY = offsetY + (y * scale);
-        const canvasWidth = width * scale;
-        const canvasHeight = height * scale;
         
         const hexColor = color.startsWith('#') ? color : `#${color}`;
         
@@ -200,6 +211,31 @@ export const AnnotationVisualizer = ({
         ctx.fillRect(canvasX - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
         // Bottom-right
         ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
+        
+        // Draw class label if available
+        if (annotation.className) {
+          const fontSize = Math.max(12, scale * 14);
+          ctx.font = `${fontSize}px Arial`;
+          ctx.textAlign = 'left';
+          
+          // Measure text for background
+          const textMetrics = ctx.measureText(annotation.className);
+          const textWidth = textMetrics.width;
+          const textHeight = fontSize;
+          const padding = 4;
+          
+          // Position label above bbox, or below if not enough space
+          const labelX = canvasX;
+          const labelY = canvasY > textHeight + padding * 2 ? canvasY - padding : canvasY + canvasHeight + textHeight + padding;
+          
+          // Draw background
+          ctx.fillStyle = hexColor;
+          ctx.fillRect(labelX, labelY - textHeight - padding, textWidth + padding * 2, textHeight + padding * 2);
+          
+          // Draw text
+          ctx.fillStyle = 'white';
+          ctx.fillText(annotation.className, labelX + padding, labelY - padding);
+        }
       } else if (annotation.bbox && annotation.bbox.length === 4) {
         console.log('Bbox not shown due to showBboxes=false:', {
           showBboxes: annotation.showBboxes,
