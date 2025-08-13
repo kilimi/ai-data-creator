@@ -29,7 +29,7 @@ interface AnnotationsContentProps {
   onImportAnnotations?: (files: File[]) => void;
   showAllAnnotationsOnGrid?: boolean;
   images?: Image[];
-  onGlobalBboxVisibilityChange?: (showBboxes: boolean) => void;
+  
   currentPageImageIds?: string[]; // NEW: Current page image IDs
 }
 
@@ -96,13 +96,13 @@ export function AnnotationsContent({
   onImportAnnotations,
   showAllAnnotationsOnGrid = false, // NEW PROP
   images = [], // NEW PROP
-  onGlobalBboxVisibilityChange,
+  
   currentPageImageIds = [] // NEW
 }: AnnotationsContentProps) {
   const navigate = useNavigate();
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
-  const [globalShowBboxes, setGlobalShowBboxes] = useState(false);
+  
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
@@ -1056,17 +1056,6 @@ export function AnnotationsContent({
     saveAnnotationFilesToLocalStorage(updatedFiles);
   };
 
-  const handleToggleGlobalBboxes = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newValue = !globalShowBboxes;
-    setGlobalShowBboxes(newValue);
-    
-    // Save to localStorage
-    localStorage.setItem(`global_bbox_visibility_${id}`, JSON.stringify(newValue));
-    
-    // Notify parent component
-    onGlobalBboxVisibilityChange?.(newValue);
-  };
 
   const handleToggleAnnotationBboxes = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1875,13 +1864,6 @@ export function AnnotationsContent({
           setVisibleAnnotations(visibilitySet);
         }
         
-        // Restore global bbox visibility state
-        const savedBboxVisibility = localStorage.getItem(`global_bbox_visibility_${id}`);
-        if (savedBboxVisibility) {
-          const bboxVisibility = JSON.parse(savedBboxVisibility);
-          setGlobalShowBboxes(bboxVisibility);
-          onGlobalBboxVisibilityChange?.(bboxVisibility);
-        }
         
       } catch (error) {
         console.error('Error loading annotations from localStorage:', error);

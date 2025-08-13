@@ -14,7 +14,7 @@ interface ImagesGridProps {
   onImageClick?: (image: Image) => void;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
-  globalShowBboxes?: boolean;
+  
 }
 
 // Helper: get annotation file name for an annotation
@@ -97,7 +97,7 @@ export function ImagesGrid({
   onImageClick,
   annotations = [],
   annotationFiles = [],
-  globalShowBboxes = false,
+  
 }: ImagesGridProps) {
   // Only show annotations that are visible (if isVisible is defined, must be true)
   const filteredAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
@@ -215,7 +215,6 @@ export function ImagesGrid({
                       imageHeight={dimensions.height}
                       className="w-full h-full"
                       showFileName={false}
-                      globalShowBboxes={globalShowBboxes}
                     />
                   </div>
                 )}

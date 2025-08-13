@@ -57,8 +57,6 @@ export function ResizableDatasetLayout({
   const imagesMemo = useMemo(() => images, [JSON.stringify(images)]);
   const [annotationFiles, setAnnotationFiles] = useState<any[]>([]);
   
-  // Global bbox visibility state
-  const [globalShowBboxes, setGlobalShowBboxes] = useState(false);
 
   // Handle annotation changes and store annotation files
   const handleShowAnnotationsChange = (show: boolean, annots: AnnotationSample[], files?: any[]) => {
@@ -89,7 +87,6 @@ export function ResizableDatasetLayout({
           onImportAnnotations={onImportAnnotations}
           selectedImageIndex={selectedImageIndex}
           setSelectedImageIndex={setSelectedImageIndex}
-          globalShowBboxes={globalShowBboxes}
         />
       </div>
     </ScrollArea>
@@ -107,8 +104,6 @@ export function ResizableDatasetLayout({
           showAllAnnotationsOnGrid
           // Pass the dataset images
           images={imagesMemo}
-          // Pass global bbox visibility callback
-          onGlobalBboxVisibilityChange={setGlobalShowBboxes}
           // Pass current page image IDs for smart annotation loading
           currentPageImageIds={paginatedImages.map(img => img.id)}
         />

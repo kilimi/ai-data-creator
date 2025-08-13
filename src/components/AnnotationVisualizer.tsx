@@ -11,7 +11,6 @@ interface AnnotationVisualizerProps {
   showFileName?: boolean;
   zoom?: number;
   pan?: { x: number; y: number };
-  globalShowBboxes?: boolean;
   globalShowMasks?: boolean;
 }
 
@@ -23,7 +22,6 @@ export const AnnotationVisualizer = ({
   showFileName = true,
   zoom = 1,
   pan = { x: 0, y: 0 },
-  globalShowBboxes = false,
   globalShowMasks = true
 }: AnnotationVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -164,8 +162,8 @@ export const AnnotationVisualizer = ({
         });
       }
       
-      // Draw bounding box if available and either individual bbox is enabled OR global bboxes are enabled
-      if ((annotation.showBboxes || globalShowBboxes) && annotation.bbox && annotation.bbox.length === 4) {
+      // Draw bounding box if available and individual bbox is enabled
+      if (annotation.showBboxes && annotation.bbox && annotation.bbox.length === 4) {
         const [x, y, width, height] = annotation.bbox;
         
         // Transform to canvas coordinates
@@ -196,7 +194,7 @@ export const AnnotationVisualizer = ({
         ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
       }
     });
-  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks, globalShowBboxes]);
+  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks]);
 
   return (
     <div ref={containerRef} className={cn("relative w-full h-full", className)}>
