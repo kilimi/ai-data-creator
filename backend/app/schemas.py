@@ -165,7 +165,6 @@ class AnnotationFileBase(BaseModel):
 class AnnotationFileCreate(AnnotationFileBase):
     id: str
     dataset_id: int
-    file_path: str
     file_size: Optional[int] = None
     annotation_count: int = 0
     image_count: int = 0
@@ -174,11 +173,13 @@ class AnnotationFileCreate(AnnotationFileBase):
 class AnnotationFile(AnnotationFileBase):
     id: str
     dataset_id: int
-    file_path: str
     file_size: Optional[int] = None
     annotation_count: int = 0
     image_count: int = 0
     category_count: int = 0
+    is_processed: bool = False
+    processing_status: str = 'pending'
+    error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -209,3 +210,56 @@ class CreateAugmentedDatasetRequest(BaseModel):
     augmentation_methods: List[str]
     method_parameters: dict = {}
     augmentation_factor: str = '2'
+
+# Annotation response schemas
+class AnnotationFileResponse(AnnotationFile):
+    """Response schema for AnnotationFile"""
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class AnnotationResponse(BaseModel):
+    """Response schema for Annotation"""
+    id: int
+    annotation_file_id: Optional[str] = None
+    image_id: int
+    dataset_id: int
+    coco_image_id: Optional[int] = None
+    coco_annotation_id: Optional[int] = None
+    category_id: Optional[int] = None
+    category: str
+    bbox_x: Optional[float] = None
+    bbox_y: Optional[float] = None
+    bbox_width: Optional[float] = None
+    bbox_height: Optional[float] = None
+    bbox: Optional[List[float]] = None
+    segmentation: Optional[dict] = None
+    area: Optional[float] = None
+    confidence: float = 1.0
+    uploaded_at: datetime
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class AnnotationClassResponse(BaseModel):
+    """Response schema for AnnotationClass"""
+    id: int
+    annotation_file_id: str
+    class_name: str
+    category_id: Optional[int] = None
+    count: int = 0
+    color: str = '#ea384c'
+    opacity: float = 0.25
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }

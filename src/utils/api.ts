@@ -272,10 +272,9 @@ export class ApiClient {
     });
   }
 
-  async importAnnotations(datasetId: string | number, file: File, annotationType?: string, useDatabase: boolean = true): Promise<ApiResponse<any>> {
+  async importAnnotations(datasetId: string | number, file: File, annotationType?: string): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('use_database', useDatabase.toString());
     if (annotationType && annotationType !== 'any') {
       formData.append('annotation_type', annotationType);
     }

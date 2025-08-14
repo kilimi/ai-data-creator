@@ -240,16 +240,6 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
                                 )
                                 db.add(new_annotation)
                     
-                    # Save annotations to JSON file if any exist
-                    if augmented_annotations:
-                        save_annotations_to_file(
-                            augmented_annotations,
-                            target_dataset.project_id,
-                            target_dataset.id,
-                            augmented_image.id,
-                            augmented_image_data['file_name']
-                        )
-                    
                     current_operation += 1
                 
                 # Update progress periodically
@@ -1076,35 +1066,3 @@ async def test_albumentations_setup():
         }
 
 
-def save_annotations_to_file(annotations: List[Dict], project_id: int, dataset_id: int, image_id: int, image_filename: str):
-    """
-    Save annotations to a JSON file in the project/dataset/annotations folder.
-    """
-    try:
-        # Create annotations directory
-        annotations_path = Path("projects") / str(project_id) / str(dataset_id) / "annotations"
-        annotations_path.mkdir(parents=True, exist_ok=True)
-        
-        # Create annotation filename based on image
-        base_filename = Path(image_filename).stem
-        annotation_filename = f"{base_filename}.json"
-        annotation_file_path = annotations_path / annotation_filename
-        
-        # Prepare annotation data in COCO-like format
-        annotation_data = {
-            "image_id": image_id,
-            "image_filename": image_filename,
-            "annotations": annotations,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        # Save to JSON file
-        with open(annotation_file_path, 'w') as f:
-            json.dump(annotation_data, f, indent=2)
-        
-        logger.info(f"Saved {len(annotations)} annotations to {annotation_file_path}")
-        return str(annotation_file_path)
-        
-    except Exception as e:
-        logger.error(f"Error saving annotations to file: {e}")
-        return None

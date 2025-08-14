@@ -152,7 +152,6 @@ class AnnotationFile(Base):
     id = Column(String, primary_key=True, index=True)  # Use string ID to match frontend
     dataset_id = Column(Integer, ForeignKey("datasets.id"))
     name = Column(String, index=True)
-    file_path = Column(String, nullable=True)  # Physical file path on disk (optional for DB-only storage)
     format = Column(String, default='COCO')  # COCO, YOLO, etc.
     type = Column(String, nullable=True)  # classification, segmentation, depth
     _tags = Column('tags', JSON, default=list)  # Store tags as JSON

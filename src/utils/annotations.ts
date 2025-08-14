@@ -31,6 +31,9 @@ export interface AnnotationFile {
   classColors?: { [className: string]: string }; // Add class color mapping
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
   tags?: string[]; // Add tags for categorization and search
+  contentLoaded?: boolean; // Track if full content has been loaded
+  processing_status?: string; // Backend processing status
+  error_message?: string; // Error message if processing failed
 }
 
 // Generate distinct random colors for classes
