@@ -1086,13 +1086,18 @@ export function AnnotationsContent({
       return;
     }
     
+    // If trying to show bboxes and content isn't loaded yet, load it first
+    if (!file.showBboxes && !file.contentLoaded && api) {
+      const loadingSuccess = await loadAnnotationFileContent(annotationId);
+      if (!loadingSuccess) {
+        return; // Failed to load content, don't proceed
+      }
+    }
+    
     // Toggle individual bbox visibility for this annotation file
     const newBboxVisibility = !file.showBboxes;
     
-    // Don't automatically change visibility - let bbox and eye work independently
-    // User needs to manually enable eye icon to see the annotations
-    
-    // Update the annotation files to toggle bbox visibility (don't need to update individual sample bbox settings)
+    // Update the annotation files to toggle bbox visibility
     const updatedFiles = annotationFiles.map(f => 
       f.id === annotationId 
         ? { 
@@ -1103,7 +1108,6 @@ export function AnnotationsContent({
     );
     
     setAnnotationFiles(updatedFiles);
-    // Don't modify visibleAnnotations - let eye icon control that independently
     
     // Save updated files to localStorage with quota handling
     saveAnnotationFilesToLocalStorage(updatedFiles);
@@ -1974,13 +1978,16 @@ export function AnnotationsContent({
 
   // Load full content for a specific annotation file on demand
   const loadAnnotationFileContent = async (fileId: string) => {
-    if (!api) return;
+    if (!api) return false;
     
     try {
       const file = annotationFiles.find(f => f.id === fileId);
       if (!file || file.contentLoaded) return true; // Already loaded
       
       console.log(`Loading full content for annotation file: ${file.name}`);
+      
+      // Add loading state
+      setLoadingAnnotations(prev => new Set(prev).add(fileId));
       
       // Fetch the file content
       const contentResponse = await api.getAnnotationContent(id, fileId);
@@ -2014,6 +2021,7 @@ export function AnnotationsContent({
         
         return true;
       }
+      return false;
     } catch (error) {
       console.error(`Failed to load content for annotation file ${fileId}:`, error);
       toast({
@@ -2022,6 +2030,13 @@ export function AnnotationsContent({
         variant: "destructive",
       });
       return false;
+    } finally {
+      // Always remove loading state
+      setLoadingAnnotations(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(fileId);
+        return newSet;
+      });
     }
   };
 
