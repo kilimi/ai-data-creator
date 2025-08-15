@@ -1027,8 +1027,26 @@ export function AnnotationsContent({
     
     const { presentFiles } = getImageFileLists(currentFile);
     
-    // If trying to make annotations visible but there are no present images, show a warning
-    if (isBecomingVisible && presentFiles.length === 0) {
+    // If trying to make annotations visible and content isn't loaded, load it first
+    if (isBecomingVisible && !currentFile.contentLoaded && api) {
+      const loadingSuccess = await loadAnnotationFileContent(annotationId);
+      if (!loadingSuccess) {
+        return; // Failed to load content, don't proceed
+      }
+      // Re-check after loading
+      const updatedFile = annotationFiles.find(f => f.id === annotationId);
+      if (updatedFile) {
+        const { presentFiles: updatedPresentFiles } = getImageFileLists(updatedFile);
+        if (updatedPresentFiles.length === 0) {
+          toast({
+            title: "Cannot show annotations",
+            description: "There are no matching images in the dataset for these annotations.",
+            variant: "destructive"
+          });
+          return;
+        }
+      }
+    } else if (isBecomingVisible && currentFile.contentLoaded && presentFiles.length === 0) {
       toast({
         title: "Cannot show annotations",
         description: "There are no matching images in the dataset for these annotations.",
