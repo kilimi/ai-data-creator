@@ -675,18 +675,17 @@ export function AnnotationsContent({
     const allVisibleAnnotations: AnnotationSample[] = [];
     annotationFiles.forEach(file => {
       // Include annotations if the eye button is enabled (visibleAnnotations.has(file.id))
-      // The parent component will use individual sample properties (isVisible, showBboxes) to determine what to render
       if (visibleAnnotations.has(file.id) && file.samples) {
         // Map the annotation image IDs to actual uploaded image IDs
         const mappedSamples = mapAnnotationImageIds(file.samples, file);
-        // Attach the annotation file name and ensure proper visibility/bbox states
+        // Attach the annotation file name and set visibility based on file settings
         const samplesWithFileName = mappedSamples.map(sample => ({
           ...sample,
           annotationFileName: file.name,
-          // Set visibility based on both eye button (file.isVisible) and individual sample state
-          isVisible: file.isVisible && (sample.isVisible !== false),
-          // Set bbox visibility based on both file and sample bbox settings
-          showBboxes: file.showBboxes && (sample.showBboxes !== false)
+          // Set visibility based on eye button (if file is in visibleAnnotations, it should be visible)
+          isVisible: true,
+          // Set bbox visibility based on bbox button state
+          showBboxes: file.showBboxes !== false
         }));
         allVisibleAnnotations.push(...samplesWithFileName);
       }
@@ -749,10 +748,10 @@ export function AnnotationsContent({
           const samplesWithFileName = mappedSamples.map(sample => ({
             ...sample,
             annotationFileName: file.name,
-            // Set visibility based on both eye button (file.isVisible) and individual sample state
-            isVisible: file.isVisible && (sample.isVisible !== false),
-            // Set bbox visibility based on both file and sample bbox settings
-            showBboxes: file.showBboxes && (sample.showBboxes !== false)
+            // Set visibility based on eye button (if file is in visibleAnnotations, it should be visible)
+            isVisible: true,
+            // Set bbox visibility based on bbox button state
+            showBboxes: file.showBboxes !== false
           }));
           allVisibleAnnotations.push(...samplesWithFileName);
         }
@@ -764,7 +763,7 @@ export function AnnotationsContent({
         onShowAnnotationsChange(false, [], annotationFiles);
       }
     }
-  }, [annotationFiles, visibleAnnotations, imagesMemo]); // REMOVED onShowAnnotationsChange from dependencies
+  }, [annotationFiles, visibleAnnotations, imagesMemo]);
   
   // Update annotation color
   const handleClassColorChange = (annotationId: string, className: string, newColor: string) => {
@@ -1051,17 +1050,12 @@ export function AnnotationsContent({
     // Save visibility state to localStorage
     localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
     
-    // Update the annotation files to mark visibility AND update individual sample visibility
+    // Update the annotation files to mark visibility (don't need to update individual sample visibility)
     const updatedFiles = annotationFiles.map(file => 
       file.id === annotationId 
         ? { 
             ...file, 
-            isVisible: isBecomingVisible,
-            samples: file.samples?.map(sample => ({
-              ...sample,
-              isVisible: isBecomingVisible,
-              annotationFileName: file.name
-            }))
+            isVisible: isBecomingVisible
           }
         : file
     );
@@ -1098,19 +1092,12 @@ export function AnnotationsContent({
     // Don't automatically change visibility - let bbox and eye work independently
     // User needs to manually enable eye icon to see the annotations
     
-    // Update the annotation files to toggle bbox visibility for all samples in this file
+    // Update the annotation files to toggle bbox visibility (don't need to update individual sample bbox settings)
     const updatedFiles = annotationFiles.map(f => 
       f.id === annotationId 
         ? { 
             ...f, 
-            showBboxes: newBboxVisibility,
-            // Keep existing visibility state unchanged
-            samples: f.samples?.map(sample => ({
-              ...sample,
-              showBboxes: newBboxVisibility,
-              // Keep existing visibility state unchanged
-              annotationFileName: f.name
-            }))
+            showBboxes: newBboxVisibility
           }
         : f
     );
@@ -2005,11 +1992,11 @@ export function AnnotationsContent({
         // Re-process the COCO annotation file
         const result = await processCOCOAnnotations(mockFile, id);
         
-        // Set all annotation samples to be hidden by default
+        // Set annotation samples visibility based on current file state
         const samples = result.samples.map(sample => ({
           ...sample,
-          isVisible: false,
-          showBboxes: false,
+          isVisible: file.isVisible || false,
+          showBboxes: file.showBboxes || false,
           annotationFileName: file.name
         }));
         
@@ -2107,6 +2094,14 @@ export function AnnotationsContent({
         
         setAnnotationFiles(combined);
         console.log(`Loaded ${processedFiles.length} annotation files metadata from backend and ${filteredSavedClassifications.length} classifications from localStorage`);
+        
+        // Restore visibility state from localStorage
+        const savedVisibility = localStorage.getItem(`annotation_visibility_${id}`);
+        if (savedVisibility) {
+          const visibilityArray: string[] = JSON.parse(savedVisibility);
+          const visibilitySet = new Set(visibilityArray);
+          setVisibleAnnotations(visibilitySet);
+        }
         
         // Load basic statistics for annotation files that need them (non-classification files)
         const filesNeedingStats = processedFiles.filter(file => 
