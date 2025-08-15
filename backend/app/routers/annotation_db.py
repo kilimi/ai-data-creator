@@ -8,16 +8,17 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import Dataset, AnnotationFile, Annotation, AnnotationClass, Image
-from ..schemas import AnnotationFileCreate, AnnotationFileResponse, AnnotationResponse, AnnotationClassResponse
+from ..database import SessionLocal
 
 router = APIRouter()
 
 async def process_coco_annotation_file(
-    annotation_file_id: str, 
-    coco_data: Dict[str, Any], 
-    db: Session
+    annotation_file_id: str,
+    coco_data: Dict[str, Any]
 ):
     """Background task to process COCO annotation file and store in database"""
+    # Use a fresh session inside background task
+    db = SessionLocal()
     try:
         # Update processing status
         annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == annotation_file_id).first()
@@ -152,11 +153,17 @@ async def process_coco_annotation_file(
         
     except Exception as e:
         # Update error status
-        if annotation_file:
-            annotation_file.processing_status = "failed"
-            annotation_file.error_message = str(e)
-            db.commit()
+        try:
+            annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == annotation_file_id).first()
+            if annotation_file:
+                annotation_file.processing_status = "failed"
+                annotation_file.error_message = str(e)
+                db.commit()
+        except Exception:
+            pass
         raise e
+    finally:
+        db.close()
 
 
 @router.post("/datasets/{dataset_id}/annotations/upload-coco")
@@ -422,3 +429,205 @@ async def update_annotation(
         "success": True,
         "message": "Annotation updated successfully"
     }
+
+
+def process_coco_annotation_file_task(
+    task_id: int,
+    file_id: str,
+    coco_data: Dict[str, Any],
+    db: Session
+):
+    """Process COCO annotation file as a task (for background processing)"""
+    try:
+        # Get the annotation file record
+        annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == file_id).first()
+        if not annotation_file:
+            raise Exception(f"Annotation file with ID {file_id} not found")
+        
+        # Update processing status
+        annotation_file.processing_status = "processing"
+        db.commit()
+        
+        # Get the task to update progress
+        from ..models import Task
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if task:
+            task.progress = 20
+            db.commit()
+        
+        # Clear existing annotations and classes for this file
+        db.query(Annotation).filter(Annotation.annotation_file_id == file_id).delete()
+        db.query(AnnotationClass).filter(AnnotationClass.annotation_file_id == file_id).delete()
+        
+        if task:
+            task.progress = 30
+            db.commit()
+        
+        # Create image name to ID mapping
+        image_mapping = {}
+        dataset_images = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id).all()
+        for img in dataset_images:
+            image_mapping[img.file_name] = img.id
+            # Also try without extension
+            base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
+            image_mapping[base_name] = img.id
+        
+        # Process COCO images and create mapping
+        coco_image_mapping = {}
+        if 'images' in coco_data:
+            for coco_img in coco_data['images']:
+                coco_image_id = coco_img['id']
+                file_name = coco_img['file_name']
+                
+                # Find matching dataset image
+                dataset_image_id = None
+                
+                # Try exact filename match first
+                if file_name in image_mapping:
+                    dataset_image_id = image_mapping[file_name]
+                else:
+                    # Try without extension
+                    base_name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
+                    if base_name in image_mapping:
+                        dataset_image_id = image_mapping[base_name]
+                    else:
+                        # Try partial matches
+                        for img_name, img_id in image_mapping.items():
+                            img_base = img_name.rsplit('.', 1)[0] if '.' in img_name else img_name
+                            if img_base == base_name or img_name == file_name:
+                                dataset_image_id = img_id
+                                break
+                
+                if dataset_image_id:
+                    coco_image_mapping[coco_image_id] = {
+                        'dataset_image_id': dataset_image_id,
+                        'file_name': file_name,
+                        'width': coco_img.get('width', 1),
+                        'height': coco_img.get('height', 1)
+                    }
+        
+        if task:
+            task.progress = 50
+            db.commit()
+        
+        # Process categories
+        category_mapping = {}
+        if 'categories' in coco_data:
+            for category in coco_data['categories']:
+                category_mapping[category['id']] = category['name']
+        
+        # Process annotations
+        annotation_count = 0
+        class_counts = {}
+        
+        if 'annotations' in coco_data:
+            total_annotations = len(coco_data['annotations'])
+            for i, coco_ann in enumerate(coco_data['annotations']):
+                # Update progress periodically
+                if task and i % 100 == 0:
+                    progress = 50 + int((i / total_annotations) * 40)
+                    task.progress = min(progress, 90)
+                    db.commit()
+                
+                coco_image_id = coco_ann['image_id']
+                category_id = coco_ann['category_id']
+                
+                # Skip if image not found
+                if coco_image_id not in coco_image_mapping:
+                    continue
+                
+                image_info = coco_image_mapping[coco_image_id]
+                class_name = category_mapping.get(category_id, f"class_{category_id}")
+                
+                # Process bbox (normalize if needed)
+                bbox = coco_ann.get('bbox')
+                bbox_x = bbox_y = bbox_width = bbox_height = None
+                
+                if bbox and len(bbox) >= 4:
+                    img_width = image_info['width']
+                    img_height = image_info['height']
+                    
+                    # Check if bbox is already normalized (values between 0 and 1)
+                    if all(0 <= v <= 1 for v in bbox):
+                        bbox_x, bbox_y, bbox_width, bbox_height = bbox
+                    else:
+                        # Normalize bbox coordinates
+                        bbox_x = bbox[0] / img_width
+                        bbox_y = bbox[1] / img_height
+                        bbox_width = bbox[2] / img_width
+                        bbox_height = bbox[3] / img_height
+                
+                # Create annotation record
+                annotation = Annotation(
+                    annotation_file_id=file_id,
+                    image_id=image_info['dataset_image_id'],
+                    dataset_id=annotation_file.dataset_id,
+                    coco_image_id=coco_image_id,
+                    coco_annotation_id=coco_ann.get('id'),
+                    category_id=category_id,
+                    category=class_name,
+                    bbox_x=bbox_x,
+                    bbox_y=bbox_y,
+                    bbox_width=bbox_width,
+                    bbox_height=bbox_height,
+                    bbox=coco_ann.get('bbox'),  # Keep original for backward compatibility
+                    segmentation=coco_ann.get('segmentation'),
+                    area=coco_ann.get('area'),
+                    confidence=1.0
+                )
+                
+                db.add(annotation)
+                annotation_count += 1
+                class_counts[class_name] = class_counts.get(class_name, 0) + 1
+        
+        if task:
+            task.progress = 95
+            db.commit()
+        
+        # Create annotation classes
+        for class_name, count in class_counts.items():
+            category_id = None
+            for cat_id, cat_name in category_mapping.items():
+                if cat_name == class_name:
+                    category_id = cat_id
+                    break
+                    
+            annotation_class = AnnotationClass(
+                annotation_file_id=file_id,
+                class_name=class_name,
+                category_id=category_id,
+                count=count,
+                color='#ea384c',  # Default color
+                opacity=0.25
+            )
+            db.add(annotation_class)
+        
+        # Update annotation file status
+        annotation_file.is_processed = True
+        annotation_file.processing_status = "completed"
+        annotation_file.annotation_count = annotation_count
+        annotation_file.category_count = len(class_counts)
+        annotation_file.image_count = len(coco_image_mapping)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "annotations_processed": annotation_count,
+            "classes_created": len(class_counts),
+            "images_matched": len(coco_image_mapping)
+        }
+        
+    except Exception as e:
+        # Update error status
+        if annotation_file:
+            annotation_file.processing_status = "failed"
+            annotation_file.error_message = str(e)
+            db.commit()
+        
+        if task:
+            task.status = 'failed'
+            task.error_message = str(e)
+            db.commit()
+        
+        raise e

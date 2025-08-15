@@ -87,8 +87,8 @@ class Image(Base):
     __tablename__ = "images"
 
     id = Column(Integer, primary_key=True, index=True)
-    dataset_id = Column(Integer, ForeignKey("datasets.id"))
-    file_name = Column(String)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
+    file_name = Column(String, index=True)
     file_size = Column(Integer)
     width = Column(Integer)
     height = Column(Integer)
@@ -104,13 +104,13 @@ class Annotation(Base):
     __tablename__ = "annotations"
 
     id = Column(Integer, primary_key=True, index=True)
-    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), nullable=True)  # Link to annotation file
-    image_id = Column(Integer, ForeignKey("images.id"))
-    dataset_id = Column(Integer, ForeignKey("datasets.id"))
+    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), nullable=True, index=True)  # Link to annotation file
+    image_id = Column(Integer, ForeignKey("images.id"), index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
     coco_image_id = Column(Integer, nullable=True)  # Original COCO image ID
     coco_annotation_id = Column(Integer, nullable=True)  # Original COCO annotation ID
     category_id = Column(Integer, nullable=True)  # COCO category ID
-    category = Column(String)  # Class name
+    category = Column(String, index=True)  # Class name
     bbox_x = Column(Float, nullable=True)  # Normalized bbox coordinates
     bbox_y = Column(Float, nullable=True)
     bbox_width = Column(Float, nullable=True) 
@@ -150,7 +150,7 @@ class AnnotationFile(Base):
     __tablename__ = "annotation_files"
 
     id = Column(String, primary_key=True, index=True)  # Use string ID to match frontend
-    dataset_id = Column(Integer, ForeignKey("datasets.id"))
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
     name = Column(String, index=True)
     format = Column(String, default='COCO')  # COCO, YOLO, etc.
     type = Column(String, nullable=True)  # classification, segmentation, depth
@@ -194,7 +194,7 @@ class AnnotationClass(Base):
     __tablename__ = "annotation_classes"
 
     id = Column(Integer, primary_key=True, index=True)
-    annotation_file_id = Column(String, ForeignKey("annotation_files.id"))
+    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), index=True)
     class_name = Column(String, index=True)
     category_id = Column(Integer, nullable=True)  # COCO category ID
     count = Column(Integer, default=0)

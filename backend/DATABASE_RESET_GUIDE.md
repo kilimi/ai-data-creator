@@ -95,11 +95,11 @@ mkdir -p data projects
 
 2. **Start the backend server**:
    ```bash
-   python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 9999
    ```
 
 3. **Verify the reset**:
-   - Check that tables are empty: `http://localhost:8000/projects/`
+   - Check that tables are empty: `http://localhost:9999/projects/`
    - Should return empty list: `{"success": true, "data": []}`
 
 ## Environment-Specific Instructions

@@ -9,7 +9,7 @@ import { X } from "lucide-react";
 interface AnnotationsUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onFilesSelected: (files: File[], type?: string) => void;
+  onFilesSelected: (files: File[], type?: string, processMode?: 'immediate' | 'background') => void;
 }
 
 export function AnnotationsUploadDialog({
@@ -19,11 +19,13 @@ export function AnnotationsUploadDialog({
 }: AnnotationsUploadDialogProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [annotationType, setAnnotationType] = useState<string>("any");
+  const [processMode, setProcessMode] = useState<'immediate' | 'background'>('background');
 
   useEffect(() => {
     if (!open) {
       setSelectedFiles([]);
       setAnnotationType("any");
+      setProcessMode('background');
     }
   }, [open]);
 
@@ -31,8 +33,8 @@ export function AnnotationsUploadDialog({
   useEffect(() => {
     console.log('AnnotationsUploadDialog useEffect triggered, selectedFiles:', selectedFiles.length);
     if (selectedFiles.length > 0) {
-      console.log('Auto-uploading files:', selectedFiles.map(f => f.name), 'with type:', annotationType);
-      onFilesSelected(selectedFiles, annotationType);
+      console.log('Auto-uploading files:', selectedFiles.map(f => f.name), 'with type:', annotationType, 'mode:', processMode);
+      onFilesSelected(selectedFiles, annotationType, processMode);
       onOpenChange(false);
     }
   }, [selectedFiles]); // Remove onFilesSelected and onOpenChange from dependencies
@@ -48,6 +50,25 @@ export function AnnotationsUploadDialog({
         </DialogHeader>
         
         <div className="space-y-4">
+          {/* Processing Mode Selection */}
+          <div className="space-y-2">
+            <Label htmlFor="process-mode" className="text-sm font-medium text-gray-300">
+              Processing Mode
+            </Label>
+            <Select value={processMode} onValueChange={(value: 'immediate' | 'background') => setProcessMode(value)}>
+              <SelectTrigger className="bg-gray-800 border-gray-600 text-white">
+                <SelectValue placeholder="Select processing mode" />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-800 border-gray-600">
+                <SelectItem value="background">Background Processing (Recommended)</SelectItem>
+                <SelectItem value="immediate">Immediate Processing</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-gray-400">
+              Background processing queues large files as tasks, while immediate processing blocks the UI
+            </p>
+          </div>
+
           {/* Annotation Type Selection */}
           <div className="space-y-2">
             <Label htmlFor="annotation-type" className="text-sm font-medium text-gray-300">

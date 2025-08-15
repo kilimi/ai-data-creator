@@ -2,11 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime
+import logging
 
 from .. import models, schemas
 from ..database import get_db
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/tasks/", response_model=List[schemas.Task])
@@ -19,16 +21,24 @@ async def get_tasks(
     db: Session = Depends(get_db)
 ):
     """Get tasks with optional filtering"""
-    query = db.query(models.Task)
-    
-    if project_id:
-        query = query.filter(models.Task.project_id == project_id)
-    if task_type:
-        query = query.filter(models.Task.task_type == task_type)
-    if status:
-        query = query.filter(models.Task.status == status)
-    
-    return query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
+    try:
+        query = db.query(models.Task)
+        
+        if project_id:
+            query = query.filter(models.Task.project_id == project_id)
+        if task_type:
+            query = query.filter(models.Task.task_type == task_type)
+        if status:
+            query = query.filter(models.Task.status == status)
+        
+        # Use execution options for better connection management
+        query = query.execution_options(autocommit=True)
+        
+        return query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
+    except Exception as e:
+        logger.error(f"Database error in get_tasks: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.get("/tasks/active", response_model=List[schemas.Task])
@@ -37,14 +47,22 @@ async def get_active_tasks(
     db: Session = Depends(get_db)
 ):
     """Get currently active tasks (pending or running)"""
-    query = db.query(models.Task).filter(
-        models.Task.status.in_(['pending', 'running'])
-    )
-    
-    if project_id:
-        query = query.filter(models.Task.project_id == project_id)
-    
-    return query.order_by(models.Task.created_at.desc()).all()
+    try:
+        query = db.query(models.Task).filter(
+            models.Task.status.in_(['pending', 'running'])
+        )
+        
+        if project_id:
+            query = query.filter(models.Task.project_id == project_id)
+        
+        # Use execution options for better connection management
+        query = query.execution_options(autocommit=True)
+        
+        return query.order_by(models.Task.created_at.desc()).all()
+    except Exception as e:
+        logger.error(f"Database error in get_active_tasks: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.get("/tasks/count", response_model=dict)
@@ -81,10 +99,21 @@ async def get_task_counts(
 @router.get("/tasks/{task_id}", response_model=schemas.Task)
 async def get_task(task_id: int, db: Session = Depends(get_db)):
     """Get task status and progress"""
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    try:
+        # Use first() with proper error handling instead of all()
+        task = db.query(models.Task).filter(models.Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Explicitly commit the read to release connection quickly
+        db.commit()
+        return task
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Database error in get_task: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.patch("/tasks/{task_id}/cancel")

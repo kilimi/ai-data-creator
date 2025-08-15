@@ -19,7 +19,7 @@ export interface AnnotationFile {
   name: string;
   date: string;
   format: string;
-  type?: 'classification' | 'segmentation' | 'depth' | 'any'; // Add annotation type
+  type?: 'classification' | 'segmentation' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' | 'any'; // Add detailed annotation types
   classCount: number;
   imageCount: number;
   matchedImageCount: number;
@@ -31,9 +31,10 @@ export interface AnnotationFile {
   classColors?: { [className: string]: string }; // Add class color mapping
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
   tags?: string[]; // Add tags for categorization and search
-  contentLoaded?: boolean; // Track if full content has been loaded
   processing_status?: string; // Backend processing status
   error_message?: string; // Error message if processing failed
+  totalSampleCount?: number; // Total number of annotations in the file
+  isContentLoaded?: boolean; // Whether full content has been loaded (for lazy loading)
 }
 
 // Generate distinct random colors for classes

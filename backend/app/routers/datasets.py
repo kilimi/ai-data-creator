@@ -6,13 +6,12 @@ import base64
 from pathlib import Path
 import os
 from datetime import datetime
-from datetime import datetime
 import asyncio
 import shutil
 import uuid
 
 from .. import models, schemas
-from ..database import get_db
+from ..database import get_db, SessionLocal
 
 router = APIRouter()
 
@@ -461,12 +460,12 @@ async def import_annotations(
         db.add(annotation_file_record)
         db.commit()
         
-        # Process the file in the background
+        # Process the file in the background using a fresh DB session
+        # Do not pass the request-scoped session `db` into background tasks
         background_tasks.add_task(
             process_coco_annotation_file,
             random_id,
-            coco_data,
-            db
+            coco_data
         )
         
         return {
@@ -485,6 +484,147 @@ async def import_annotations(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to import annotations: {str(e)}")
+
+
+@router.post("/datasets/{dataset_id}/create-annotation-task")
+async def create_annotation_processing_task(
+    dataset_id: int,
+    file: UploadFile = File(...),
+    annotation_type: Optional[str] = Form(None),
+    task_name: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Create a background task for annotation processing"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Read the uploaded file
+        contents = await file.read()
+        
+        # Generate a random ID for the annotation file
+        import uuid
+        file_id = str(uuid.uuid4())[:8]
+        
+        # Validate file format
+        try:
+            coco_data = json.loads(contents.decode('utf-8'))
+            if not all(key in coco_data for key in ['images', 'annotations', 'categories']):
+                raise HTTPException(status_code=400, detail="Invalid COCO format - missing required fields")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Only COCO JSON format is supported")
+        
+        # Get basic statistics
+        annotation_count = len(coco_data.get('annotations', []))
+        image_count = len(coco_data.get('images', []))
+        category_count = len(coco_data.get('categories', []))
+        
+        # Create the annotation file record (initially not processed)
+        annotation_file_record = models.AnnotationFile(
+            id=file_id,
+            dataset_id=dataset_id,
+            name=file.filename,
+            format='COCO',
+            file_size=len(contents),
+            annotation_count=annotation_count,
+            image_count=image_count,
+            category_count=category_count,
+            is_processed=False,
+            processing_status="pending"
+        )
+        
+        db.add(annotation_file_record)
+        db.flush()  # Get the ID without committing
+        
+        # Create the task record
+        task_name_final = task_name or f"Process annotation file: {file.filename}"
+        task_description = f"Processing annotation file '{file.filename}' for dataset '{dataset.name}' ({annotation_count} annotations, {image_count} images)"
+        
+        task = models.Task(
+            name=task_name_final,
+            description=task_description,
+            task_type='annotation_processing',
+            status='pending',
+            progress=0,
+            project_id=dataset.project_id,
+            task_metadata={
+                'dataset_id': dataset_id,
+                'file_id': file_id,
+                'filename': file.filename,
+                'annotation_type': annotation_type,
+                'file_size': len(contents),
+                'annotation_count': annotation_count,
+                'image_count': image_count,
+                'category_count': category_count,
+                'coco_data': coco_data  # Store the actual data for processing
+            }
+        )
+        
+        db.add(task)
+        db.commit()
+        
+        # TODO: Here you would normally dispatch the task to a task queue (Celery, RQ, etc.)
+        # For now, we'll simulate immediate background processing
+        from .annotation_db import process_coco_annotation_file_task
+        import threading
+        
+        def process_task():
+            """Run processing in a separate thread with its own DB session."""
+            session = SessionLocal()
+            try:
+                # Reload the task within this session
+                task_db = session.query(models.Task).filter(models.Task.id == task.id).first()
+                if task_db:
+                    task_db.status = 'running'
+                    task_db.started_at = datetime.utcnow()
+                    task_db.progress = 10
+                    session.commit()
+                
+                # Process the annotation file using the same dedicated session
+                process_coco_annotation_file_task(
+                    task_id=task.id,
+                    file_id=file_id,
+                    coco_data=coco_data,
+                    db=session
+                )
+                
+                # Mark as completed
+                task_db = session.query(models.Task).filter(models.Task.id == task.id).first()
+                if task_db:
+                    task_db.status = 'completed'
+                    task_db.completed_at = datetime.utcnow()
+                    task_db.progress = 100
+                    session.commit()
+            except Exception as e:
+                # Mark as failed
+                task_db = session.query(models.Task).filter(models.Task.id == task.id).first()
+                if task_db:
+                    task_db.status = 'failed'
+                    task_db.completed_at = datetime.utcnow()
+                    task_db.error_message = str(e)
+                    session.commit()
+            finally:
+                session.close()
+
+        # Start background processing thread
+        processing_thread = threading.Thread(target=process_task)
+        processing_thread.daemon = True
+        processing_thread.start()
+
+        return {
+            "success": True,
+            "data": {
+                "task_id": task.id,
+                "file_id": file_id,
+                "status": "pending",
+                "message": f"Annotation processing task created for '{file.filename}'"
+            }
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create annotation processing task: {str(e)}")
 
 
 @router.delete("/datasets/{dataset_id}/annotations/{annotation_id}")
@@ -580,21 +720,97 @@ async def get_dataset_annotations(
         raise HTTPException(status_code=500, detail=f"Failed to get annotations: {str(e)}")
 
 
-@router.get("/datasets/{dataset_id}/annotations/list")
-async def get_dataset_annotations_list(
+@router.get("/datasets/{dataset_id}/annotations/summary")
+async def get_dataset_annotations_summary(
     dataset_id: int,
     db: Session = Depends(get_db)
 ):
-    """Get all individual annotations from annotation files (database-only)"""
+    """Get fast summary of annotation data (counts only) for a dataset"""
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Get all individual annotations from database
-        annotations = db.query(models.Annotation).filter(
+        # Fast aggregated queries using COUNT()
+        from sqlalchemy import func
+        
+        # Get annotation file count and total annotation count efficiently
+        file_count_result = db.query(func.count(models.AnnotationFile.id)).filter(
+            models.AnnotationFile.dataset_id == dataset_id
+        ).scalar()
+        
+        total_annotations_result = db.query(func.count(models.Annotation.id)).filter(
             models.Annotation.dataset_id == dataset_id
-        ).all()
+        ).scalar()
+        
+        # Get annotations per file efficiently
+        files_with_counts = db.query(
+            models.AnnotationFile.id,
+            models.AnnotationFile.name,
+            models.AnnotationFile.annotation_count,
+            models.AnnotationFile.image_count,
+            models.AnnotationFile.processing_status,
+            func.count(models.Annotation.id).label("actual_count")
+        ).outerjoin(
+            models.Annotation, models.AnnotationFile.id == models.Annotation.annotation_file_id
+        ).filter(
+            models.AnnotationFile.dataset_id == dataset_id
+        ).group_by(models.AnnotationFile.id).all()
+        
+        file_summaries = []
+        for file_data in files_with_counts:
+            file_summaries.append({
+                "id": file_data.id,
+                "name": file_data.name,
+                "stored_count": file_data.annotation_count or 0,
+                "actual_count": file_data.actual_count or 0,
+                "image_count": file_data.image_count or 0,
+                "processing_status": file_data.processing_status
+            })
+        
+        return {
+            "success": True,
+            "data": {
+                "dataset_id": dataset_id,
+                "file_count": file_count_result or 0,
+                "total_annotations": total_annotations_result or 0,
+                "files": file_summaries
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_dataset_annotations_summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get annotation summary: {str(e)}")
+
+
+@router.get("/datasets/{dataset_id}/annotations/list")
+async def get_dataset_annotations_list(
+    dataset_id: int,
+    page: int = 1,
+    limit: int = 1000,
+    annotation_file_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get individual annotations from annotation files with pagination (database-only)"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Build query with optional filtering by annotation file
+        query = db.query(models.Annotation).filter(models.Annotation.dataset_id == dataset_id)
+        
+        if annotation_file_id:
+            query = query.filter(models.Annotation.annotation_file_id == annotation_file_id)
+        
+        # Get total count efficiently
+        total_count = query.count()
+        
+        # Apply pagination
+        offset = (page - 1) * limit
+        annotations = query.offset(offset).limit(limit).all()
         
         all_annotations = []
         for ann in annotations:
@@ -619,14 +835,20 @@ async def get_dataset_annotations_list(
             }
             all_annotations.append(annotation_data)
         
-        print(f"Found {len(all_annotations)} individual annotations in dataset {dataset_id}")
-        if all_annotations:
-            sample_ids = [str(ann['id']) for ann in all_annotations[:10]]
+        print(f"Found {len(all_annotations)} annotations (page {page}/{(total_count + limit - 1) // limit}) in dataset {dataset_id}")
+        if all_annotations and page == 1:  # Only log sample IDs on first page
+            sample_ids = [str(ann['id']) for ann in all_annotations[:5]]
             print(f"Sample annotation IDs: {sample_ids}")
         
         return {
             "success": True,
-            "data": all_annotations
+            "data": all_annotations,
+            "pagination": {
+                "page": page,
+                "limit": limit,
+                "total": total_count,
+                "pages": (total_count + limit - 1) // limit
+            }
         }
         
     except HTTPException:
@@ -640,9 +862,12 @@ async def get_dataset_annotations_list(
 async def get_dataset_annotation_content(
     dataset_id: int,
     annotation_id: str,
+    limit: int = 10000,  # Limit for large annotation files
+    include_images: bool = True,
+    include_annotations: bool = True,
     db: Session = Depends(get_db)
 ):
-    """Get the content of a specific annotation file (database-only)"""
+    """Get the content of a specific annotation file with performance optimizations (database-only)"""
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
@@ -657,21 +882,38 @@ async def get_dataset_annotation_content(
         if not annotation_file:
             raise HTTPException(status_code=404, detail="Annotation file not found")
         
-        # Generate COCO format from database
+        # For large annotation files, return summary instead of full content
+        if annotation_file.annotation_count > limit:
+            return {
+                "success": True,
+                "data": {
+                    "content": None,
+                    "filename": annotation_file.name,
+                    "format": "COCO",
+                    "size": 0,
+                    "source": "database",
+                    "is_large": True,
+                    "total_annotations": annotation_file.annotation_count,
+                    "limit": limit,
+                    "message": f"File too large ({annotation_file.annotation_count} annotations). Use paginated API instead."
+                }
+            }
+        
+        # Generate COCO format from database with limited queries
         from .annotation_db import get_annotation_data, get_annotation_classes
         
-        # Get all annotations and classes
+        # Get classes first (usually small)
+        classes_response = await get_annotation_classes(dataset_id, annotation_id, db)
+        
+        # Get annotations with limit
         annotations_response = await get_annotation_data(
-            dataset_id, annotation_id, None, 1, 10000, None, db
-        )
-        classes_response = await get_annotation_classes(
-            dataset_id, annotation_id, db
+            dataset_id, annotation_id, None, 1, limit, None, db
         )
         
         if not annotations_response["success"] or not classes_response["success"]:
             raise HTTPException(status_code=500, detail="Failed to retrieve annotation data")
         
-        # Build COCO format
+        # Build COCO format efficiently
         coco_data = {
             "info": {
                 "description": f"Annotations for dataset {dataset_id}",
@@ -696,52 +938,67 @@ async def get_dataset_annotation_content(
                 "supercategory": ""
             })
         
-        # Get image information
-        image_id_map = {}
-        for ann in annotations_response["data"]["annotations"]:
-            image_id = ann["imageId"]
-            if image_id not in image_id_map:
-                # Get image details
-                image = db.query(models.Image).filter(models.Image.id == image_id).first()
-                if image:
-                    coco_image_id = ann.get("cocoImageId", len(image_id_map) + 1)
-                    image_id_map[image_id] = coco_image_id
+        # Process images and annotations more efficiently
+        if include_images or include_annotations:
+            # Get unique image IDs from annotations to minimize image queries
+            image_ids = set()
+            for ann in annotations_response["data"]["annotations"]:
+                image_ids.add(ann["imageId"])
+            
+            # Batch load images
+            if include_images and image_ids:
+                images = db.query(models.Image).filter(
+                    models.Image.id.in_(list(image_ids))
+                ).all()
+                
+                image_id_map = {}
+                for i, image in enumerate(images):
+                    coco_image_id = i + 1
+                    image_id_map[image.id] = coco_image_id
                     coco_data["images"].append({
                         "id": coco_image_id,
                         "file_name": image.file_name,
                         "width": image.width or 1,
                         "height": image.height or 1
                     })
-        
-        # Add annotations
-        for ann in annotations_response["data"]["annotations"]:
-            if ann["bbox"] and len(ann["bbox"]) == 4:
-                # Convert normalized bbox back to pixel coordinates
-                image_id = ann["imageId"]
-                image = db.query(models.Image).filter(models.Image.id == image_id).first()
-                if image:
-                    width = image.width or 1
-                    height = image.height or 1
-                    bbox = [
-                        ann["bbox"][0] * width,   # x
-                        ann["bbox"][1] * height,  # y  
-                        ann["bbox"][2] * width,   # width
-                        ann["bbox"][3] * height   # height
-                    ]
-                    
-                    coco_ann = {
-                        "id": ann.get("cocoAnnotationId", ann["id"]),
-                        "image_id": image_id_map.get(image_id, 1),
-                        "category_id": category_id_map.get(ann["className"], 1),
-                        "bbox": bbox,
-                        "area": ann.get("area", bbox[2] * bbox[3]),
-                        "iscrowd": 0
-                    }
-                    
-                    if ann.get("segmentation"):
-                        coco_ann["segmentation"] = ann["segmentation"]
+            
+            # Add annotations
+            if include_annotations:
+                for ann in annotations_response["data"]["annotations"]:
+                    if ann["bbox"] and len(ann["bbox"]) == 4:
+                        # Convert normalized bbox back to pixel coordinates if we have image dimensions
+                        image_id = ann["imageId"]
                         
-                    coco_data["annotations"].append(coco_ann)
+                        if include_images and image_id in image_id_map:
+                            # Find the image for dimensions
+                            image = next((img for img in images if img.id == image_id), None)
+                            if image:
+                                width = image.width or 1
+                                height = image.height or 1
+                                bbox = [
+                                    ann["bbox"][0] * width,   # x
+                                    ann["bbox"][1] * height,  # y  
+                                    ann["bbox"][2] * width,   # width
+                                    ann["bbox"][3] * height   # height
+                                ]
+                            else:
+                                bbox = ann["bbox"]  # Use as-is if no image found
+                        else:
+                            bbox = ann["bbox"]  # Use normalized bbox
+                        
+                        coco_ann = {
+                            "id": ann.get("cocoAnnotationId", ann["id"]),
+                            "image_id": image_id_map.get(image_id, 1) if include_images else ann["imageId"],
+                            "category_id": category_id_map.get(ann["className"], 1),
+                            "bbox": bbox,
+                            "area": ann.get("area", bbox[2] * bbox[3] if len(bbox) >= 4 else 0),
+                            "iscrowd": 0
+                        }
+                        
+                        if ann.get("segmentation"):
+                            coco_ann["segmentation"] = ann["segmentation"]
+                            
+                        coco_data["annotations"].append(coco_ann)
         
         content = json.dumps(coco_data, indent=2)
         
@@ -752,7 +1009,11 @@ async def get_dataset_annotation_content(
                 "filename": annotation_file.name,
                 "format": "COCO",
                 "size": len(content),
-                "source": "database"
+                "source": "database",
+                "is_large": False,
+                "annotation_count": len(coco_data["annotations"]),
+                "image_count": len(coco_data["images"]),
+                "category_count": len(coco_data["categories"])
             }
         }
         

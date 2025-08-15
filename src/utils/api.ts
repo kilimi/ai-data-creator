@@ -244,8 +244,62 @@ export class ApiClient {
     return this.request<any[]>(`/datasets/${datasetId}/annotations`);
   }
 
+  async getAnnotationsSummary(datasetId: string | number): Promise<ApiResponse<{
+    dataset_id: number;
+    file_count: number;
+    total_annotations: number;
+    files: Array<{
+      id: string;
+      name: string;
+      stored_count: number;
+      actual_count: number;
+      image_count: number;
+      processing_status: string;
+    }>;
+  }>> {
+    return this.request<any>(`/datasets/${datasetId}/annotations/summary`);
+  }
+
   async getAnnotation(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
     return this.request<any>(`/datasets/${datasetId}/annotations/${annotationId}`);
+  }
+
+  async getAnnotationsList(
+    datasetId: string | number,
+    params?: {
+      page?: number;
+      limit?: number;
+      sort_by?: string;
+      sort_order?: 'asc' | 'desc';
+    }
+  ): Promise<ApiResponse<{
+    annotations: Array<{
+      id: string;
+      name: string;
+      format: string;
+      stored_count: number;
+      actual_count: number;
+      processing_status: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      pages: number;
+    };
+  }>> {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.append('page', params.page.toString());
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    if (params?.sort_order) searchParams.append('sort_order', params.sort_order);
+    
+    const queryString = searchParams.toString();
+    const endpoint = `/datasets/${datasetId}/annotations/list${queryString ? `?${queryString}` : ''}`;
+    
+    return this.request(endpoint);
   }
 
   async deleteAnnotation(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
@@ -279,6 +333,35 @@ export class ApiClient {
       formData.append('annotation_type', annotationType);
     }
     return this.request(`/datasets/${datasetId}/import-annotations`, {
+      method: 'POST',
+      body: formData
+    });
+  }
+
+  /**
+   * Create an annotation processing task (async processing)
+   */
+  async createAnnotationProcessingTask(
+    datasetId: string | number, 
+    file: File, 
+    annotationType?: string,
+    taskName?: string
+  ): Promise<ApiResponse<{
+    task_id: number;
+    file_id: string;
+    status: string;
+    message: string;
+  }>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (annotationType && annotationType !== 'any') {
+      formData.append('annotation_type', annotationType);
+    }
+    if (taskName) {
+      formData.append('task_name', taskName);
+    }
+    
+    return this.request(`/datasets/${datasetId}/create-annotation-task`, {
       method: 'POST',
       body: formData
     });
@@ -507,8 +590,36 @@ export class ApiClient {
     });
   }
 
-  async getAnnotationContent(datasetId: string | number, annotationId: string): Promise<ApiResponse<any>> {
-    return this.request<any>(`/datasets/${datasetId}/annotations/${annotationId}/content`);
+  async getAnnotationContent(
+    datasetId: string | number, 
+    annotationId: string,
+    options?: {
+      limit?: number;
+      include_images?: boolean;
+      include_annotations?: boolean;
+    }
+  ): Promise<ApiResponse<{
+    content: string | null;
+    filename: string;
+    format: string;
+    size: number;
+    source: string;
+    is_large?: boolean;
+    total_annotations?: number;
+    annotation_count?: number;
+    image_count?: number;
+    category_count?: number;
+    message?: string;
+  }>> {
+    const searchParams = new URLSearchParams();
+    if (options?.limit) searchParams.append('limit', options.limit.toString());
+    if (options?.include_images !== undefined) searchParams.append('include_images', options.include_images.toString());
+    if (options?.include_annotations !== undefined) searchParams.append('include_annotations', options.include_annotations.toString());
+    
+    const queryString = searchParams.toString();
+    const endpoint = `/datasets/${datasetId}/annotations/${annotationId}/content${queryString ? `?${queryString}` : ''}`;
+    
+    return this.request<any>(endpoint);
   }
 
   async updateAnnotationContent(datasetId: string | number, annotationId: string, file: File): Promise<ApiResponse<any>> {

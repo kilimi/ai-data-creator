@@ -143,7 +143,7 @@ pip install albumentations opencv-python pillow numpy
 ### Transform Errors
 Check the test endpoint to verify your setup:
 ```bash
-curl http://localhost:8000/augmentations/setup/test
+curl http://localhost:9999/augmentations/setup/test
 ```
 
 ### Memory Issues
