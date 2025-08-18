@@ -79,12 +79,39 @@ export const AnnotationVisualizer = ({
   // Filter out hidden annotations before drawing
   const visibleAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
 
+  // Add comprehensive debugging
+  console.log('AnnotationVisualizer: Render state:', {
+    totalAnnotations: annotations.length,
+    visibleAnnotations: visibleAnnotations.length,
+    imageWidth,
+    imageHeight,
+    containerDimensions,
+    globalShowMasks,
+    hasCanvas: !!canvasRef.current,
+    annotationsWithSegmentation: visibleAnnotations.filter(a => a.segmentation && a.segmentation.length > 0).length
+  });
+
   // Draw annotations on canvas
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     
+    console.log('AnnotationVisualizer: useLayoutEffect triggered with:', {
+      hasCanvas: !!canvas,
+      visibleAnnotationsCount: visibleAnnotations.length,
+      containerWidth: containerDimensions.width,
+      containerHeight: containerDimensions.height,
+      imageWidth,
+      imageHeight
+    });
+    
     // Wait for both image and container to be ready before drawing
     if (!canvas || visibleAnnotations.length === 0 || !containerDimensions.width || !containerDimensions.height || !imageWidth || !imageHeight) {
+      console.log('AnnotationVisualizer: Early return due to missing requirements:', {
+        hasCanvas: !!canvas,
+        visibleAnnotationsCount: visibleAnnotations.length,
+        containerReady: !!(containerDimensions.width && containerDimensions.height),
+        imageReady: !!(imageWidth && imageHeight)
+      });
       if (canvas) {
         const ctx = canvas.getContext("2d");
         if (ctx) {
@@ -128,14 +155,14 @@ export const AnnotationVisualizer = ({
       
       // Draw segmentation mask if available and masks are enabled
       if (globalShowMasks && annotation.segmentation && annotation.segmentation.length > 0) {
-        console.log(`Drawing segmentation for ${annotation.className} with ${annotation.segmentation.length} segments`);
+        console.log(`AnnotationVisualizer: Drawing segmentation for ${annotation.className} with ${annotation.segmentation.length} segments, isVisible: ${annotation.isVisible}, globalShowMasks: ${globalShowMasks}`);
         annotation.segmentation.forEach((segment, segIndex) => {
           if (!Array.isArray(segment) || segment.length < 6) { 
-            console.log(`Skipping invalid segment ${segIndex} - not array or too short:`, segment);
+            console.log(`AnnotationVisualizer: Skipping invalid segment ${segIndex} - not array or too short:`, segment);
             return; 
           }
           
-          console.log(`Drawing segment ${segIndex} with ${segment.length} points`);
+          console.log(`AnnotationVisualizer: Drawing segment ${segIndex} with ${segment.length} points`);
           
           ctx.beginPath();
           
@@ -248,30 +275,8 @@ export const AnnotationVisualizer = ({
         // Bottom-right
         ctx.fillRect(canvasX + canvasWidth - markerSize/2, canvasY + canvasHeight - markerSize/2, markerSize, markerSize);
         
-        // Draw class label if available
-        if (annotation.className) {
-          const fontSize = Math.max(12, scale * 14);
-          ctx.font = `${fontSize}px Arial`;
-          ctx.textAlign = 'left';
-          
-          // Measure text for background
-          const textMetrics = ctx.measureText(annotation.className);
-          const textWidth = textMetrics.width;
-          const textHeight = fontSize;
-          const padding = 4;
-          
-          // Position label above bbox, or below if not enough space
-          const labelX = canvasX;
-          const labelY = canvasY > textHeight + padding * 2 ? canvasY - padding : canvasY + canvasHeight + textHeight + padding;
-          
-          // Draw background
-          ctx.fillStyle = hexColor;
-          ctx.fillRect(labelX, labelY - textHeight - padding, textWidth + padding * 2, textHeight + padding * 2);
-          
-          // Draw text
-          ctx.fillStyle = 'white';
-          ctx.fillText(annotation.className, labelX + padding, labelY - padding);
-        }
+        // Class label drawing removed - no text on bounding boxes
+        
       } else if (annotation.bbox && annotation.bbox.length === 4) {
         console.log('Bbox not shown due to showBboxes=false:', {
           showBboxes: annotation.showBboxes,

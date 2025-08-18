@@ -140,12 +140,14 @@ export function ImagesGrid({
   };
 
   const getImageAnnotations = (imageId: string) => {
-    const imageAnnotations = filteredAnnotations.filter(annotation => annotation.imageId === imageId);
+    // Convert both to strings for comparison to handle type mismatches
+    const imageAnnotations = filteredAnnotations.filter(annotation => String(annotation.imageId) === String(imageId));
     
     if (imageAnnotations.length > 0) {
-      console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId}:`);
+      console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId} (type: ${typeof imageId}):`);
       imageAnnotations.forEach((ann, idx) => {
         console.log(`  ${idx + 1}. Class: ${ann.className}, File: ${ann.annotationFileName || 'NOT SET'}, Color: ${ann.color}`);
+        console.log(`      annotation.imageId: ${ann.imageId} (type: ${typeof ann.imageId}), matches: ${String(ann.imageId) === String(imageId)}`);
         console.log(`      bbox: ${JSON.stringify(ann.bbox)}, showBboxes: ${ann.showBboxes}, isVisible: ${ann.isVisible}`);
         
         // Add debugging for bbox format
@@ -162,6 +164,9 @@ export function ImagesGrid({
           console.log(`      no segmentation data`);
         }
       });
+    } else {
+      console.log(`ImagesGrid: No annotations found for image ${imageId} (type: ${typeof imageId}). Sample annotation imageIds:`, 
+        filteredAnnotations.slice(0, 3).map(a => `${a.imageId} (${typeof a.imageId})`));
     }
     
     return imageAnnotations;
@@ -230,6 +235,7 @@ export function ImagesGrid({
                       imageHeight={dimensions.height}
                       className="w-full h-full"
                       showFileName={false}
+                      globalShowMasks={true}
                     />
                   </div>
                 )}

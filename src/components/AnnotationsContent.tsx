@@ -89,6 +89,61 @@ function toCOCOFormat(file: AnnotationFile) {
   };
 }
 
+// Generate a random bright color for class annotations
+function generateRandomColor(): string {
+  const colors = [
+    '#FF6B6B', // Red
+    '#4ECDC4', // Teal
+    '#45B7D1', // Blue
+    '#96CEB4', // Green
+    '#FECA57', // Yellow
+    '#FF9FF3', // Pink
+    '#54A0FF', // Light Blue
+    '#5F27CD', // Purple
+    '#00D2D3', // Cyan
+    '#FF9F43', // Orange
+    '#10AC84', // Emerald
+    '#EE5A24', // Dark Orange
+    '#0984E3', // Blue
+    '#6C5CE7', // Purple
+    '#A29BFE', // Light Purple
+    '#FD79A8', // Pink
+    '#FDCB6E', // Yellow
+    '#6C5CE7', // Indigo
+    '#00B894', // Mint
+    '#E17055'  // Coral
+  ];
+  
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+// Get color for a class, generating a unique one if not already assigned
+function getOrAssignClassColor(className: string, existingColors: { [className: string]: string }, usedColors: Set<string> = new Set()): string {
+  if (existingColors[className]) {
+    return existingColors[className];
+  }
+  
+  // Generate a color that hasn't been used yet
+  const availableColors = [
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3', 
+    '#54A0FF', '#5F27CD', '#00D2D3', '#FF9F43', '#10AC84', '#EE5A24', 
+    '#0984E3', '#6C5CE7', '#A29BFE', '#FD79A8', '#FDCB6E', '#00B894', '#E17055'
+  ];
+  
+  // Add already used colors to the set
+  Object.values(existingColors).forEach(color => usedColors.add(color));
+  
+  // Find an unused color
+  let newColor = availableColors.find(color => !usedColors.has(color));
+  
+  // If all colors are used, just pick a random one
+  if (!newColor) {
+    newColor = availableColors[Math.floor(Math.random() * availableColors.length)];
+  }
+  
+  return newColor;
+}
+
 export function AnnotationsContent({ 
   id, 
   className = "", 
@@ -153,9 +208,15 @@ export function AnnotationsContent({
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
 
   // Smart annotation loading for current page
-  const loadAnnotationsForCurrentPage = async (fileId: string, force = false) => {
+  const loadAnnotationsForCurrentPage = async (fileId: string, force = false, currentBboxState?: boolean) => {
     const file = annotationFiles.find(f => f.id === fileId);
     if (!file || !api) return null;
+
+    // Prevent loading if already processing this file
+    if ((file as any).isLoadingCurrentPage && !force) {
+      console.log(`Skipping load for ${file.name} - already loading`);
+      return null;
+    }
 
     // Check if we need to load annotations for current page
     const currentPageString = currentPageImageIds.join(',');
@@ -167,14 +228,126 @@ export function AnnotationsContent({
     }
 
     try {
+      // Mark file as loading to prevent duplicate requests
+      setAnnotationFiles(prev => prev.map(f => 
+        f.id === fileId ? { ...f, isLoadingCurrentPage: true } : f
+      ));
+      
       setLoadingAnnotations(prev => new Set(prev).add(fileId));
       
       console.log(`Loading annotations for file ${file.name} for current page with ${currentPageImageIds.length} images`);
       
-      // Load full annotation data from backend
+      // Determine the bbox state to use
+      const bboxState = currentBboxState !== undefined ? currentBboxState : file.showBboxes;
+      
+      // Try to use the new annotation data API first (better for large files)
+      try {
+        const annotationDataResponse = await api.getAnnotationData(id, fileId, {
+          imageIds: currentPageImageIds,
+          limit: 1000 // Get up to 1000 annotations for current page
+        });
+        
+        if (annotationDataResponse?.success && annotationDataResponse.data?.annotations) {
+          console.log(`Loaded ${annotationDataResponse.data.annotations.length} annotations using annotation data API`);
+          console.log('Raw annotation data:', annotationDataResponse.data.annotations.slice(0, 2)); // Debug first 2 annotations
+          
+          // Track used colors to ensure uniqueness
+          const usedColors = new Set(Object.values(file.classColors || {}));
+          
+          // Convert to our format
+          const currentPageAnnotations = annotationDataResponse.data.annotations.map((anno: any): AnnotationSample => {
+            const color = getOrAssignClassColor(anno.className, file.classColors || {}, usedColors);
+            usedColors.add(color); // Track this color as used
+            const annotationSample = {
+              id: anno.id || `annotation_${anno.cocoAnnotationId || Math.random()}`,
+              imageId: anno.imageId,
+              className: anno.className,
+              bbox: anno.bbox || [0, 0, 0, 0],
+              segmentation: anno.segmentation || undefined,
+              area: anno.area || 0,
+              confidence: anno.confidence || 1.0,
+              color: color,
+              isVisible: true, // This controls mask visibility
+              showBboxes: bboxState !== false,
+              annotationFileName: file.name
+            };
+            console.log(`Converted annotation for image ${anno.imageId}:`, annotationSample);
+            return annotationSample;
+          });
+          
+          console.log(`Converted ${currentPageAnnotations.length} annotations for current page`);
+          
+          // Update classColors with any new colors that were generated
+          const updatedClassColors = { ...file.classColors };
+          currentPageAnnotations.forEach(annotation => {
+            if (!updatedClassColors[annotation.className]) {
+              updatedClassColors[annotation.className] = annotation.color;
+            }
+          });
+          
+          // Cache the loaded annotations
+          setCurrentPageAnnotations(prev => ({
+            ...prev,
+            [fileId]: currentPageAnnotations
+          }));
+          
+          setLastLoadedPageIds([...currentPageImageIds]);
+          
+          // Update the file with the loaded samples and mark as loaded
+          const updatedFiles = annotationFiles.map(f => 
+            f.id === fileId 
+              ? { 
+                  ...f, 
+                  samples: currentPageAnnotations, 
+                  classColors: updatedClassColors, // Save the updated colors
+                  // Use the bbox state parameter if provided, otherwise preserve current state
+                  showBboxes: currentBboxState !== undefined ? currentBboxState : f.showBboxes,
+                  currentPageLoaded: true,
+                  isLoadingCurrentPage: false,
+                  // Re-detect type now that we have samples loaded
+                  type: currentPageAnnotations.length > 0 ? (() => {
+                    const hasSegmentation = currentPageAnnotations.some(sample => 
+                      sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+                    );
+                    const hasMeaningfulBbox = currentPageAnnotations.some(sample => 
+                      sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+                      (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+                    );
+                    
+                    if (hasSegmentation && hasMeaningfulBbox) {
+                      return 'segmentation-mask-bbox';
+                    } else if (hasSegmentation) {
+                      return 'segmentation-mask';
+                    } else if (hasMeaningfulBbox) {
+                      return 'segmentation-bbox';
+                    } else {
+                      return 'classification';
+                    }
+                  })() : f.type
+                }
+              : f
+          );
+          setAnnotationFiles(updatedFiles);
+          
+          console.log(`Updated annotation file ${file.name} with ${currentPageAnnotations.length} samples`);
+          
+          return currentPageAnnotations;
+        }
+      } catch (apiError) {
+        console.log('Annotation data API failed, falling back to content API:', apiError);
+      }
+      
+      // Fallback to original content loading method
       const contentResponse = await api.getAnnotationContent(id, fileId);
       if (!contentResponse.success || !contentResponse.data.content) {
         console.warn(`Failed to load annotation content for file ${file.name}:`, contentResponse);
+        
+        // Check if it's a large file
+        if (contentResponse.data?.is_large) {
+          console.log('File is too large for content API, annotations will be loaded on-demand');
+          return [];
+        }
+        
         return [];
       }
 
@@ -191,6 +364,9 @@ export function AnnotationsContent({
             imageMap.set(img.id, img.file_name);
           });
         }
+
+        // Track used colors to ensure uniqueness
+        const usedColors = new Set(Object.values(file.classColors || {}));
 
         // Filter annotations for current page
         for (const anno of cocoData.annotations) {
@@ -224,6 +400,9 @@ export function AnnotationsContent({
               ] as [number, number, number, number];
             }
 
+            const color = getOrAssignClassColor(className, file.classColors || {}, usedColors);
+            usedColors.add(color); // Track this color as used
+
             const annotationSample: AnnotationSample = {
               id: `${fileId}_${anno.id}`,
               imageId: matchingImage.id,
@@ -232,9 +411,9 @@ export function AnnotationsContent({
               segmentation: anno.segmentation || undefined,
               area: anno.area,
               confidence: 1.0,
-              color: file.classColors?.[className] || '#ea384c',
-              isVisible: true,
-              showBboxes: file.showBboxes || false,
+              color: color,
+              isVisible: true, // This controls mask visibility
+              showBboxes: bboxState !== false, // Use the passed bbox state
               annotationFileName: file.name
             };
             
@@ -244,6 +423,44 @@ export function AnnotationsContent({
       }
 
       console.log(`Loaded ${currentPageAnnotations.length} annotations for current page from ${file.name}`);
+      
+      // Update classColors with any new colors that were generated
+      const updatedClassColors = { ...file.classColors };
+      currentPageAnnotations.forEach(annotation => {
+        if (!updatedClassColors[annotation.className]) {
+          updatedClassColors[annotation.className] = annotation.color;
+        }
+      });
+      
+      // Update the annotation file with new colors and re-detect type
+      setAnnotationFiles(prev => prev.map(f => 
+        f.id === fileId 
+          ? { 
+              ...f, 
+              classColors: updatedClassColors,
+              // Re-detect type now that we have samples loaded
+              type: currentPageAnnotations.length > 0 ? (() => {
+                const hasSegmentation = currentPageAnnotations.some(sample => 
+                  sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+                );
+                const hasMeaningfulBbox = currentPageAnnotations.some(sample => 
+                  sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+                  (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+                );
+                
+                if (hasSegmentation && hasMeaningfulBbox) {
+                  return 'segmentation-mask-bbox';
+                } else if (hasSegmentation) {
+                  return 'segmentation-mask';
+                } else if (hasMeaningfulBbox) {
+                  return 'segmentation-bbox';
+                } else {
+                  return 'classification';
+                }
+              })() : f.type
+            }
+          : f
+      ));
       
       // Cache the loaded annotations
       setCurrentPageAnnotations(prev => ({
@@ -269,11 +486,17 @@ export function AnnotationsContent({
       
       return [];
     } finally {
+      // Clear loading state
       setLoadingAnnotations(prev => {
         const newSet = new Set(prev);
         newSet.delete(fileId);
         return newSet;
       });
+      
+      // Clear the loading flag on the file
+      setAnnotationFiles(prev => prev.map(f => 
+        f.id === fileId ? { ...f, isLoadingCurrentPage: false } : f
+      ));
     }
   };
 
@@ -361,6 +584,8 @@ export function AnnotationsContent({
   
   // Auto-detect annotation type based on content with detailed segmentation types
   const detectAnnotationType = (file: AnnotationFile): 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' => {
+    console.log(`[detectAnnotationType] Checking file: ${file.name}, file.type: ${file.type}, samples count: ${file.samples?.length || 0}`);
+    
     // If type is explicitly set, use it (but expand old 'segmentation' to detailed types)
     if (file.type === 'classification') return 'classification';
     if (file.type === 'segmentation-mask-bbox') return 'segmentation-mask-bbox';
@@ -621,7 +846,7 @@ export function AnnotationsContent({
           return stat;
         });
         if (!found && mergedCount > 0) {
-          updatedClassStats.push({ className: mergedName, count: mergedCount, color: mergedColor || '#ea384c', ...(mergedOpacity !== undefined ? { opacity: mergedOpacity } : {}) });
+          updatedClassStats.push({ className: mergedName, count: mergedCount, color: mergedColor || generateRandomColor(), ...(mergedOpacity !== undefined ? { opacity: mergedOpacity } : {}) });
         }
         // Update classColors
         const updatedClassColors = { ...file.classColors };
@@ -724,24 +949,52 @@ export function AnnotationsContent({
 
   // Update visible annotations based on currently visible files
   const updateVisibleAnnotations = useCallback(() => {
+    console.log('updateVisibleAnnotations called');
+    console.log('annotationFiles:', annotationFiles.length);
+    console.log('visibleAnnotations:', Array.from(visibleAnnotations));
+    
     const allVisibleAnnotations: AnnotationSample[] = [];
     annotationFiles.forEach(file => {
       // Include annotations if the eye button is enabled (visibleAnnotations.has(file.id))
       if (visibleAnnotations.has(file.id) && file.samples) {
+        console.log(`Processing visible file ${file.name} with ${file.samples.length} samples`);
         // Map the annotation image IDs to actual uploaded image IDs
         const mappedSamples = mapAnnotationImageIds(file.samples, file);
+        console.log(`Mapped to ${mappedSamples.length} samples`);
+        
         // Attach the annotation file name and set visibility based on file settings
         const samplesWithFileName = mappedSamples.map(sample => ({
           ...sample,
           annotationFileName: file.name,
           // Set visibility based on eye button (if file is in visibleAnnotations, it should be visible)
-          isVisible: true,
+          isVisible: true, // This controls mask visibility
           // Set bbox visibility based on bbox button state
           showBboxes: file.showBboxes !== false
         }));
+        
+        console.log(`Added ${samplesWithFileName.length} samples from ${file.name}, showBboxes: ${file.showBboxes}`);
         allVisibleAnnotations.push(...samplesWithFileName);
+      } else if (visibleAnnotations.has(file.id)) {
+        console.log(`File ${file.name} is visible but has no samples`);
       }
     });
+    
+    console.log(`Total visible annotations: ${allVisibleAnnotations.length}`);
+    
+    // Debug: Check if annotations have segmentation data
+    const annotationsWithSegmentation = allVisibleAnnotations.filter(ann => ann.segmentation && ann.segmentation.length > 0);
+    console.log(`Annotations with segmentation data: ${annotationsWithSegmentation.length}`);
+    if (annotationsWithSegmentation.length > 0) {
+      console.log('Sample annotation with segmentation:', {
+        id: annotationsWithSegmentation[0].id,
+        imageId: annotationsWithSegmentation[0].imageId,
+        className: annotationsWithSegmentation[0].className,
+        isVisible: annotationsWithSegmentation[0].isVisible,
+        hasSegmentation: !!annotationsWithSegmentation[0].segmentation,
+        segmentationLength: annotationsWithSegmentation[0].segmentation?.length || 0
+      });
+    }
+    
     if (onShowAnnotationsChange) {
       // If showAllAnnotationsOnGrid is true, always show all annotations
       if (showAllAnnotationsOnGrid) {
@@ -755,8 +1008,10 @@ export function AnnotationsContent({
             showBboxes: file.showBboxes !== false
           }));
         });
+        console.log(`Sending ${allAnnotations.length} annotations to parent (showAllAnnotationsOnGrid mode)`);
         onShowAnnotationsChange(allAnnotations.length > 0, allAnnotations, annotationFiles);
       } else {
+        console.log(`Sending ${allVisibleAnnotations.length} visible annotations to parent`);
         onShowAnnotationsChange(allVisibleAnnotations.length > 0, allVisibleAnnotations, annotationFiles);
       }
     }
@@ -767,6 +1022,17 @@ export function AnnotationsContent({
     updateVisibleAnnotations();
   }, [annotationFiles, visibleAnnotations, imagesMemo, showAllAnnotationsOnGrid]); // REMOVE updateVisibleAnnotations from deps to prevent infinite loop
 
+  // Reset currentPageLoaded flag when page changes
+  useEffect(() => {
+    if (currentPageImageIds.length > 0) {
+      setAnnotationFiles(prev => prev.map(f => ({ 
+        ...f, 
+        currentPageLoaded: false,
+        isLoadingCurrentPage: false 
+      })));
+    }
+  }, [currentPageImageIds.join(',')]); // Only trigger when actual page changes
+
   // Auto-load annotations for current page when page changes
   useEffect(() => {
     if (currentPageImageIds.length > 0 && api) {
@@ -774,7 +1040,8 @@ export function AnnotationsContent({
       const filesNeedingLoad = annotationFiles.filter(file => 
         visibleAnnotations.has(file.id) &&
         !(file as any).currentPageLoaded &&
-        !loadingAnnotations.has(file.id) // Don't load if already loading
+        !loadingAnnotations.has(file.id) && // Don't load if already loading
+        !(file as any).isLoadingCurrentPage // Additional check to prevent loading if already processing
       );
       
       if (filesNeedingLoad.length > 0) {
@@ -1062,66 +1329,119 @@ export function AnnotationsContent({
     
     const isBecomingVisible = !visibleAnnotations.has(annotationId);
     
-    // If trying to make annotations visible, first ensure we have the annotation content loaded
+    // If trying to make annotations visible, check if we have any matching images
     if (isBecomingVisible) {
-      // Load annotation content to get imageMapping if needed
+      // For large files, use a different approach - check if we have current page images
       if (!file.imageMapping && api) {
-        console.log('Loading annotation content to get image mapping...');
+        console.log('Checking annotation availability for current page images...');
         try {
-          console.log(`Loading annotation content for file ${file.id}:`, { 
-            processing_status: file.processing_status
+          // Get current page image IDs
+          const currentImageIds = currentPageImageIds;
+          
+          if (currentImageIds.length === 0) {
+            toast({
+              title: "No images on current page",
+              description: "Navigate to a page with images to view annotations.",
+              variant: "default"
+            });
+            return;
+          }
+          
+          // Try to load annotations for current page images only
+          console.log(`Checking annotations for ${currentImageIds.length} current page images`);
+          const annotationDataResponse = await api.getAnnotationData(id, file.id, {
+            imageIds: currentImageIds,
+            limit: 10 // Just check if any exist
           });
           
-          const contentResponse = await api.getAnnotationContent(id, file.id);
-          console.log('Annotation content response:', contentResponse);
-          
-          if (contentResponse?.success && contentResponse.data?.content) {
-            const cocoData = JSON.parse(contentResponse.data.content);
+          if (annotationDataResponse?.success && annotationDataResponse.data) {
+            const hasAnnotations = annotationDataResponse.data.annotations && annotationDataResponse.data.annotations.length > 0;
             
-            // Create imageMapping from COCO data
-            const imageMapping: { [imageId: string]: string } = {};
-            if (cocoData.images && Array.isArray(cocoData.images)) {
-              cocoData.images.forEach((img: any) => {
-                if (img.id && img.file_name) {
-                  imageMapping[img.id.toString()] = img.file_name;
-                }
+            console.log(`Visibility check result: ${hasAnnotations ? 'found' : 'no'} annotations for current page`);
+            console.log('Annotation data response:', annotationDataResponse.data);
+            
+            if (!hasAnnotations) {
+              toast({
+                title: "No annotations for current page",
+                description: "There are no annotations for images on the current page. Try navigating to other pages.",
+                variant: "default"
               });
+              return;
             }
             
-            // Update the file with imageMapping
-            const updatedFiles = annotationFiles.map(f => 
-              f.id === annotationId 
-                ? { ...f, imageMapping }
-                : f
-            );
-            setAnnotationFiles(updatedFiles);
+            console.log(`Found ${annotationDataResponse.data.annotations.length} annotations for current page - proceeding with visibility toggle`);
+          } else {
+            // Fallback to original method for smaller files
+            console.log('Falling back to full content loading...');
+            const contentResponse = await api.getAnnotationContent(id, file.id);
             
-            // Now check with the new imageMapping
-            const { presentFiles } = getImageFileLists({ ...file, imageMapping });
-            
-            if (presentFiles.length === 0) {
+            if (contentResponse?.success && contentResponse.data) {
+              // Check if file is too large
+              if (contentResponse.data.is_large && !contentResponse.data.content) {
+                toast({
+                  title: "Annotation file too large", 
+                  description: `${contentResponse.data.message || 'This annotation file is too large to load all at once'}. Navigate to specific pages to view relevant annotations.`,
+                  variant: "default"
+                });
+                return;
+              }
+              
+              if (contentResponse.data.content) {
+                const cocoData = JSON.parse(contentResponse.data.content);
+                
+                // Create imageMapping from COCO data
+                const imageMapping: { [imageId: string]: string } = {};
+                if (cocoData.images && Array.isArray(cocoData.images)) {
+                  cocoData.images.forEach((img: any) => {
+                    if (img.id && img.file_name) {
+                      imageMapping[img.id.toString()] = img.file_name;
+                    }
+                  });
+                }
+                
+                // Update the file with imageMapping
+                const updatedFiles = annotationFiles.map(f => 
+                  f.id === annotationId 
+                    ? { ...f, imageMapping }
+                    : f
+                );
+                setAnnotationFiles(updatedFiles);
+                
+                // Now check with the new imageMapping
+                const { presentFiles } = getImageFileLists({ ...file, imageMapping });
+                
+                if (presentFiles.length === 0) {
+                  toast({
+                    title: "Cannot show annotations",
+                    description: "There are no matching images in the dataset for these annotations.",
+                    variant: "destructive"
+                  });
+                  return;
+                }
+              } else {
+                toast({
+                  title: "Cannot load annotations",
+                  description: "Annotation content is not available.",
+                  variant: "destructive"
+                });
+                return;
+              }
+            } else {
+              console.error('Failed to load annotation content:', contentResponse);
+              const errorMsg = contentResponse?.error || (contentResponse?.data as any)?.message || "Failed to load annotation content. Please try again.";
               toast({
-                title: "Cannot show annotations",
-                description: "There are no matching images in the dataset for these annotations.",
+                title: "Cannot load annotations",
+                description: errorMsg,
                 variant: "destructive"
               });
               return;
             }
-          } else {
-            console.error('Failed to load annotation content:', contentResponse);
-            const errorMsg = contentResponse?.error || (contentResponse?.data as any)?.message || "Failed to load annotation content. Please try again.";
-            toast({
-              title: "Cannot load annotations",
-              description: errorMsg,
-              variant: "destructive"
-            });
-            return;
           }
         } catch (error) {
-          console.error('Error loading annotation content:', error);
+          console.error('Error checking annotation availability:', error);
           toast({
             title: "Cannot load annotations",
-            description: "Failed to load annotation content. Please try again.",
+            description: "Failed to check annotation availability. Please try again.",
             variant: "destructive"
           });
           return;
@@ -1145,8 +1465,18 @@ export function AnnotationsContent({
     
     if (visibleAnnotations.has(annotationId)) {
       newVisibleAnnotations.delete(annotationId);
+      console.log(`Hiding annotations for file ${file.name}`);
     } else {
       newVisibleAnnotations.add(annotationId);
+      console.log(`Showing annotations for file ${file.name}`);
+      
+      // Load annotations for current page when making them visible
+      if (currentPageImageIds.length > 0 && api) {
+        console.log(`Loading annotations for current page with ${currentPageImageIds.length} images`);
+        loadAnnotationsForCurrentPage(file.id, true).then(annotations => {
+          console.log(`Loaded ${annotations?.length || 0} annotations for visibility toggle`);
+        });
+      }
     }
     
     setVisibleAnnotations(newVisibleAnnotations);
@@ -1166,6 +1496,8 @@ export function AnnotationsContent({
     
     setAnnotationFiles(updatedFiles);
     
+    console.log(`Updated annotation files after visibility toggle. File ${file.name} is now ${isBecomingVisible ? 'visible' : 'hidden'}`);
+    
     // Save updated files to localStorage with quota handling
     saveAnnotationFilesToLocalStorage(updatedFiles);
   };
@@ -1177,59 +1509,119 @@ export function AnnotationsContent({
     const file = annotationFiles.find(f => f.id === annotationId);
     if (!file) return;
 
-    // If trying to show bboxes, first ensure we have the annotation content loaded
+    // If trying to show bboxes, check if we have annotations for current page
     if (!file.showBboxes) {
-      // Load annotation content to get imageMapping
+      // For large files, use the annotation data API instead of loading full content
       if (!file.imageMapping && api) {
-        console.log('Loading annotation content to get image mapping...');
+        console.log('Checking bounding box availability for current page images...');
         try {
-          const contentResponse = await api.getAnnotationContent(id, file.id);
+          // Get current page image IDs
+          const currentImageIds = currentPageImageIds;
           
-          if (contentResponse?.success && contentResponse.data?.content) {
-            const cocoData = JSON.parse(contentResponse.data.content);
+          if (currentImageIds.length === 0) {
+            toast({
+              title: "No images on current page",
+              description: "Navigate to a page with images to view bounding boxes.",
+              variant: "default"
+            });
+            return;
+          }
+          
+          // Try to load annotations for current page images only
+          console.log(`Checking bounding boxes for ${currentImageIds.length} current page images`);
+          const annotationDataResponse = await api.getAnnotationData(id, file.id, {
+            imageIds: currentImageIds,
+            limit: 10 // Just check if any exist
+          });
+          
+          if (annotationDataResponse?.success && annotationDataResponse.data) {
+            const hasAnnotations = annotationDataResponse.data.annotations && annotationDataResponse.data.annotations.length > 0;
             
-            // Create imageMapping from COCO data
-            const imageMapping: { [imageId: string]: string } = {};
-            if (cocoData.images && Array.isArray(cocoData.images)) {
-              cocoData.images.forEach((img: any) => {
-                if (img.id && img.file_name) {
-                  imageMapping[img.id.toString()] = img.file_name;
-                }
+            console.log(`Bbox check result: ${hasAnnotations ? 'found' : 'no'} annotations for current page`);
+            console.log('Bbox annotation data response:', annotationDataResponse.data);
+            
+            if (!hasAnnotations) {
+              toast({
+                title: "No bounding boxes for current page",
+                description: "There are no bounding boxes for images on the current page. Try navigating to other pages.",
+                variant: "default"
               });
+              return;
             }
             
-            // Update the file with imageMapping
-            const updatedFiles = annotationFiles.map(f => 
-              f.id === annotationId 
-                ? { ...f, imageMapping }
-                : f
-            );
-            setAnnotationFiles(updatedFiles);
+            console.log(`Found ${annotationDataResponse.data.annotations.length} bounding boxes for current page - proceeding with bbox toggle`);
+          } else {
+            // Fallback to original method for smaller files
+            console.log('Falling back to full content loading for bounding boxes...');
+            const contentResponse = await api.getAnnotationContent(id, file.id);
             
-            // Now check with the new imageMapping
-            const { presentFiles } = getImageFileLists({ ...file, imageMapping });
-            
-            if (presentFiles.length === 0) {
+            if (contentResponse?.success && contentResponse.data) {
+              // Check if file is too large
+              if (contentResponse.data.is_large && !contentResponse.data.content) {
+                toast({
+                  title: "Annotation file too large",
+                  description: `${contentResponse.data.message || 'This annotation file is too large to load all at once'}. Navigate to specific pages to view relevant bounding boxes.`,
+                  variant: "default"
+                });
+                return;
+              }
+              
+              if (contentResponse.data.content) {
+                const cocoData = JSON.parse(contentResponse.data.content);
+                
+                // Create imageMapping from COCO data
+                const imageMapping: { [imageId: string]: string } = {};
+                if (cocoData.images && Array.isArray(cocoData.images)) {
+                  cocoData.images.forEach((img: any) => {
+                    if (img.id && img.file_name) {
+                      imageMapping[img.id.toString()] = img.file_name;
+                    }
+                  });
+                }
+                
+                // Update the file with imageMapping
+                const updatedFiles = annotationFiles.map(f => 
+                  f.id === annotationId 
+                    ? { ...f, imageMapping }
+                    : f
+                );
+                setAnnotationFiles(updatedFiles);
+                
+                // Now check with the new imageMapping
+                const { presentFiles } = getImageFileLists({ ...file, imageMapping });
+                
+                if (presentFiles.length === 0) {
+                  toast({
+                    title: "Cannot show bounding boxes",
+                    description: "There are no matching images in the dataset for these annotations.",
+                    variant: "destructive"
+                  });
+                  return;
+                }
+              } else {
+                toast({
+                  title: "Cannot load annotations",
+                  description: "Annotation content is not available.",
+                  variant: "destructive"
+                });
+                return;
+              }
+            } else {
+              console.error('Failed to load annotation content:', contentResponse);
+              const errorMsg = contentResponse?.error || (contentResponse?.data as any)?.message || "Failed to load annotation content. Please try again.";
               toast({
-                title: "Cannot show bounding boxes",
-                description: "There are no matching images in the dataset for these annotations.",
+                title: "Cannot load annotations",
+                description: errorMsg,
                 variant: "destructive"
               });
               return;
             }
-          } else {
-            toast({
-              title: "Cannot load annotations",
-              description: "Failed to load annotation content. Please try again.",
-              variant: "destructive"
-            });
-            return;
           }
         } catch (error) {
-          console.error('Error loading annotation content:', error);
+          console.error('Error checking bounding box availability:', error);
           toast({
-            title: "Cannot load annotations",
-            description: "Failed to load annotation content. Please try again.",
+            title: "Cannot load bounding boxes",
+            description: "Failed to check bounding box availability. Please try again.",
             variant: "destructive"
           });
           return;
@@ -1252,6 +1644,8 @@ export function AnnotationsContent({
     // Toggle individual bbox visibility for this annotation file
     const newBboxVisibility = !file.showBboxes;
     
+    console.log(`Toggling bbox visibility for ${file.name} to ${newBboxVisibility}`);
+    
     // Update the annotation files to toggle bbox visibility
     const updatedFiles = annotationFiles.map(f => 
       f.id === annotationId 
@@ -1263,6 +1657,18 @@ export function AnnotationsContent({
     );
     
     setAnnotationFiles(updatedFiles);
+    
+    console.log(`Updated annotation files after bbox toggle. File ${file.name} showBboxes: ${newBboxVisibility}`);
+    
+    // If we're enabling bboxes, make sure we load annotations for current page
+    // Do this AFTER updating the annotation files to ensure we use the correct bbox state
+    if (newBboxVisibility && currentPageImageIds.length > 0 && api) {
+      console.log(`Loading annotations for bbox display with ${currentPageImageIds.length} images`);
+      // Pass the new bbox state to ensure it's used correctly
+      loadAnnotationsForCurrentPage(annotationId, true, newBboxVisibility).then(annotations => {
+        console.log(`Loaded ${annotations?.length || 0} annotations for bbox display`);
+      });
+    }
     
     // Save updated files to localStorage with quota handling
     saveAnnotationFilesToLocalStorage(updatedFiles);
@@ -2104,13 +2510,24 @@ export function AnnotationsContent({
           // Process the COCO annotation file
           const result = await processCOCOAnnotations(file, id);
           
-          // Set all annotation samples to be hidden by default
+          console.log(`Processing results for ${file.name}:`, {
+            classColors: result.classColors,
+            statsCount: result.stats.length,
+            samplesCount: result.samples.length
+          });
+          
+          // Set all annotation samples to be hidden by default and assign colors
           const samples = result.samples.map(sample => ({
             ...sample,
             isVisible: false,
             showBboxes: false, // Individual bbox visibility disabled by default
-            annotationFileName: file.name
+            annotationFileName: file.name,
+            color: result.classColors[sample.className] || sample.color || generateRandomColor() // Ensure each sample has a color
           }));
+          
+          console.log(`Sample color assignment for ${file.name}:`, 
+            samples.slice(0, 3).map(s => ({ class: s.className, color: s.color }))
+          );
           
           let fileId = Math.random().toString(36).substring(2, 11); // Default fallback ID
           
@@ -2239,7 +2656,13 @@ export function AnnotationsContent({
             classColors: result.classColors,
             imageMapping: result.imageMapping,
             tags: [] // Initialize with empty tags array
-          };              console.log(`Creating annotation file with ID: ${fileId} for file: ${file.name}`);
+          };
+          
+          console.log(`Created annotation file for ${file.name}:`, {
+            type: finalType,
+            classColors: result.classColors,
+            classStats: result.stats.map(s => ({ name: s.className, color: s.color }))
+          });              console.log(`Creating annotation file with ID: ${fileId} for file: ${file.name}`);
           
           // If API is available, we'll refresh from backend after all uploads
           // If no API, add to local state immediately
@@ -2278,7 +2701,35 @@ export function AnnotationsContent({
         // If API is available, refresh from backend to get the updated list
         if (api) {
           console.log('Refreshing annotation files from backend after successful import');
+          // Store current colors before refresh to preserve them
+          const currentColors: { [fileName: string]: { [className: string]: string } } = {};
+          annotationFiles.forEach(file => {
+            if (file.classColors && Object.keys(file.classColors).length > 0) {
+              currentColors[file.name] = { ...file.classColors };
+            }
+          });
+          console.log('Preserving colors from current files:', currentColors);
+          
           await loadAnnotationFilesFromBackend();
+          
+          // Restore colors if they were lost during backend refresh
+          if (Object.keys(currentColors).length > 0) {
+            setAnnotationFiles(prev => prev.map(file => {
+              const savedColors = currentColors[file.name];
+              if (savedColors && (!file.classColors || Object.keys(file.classColors).length === 0)) {
+                console.log(`Restoring colors for ${file.name}:`, savedColors);
+                return {
+                  ...file,
+                  classColors: savedColors,
+                  classStats: file.classStats?.map(stat => ({
+                    ...stat,
+                    color: savedColors[stat.className] || stat.color
+                  }))
+                };
+              }
+              return file;
+            }));
+          }
           
           // Start polling for processing status if we have processing files
           if (processingFiles.size > 0) {
@@ -2333,11 +2784,41 @@ export function AnnotationsContent({
         
         // Create lightweight annotation file objects from summary
         const lightweightFiles: AnnotationFile[] = await Promise.all(summary.files.map(async (fileSummary: any) => {
-          // Try to detect classification from filename
-          const isClassification = fileSummary.name && (
-            fileSummary.name.toLowerCase().includes('classification') || 
-            fileSummary.name.toLowerCase().includes('class')
-          );
+          // Always detect annotation type by loading content
+          let detectedType: 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' = 'nothing';
+          
+          try {
+            console.log(`Detecting annotation type for ${fileSummary.name}...`);
+            const contentResponse = await api.getAnnotationContent(id, fileSummary.id);
+            if (contentResponse && contentResponse.success && contentResponse.data.content) {
+              // Detect annotation type from content first
+              detectedType = detectAnnotationTypeFromContent(contentResponse.data.content, fileSummary.name);
+              console.log(`Auto-detected type for ${fileSummary.name}: ${detectedType}`);
+            } else {
+              // Fallback to filename-based detection
+              const nameLower = fileSummary.name.toLowerCase();
+              if (nameLower.includes('classification') || nameLower.includes('class')) {
+                detectedType = 'classification';
+              } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
+                detectedType = 'segmentation-mask-bbox';
+              } else {
+                detectedType = 'segmentation-bbox'; // Default for COCO files
+              }
+              console.log(`Fallback filename-based detection for ${fileSummary.name}: ${detectedType}`);
+            }
+          } catch (error) {
+            console.warn(`Failed to load content for type detection of ${fileSummary.name}:`, error);
+            // Try to guess from filename as fallback
+            const nameLower = fileSummary.name.toLowerCase();
+            if (nameLower.includes('classification') || nameLower.includes('class')) {
+              detectedType = 'classification';
+            } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
+              detectedType = 'segmentation-mask-bbox';
+            } else {
+              detectedType = 'segmentation-bbox'; // Default for COCO files
+            }
+            console.log(`Error fallback type detection for ${fileSummary.name}: ${detectedType}`);
+          }
           
           // Load class statistics without full content for faster display
           let classStats: Array<{ className: string; count: number; color: string; opacity: number }> = [];
@@ -2345,6 +2826,7 @@ export function AnnotationsContent({
             const classesResponse = await api.getAnnotationClasses(id, fileSummary.id);
             if (classesResponse && classesResponse.success && classesResponse.data) {
               classStats = classesResponse.data.classes || [];
+              console.log(`Loaded ${classStats.length} classes for ${fileSummary.name}:`, classStats);
             }
           } catch (error) {
             console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
@@ -2355,7 +2837,7 @@ export function AnnotationsContent({
             name: fileSummary.name,
             date: new Date().toISOString().split('T')[0], // We don't have creation date in summary
             format: 'COCO', // Default format
-            type: isClassification ? 'classification' : undefined,
+            type: detectedType,
             classCount: classStats.length,
             imageCount: fileSummary.image_count || 0, // Use image_count from summary
             matchedImageCount: 0, // Will be calculated when needed
@@ -2364,7 +2846,14 @@ export function AnnotationsContent({
             samples: [], // Empty initially - will be loaded on demand
             classStats: classStats,
             classColors: classStats.reduce((acc, stat) => {
-              acc[stat.className] = stat.color;
+              // Ensure we always have a color for each class
+              let assignedColor = stat.color;
+              if (!assignedColor) {
+                const usedColors = new Set(Object.values(acc));
+                assignedColor = getOrAssignClassColor(stat.className, acc, usedColors);
+              }
+              acc[stat.className] = assignedColor;
+              console.log(`Color assignment for ${stat.className}: ${assignedColor} (original: ${stat.color})`);
               return acc;
             }, {} as Record<string, string>),
             isVisible: false,
@@ -2436,15 +2925,15 @@ export function AnnotationsContent({
       if (response && response.success && response.data) {
         // Load full annotation content immediately for all files (original behavior)
         const processedFiles = await Promise.all(response.data.map(async (file: any) => {
-          // Try to detect classification from filename or format
-          const isClassification = file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class'));
+          // Always detect annotation type by loading content
+          let detectedType: 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' = 'nothing';
           
           const annotationFile: AnnotationFile = {
             id: file.id, // Use the backend-provided ID
             name: file.name || file.filename,
             date: file.created_at ? new Date(file.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
             format: file.format || 'COCO',
-            type: isClassification ? 'classification' : undefined,
+            type: detectedType, // Will be updated below
             classCount: file.category_count || 0,
             imageCount: file.image_count || 0,
             matchedImageCount: file.matched_image_count || 0,
@@ -2462,14 +2951,16 @@ export function AnnotationsContent({
 
           // Load full content and statistics immediately
           try {
+            console.log(`Loading content and detecting type for ${file.name}...`);
             const contentResponse = await api.getAnnotationContent(id, file.id);
             if (contentResponse && contentResponse.success && contentResponse.data.content) {
+              // Detect annotation type from content first
+              detectedType = detectAnnotationTypeFromContent(contentResponse.data.content, file.name);
+              console.log(`Auto-detected type for ${file.name}: ${detectedType}`);
+              
               // Process the full COCO content to get samples and statistics
               const mockFile = new File([contentResponse.data.content], file.name, { type: 'application/json' });
               const result = await processCOCOAnnotations(mockFile, id);
-              
-              // Detect annotation type from content
-              const detectedType = detectAnnotationTypeFromContent(contentResponse.data.content, file.name);
               
               // Update annotation file with full processed data
               annotationFile.type = detectedType;
@@ -2481,11 +2972,24 @@ export function AnnotationsContent({
                 ...sample,
                 isVisible: false,
                 showBboxes: false,
-                annotationFileName: file.name
+                annotationFileName: file.name,
+                color: result.classColors[sample.className] || sample.color || generateRandomColor() // Ensure colors are assigned
               }));
+              
+              console.log(`Full backend loading for ${file.name} - Colors:`, result.classColors);
+            } else {
+              // Fallback to filename-based detection
+              const isClassification = file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class'));
+              detectedType = isClassification ? 'classification' : 'nothing';
+              annotationFile.type = detectedType;
+              console.log(`Fallback filename-based detection for ${file.name}: ${detectedType}`);
             }
           } catch (error) {
             console.error(`Failed to load content for ${file.name}:`, error);
+            // Fallback to filename-based detection
+            const isClassification = file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class'));
+            detectedType = isClassification ? 'classification' : 'nothing';
+            annotationFile.type = detectedType;
           }
           
           return annotationFile;
@@ -2568,7 +3072,7 @@ export function AnnotationsContent({
             matchedImageCount: 0,
             datasetId: id,
             isVisible: file.isVisible || false,
-            showBboxes: file.showBboxes || false,
+            showBboxes: file.showBboxes !== false,
             classColors: {},
             tags: [],
             classStats: [],
@@ -2598,14 +3102,32 @@ export function AnnotationsContent({
             console.log(`Large dataset: ${pagination.totalSamples} total samples, showing preview of ${pagination.previewSize} per file`);
           }
           
-          const previewFiles = parsed.map((file: any) => ({
-            ...file,
-            samples: file.samples?.map((sample: any) => ({
-              ...sample,
-              showBboxes: sample.showBboxes ?? false,
-              annotationFileName: sample.annotationFileName || file.name
-            })) || []
-          }));
+          const previewFiles = parsed.map((file: any) => {
+            // Ensure all classes have colors assigned, even in preview mode
+            const usedColors = new Set<string>(Object.values(file.classColors || {}));
+            const updatedClassColors = { ...file.classColors };
+            
+            // Check if any samples need colors assigned
+            if (file.samples) {
+              file.samples.forEach((sample: any) => {
+                if (!updatedClassColors[sample.className]) {
+                  updatedClassColors[sample.className] = getOrAssignClassColor(sample.className, updatedClassColors, usedColors);
+                  usedColors.add(updatedClassColors[sample.className]);
+                }
+              });
+            }
+            
+            return {
+              ...file,
+              classColors: updatedClassColors,
+              samples: file.samples?.map((sample: any) => ({
+                ...sample,
+                color: updatedClassColors[sample.className] || sample.color || generateRandomColor(), // Ensure every sample has a color
+                showBboxes: sample.showBboxes ?? false,
+                annotationFileName: sample.annotationFileName || file.name
+              })) || []
+            };
+          });
           
           setAnnotationFiles(previewFiles);
           
@@ -2618,12 +3140,38 @@ export function AnnotationsContent({
         } else {
           // Normal mode: Complete data for small datasets
           const annotationsWithFileNames = parsed.map((file: AnnotationFile) => {
+            // Ensure all classes have colors assigned
+            const usedColors = new Set<string>(Object.values(file.classColors || {}));
+            const updatedClassColors = { ...file.classColors };
+            
+            // Check if any classes need colors assigned
+            if (file.samples) {
+              file.samples.forEach(sample => {
+                if (!updatedClassColors[sample.className]) {
+                  updatedClassColors[sample.className] = getOrAssignClassColor(sample.className, updatedClassColors, usedColors);
+                  usedColors.add(updatedClassColors[sample.className]);
+                }
+              });
+            }
+            
+            // Also ensure classStats have colors
+            if (file.classStats) {
+              file.classStats.forEach(stat => {
+                if (!updatedClassColors[stat.className]) {
+                  updatedClassColors[stat.className] = getOrAssignClassColor(stat.className, updatedClassColors, usedColors);
+                  usedColors.add(updatedClassColors[stat.className]);
+                }
+              });
+            }
+            
             return {
               ...file,
-              showBboxes: file.showBboxes ?? false,
+              classColors: updatedClassColors,
+              showBboxes: file.showBboxes !== false,
               samples: file.samples?.map(sample => ({
                 ...sample,
-                showBboxes: (sample as any).showBboxes ?? false,
+                color: updatedClassColors[sample.className] || sample.color, // Use assigned color
+                showBboxes: file.showBboxes !== false, // Use file's bbox state, not individual sample state
                 annotationFileName: (sample as any).annotationFileName || file.name
               }))
             };
@@ -3100,7 +3648,9 @@ export function AnnotationsContent({
             const dateB = new Date(b.date);
             return dateB.getTime() - dateA.getTime();
           })
-          .map((file) => (
+          .map((file) => {
+            console.log(`Rendering file ${file.name} - Type: ${file.type}, Colors:`, file.classColors, 'Stats:', file.classStats?.map(s => ({name: s.className, color: s.color})));
+            return (
               <div key={file.id} className="border border-gray-700 rounded-lg overflow-hidden">
                 {/* Main annotation row */}
                 <div 
@@ -3220,7 +3770,33 @@ export function AnnotationsContent({
                           >
                             {(() => {
                               const type = detectAnnotationType(file);
-                              switch (type) {
+                              console.log(`Badge display: File ${file.name}, file.type: ${file.type}, detected type: ${type}, samples: ${file.samples?.length || 0}`);
+                              
+                              // Ensure we always show a meaningful type
+                              let displayType = type;
+                              if (type === 'nothing' && file.samples && file.samples.length > 0) {
+                                // Try to detect again based on actual sample content
+                                const hasSegmentation = file.samples.some(sample => 
+                                  sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+                                );
+                                const hasMeaningfulBbox = file.samples.some(sample => 
+                                  sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+                                  (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+                                );
+                                
+                                if (hasSegmentation && hasMeaningfulBbox) {
+                                  displayType = 'segmentation-mask-bbox';
+                                } else if (hasSegmentation) {
+                                  displayType = 'segmentation-mask';
+                                } else if (hasMeaningfulBbox) {
+                                  displayType = 'segmentation-bbox';
+                                } else {
+                                  displayType = 'classification';
+                                }
+                                console.log(`Re-detected type for ${file.name}: ${displayType} (hasSegmentation: ${hasSegmentation}, hasMeaningfulBbox: ${hasMeaningfulBbox})`);
+                              }
+                              
+                              switch (displayType) {
                                 case 'classification':
                                   return 'Classification';
                                 case 'segmentation-mask-bbox':
@@ -3230,9 +3806,9 @@ export function AnnotationsContent({
                                 case 'segmentation-bbox':
                                   return 'Segmentation (bbox)';
                                 case 'nothing':
-                                  return '';
+                                  return 'Unknown Type';
                                 default:
-                                  return type;
+                                  return displayType || 'Unknown';
                               }
                             })()}
                           </Badge>
@@ -3477,7 +4053,7 @@ export function AnnotationsContent({
                               <ClassColorOpacityPicker
                                 annotationId={file.id}
                                 className={selectedClass}
-                                color={file.classStats.find(s => s.className === selectedClass)?.color || '#ea384c'}
+                                color={file.classStats.find(s => s.className === selectedClass)?.color || generateRandomColor()}
                                 opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
                                 onColorOpacityChange={handleClassColorOpacityChange}
                                 onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
@@ -3498,7 +4074,8 @@ export function AnnotationsContent({
                   </div>
                 )}
               </div>
-            ))
+            );
+          })
         }        
         {annotationFiles.length === 0 && (
           <div className="flex flex-col items-center justify-center text-center p-8">

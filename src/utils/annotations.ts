@@ -163,11 +163,14 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         const classNames = categories.map((cat: any) => cat.name || `category_${cat.id || 'unknown'}`);
         const classColors = generateClassColors(classNames);
         
+        console.log(`Generated colors for ${classNames.length} classes:`, classColors);
+        
         const categoryColors: { [key: string]: string } = {};
         const processedCategories = categories.map((cat: any) => {
           const className = cat.name || `category_${cat.id || 'unknown'}`;
           const color = classColors[className];
           categoryColors[cat.id] = color;
+          console.log(`Category ${cat.id} (${className}) assigned color: ${color}`);
           return { id: cat.id, name: className, color: color };
         });
 
@@ -182,6 +185,12 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
           const category = processedCategories.find(cat => cat.id === anno.category_id);
           const className = category ? category.name : `category_${anno.category_id || 'unknown'}`;
           const color = category ? category.color : '#808080'; // Default color
+
+          if (!category) {
+            console.warn(`No category found for annotation with category_id: ${anno.category_id}, using default color`);
+          } else {
+            console.log(`Annotation for class ${className} assigned color: ${color}`);
+          }
 
           classCounts[className] = (classCounts[className] || 0) + 1;
 

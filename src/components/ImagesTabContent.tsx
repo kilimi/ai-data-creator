@@ -114,8 +114,22 @@ export function ImagesTabContent({
   // Get current image and annotations (based on full images array)
   const selectedImage = selectedImageIndex !== null ? images[selectedImageIndex] : null;
   const selectedImageAnnotations = selectedImage
-    ? annotations.filter((anno) => anno.imageId === selectedImage.id)
+    ? annotations.filter((anno) => {
+        // Convert both to strings for comparison to handle type mismatches
+        const matches = String(anno.imageId) === String(selectedImage.id);
+        if (selectedImage) {
+          console.log(`ImagesTabContent: Checking annotation ${anno.id} with imageId ${anno.imageId} (type: ${typeof anno.imageId}) against selected image ${selectedImage.id} (type: ${typeof selectedImage.id}) - matches: ${matches}`);
+        }
+        return matches;
+      })
     : [];
+  
+  console.log(`ImagesTabContent: Selected image:`, selectedImage);
+  console.log(`ImagesTabContent: Total annotations available:`, annotations.length);
+  console.log(`ImagesTabContent: Filtered annotations for selected image:`, selectedImageAnnotations.length);
+  if (annotations.length > 0) {
+    console.log(`ImagesTabContent: Sample annotation imageIds:`, annotations.slice(0, 5).map(a => `${a.imageId} (${typeof a.imageId})`));
+  }
 
   // Attach annotationFileName to each annotation for grid and popup
   const annotationsWithFileName = annotations.map((ann) => ({
