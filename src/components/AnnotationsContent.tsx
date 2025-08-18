@@ -584,8 +584,6 @@ export function AnnotationsContent({
   
   // Auto-detect annotation type based on content with detailed segmentation types
   const detectAnnotationType = (file: AnnotationFile): 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' => {
-    console.log(`[detectAnnotationType] Checking file: ${file.name}, file.type: ${file.type}, samples count: ${file.samples?.length || 0}`);
-    
     // If type is explicitly set, use it (but expand old 'segmentation' to detailed types)
     if (file.type === 'classification') return 'classification';
     if (file.type === 'segmentation-mask-bbox') return 'segmentation-mask-bbox';
@@ -3649,7 +3647,6 @@ export function AnnotationsContent({
             return dateB.getTime() - dateA.getTime();
           })
           .map((file) => {
-            console.log(`Rendering file ${file.name} - Type: ${file.type}, Colors:`, file.classColors, 'Stats:', file.classStats?.map(s => ({name: s.className, color: s.color})));
             return (
               <div key={file.id} className="border border-gray-700 rounded-lg overflow-hidden">
                 {/* Main annotation row */}
@@ -3770,7 +3767,6 @@ export function AnnotationsContent({
                           >
                             {(() => {
                               const type = detectAnnotationType(file);
-                              console.log(`Badge display: File ${file.name}, file.type: ${file.type}, detected type: ${type}, samples: ${file.samples?.length || 0}`);
                               
                               // Ensure we always show a meaningful type
                               let displayType = type;
@@ -3793,7 +3789,6 @@ export function AnnotationsContent({
                                 } else {
                                   displayType = 'classification';
                                 }
-                                console.log(`Re-detected type for ${file.name}: ${displayType} (hasSegmentation: ${hasSegmentation}, hasMeaningfulBbox: ${hasMeaningfulBbox})`);
                               }
                               
                               switch (displayType) {

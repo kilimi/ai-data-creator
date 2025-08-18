@@ -101,10 +101,6 @@ export function ImagesGrid({
 }: ImagesGridProps) {
   // Only show annotations that are visible (if isVisible is defined, must be true)
   const filteredAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
-  
-  console.log('ImagesGrid: Total annotations received:', annotations.length);
-  console.log('ImagesGrid: Filtered visible annotations:', filteredAnnotations.length);
-  console.log('ImagesGrid: Annotation files received:', annotationFiles.length);
 
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
@@ -164,9 +160,6 @@ export function ImagesGrid({
           console.log(`      no segmentation data`);
         }
       });
-    } else {
-      console.log(`ImagesGrid: No annotations found for image ${imageId} (type: ${typeof imageId}). Sample annotation imageIds:`, 
-        filteredAnnotations.slice(0, 3).map(a => `${a.imageId} (${typeof a.imageId})`));
     }
     
     return imageAnnotations;
