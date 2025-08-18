@@ -57,7 +57,7 @@ docker-compose down -v
 docker-compose exec backend alembic upgrade head
 
 # Backend will be available at:
-http://localhost:8000
+http://localhost:9999
 ```
 
 ### Frontend Access
