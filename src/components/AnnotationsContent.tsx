@@ -1062,17 +1062,76 @@ export function AnnotationsContent({
     
     const isBecomingVisible = !visibleAnnotations.has(annotationId);
     
-    // Get the present files count
-    const { presentFiles } = getImageFileLists(file);
-    
-    // If trying to make annotations visible but there are no matching images, show warning
-    if (isBecomingVisible && presentFiles.length === 0) {
-      toast({
-        title: "Cannot show annotations",
-        description: "There are no matching images in the dataset for these annotations.",
-        variant: "destructive"
-      });
-      return;
+    // If trying to make annotations visible, first ensure we have the annotation content loaded
+    if (isBecomingVisible) {
+      // Load annotation content to get imageMapping if needed
+      if (!file.imageMapping && api) {
+        console.log('Loading annotation content to get image mapping...');
+        try {
+          const contentResponse = await api.getAnnotationContent(id, file.id);
+          
+          if (contentResponse?.success && contentResponse.data?.content) {
+            const cocoData = JSON.parse(contentResponse.data.content);
+            
+            // Create imageMapping from COCO data
+            const imageMapping: { [imageId: string]: string } = {};
+            if (cocoData.images && Array.isArray(cocoData.images)) {
+              cocoData.images.forEach((img: any) => {
+                if (img.id && img.file_name) {
+                  imageMapping[img.id.toString()] = img.file_name;
+                }
+              });
+            }
+            
+            // Update the file with imageMapping
+            const updatedFiles = annotationFiles.map(f => 
+              f.id === annotationId 
+                ? { ...f, imageMapping }
+                : f
+            );
+            setAnnotationFiles(updatedFiles);
+            
+            // Now check with the new imageMapping
+            const { presentFiles } = getImageFileLists({ ...file, imageMapping });
+            
+            if (presentFiles.length === 0) {
+              toast({
+                title: "Cannot show annotations",
+                description: "There are no matching images in the dataset for these annotations.",
+                variant: "destructive"
+              });
+              return;
+            }
+          } else {
+            toast({
+              title: "Cannot load annotations",
+              description: "Failed to load annotation content. Please try again.",
+              variant: "destructive"
+            });
+            return;
+          }
+        } catch (error) {
+          console.error('Error loading annotation content:', error);
+          toast({
+            title: "Cannot load annotations",
+            description: "Failed to load annotation content. Please try again.",
+            variant: "destructive"
+          });
+          return;
+        }
+      } else {
+        // Check with existing imageMapping or samples
+        const { presentFiles } = getImageFileLists(file);
+        
+        if (presentFiles.length === 0) {
+          toast({
+            title: "Cannot show annotations",
+            description: "There are no matching images in the dataset for these annotations.",
+            variant: "destructive"
+          });
+          return;
+        }
+      }
     }
     
     const newVisibleAnnotations = new Set(visibleAnnotations);
@@ -1110,18 +1169,77 @@ export function AnnotationsContent({
     
     const file = annotationFiles.find(f => f.id === annotationId);
     if (!file) return;
-    
-    // Get the present files count
-    const { presentFiles } = getImageFileLists(file);
-    
-    // If trying to show bboxes but there are no present images, show a warning
-    if (!file.showBboxes && presentFiles.length === 0) {
-      toast({
-        title: "Cannot show bounding boxes",
-        description: "There are no matching images in the dataset for these annotations.",
-        variant: "destructive"
-      });
-      return;
+
+    // If trying to show bboxes, first ensure we have the annotation content loaded
+    if (!file.showBboxes) {
+      // Load annotation content to get imageMapping
+      if (!file.imageMapping && api) {
+        console.log('Loading annotation content to get image mapping...');
+        try {
+          const contentResponse = await api.getAnnotationContent(id, file.id);
+          
+          if (contentResponse?.success && contentResponse.data?.content) {
+            const cocoData = JSON.parse(contentResponse.data.content);
+            
+            // Create imageMapping from COCO data
+            const imageMapping: { [imageId: string]: string } = {};
+            if (cocoData.images && Array.isArray(cocoData.images)) {
+              cocoData.images.forEach((img: any) => {
+                if (img.id && img.file_name) {
+                  imageMapping[img.id.toString()] = img.file_name;
+                }
+              });
+            }
+            
+            // Update the file with imageMapping
+            const updatedFiles = annotationFiles.map(f => 
+              f.id === annotationId 
+                ? { ...f, imageMapping }
+                : f
+            );
+            setAnnotationFiles(updatedFiles);
+            
+            // Now check with the new imageMapping
+            const { presentFiles } = getImageFileLists({ ...file, imageMapping });
+            
+            if (presentFiles.length === 0) {
+              toast({
+                title: "Cannot show bounding boxes",
+                description: "There are no matching images in the dataset for these annotations.",
+                variant: "destructive"
+              });
+              return;
+            }
+          } else {
+            toast({
+              title: "Cannot load annotations",
+              description: "Failed to load annotation content. Please try again.",
+              variant: "destructive"
+            });
+            return;
+          }
+        } catch (error) {
+          console.error('Error loading annotation content:', error);
+          toast({
+            title: "Cannot load annotations",
+            description: "Failed to load annotation content. Please try again.",
+            variant: "destructive"
+          });
+          return;
+        }
+      } else {
+        // Check with existing imageMapping or samples
+        const { presentFiles } = getImageFileLists(file);
+        
+        if (presentFiles.length === 0) {
+          toast({
+            title: "Cannot show bounding boxes",
+            description: "There are no matching images in the dataset for these annotations.",
+            variant: "destructive"
+          });
+          return;
+        }
+      }
     }
     
     // Toggle individual bbox visibility for this annotation file
@@ -1428,27 +1546,41 @@ export function AnnotationsContent({
     setShowUploadDialog(true);
   };  // Get present and missing image file names for an annotation file
   const getImageFileLists = (file: AnnotationFile) => {
-    if (!file.imageMapping) {
-      // Fallback for emergency mode without imageMapping or files without image data
+    if (!file.imageMapping && (!file.samples || file.samples.length === 0)) {
+      // No mapping and no samples - nothing to check
       return { presentFiles: [], missingFiles: [] };
     }
     
-    // Get all unique image IDs from the complete imageMapping
-    const allImageIds = Object.keys(file.imageMapping);
+    let allImageIds: string[] = [];
+    let imageMapping: { [imageId: string]: string } = {};
     
-    // Create a set of uploaded image file names for quick lookup
+    if (file.imageMapping) {
+      // Use existing imageMapping if available
+      allImageIds = Object.keys(file.imageMapping);
+      imageMapping = file.imageMapping;
+    } else if (file.samples && file.samples.length > 0) {
+      // Fallback: extract unique image IDs from samples
+      allImageIds = Array.from(new Set(file.samples.map(sample => sample.imageId)));
+      // Create a basic mapping using image IDs as filenames (best guess)
+      allImageIds.forEach(imageId => {
+        imageMapping[imageId] = imageId; // Will be compared directly with image IDs
+      });
+    }
+    
+    // Create a set of uploaded image info for quick lookup (both ID and fileName)
+    const uploadedImageIds = new Set(imagesMemo.map(img => img.id));
     const uploadedImageNames = new Set(imagesMemo.map(img => img.fileName));
     
     const presentFiles: string[] = [];
     const missingFiles: string[] = [];
     
     allImageIds.forEach(imageId => {
-      // Get the actual filename from the COCO images array
-      const fileName = file.imageMapping![imageId];
+      const fileName = imageMapping[imageId];
       
       if (fileName) {
         // Check if this image file exists in the current dataset
-        if (uploadedImageNames.has(fileName)) {
+        // Try both by fileName (for COCO files) and by imageId (for database images)
+        if (uploadedImageNames.has(fileName) || uploadedImageIds.has(fileName) || uploadedImageIds.has(imageId)) {
           presentFiles.push(fileName);
         } else {
           missingFiles.push(fileName);

@@ -112,15 +112,58 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
 
   useEffect(() => {
     const fetchData = async () => {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      if (id) {
-        setDataset(getMockDataset(id));
+      if (!id) {
+        setLoading(false);
+        return;
       }
+
+      try {
+        // Import the API hook dynamically
+        const { useApi } = await import('@/hooks/use-api');
+        const { api } = useApi();
+        
+        if (api) {
+          // Load real dataset data
+          const [datasetRes, imagesRes, annotationsRes] = await Promise.all([
+            api.getDataset(id),
+            api.getImages(id),
+            api.getAnnotations(id)
+          ]);
+          
+          if (datasetRes?.success && datasetRes.data) {
+            setDataset(datasetRes.data);
+          } else {
+            // Fallback to mock data if API fails
+            setDataset(getMockDataset(id));
+          }
+          
+          if (imagesRes?.success && imagesRes.data) {
+            setImages(imagesRes.data);
+          }
+          
+          if (annotationsRes?.success && annotationsRes.data) {
+            setAnnotations(annotationsRes.data);
+          }
+        } else {
+          // Fallback to mock data if no API
+          setDataset(getMockDataset(id));
+        }
+      } catch (error) {
+        console.error('Error loading dataset data:', error);
+        // Fallback to mock data on error
+        setDataset(getMockDataset(id));
+        toast({
+          variant: "destructive",
+          title: "Loading error",
+          description: "Failed to load dataset data, using offline mode.",
+        });
+      }
+      
       setLoading(false);
     };
     
     fetchData();
-  }, [id]);
+  }, [id, toast]);
 
   const handleImageUpload = (files: File[]) => {
     const newImages = files.map(file => {
