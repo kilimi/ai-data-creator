@@ -1068,7 +1068,12 @@ export function AnnotationsContent({
       if (!file.imageMapping && api) {
         console.log('Loading annotation content to get image mapping...');
         try {
+          console.log(`Loading annotation content for file ${file.id}:`, { 
+            processing_status: file.processing_status
+          });
+          
           const contentResponse = await api.getAnnotationContent(id, file.id);
+          console.log('Annotation content response:', contentResponse);
           
           if (contentResponse?.success && contentResponse.data?.content) {
             const cocoData = JSON.parse(contentResponse.data.content);
@@ -1103,9 +1108,11 @@ export function AnnotationsContent({
               return;
             }
           } else {
+            console.error('Failed to load annotation content:', contentResponse);
+            const errorMsg = contentResponse?.error || (contentResponse?.data as any)?.message || "Failed to load annotation content. Please try again.";
             toast({
               title: "Cannot load annotations",
-              description: "Failed to load annotation content. Please try again.",
+              description: errorMsg,
               variant: "destructive"
             });
             return;
