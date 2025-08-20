@@ -137,86 +137,58 @@ export default function Index() {
       <Navbar />
       
       <main className="container max-w-7xl mx-auto px-4 pt-24">
-        {/* Modern Hero Section */}
+        {/* Clean Hero Section */}
         <div className="relative mb-12">
-          {/* Background Elements */}
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5 rounded-3xl" />
-          <div className="absolute top-8 left-8 w-32 h-32 bg-primary/10 rounded-full blur-2xl" />
-          <div className="absolute bottom-8 right-8 w-24 h-24 bg-accent/10 rounded-full blur-xl" />
-          
-          <div className="relative glass-card rounded-3xl p-8 lg:p-12">
+          <div className="glass-card rounded-2xl p-8 lg:p-10">
             {/* Header */}
-            <div className="text-center mb-8">
-              <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-2 rounded-full text-sm font-medium mb-4">
-                <Rocket className="w-4 h-4" />
-                AI-Powered Data Platform
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8">
+              <div className="space-y-3">
+                <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-3 py-1 rounded-full text-sm font-medium">
+                  <Rocket className="w-4 h-4" />
+                  AI Development Platform
+                </div>
+                <h1 className="text-3xl lg:text-4xl font-bold text-foreground">
+                  Welcome back to your workspace
+                </h1>
+                <p className="text-muted-foreground max-w-2xl">
+                  Continue working on your machine learning projects or start something new.
+                </p>
               </div>
-              <h1 className="text-4xl lg:text-5xl font-bold mb-4 bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
-                Transform Your Data into Intelligence
-              </h1>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Build, annotate, and deploy machine learning models with our comprehensive AI development platform.
-              </p>
+              
+              {/* Quick Actions */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button size="lg" className="px-6 h-11 group" asChild>
+                  <Link to="/projects/new" className="flex items-center gap-2">
+                    <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-300" />
+                    New Project
+                  </Link>
+                </Button>
+                <Button variant="outline" size="lg" className="px-6 h-11" asChild>
+                  <Link to="/api-settings" className="flex items-center gap-2">
+                    <Settings className="w-5 h-5" />
+                    Settings
+                  </Link>
+                </Button>
+              </div>
             </div>
 
-            {/* Modern Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-              <Card className="glass-card border-primary/20 group hover:border-primary/40 transition-all duration-300">
-                <CardContent className="p-6 text-center">
-                  <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-primary/20 transition-colors">
-                    <Database className="w-6 h-6 text-primary" />
-                  </div>
-                  <div className="text-3xl font-bold text-foreground mb-2">{stats.totalProjects}</div>
-                  <p className="text-muted-foreground">Active Projects</p>
-                  <div className="w-full bg-primary/10 rounded-full h-1 mt-3">
-                    <div className="bg-primary h-1 rounded-full w-3/4"></div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card className="glass-card border-accent/20 group hover:border-accent/40 transition-all duration-300">
-                <CardContent className="p-6 text-center">
-                  <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-accent/20 transition-colors">
-                    <Brain className="w-6 h-6 text-accent" />
-                  </div>
-                  <div className="text-3xl font-bold text-foreground mb-2">{stats.totalDatasets}</div>
-                  <p className="text-muted-foreground">Datasets Created</p>
-                  <div className="w-full bg-accent/10 rounded-full h-1 mt-3">
-                    <div className="bg-accent h-1 rounded-full w-2/3"></div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card className="glass-card border-secondary/20 group hover:border-secondary/40 transition-all duration-300">
-                <CardContent className="p-6 text-center">
-                  <div className="w-12 h-12 bg-secondary/10 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-secondary/20 transition-colors">
-                    <BarChart3 className="w-6 h-6 text-secondary" />
-                  </div>
-                  <div className="text-3xl font-bold text-foreground mb-2">{stats.totalImages.toLocaleString()}</div>
-                  <p className="text-muted-foreground">Images Processed</p>
-                  <div className="w-full bg-secondary/10 rounded-full h-1 mt-3">
-                    <div className="bg-secondary h-1 rounded-full w-5/6"></div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button size="lg" className="px-8 h-12 group" asChild>
-                <Link to="/projects/new" className="flex items-center gap-2">
-                  <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-300" />
-                  Create New Project
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" />
-                </Link>
-              </Button>
-              <Button variant="outline" size="lg" className="px-8 h-12" asChild>
-                <Link to="/api-settings" className="flex items-center gap-2">
-                  <Settings className="w-5 h-5" />
-                  Configure Settings
-                </Link>
-              </Button>
-            </div>
+            {/* Overview Bar */}
+            {stats.totalProjects > 0 && (
+              <div className="flex items-center gap-6 text-sm text-muted-foreground border-t border-border/50 pt-6">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  <span>{stats.totalProjects} projects</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Brain className="w-4 h-4" />
+                  <span>{stats.totalDatasets} datasets</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" />
+                  <span>{stats.totalImages.toLocaleString()} images</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
