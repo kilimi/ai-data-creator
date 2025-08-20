@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Settings, Sparkles, Database, Brain, Zap, TrendingUp, Activity, Tag } from "lucide-react";
+import { Plus, Search, Settings, Database, Brain, Activity, Tag, Rocket, Target, BarChart3, Filter, ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -133,58 +133,87 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5">
+    <div className="min-h-screen bg-background">
       <Navbar />
       
-      <main className="container max-w-7xl mx-auto px-4 pt-32">
-        {/* Hero Section */}
-        <div className="relative mb-8 text-center">
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-accent/10 to-secondary/10 rounded-2xl blur-3xl -z-10" />
-          <div className="relative bg-card/80 backdrop-blur-sm border rounded-2xl p-6">
-            {/* Stats Cards */}
-            <div className="grid grid-cols-3 gap-3 mb-6 max-w-lg mx-auto">
-              <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
-                <CardContent className="p-3 text-center">
-                  <div className="flex items-center justify-center gap-1 mb-1">
-                    <Database className="w-4 h-4 text-primary" />
-                    <span className="text-lg font-bold text-primary">{stats.totalProjects}</span>
+      <main className="container max-w-7xl mx-auto px-4 pt-24">
+        {/* Modern Hero Section */}
+        <div className="relative mb-12">
+          {/* Background Elements */}
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5 rounded-3xl" />
+          <div className="absolute top-8 left-8 w-32 h-32 bg-primary/10 rounded-full blur-2xl" />
+          <div className="absolute bottom-8 right-8 w-24 h-24 bg-accent/10 rounded-full blur-xl" />
+          
+          <div className="relative glass-card rounded-3xl p-8 lg:p-12">
+            {/* Header */}
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-4 py-2 rounded-full text-sm font-medium mb-4">
+                <Rocket className="w-4 h-4" />
+                AI-Powered Data Platform
+              </div>
+              <h1 className="text-4xl lg:text-5xl font-bold mb-4 bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
+                Transform Your Data into Intelligence
+              </h1>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                Build, annotate, and deploy machine learning models with our comprehensive AI development platform.
+              </p>
+            </div>
+
+            {/* Modern Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <Card className="glass-card border-primary/20 group hover:border-primary/40 transition-all duration-300">
+                <CardContent className="p-6 text-center">
+                  <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-primary/20 transition-colors">
+                    <Database className="w-6 h-6 text-primary" />
                   </div>
-                  <p className="text-xs text-muted-foreground">Projects</p>
+                  <div className="text-3xl font-bold text-foreground mb-2">{stats.totalProjects}</div>
+                  <p className="text-muted-foreground">Active Projects</p>
+                  <div className="w-full bg-primary/10 rounded-full h-1 mt-3">
+                    <div className="bg-primary h-1 rounded-full w-3/4"></div>
+                  </div>
                 </CardContent>
               </Card>
               
-              <Card className="bg-gradient-to-br from-accent/5 to-accent/10 border-accent/20">
-                <CardContent className="p-3 text-center">
-                  <div className="flex items-center justify-center gap-1 mb-1">
-                    <Brain className="w-4 h-4 text-accent" />
-                    <span className="text-lg font-bold text-accent">{stats.totalDatasets}</span>
+              <Card className="glass-card border-accent/20 group hover:border-accent/40 transition-all duration-300">
+                <CardContent className="p-6 text-center">
+                  <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-accent/20 transition-colors">
+                    <Brain className="w-6 h-6 text-accent" />
                   </div>
-                  <p className="text-xs text-muted-foreground">Datasets</p>
+                  <div className="text-3xl font-bold text-foreground mb-2">{stats.totalDatasets}</div>
+                  <p className="text-muted-foreground">Datasets Created</p>
+                  <div className="w-full bg-accent/10 rounded-full h-1 mt-3">
+                    <div className="bg-accent h-1 rounded-full w-2/3"></div>
+                  </div>
                 </CardContent>
               </Card>
               
-              <Card className="bg-gradient-to-br from-secondary/5 to-secondary/10 border-secondary/20">
-                <CardContent className="p-3 text-center">
-                  <div className="flex items-center justify-center gap-1 mb-1">
-                    <Activity className="w-4 h-4 text-secondary" />
-                    <span className="text-lg font-bold text-secondary">{stats.totalImages.toLocaleString()}</span>
+              <Card className="glass-card border-secondary/20 group hover:border-secondary/40 transition-all duration-300">
+                <CardContent className="p-6 text-center">
+                  <div className="w-12 h-12 bg-secondary/10 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-secondary/20 transition-colors">
+                    <BarChart3 className="w-6 h-6 text-secondary" />
                   </div>
-                  <p className="text-xs text-muted-foreground">Images</p>
+                  <div className="text-3xl font-bold text-foreground mb-2">{stats.totalImages.toLocaleString()}</div>
+                  <p className="text-muted-foreground">Images Processed</p>
+                  <div className="w-full bg-secondary/10 rounded-full h-1 mt-3">
+                    <div className="bg-secondary h-1 rounded-full w-5/6"></div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Button className="px-6" asChild>
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Button size="lg" className="px-8 h-12 group" asChild>
                 <Link to="/projects/new" className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  New Project
+                  <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-300" />
+                  Create New Project
+                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" />
                 </Link>
               </Button>
-              <Button variant="outline" className="px-6" asChild>
+              <Button variant="outline" size="lg" className="px-8 h-12" asChild>
                 <Link to="/api-settings" className="flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  Settings
+                  <Settings className="w-5 h-5" />
+                  Configure Settings
                 </Link>
               </Button>
             </div>
@@ -193,110 +222,153 @@ export default function Index() {
 
         {/* Projects Section */}
         <div className="mb-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-            <div>
-              <h2 className="text-2xl font-bold flex items-center gap-2">
-                <TrendingUp className="w-6 h-6 text-primary" />
+          {/* Section Header */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8">
+            <div className="space-y-2">
+              <h2 className="text-3xl font-bold flex items-center gap-3">
+                <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
+                  <Target className="w-5 h-5 text-primary" />
+                </div>
                 Your Projects
               </h2>
-              <p className="text-muted-foreground">Manage and monitor your AI projects</p>
+              <p className="text-muted-foreground text-lg">
+                Manage and monitor your AI development workspace
+              </p>
+            </div>
+            
+            {/* Quick Actions */}
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/api-settings" className="flex items-center gap-2">
+                  <Settings className="w-4 h-4" />
+                  Settings
+                </Link>
+              </Button>
             </div>
           </div>
           
-          <div className="flex flex-col sm:flex-row gap-4 mb-6">
-            <div className="flex-1 flex items-center gap-4">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          {/* Search and Filters */}
+          <div className="glass-card rounded-2xl p-6 mb-8">
+            <div className="flex flex-col lg:flex-row gap-4">
+              {/* Search */}
+              <div className="relative flex-1 max-w-lg">
+                <Search className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Search projects..."
+                  placeholder="Search projects by name, description, or tags..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 bg-background/80 backdrop-blur-sm"
+                  className="pl-12 h-12 bg-background/50 border-border/50 focus:border-primary/50 transition-colors"
                 />
               </div>
+              
+              {/* Sort Dropdown */}
               <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as any)}>
-                <SelectTrigger className="w-[180px] bg-background/80 backdrop-blur-sm">
+                <SelectTrigger className="w-[200px] h-12 bg-background/50 border-border/50">
+                  <Filter className="w-4 h-4 mr-2" />
                   <SelectValue placeholder="Sort by" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="newest">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4" />
+                      Newest first
+                    </div>
+                  </SelectItem>
                   <SelectItem value="oldest">Oldest first</SelectItem>
                   <SelectItem value="name">Name (A-Z)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            
+            {/* Tag Filter */}
+            {allTags.length > 0 && (
+              <div className="mt-6 pt-6 border-t border-border/50">
+                <div className="flex items-center gap-3 mb-3">
+                  <Tag className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-muted-foreground">Filter by tags:</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={selectedTag === null ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSelectedTag(null)}
+                    className="rounded-full"
+                  >
+                    All Projects
+                  </Button>
+                  {allTags.map(tag => (
+                    <Button
+                      key={tag}
+                      variant={selectedTag === tag ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedTag(tag)}
+                      className="rounded-full gap-1"
+                    >
+                      {tag}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          
-          {/* Tag Filter */}
-          {allTags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-6">
-              <Button
-                variant={selectedTag === null ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedTag(null)}
-                className="gap-1"
-              >
-                All Tags
-              </Button>
-              {allTags.map(tag => (
-                <Button
-                  key={tag}
-                  variant={selectedTag === tag ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedTag(tag)}
-                  className="gap-1"
-                >
-                  <Tag className="w-3 h-3" />
-                  {tag}
-                </Button>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Projects Grid */}
         {stableLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Array(6).fill(0).map((_, i) => (
-              <ProjectCardSkeleton key={i} />
-            ))}
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div className="h-6 w-32 bg-muted rounded animate-pulse"></div>
+              <div className="h-4 w-20 bg-muted rounded animate-pulse"></div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array(6).fill(0).map((_, i) => (
+                <ProjectCardSkeleton key={i} />
+              ))}
+            </div>
           </div>
         ) : error ? (
-          <Card className="p-8 text-center">
-            <div className="text-destructive mb-4">
-              <Zap className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <h3 className="text-lg font-medium">Connection Error</h3>
+          <Card className="glass-card p-12 text-center">
+            <div className="mb-6">
+              <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-destructive/10 flex items-center justify-center">
+                <Activity className="w-10 h-10 text-destructive animate-pulse" />
+              </div>
+              <h3 className="text-xl font-semibold mb-2 text-destructive">Connection Error</h3>
+              <p className="text-muted-foreground mb-6 max-w-md mx-auto">{error}</p>
             </div>
-            <p className="text-muted-foreground mb-4">{error}</p>
-            <Button variant="outline" onClick={() => window.location.reload()}>
-              Try Again
-            </Button>
+            <div className="flex gap-3 justify-center">
+              <Button variant="outline" onClick={() => window.location.reload()}>
+                Try Again
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/api-settings">Check Settings</Link>
+              </Button>
+            </div>
           </Card>
         ) : filteredAndSortedProjects().length === 0 ? (
-          <Card className="p-12 text-center">
-            <div className="mb-6">
-              <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center">
-                <Brain className="w-12 h-12 text-primary" />
+          <Card className="glass-card p-12 text-center">
+            <div className="mb-8">
+              <div className="w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br from-primary/10 via-accent/10 to-secondary/10 flex items-center justify-center animate-float">
+                <Brain className="w-16 h-16 text-primary" />
               </div>
-              <h3 className="text-xl font-semibold mb-2">
-                {searchQuery || selectedTag ? "No matching projects" : "Ready to start your AI journey?"}
+              <h3 className="text-2xl font-semibold mb-3">
+                {searchQuery || selectedTag ? "No matching projects found" : "Welcome to Your AI Workspace"}
               </h3>
-              <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+              <p className="text-muted-foreground mb-8 max-w-lg mx-auto text-lg leading-relaxed">
                 {searchQuery || selectedTag
-                  ? "No projects matching your search criteria. Try adjusting your search terms or clearing filters."
-                  : "Create your first project to begin annotating data, training models, and building intelligent applications."
+                  ? "We couldn't find any projects matching your search criteria. Try adjusting your filters or search terms."
+                  : "Start your machine learning journey by creating your first project. Build datasets, train models, and deploy intelligent solutions."
                 }
               </p>
             </div>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Button size="lg" asChild>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center max-w-md mx-auto">
+              <Button size="lg" className="flex-1 h-12" asChild>
                 <Link to="/projects/new" className="flex items-center gap-2">
                   <Plus className="w-5 h-5" />
-                  Create Your First Project
+                  {searchQuery || selectedTag ? "Create New Project" : "Get Started"}
                 </Link>
               </Button>
               {(searchQuery || selectedTag) && (
-                <Button variant="outline" size="lg" onClick={() => {
+                <Button variant="outline" size="lg" className="flex-1 h-12" onClick={() => {
                   setSearchQuery("");
                   setSelectedTag(null);
                 }}>
@@ -306,10 +378,32 @@ export default function Index() {
             </div>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredAndSortedProjects().map((project, index) => (
-              <ProjectCard key={project.id} project={project} />
-            ))}
+          <div className="space-y-6">
+            {/* Results Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold text-foreground">
+                  {filteredAndSortedProjects().length} {filteredAndSortedProjects().length === 1 ? 'Project' : 'Projects'}
+                </h3>
+                {(searchQuery || selectedTag) && (
+                  <Badge variant="secondary" className="rounded-full">
+                    Filtered
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Sorted by {sortOrder === 'newest' ? 'newest first' : sortOrder === 'oldest' ? 'oldest first' : 'name'}
+              </p>
+            </div>
+            
+            {/* Projects Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredAndSortedProjects().map((project, index) => (
+                <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 100}ms` }}>
+                  <ProjectCard project={project} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </main>
