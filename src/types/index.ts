@@ -55,6 +55,15 @@ export interface Image {
   annotations?: Annotation[]; // Optional: array of polygon or bbox annotations for this image
 }
 
+export interface ImageCollection {
+  id: string;
+  name: string;
+  images: Image[];
+  currentPage: number;
+  totalPages: number;
+  paginatedImages: Image[];
+}
+
 export interface Annotation {
   id: string;
   imageId: string;

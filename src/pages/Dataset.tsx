@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
-import { Dataset as DatasetType, Image } from "@/types";
+import { Dataset as DatasetType, Image, ImageCollection } from "@/types";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
@@ -34,6 +34,8 @@ export default function Dataset() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
+  const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
+  const [useTabbedImages, setUseTabbedImages] = useState(true); // Feature flag for tabbed images
   const [currentPage, setCurrentPage] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
@@ -72,6 +74,123 @@ export default function Dataset() {
     (currentPage - 1) * settings.imagesPerPage,
     currentPage * settings.imagesPerPage
   );
+
+  // Utility functions for managing image collections
+  const createImageCollection = (id: string, name: string, images: Image[]): ImageCollection => {
+    const imagesPerPage = settings.imagesPerPage;
+    const totalPages = Math.ceil(images.length / imagesPerPage);
+    const currentPage = 1;
+    const paginatedImages = images.slice(0, imagesPerPage);
+    
+    return {
+      id,
+      name,
+      images,
+      currentPage,
+      totalPages,
+      paginatedImages
+    };
+  };
+
+  const updateImageCollectionPagination = (collection: ImageCollection, newPage: number): ImageCollection => {
+    const imagesPerPage = settings.imagesPerPage;
+    const totalPages = Math.ceil(collection.images.length / imagesPerPage);
+    const safePage = Math.max(1, Math.min(newPage, totalPages));
+    const paginatedImages = collection.images.slice(
+      (safePage - 1) * imagesPerPage,
+      safePage * imagesPerPage
+    );
+    
+    return {
+      ...collection,
+      currentPage: safePage,
+      totalPages,
+      paginatedImages
+    };
+  };
+
+  // Initialize default image collection when images are loaded
+  useEffect(() => {
+    if (useTabbedImages) {
+      // Check if we already have collections set up
+      if (imageCollections.length === 0) {
+        const defaultCollection = createImageCollection("main", "RGB Images", images);
+        setImageCollections([defaultCollection]);
+      } else {
+        // Update existing collections with new images if needed
+        setImageCollections(prev => prev.map(collection => {
+          if (collection.id === "main") {
+            return createImageCollection("main", "RGB Images", images);
+          }
+          return updateImageCollectionPagination(collection, collection.currentPage);
+        }));
+      }
+    }
+  }, [images, useTabbedImages, settings.imagesPerPage]);
+
+  // Update collections pagination when settings change
+  useEffect(() => {
+    if (useTabbedImages && imageCollections.length > 0) {
+      setImageCollections(prev => prev.map(collection => 
+        updateImageCollectionPagination(collection, collection.currentPage)
+      ));
+    }
+  }, [settings.imagesPerPage, useTabbedImages]);
+
+  // Tab event handlers
+  const handleAddImageTab = (name: string) => {
+    const newCollectionId = `collection-${Date.now()}`;
+    const newCollection = createImageCollection(newCollectionId, name, []);
+    setImageCollections(prev => [...prev, newCollection]);
+  };
+
+  const handleRemoveImageTab = (collectionId: string) => {
+    // Don't allow removing the main collection
+    if (collectionId === "main") return;
+    
+    setImageCollections(prev => prev.filter(collection => collection.id !== collectionId));
+  };
+
+  const handleTabPageChange = (collectionId: string, page: number) => {
+    setImageCollections(prev => prev.map(collection => {
+      if (collection.id === collectionId) {
+        return updateImageCollectionPagination(collection, page);
+      }
+      return collection;
+    }));
+  };
+
+  const handleTabDeleteImage = async (collectionId: string, imageId: string): Promise<void> => {
+    // For collections other than main, just remove from the collection
+    if (collectionId !== "main") {
+      setImageCollections(prev => prev.map(collection => {
+        if (collection.id === collectionId) {
+          const updatedImages = collection.images.filter(img => img.id !== imageId);
+          return createImageCollection(collection.id, collection.name, updatedImages);
+        }
+        return collection;
+      }));
+      return;
+    }
+    
+    // For main collection, delete the actual image using the existing handler
+    await handleDeleteImage(imageId);
+  };
+
+  const handleTabUploadImages = async (collectionId: string, files: File[]): Promise<void> => {
+    try {
+      // Upload the files using the existing upload handler
+      await handleUploadImages(files);
+      
+      // If this is not the main collection, we need to track these images separately
+      // For now, we'll just let them go to the main collection
+      // In a real implementation, you might want to have separate upload endpoints
+      console.log(`Files uploaded to collection: ${collectionId}`, files);
+    } catch (error) {
+      console.error('Failed to upload images:', error);
+      throw error;
+    }
+  };
 
   const fetchDataset = async () => {
     if (!id || !api) return;
@@ -593,6 +712,14 @@ export default function Dataset() {
                 onShowAnnotationsChange={handleShowAnnotationsChange}
                 selectedImageIndex={selectedImageIndex}
                 setSelectedImageIndex={setSelectedImageIndex}
+                // Tabbed images props
+                useTabbedImages={useTabbedImages}
+                imageCollections={imageCollections}
+                onAddImageTab={handleAddImageTab}
+                onRemoveImageTab={handleRemoveImageTab}
+                onTabPageChange={handleTabPageChange}
+                onTabDeleteImage={handleTabDeleteImage}
+                onTabUploadImages={handleTabUploadImages}
               />
             </div>
             <ImageUploadDialog 

@@ -686,6 +686,8 @@ export function AnnotationsContent({
 
   const handleSaveTags = async (tags: string[]) => {
     const annotationId = tagsDialog.annotationId;
+    console.log(`Saving tags for annotation ${annotationId}:`, tags); // Debug log
+    
     const updatedFiles = annotationFiles.map(file => 
       file.id === annotationId 
         ? { 
@@ -704,8 +706,9 @@ export function AnnotationsContent({
       let success = true;
       if (api) {
         // Call the API to update tags in the database
-        console.log(`Saving tags for annotation ${annotationId}:`, tags);
+        console.log(`Calling API to save tags for annotation ${annotationId}:`, tags);
         const response = await api.updateAnnotationTags(id, annotationId, tags);
+        console.log('API response for saving tags:', response); // Debug log
         if (!response.success) {
           success = false;
           throw new Error(response.error || "Failed to save tags on server");
@@ -716,10 +719,12 @@ export function AnnotationsContent({
 
       if (success) {
         setAnnotationFiles(updatedFiles);
+        console.log('Tags successfully saved and state updated'); // Debug log
         // Also update localStorage for local persistence (backup)
         localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
       }
     } catch (error) {
+      console.error('Error saving tags:', error); // Debug log
       throw error; // Re-throw to be handled by the dialog
     }
   };
@@ -1853,7 +1858,7 @@ export function AnnotationsContent({
     setEditDialog({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   };
 
-  const handleDownloadAnnotation = (annotationId: string, e: React.MouseEvent) => {
+  const handleDownloadAnnotation = async (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
     const file = annotationFiles.find(f => f.id === annotationId);
@@ -1866,88 +1871,207 @@ export function AnnotationsContent({
       return;
     }
 
+    // Show loading toast for better UX
+    toast({
+      title: "Preparing export...",
+      description: "Generating COCO format file for download.",
+    });
+
     try {
-      // Extract unique categories from samples
-      const categoryMap = new Map<string, number>();
-      let categoryId = 1;
-      
-      // Build category mapping
-      file.samples?.forEach(sample => {
-        if (!categoryMap.has(sample.className)) {
-          categoryMap.set(sample.className, categoryId++);
+      if (api) {
+        // Smart approach: Try to get the annotation content directly and export as-is
+        // This avoids loading into memory as our internal format
+        console.log(`Requesting direct export for annotation file ${file.name}...`);
+        
+        // Get the annotation content directly from backend
+        const contentResponse = await api.getAnnotationContent(id, file.id);
+        
+        if (!contentResponse || !contentResponse.success || !contentResponse.data.content) {
+          throw new Error('Failed to load annotation content from backend for export.');
         }
-      });
 
-      // Create categories array
-      const categories = Array.from(categoryMap.entries()).map(([name, id]) => ({
-        id,
-        name,
-        supercategory: ""
-      }));
+        // Parse to validate it's proper COCO format, but don't convert to our internal format
+        let cocoData;
+        try {
+          cocoData = JSON.parse(contentResponse.data.content);
+        } catch (parseError) {
+          throw new Error('Annotation file contains invalid JSON data.');
+        }
+        
+        if (!cocoData.annotations || !Array.isArray(cocoData.annotations) || cocoData.annotations.length === 0) {
+          toast({
+            title: "No data to export",
+            description: "This annotation file contains no annotation data.",
+            variant: "destructive",
+          });
+          return;
+        }
 
-      // Create a COCO format JSON structure for download
-      const cocoData = {
-        info: {
-          description: `Annotations for ${file.name}`,
-          version: "1.0",
-          year: new Date().getFullYear(),
-          contributor: "LAI",
-          date_created: new Date().toISOString()
-        },
-        licenses: [{
-          id: 1,
-          name: "Unknown License",
-          url: ""
-        }],
-        images: Object.entries(file.imageMapping || {}).map(([imageId, fileName]) => ({
-          id: parseInt(imageId),
-          width: 640, // Default width - could be enhanced to store actual dimensions
-          height: 480, // Default height - could be enhanced to store actual dimensions
-          file_name: fileName,
-          license: 1,
-          flickr_url: "",
-          coco_url: "",
-          date_captured: ""
-        })),
-        categories,
-        annotations: file.samples?.map((sample, index) => ({
-          id: index + 1,
-          image_id: parseInt(sample.imageId),
-          category_id: categoryMap.get(sample.className) || 1,
-          bbox: sample.bbox ? [
-            sample.bbox[0] * 640, // Convert normalized to pixel coordinates
-            sample.bbox[1] * 480,
-            sample.bbox[2] * 640,
-            sample.bbox[3] * 480
-          ] : [0, 0, 0, 0],
-          area: sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * 640 * 480 : 0),
-          iscrowd: 0,
-          segmentation: sample.segmentation || []
-        })) || []
-      };
+        // Directly export the COCO data without any conversion 
+        // Just ensure it has proper COCO structure
+        const exportData = {
+          info: cocoData.info || {
+            description: `Annotations for ${file.name}`,
+            version: "1.0",
+            year: new Date().getFullYear(),
+            contributor: "AI Data Creator",
+            date_created: new Date().toISOString()
+          },
+          licenses: cocoData.licenses || [{
+            id: 1,
+            name: "Unknown License",
+            url: ""
+          }],
+          images: cocoData.images || [],
+          categories: cocoData.categories || [],
+          annotations: cocoData.annotations || []
+        };
 
-      // Create and download the file
-      const dataStr = JSON.stringify(cocoData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${file.name.replace(/\.[^/.]+$/, '')}_export.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+        console.log(`Exporting ${exportData.annotations.length} annotations directly from backend COCO data`);
 
-      toast({
-        title: "Download started",
-        description: `Downloading ${file.name} as COCO JSON format.`,
-      });
+        // Create and download the file directly from the original COCO data
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${file.name.replace(/\.[^/.]+$/, '')}_export.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        toast({
+          title: "Download completed",
+          description: `Successfully exported ${file.name} with ${exportData.annotations.length} annotations.`,
+        });
+
+      } else {
+        // No API available - export from local samples
+        const samplesData = file.samples;
+        
+        if (!samplesData || samplesData.length === 0) {
+          toast({
+            title: "No data to export",
+            description: "This annotation file has no samples to export and no backend connection is available.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        console.log(`Exporting ${samplesData.length} samples from local data`);
+        
+        // Extract unique categories from samples
+        const categoryMap = new Map<string, number>();
+        let categoryId = 1;
+        
+        samplesData.forEach(sample => {
+          if (!categoryMap.has(sample.className)) {
+            categoryMap.set(sample.className, categoryId++);
+          }
+        });
+
+        const categories = Array.from(categoryMap.entries()).map(([name, id]) => ({
+          id,
+          name,
+          supercategory: ""
+        }));
+
+        // Create images array from samples
+        const imageSet = new Map<string, any>();
+        samplesData.forEach(sample => {
+          if (!imageSet.has(sample.imageId)) {
+            const actualImage = imagesMemo.find(img => img.id === sample.imageId);
+            const fileName = file.imageMapping?.[sample.imageId] || actualImage?.fileName || `image_${sample.imageId}.jpg`;
+            
+            imageSet.set(sample.imageId, {
+              id: parseInt(sample.imageId) || Math.abs(sample.imageId.split('').reduce((a, b) => {
+                a = ((a << 5) - a) + b.charCodeAt(0);
+                return a & a;
+              }, 0)) || Math.floor(Math.random() * 1000000),
+              width: actualImage?.width || 640,
+              height: actualImage?.height || 480,
+              file_name: fileName,
+              license: 1,
+              flickr_url: "",
+              coco_url: "",
+              date_captured: ""
+            });
+          }
+        });
+
+        const cocoData = {
+          info: {
+            description: `Annotations for ${file.name}`,
+            version: "1.0",
+            year: new Date().getFullYear(),
+            contributor: "AI Data Creator",
+            date_created: new Date().toISOString()
+          },
+          licenses: [{
+            id: 1,
+            name: "Unknown License",
+            url: ""
+          }],
+          images: Array.from(imageSet.values()),
+          categories: categories,
+          annotations: samplesData.map((sample, index) => {
+            const imageInfo = imageSet.get(sample.imageId);
+            const imageWidth = imageInfo?.width || 640;
+            const imageHeight = imageInfo?.height || 480;
+            
+            // Convert normalized bbox to absolute coordinates if needed
+            let bboxAbsolute = [0, 0, 0, 0];
+            if (sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4) {
+              if (sample.bbox[0] > 1 || sample.bbox[1] > 1 || sample.bbox[2] > 1 || sample.bbox[3] > 1) {
+                bboxAbsolute = [...sample.bbox];
+              } else {
+                bboxAbsolute = [
+                  sample.bbox[0] * imageWidth,
+                  sample.bbox[1] * imageHeight,
+                  sample.bbox[2] * imageWidth,
+                  sample.bbox[3] * imageHeight
+                ];
+              }
+            }
+            
+            return {
+              id: index + 1,
+              image_id: imageInfo?.id || parseInt(sample.imageId) || 1,
+              category_id: categoryMap.get(sample.className) || 1,
+              bbox: bboxAbsolute,
+              area: sample.area || (bboxAbsolute[2] * bboxAbsolute[3]),
+              iscrowd: 0,
+              segmentation: sample.segmentation || []
+            };
+          })
+        };
+
+        // Create and download the file
+        const dataStr = JSON.stringify(cocoData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${file.name.replace(/\.[^/.]+$/, '')}_export.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        toast({
+          title: "Download completed",
+          description: `Successfully exported ${file.name} with ${cocoData.annotations.length} annotations.`,
+        });
+      }
+
     } catch (error) {
       console.error('Error downloading annotation:', error);
       toast({
-        title: "Download failed",
-        description: "Failed to export annotation file.",
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "Failed to export annotation file.",
         variant: "destructive",
       });
     }
@@ -2856,7 +2980,7 @@ export function AnnotationsContent({
             }, {} as Record<string, string>),
             isVisible: false,
             showBboxes: false,
-            tags: [],
+            tags: fileSummary.tags || [], // Load tags from backend summary
             // Mark as lazy-loaded so we know content isn't loaded yet
             isContentLoaded: false,
             processing_status: fileSummary.processing_status

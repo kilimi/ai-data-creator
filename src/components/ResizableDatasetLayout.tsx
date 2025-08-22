@@ -1,9 +1,10 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
+import { TabbedImagesContent } from '@/components/TabbedImagesContent';
 import { AnnotationsContent } from '@/components/AnnotationsContent';
-import { Image } from '@/types';
+import { Image, ImageCollection } from '@/types';
 import { AnnotationSample } from '@/utils/annotations';
 import { LayoutType } from './LayoutControls';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -12,6 +13,8 @@ interface ResizableDatasetLayoutProps {
   layout: LayoutType;
   id: string;
   images: Image[];
+  imageCollections?: ImageCollection[]; // NEW: for tabbed image system
+  useTabbedImages?: boolean; // NEW: flag to enable tabbed images
   currentPage: number;
   imagesPerPage: number;
   imageSize: number;
@@ -20,8 +23,13 @@ interface ResizableDatasetLayoutProps {
   onImageSizeChange: (value: number[]) => void;
   onSliderPositionChange: (value: number) => void;
   onPageChange: (page: number) => void;
+  onTabPageChange?: (tabId: string, page: number) => void; // NEW: for tabbed pagination
   onOpenUploadDialog: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
+  onTabDeleteImage?: (tabId: string, imageId: string) => Promise<void>; // NEW: for tabbed image deletion
+  onTabUploadImages?: (tabId: string, files: File[]) => Promise<void>; // NEW: for tabbed image upload
+  onAddImageTab?: (tabName: string) => void; // NEW: for adding new tabs
+  onRemoveImageTab?: (tabId: string) => void; // NEW: for removing tabs
   paginatedImages: Image[];
   totalPages: number;
   annotations?: AnnotationSample[];
@@ -35,6 +43,8 @@ export function ResizableDatasetLayout({
   layout,
   id,
   images,
+  imageCollections,
+  useTabbedImages = false,
   currentPage,
   imagesPerPage,
   imageSize,
@@ -43,8 +53,13 @@ export function ResizableDatasetLayout({
   onImageSizeChange,
   onSliderPositionChange,
   onPageChange,
+  onTabPageChange,
   onOpenUploadDialog,
   onDeleteImage,
+  onTabDeleteImage,
+  onTabUploadImages,
+  onAddImageTab,
+  onRemoveImageTab,
   paginatedImages,
   totalPages,
   annotations = [],
@@ -69,25 +84,45 @@ export function ResizableDatasetLayout({
   const renderImagesSection = () => (
     <ScrollArea className="h-full w-full">
       <div className="p-6">
-        <ImagesTabContent
-          id={id}
-          images={imagesMemo}
-          currentPage={currentPage}
-          imagesPerPage={imagesPerPage}
-          imageSize={imageSize}
-          onImagesPerPageChange={onImagesPerPageChange}
-          onImageSizeChange={onImageSizeChange}
-          onPageChange={onPageChange}
-          onOpenUploadDialog={onOpenUploadDialog}
-          onDeleteImage={onDeleteImage}
-          paginatedImages={paginatedImages}
-          totalPages={totalPages}
-          annotations={annotations}
-          annotationFiles={annotationFiles}
-          onImportAnnotations={onImportAnnotations}
-          selectedImageIndex={selectedImageIndex}
-          setSelectedImageIndex={setSelectedImageIndex}
-        />
+        {useTabbedImages && imageCollections ? (
+          <TabbedImagesContent
+            id={id}
+            imageCollections={imageCollections}
+            imagesPerPage={imagesPerPage}
+            imageSize={imageSize}
+            onImagesPerPageChange={onImagesPerPageChange}
+            onImageSizeChange={onImageSizeChange}
+            onPageChange={onTabPageChange || (() => {})}
+            onDeleteImage={onTabDeleteImage || (() => Promise.resolve())}
+            onUploadImages={onTabUploadImages || (() => Promise.resolve())}
+            onAddTab={onAddImageTab || (() => {})}
+            onRemoveTab={onRemoveImageTab || (() => {})}
+            annotations={annotations}
+            annotationFiles={annotationFiles}
+            selectedImageIndex={selectedImageIndex}
+            setSelectedImageIndex={setSelectedImageIndex}
+          />
+        ) : (
+          <ImagesTabContent
+            id={id}
+            images={imagesMemo}
+            currentPage={currentPage}
+            imagesPerPage={imagesPerPage}
+            imageSize={imageSize}
+            onImagesPerPageChange={onImagesPerPageChange}
+            onImageSizeChange={onImageSizeChange}
+            onPageChange={onPageChange}
+            onOpenUploadDialog={onOpenUploadDialog}
+            onDeleteImage={onDeleteImage}
+            paginatedImages={paginatedImages}
+            totalPages={totalPages}
+            annotations={annotations}
+            annotationFiles={annotationFiles}
+            onImportAnnotations={onImportAnnotations}
+            selectedImageIndex={selectedImageIndex}
+            setSelectedImageIndex={setSelectedImageIndex}
+          />
+        )}
       </div>
     </ScrollArea>
   );
