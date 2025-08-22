@@ -56,6 +56,45 @@ export default function Dataset() {
   const datasetId = id || '';
   const { settings, isLoaded: settingsLoaded, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(datasetId);
   
+  // Persistence keys for image collections
+  const COLLECTIONS_STORAGE_KEY = `imageCollections_${datasetId}`;
+  
+  // Load persisted image collections
+  const loadPersistedCollections = (): ImageCollection[] => {
+    try {
+      const saved = localStorage.getItem(COLLECTIONS_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.map((collection: any) => ({
+          ...collection,
+          images: images.filter((img: Image) => 
+            collection.imageIds?.includes(img.id) || collection.id === "main"
+          ),
+          currentPage: 1,
+          totalPages: Math.ceil((collection.imageIds?.length || images.length) / settings.imagesPerPage),
+          paginatedImages: []
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading persisted collections:', error);
+    }
+    return [];
+  };
+  
+  // Save image collections to localStorage
+  const saveImageCollections = (collections: ImageCollection[]) => {
+    try {
+      const toSave = collections.map(collection => ({
+        id: collection.id,
+        name: collection.name,
+        imageIds: collection.images.map(img => img.id)
+      }));
+      localStorage.setItem(COLLECTIONS_STORAGE_KEY, JSON.stringify(toSave));
+    } catch (error) {
+      console.error('Error saving image collections:', error);
+    }
+  };
+  
   console.log('Dataset component render - ID:', id, 'Settings loaded:', settingsLoaded, 'Current settings:', settings);
   
   // Calculate pagination values using persistent settings
@@ -88,7 +127,8 @@ export default function Dataset() {
       images,
       currentPage,
       totalPages,
-      paginatedImages
+      paginatedImages,
+      imageIds: images.map(img => img.id)
     };
   };
 
@@ -105,15 +145,33 @@ export default function Dataset() {
       ...collection,
       currentPage: safePage,
       totalPages,
-      paginatedImages
+      paginatedImages,
+      imageIds: collection.images.map(img => img.id)
     };
   };
 
   // Initialize default image collection when images are loaded
   useEffect(() => {
     if (useTabbedImages) {
-      // Check if we already have collections set up
-      if (imageCollections.length === 0) {
+      // Try to load persisted collections first
+      const persistedCollections = loadPersistedCollections();
+      
+      if (persistedCollections.length > 0) {
+        // Update persisted collections with current images and pagination
+        const updatedCollections = persistedCollections.map(collection => {
+          if (collection.id === "main") {
+            return createImageCollection("main", "RGB Images", images);
+          } else {
+            // For custom collections, restore their specific images
+            const collectionImages = images.filter(img => 
+              collection.imageIds?.includes(img.id)
+            );
+            return createImageCollection(collection.id, collection.name, collectionImages);
+          }
+        });
+        setImageCollections(updatedCollections);
+      } else if (imageCollections.length === 0) {
+        // Create default collection if none exist
         const defaultCollection = createImageCollection("main", "RGB Images", images);
         setImageCollections([defaultCollection]);
       } else {
@@ -136,6 +194,13 @@ export default function Dataset() {
       ));
     }
   }, [settings.imagesPerPage, useTabbedImages]);
+
+  // Save collections to localStorage whenever they change
+  useEffect(() => {
+    if (imageCollections.length > 0) {
+      saveImageCollections(imageCollections);
+    }
+  }, [imageCollections]);
 
   // Tab event handlers
   const handleAddImageTab = (name: string) => {
@@ -182,10 +247,38 @@ export default function Dataset() {
       // Upload the files using the existing upload handler
       await handleUploadImages(files);
       
-      // If this is not the main collection, we need to track these images separately
-      // For now, we'll just let them go to the main collection
-      // In a real implementation, you might want to have separate upload endpoints
-      console.log(`Files uploaded to collection: ${collectionId}`, files);
+      // After upload, get the newly uploaded images and assign them to the correct collection
+      // The handleUploadImages function updates the images state, so we need to wait for that
+      setTimeout(() => {
+        if (collectionId !== "main") {
+          // For custom collections, we need to move the newly uploaded images from main to this collection
+          setImageCollections(prev => {
+            const mainCollection = prev.find(c => c.id === "main");
+            const targetCollection = prev.find(c => c.id === collectionId);
+            
+            if (mainCollection && targetCollection && files.length > 0) {
+              // Get the last N images from main (where N = number of uploaded files)
+              const mainImages = [...mainCollection.images];
+              const newlyUploadedImages = mainImages.slice(-files.length);
+              const remainingMainImages = mainImages.slice(0, -files.length);
+              
+              // Update collections
+              return prev.map(collection => {
+                if (collection.id === "main") {
+                  return createImageCollection("main", "RGB Images", remainingMainImages);
+                } else if (collection.id === collectionId) {
+                  const updatedImages = [...collection.images, ...newlyUploadedImages];
+                  return createImageCollection(collectionId, collection.name, updatedImages);
+                }
+                return collection;
+              });
+            }
+            return prev;
+          });
+        }
+      }, 500); // Small delay to ensure images state is updated
+      
+      console.log(`Files uploaded to collection: ${collectionId}`, files.map(f => f.name));
     } catch (error) {
       console.error('Failed to upload images:', error);
       throw error;

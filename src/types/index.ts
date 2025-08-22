@@ -62,6 +62,7 @@ export interface ImageCollection {
   currentPage: number;
   totalPages: number;
   paginatedImages: Image[];
+  imageIds?: string[]; // For persistence: track which images belong to this collection
 }
 
 export interface Annotation {
