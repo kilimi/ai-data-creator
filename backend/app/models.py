@@ -62,6 +62,7 @@ class Dataset(Base):
     images = relationship("Image", cascade="all, delete-orphan", back_populates="dataset")
     annotations = relationship("Annotation", cascade="all, delete-orphan", back_populates="dataset")
     annotation_files = relationship("AnnotationFile", cascade="all, delete-orphan", back_populates="dataset")
+    image_collections = relationship("ImageCollection", cascade="all, delete-orphan", back_populates="dataset")
 
     @property
     def tags(self):
@@ -96,9 +97,32 @@ class Image(Base):
     thumbnail_url = Column(String)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     annotations_count = Column(Integer, default=0)
+    collection_id = Column(Integer, ForeignKey("image_collections.id"), nullable=True, index=True)  # Optional: which collection this image belongs to
 
     dataset = relationship("Dataset", back_populates="images")
     annotations = relationship("Annotation", cascade="all, delete-orphan", back_populates="image")
+    collection = relationship("ImageCollection", back_populates="images")
+
+
+class ImageCollection(Base):
+    __tablename__ = "image_collections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
+    name = Column(String, index=True)
+    description = Column(Text, nullable=True)
+    is_default = Column(Boolean, default=False)  # True for the main "RGB Images" collection
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    dataset = relationship("Dataset", back_populates="image_collections")
+    images = relationship("Image", back_populates="collection")
+
+    @property
+    def image_count(self):
+        """Get the number of images in this collection"""
+        return len(self.images) if self.images else 0
+
 
 class Annotation(Base):
     __tablename__ = "annotations"

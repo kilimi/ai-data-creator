@@ -12,6 +12,11 @@ import { AnnotationSample } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
+import { 
+  imageCollectionsApi, 
+  convertToFrontendImageCollection, 
+  ImageCollectionData 
+} from "@/utils/imageCollections";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 
 export default function Dataset() {
-  const { id } = useParams<{ id: string }>();
+  const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const { api } = useApi();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -37,12 +42,15 @@ export default function Dataset() {
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
   const [useTabbedImages, setUseTabbedImages] = useState(true); // Feature flag for tabbed images
   const [currentPage, setCurrentPage] = useState(1);
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [datasetProjectId, setDatasetProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const [visibleAnnotations, setVisibleAnnotations] = useState<AnnotationSample[]>([]);
   const [importedAnnotations, setImportedAnnotations] = useState<AnnotationSample[]>([]);
+  
+  // Compute the effective project ID (URL parameter takes precedence)
+  const effectiveProjectId = projectId || datasetProjectId;
   
   // Upload progress state
   const [isUploading, setIsUploading] = useState(false);
@@ -56,42 +64,38 @@ export default function Dataset() {
   const datasetId = id || '';
   const { settings, isLoaded: settingsLoaded, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(datasetId);
   
-  // Persistence keys for image collections
-  const COLLECTIONS_STORAGE_KEY = `imageCollections_${datasetId}`;
-  
-  // Load persisted image collections
-  const loadPersistedCollections = (): ImageCollection[] => {
+  // Load image collections from database
+  const loadImageCollections = async (): Promise<void> => {
+    if (!datasetId) return;
+    
     try {
-      const saved = localStorage.getItem(COLLECTIONS_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.map((collection: any) => ({
-          ...collection,
-          images: images.filter((img: Image) => 
-            collection.imageIds?.includes(img.id) || collection.id === "main"
-          ),
-          currentPage: 1,
-          totalPages: Math.ceil((collection.imageIds?.length || images.length) / settings.imagesPerPage),
-          paginatedImages: []
-        }));
+      const backendCollections = await imageCollectionsApi.getImageCollections(datasetId);
+      
+      // Convert to frontend format
+      const frontendCollections = backendCollections.map(collection => 
+        convertToFrontendImageCollection(collection, settings.imagesPerPage)
+      );
+      
+      console.log('Loaded image collections:', frontendCollections);
+      setImageCollections(frontendCollections);
+      
+      // If no collections exist, initialize default collection
+      if (backendCollections.length === 0) {
+        await imageCollectionsApi.initializeDefaultCollection(datasetId);
+        // Reload collections after initialization
+        const newCollections = await imageCollectionsApi.getImageCollections(datasetId);
+        const newFrontendCollections = newCollections.map(collection => 
+          convertToFrontendImageCollection(collection, settings.imagesPerPage)
+        );
+        setImageCollections(newFrontendCollections);
       }
     } catch (error) {
-      console.error('Error loading persisted collections:', error);
-    }
-    return [];
-  };
-  
-  // Save image collections to localStorage
-  const saveImageCollections = (collections: ImageCollection[]) => {
-    try {
-      const toSave = collections.map(collection => ({
-        id: collection.id,
-        name: collection.name,
-        imageIds: collection.images.map(img => img.id)
-      }));
-      localStorage.setItem(COLLECTIONS_STORAGE_KEY, JSON.stringify(toSave));
-    } catch (error) {
-      console.error('Error saving image collections:', error);
+      console.error('Error loading image collections:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load image collections",
+        variant: "destructive",
+      });
     }
   };
   
@@ -150,41 +154,12 @@ export default function Dataset() {
     };
   };
 
-  // Initialize default image collection when images are loaded
+  // Initialize collections when dataset is loaded (even if empty)
   useEffect(() => {
-    if (useTabbedImages) {
-      // Try to load persisted collections first
-      const persistedCollections = loadPersistedCollections();
-      
-      if (persistedCollections.length > 0) {
-        // Update persisted collections with current images and pagination
-        const updatedCollections = persistedCollections.map(collection => {
-          if (collection.id === "main") {
-            return createImageCollection("main", "RGB Images", images);
-          } else {
-            // For custom collections, restore their specific images
-            const collectionImages = images.filter(img => 
-              collection.imageIds?.includes(img.id)
-            );
-            return createImageCollection(collection.id, collection.name, collectionImages);
-          }
-        });
-        setImageCollections(updatedCollections);
-      } else if (imageCollections.length === 0) {
-        // Create default collection if none exist
-        const defaultCollection = createImageCollection("main", "RGB Images", images);
-        setImageCollections([defaultCollection]);
-      } else {
-        // Update existing collections with new images if needed
-        setImageCollections(prev => prev.map(collection => {
-          if (collection.id === "main") {
-            return createImageCollection("main", "RGB Images", images);
-          }
-          return updateImageCollectionPagination(collection, collection.currentPage);
-        }));
-      }
+    if (settingsLoaded && dataset) {
+      loadImageCollections();
     }
-  }, [images, useTabbedImages, settings.imagesPerPage]);
+  }, [dataset, settingsLoaded]);
 
   // Update collections pagination when settings change
   useEffect(() => {
@@ -195,25 +170,47 @@ export default function Dataset() {
     }
   }, [settings.imagesPerPage, useTabbedImages]);
 
-  // Save collections to localStorage whenever they change
-  useEffect(() => {
-    if (imageCollections.length > 0) {
-      saveImageCollections(imageCollections);
-    }
-  }, [imageCollections]);
-
   // Tab event handlers
-  const handleAddImageTab = (name: string) => {
-    const newCollectionId = `collection-${Date.now()}`;
-    const newCollection = createImageCollection(newCollectionId, name, []);
-    setImageCollections(prev => [...prev, newCollection]);
+  const handleAddImageTab = async (name: string): Promise<void> => {
+    if (!datasetId) return;
+    
+    try {
+      await imageCollectionsApi.createImageCollection(datasetId, { name });
+      await loadImageCollections(); // Reload to get updated data
+      toast({
+        title: "Success",
+        description: `Image collection "${name}" created successfully`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create image collection",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleRemoveImageTab = (collectionId: string) => {
-    // Don't allow removing the main collection
-    if (collectionId === "main") return;
+  const handleRemoveImageTab = async (collectionId: string): Promise<void> => {
+    if (!datasetId) return;
     
-    setImageCollections(prev => prev.filter(collection => collection.id !== collectionId));
+    // Don't allow removing the main collection (default collection)
+    const collection = imageCollections.find(c => c.id === collectionId);
+    if (!collection) return;
+    
+    try {
+      await imageCollectionsApi.deleteImageCollection(datasetId, parseInt(collectionId));
+      await loadImageCollections(); // Reload to get updated data
+      toast({
+        title: "Success",
+        description: `Image collection "${collection.name}" deleted successfully`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete image collection",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleTabPageChange = (collectionId: string, page: number) => {
@@ -226,8 +223,10 @@ export default function Dataset() {
   };
 
   const handleTabDeleteImage = async (collectionId: string, imageId: string): Promise<void> => {
-    // For collections other than main, just remove from the collection
-    if (collectionId !== "main") {
+    if (!id) return;
+    
+    try {
+      // Remove from frontend state first for immediate feedback
       setImageCollections(prev => prev.map(collection => {
         if (collection.id === collectionId) {
           const updatedImages = collection.images.filter(img => img.id !== imageId);
@@ -235,52 +234,66 @@ export default function Dataset() {
         }
         return collection;
       }));
-      return;
+      
+      // Actually delete from database via API
+      if (api) {
+        const response = await api.deleteImage(id, imageId);
+        if (response.success) {
+          console.log('Image deleted from backend successfully');
+          toast({
+            title: "Success",
+            description: "Image deleted successfully",
+          });
+        } else {
+          console.error('Backend delete failed:', response.error);
+          // Reload collections to restore state if backend delete failed
+          await loadImageCollections();
+          toast({
+            title: "Error",
+            description: "Failed to delete image from database",
+            variant: "destructive",
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      // Reload collections to restore state if delete failed
+      await loadImageCollections();
+      toast({
+        title: "Error", 
+        description: "Failed to delete image",
+        variant: "destructive",
+      });
     }
-    
-    // For main collection, delete the actual image using the existing handler
-    await handleDeleteImage(imageId);
   };
 
   const handleTabUploadImages = async (collectionId: string, files: File[]): Promise<void> => {
+    if (!datasetId) return;
+    
     try {
-      // Upload the files using the existing upload handler
-      await handleUploadImages(files);
+      const collectionIdNum = parseInt(collectionId);
+      if (isNaN(collectionIdNum)) {
+        throw new Error('Invalid collection ID');
+      }
       
-      // After upload, get the newly uploaded images and assign them to the correct collection
-      // The handleUploadImages function updates the images state, so we need to wait for that
-      setTimeout(() => {
-        if (collectionId !== "main") {
-          // For custom collections, we need to move the newly uploaded images from main to this collection
-          setImageCollections(prev => {
-            const mainCollection = prev.find(c => c.id === "main");
-            const targetCollection = prev.find(c => c.id === collectionId);
-            
-            if (mainCollection && targetCollection && files.length > 0) {
-              // Get the last N images from main (where N = number of uploaded files)
-              const mainImages = [...mainCollection.images];
-              const newlyUploadedImages = mainImages.slice(-files.length);
-              const remainingMainImages = mainImages.slice(0, -files.length);
-              
-              // Update collections
-              return prev.map(collection => {
-                if (collection.id === "main") {
-                  return createImageCollection("main", "RGB Images", remainingMainImages);
-                } else if (collection.id === collectionId) {
-                  const updatedImages = [...collection.images, ...newlyUploadedImages];
-                  return createImageCollection(collectionId, collection.name, updatedImages);
-                }
-                return collection;
-              });
-            }
-            return prev;
-          });
-        }
-      }, 500); // Small delay to ensure images state is updated
+      await imageCollectionsApi.uploadImagesToCollection(datasetId, collectionIdNum, files);
+      
+      // Reload collections to get updated data with new images
+      await loadImageCollections();
+      
+      toast({
+        title: "Success",
+        description: `Successfully uploaded ${files.length} images to collection`,
+      });
       
       console.log(`Files uploaded to collection: ${collectionId}`, files.map(f => f.name));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to upload images:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to upload images",
+        variant: "destructive",
+      });
       throw error;
     }
   };
@@ -296,7 +309,7 @@ export default function Dataset() {
         
         // If dataset has project_id, fetch the project name
         if (response.data.project_id) {
-          setProjectId(response.data.project_id.toString());
+          setDatasetProjectId(response.data.project_id.toString());
           const projectResponse = await api.getProject(response.data.project_id.toString());
           if (projectResponse.success && projectResponse.data) {
             setProjectName(projectResponse.data.name);
@@ -767,7 +780,7 @@ export default function Dataset() {
             <div className="px-6 py-4 border-b bg-background">
               <div>
                 <DatasetBreadcrumb 
-                  projectId={projectId} 
+                  projectId={effectiveProjectId} 
                   projectName={projectName} 
                   datasetName={dataset?.name}
                   isLoading={isLoading}
@@ -787,6 +800,7 @@ export default function Dataset() {
               <ResizableDatasetLayout
                 layout={settings.layout}
                 id={id || ''}
+                projectId={effectiveProjectId || undefined}
                 images={images}
                 currentPage={currentPage}
                 imagesPerPage={settings.imagesPerPage}

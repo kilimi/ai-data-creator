@@ -249,7 +249,7 @@ export function DatasetGroupCard({
             {group.datasets.map((dataset) => (
               <Link
                 key={dataset.id}
-                to={`/datasets/${dataset.id}`}
+                to={`/projects/${group.project_id}/datasets/${dataset.id}`}
                 className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors"
               >
                 {dataset.thumbnailUrl ? (

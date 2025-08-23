@@ -228,7 +228,7 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
             {project.datasets.length > 0 && (
               <div className="flex -space-x-2">
                 {project.datasets.slice(0, 3).map((dataset) => (
-                  <DatasetThumbnail key={dataset.id} dataset={dataset} />
+                  <DatasetThumbnail key={dataset.id} dataset={dataset} projectId={project.id} />
                 ))}
                 {project.datasets.length > 3 && (
                   <Avatar className="border-2 border-background h-8 w-8">
@@ -278,9 +278,10 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
 
 interface DatasetThumbnailProps {
   dataset: Dataset;
+  projectId: number;
 }
 
-function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
+function DatasetThumbnail({ dataset, projectId }: DatasetThumbnailProps) {
   // Get annotation count from localStorage (for locally saved annotations)
   const localAnnotationCount = useAnnotationFilesCount(dataset.id);
   
@@ -290,7 +291,7 @@ function DatasetThumbnail({ dataset }: DatasetThumbnailProps) {
   return (
     <HoverCard>
       <HoverCardTrigger asChild>
-        <Link to={`/datasets/${dataset.id}`}>
+        <Link to={`/projects/${projectId}/datasets/${dataset.id}`}>
           <Avatar className="border-2 border-background h-8 w-8 cursor-pointer">
             {dataset.thumbnailUrl ? (
               <AvatarImage src={dataset.thumbnailUrl} alt={dataset.name} />

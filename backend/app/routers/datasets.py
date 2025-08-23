@@ -239,9 +239,27 @@ async def upload_images(
                     overwritten_images.append(existing_image)
                     print(f"Overwriting existing image: {clean_filename}")
                 else:
-                    # Create new image record
+                    # Get or create default collection for this dataset
+                    default_collection = db.query(models.ImageCollection).filter(
+                        models.ImageCollection.dataset_id == dataset_id,
+                        models.ImageCollection.is_default == True
+                    ).first()
+                    
+                    if not default_collection:
+                        # Create default collection if it doesn't exist
+                        default_collection = models.ImageCollection(
+                            dataset_id=dataset_id,
+                            name="RGB Images",
+                            description="Default image collection",
+                            is_default=True
+                        )
+                        db.add(default_collection)
+                        db.flush()  # Get the ID without committing the full transaction
+                    
+                    # Create new image record and assign to default collection
                     db_image = models.Image(
                         dataset_id=dataset_id,
+                        collection_id=default_collection.id,  # Assign to default collection
                         file_name=clean_filename,
                         file_size=len(contents),
                         width=0,
@@ -252,7 +270,7 @@ async def upload_images(
                     )
                     db.add(db_image)
                     uploaded_images.append(db_image)
-                    print(f"Adding new image: {clean_filename}")
+                    print(f"Adding new image to default collection: {clean_filename}")
                     
             except Exception as e:
                 print(f"Error uploading file {file.filename}: {e}")

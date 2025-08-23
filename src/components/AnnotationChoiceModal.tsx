@@ -8,9 +8,10 @@ interface AnnotationChoiceModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   datasetId: string;
+  projectId?: string;
 }
 
-export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId }: AnnotationChoiceModalProps) {
+export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId, projectId }: AnnotationChoiceModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl">
@@ -42,7 +43,7 @@ export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId }: Annot
                 className="w-full"
                 onClick={() => onOpenChange(false)}
               >
-                <Link to={`/datasets/${datasetId}/annotate/classification`}>
+                <Link to={projectId ? `/projects/${projectId}/datasets/${datasetId}/annotate/classification` : `/datasets/${datasetId}/annotate/classification`}>
                   Start Classification
                 </Link>
               </Button>
@@ -72,7 +73,7 @@ export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId }: Annot
                 className="w-full"
                 onClick={() => onOpenChange(false)}
               >
-                <Link to={`/datasets/${datasetId}/annotate`}>
+                <Link to={projectId ? `/projects/${projectId}/datasets/${datasetId}/annotate/segmentation` : `/datasets/${datasetId}/annotate/segmentation`}>
                   Start Segmentation
                 </Link>
               </Button>

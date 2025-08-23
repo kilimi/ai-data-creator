@@ -6,7 +6,7 @@ import { ArrowLeft, Grid3X3, Layers } from "lucide-react";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 
 export default function AnnotationChoice() {
-  const { id } = useParams<{ id: string }>();
+  const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const navigate = useNavigate();
   
   // Dataset settings
@@ -20,8 +20,9 @@ export default function AnnotationChoice() {
     if (settings.layout === 'images-only' || settings.layout === 'annotations-only') {
       updateLayout('horizontal');
     }
-    // Navigate to dataset page
-    navigate(`/datasets/${id}`);
+    // Navigate to dataset page with proper URL format
+    const datasetUrl = projectId ? `/projects/${projectId}/datasets/${id}` : `/datasets/${id}`;
+    navigate(datasetUrl);
   };
 
   return (
@@ -61,7 +62,7 @@ export default function AnnotationChoice() {
                   <li>• Class management tools</li>
                 </ul>
                 <Button asChild className="w-full">
-                  <Link to={`/datasets/${id}/annotate/classification`}>
+                  <Link to={projectId ? `/projects/${projectId}/datasets/${id}/annotate/classification` : `/datasets/${id}/annotate/classification`}>
                     Start Classification
                   </Link>
                 </Button>
@@ -86,7 +87,7 @@ export default function AnnotationChoice() {
                   <li>• Advanced annotation features</li>
                 </ul>
                 <Button asChild variant="secondary" className="w-full">
-                  <Link to={`/datasets/${id}/annotate`}>
+                  <Link to={projectId ? `/projects/${projectId}/datasets/${id}/annotate` : `/datasets/${id}/annotate`}>
                     Start Segmentation
                   </Link>
                 </Button>

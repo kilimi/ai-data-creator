@@ -77,30 +77,46 @@ class Project(ProjectBase):
 
 class Image(BaseModel):
     id: int
-    dataset_id: int
-    file_name: str
-    file_size: int
+    datasetId: int
+    fileName: str
+    fileSize: int
     width: int
     height: int
     url: str
-    thumbnail_url: str
-    uploaded_at: datetime
-    annotations_count: int = 0
+    thumbnailUrl: str
+    uploadedAt: datetime
+    annotationsCount: int = 0
 
-    # Helper function to convert to frontend format
-    def to_frontend_format(self, dataset_id: str) -> dict:
-        return {
-            "id": str(self.id),
-            "datasetId": str(dataset_id),
-            "fileName": self.file_name,
-            "fileSize": self.file_size,
-            "width": self.width,
-            "height": self.height,
-            "url": self.url,
-            "thumbnailUrl": self.thumbnail_url,
-            "uploadedAt": self.uploaded_at.isoformat(),
-            "annotationsCount": self.annotations_count
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
         }
+
+
+class ImageCollectionBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    is_default: bool = False
+
+class ImageCollectionCreate(ImageCollectionBase):
+    dataset_id: int
+
+class ImageCollection(ImageCollectionBase):
+    id: int
+    dataset_id: int
+    created_at: datetime
+    updated_at: datetime
+    image_count: int = 0
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+class ImageCollectionWithImages(ImageCollection):
+    images: List[Image] = []
 
     class Config:
         from_attributes = True

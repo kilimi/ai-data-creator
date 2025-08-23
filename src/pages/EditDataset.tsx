@@ -73,7 +73,7 @@ interface EditDatasetProps {
 }
 
 const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
-  const { id } = useParams<{ id: string }>();
+  const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -436,8 +436,12 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         description: 'Dataset and all associated data have been removed.',
       });
 
-      // Navigate back to datasets page
-      navigate('/datasets');
+      // Navigate back to the appropriate page
+      if (projectId) {
+        navigate(`/projects/${projectId}`);
+      } else {
+        navigate('/');
+      }
     } catch (error) {
       console.error('Error deleting dataset:', error);
       toast({
@@ -584,7 +588,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
               asChild 
               className="mr-2 text-gray-300 hover:text-white hover:bg-gray-800"
             >
-              <Link to={`/datasets/${id}`}>
+              <Link to={projectId ? `/projects/${projectId}/datasets/${id}` : `/datasets/${id}`}>
                 <ArrowLeft className="mr-1 h-4 w-4" /> Back
               </Link>
             </Button>

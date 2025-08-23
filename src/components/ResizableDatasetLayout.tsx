@@ -12,6 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 interface ResizableDatasetLayoutProps {
   layout: LayoutType;
   id: string;
+  projectId?: string;
   images: Image[];
   imageCollections?: ImageCollection[]; // NEW: for tabbed image system
   useTabbedImages?: boolean; // NEW: flag to enable tabbed images
@@ -42,6 +43,7 @@ interface ResizableDatasetLayoutProps {
 export function ResizableDatasetLayout({
   layout,
   id,
+  projectId,
   images,
   imageCollections,
   useTabbedImages = false,
@@ -87,6 +89,7 @@ export function ResizableDatasetLayout({
         {useTabbedImages && imageCollections ? (
           <TabbedImagesContent
             id={id}
+            projectId={projectId}
             imageCollections={imageCollections}
             imagesPerPage={imagesPerPage}
             imageSize={imageSize}
@@ -132,6 +135,7 @@ export function ResizableDatasetLayout({
       <div className="p-6">
         <AnnotationsContent
           id={id}
+          projectId={projectId}
           onShowAnnotationsChange={handleShowAnnotationsChange}
           onImportAnnotations={onImportAnnotations}
           className="h-full"

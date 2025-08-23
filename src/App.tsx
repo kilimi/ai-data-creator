@@ -30,6 +30,12 @@ const App = () => (
           <Route path="/projects/new/dataset" element={<CreateDataset />} />
           <Route path="/projects/:id" element={<DatasetDetail projectMode={true} />} />
           <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
+          <Route path="/projects/:projectId/datasets/:id" element={<Dataset />} />
+          <Route path="/projects/:projectId/datasets/:id/edit" element={<EditDataset />} />
+          <Route path="/projects/:projectId/datasets/:id/annotate" element={<AnnotationChoice />} />
+          <Route path="/projects/:projectId/datasets/:id/annotate/classification" element={<Classification />} />
+          <Route path="/projects/:projectId/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
+          {/* Keep legacy routes for backward compatibility */}
           <Route path="/datasets/:id" element={<Dataset />} />
           <Route path="/datasets/:id/edit" element={<EditDataset />} />
           <Route path="/datasets/:id/annotate" element={<AnnotationChoice />} />

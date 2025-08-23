@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
+import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { ClassColorPicker } from "@/components/ClassColorPicker";
 import { ClassColorOpacityPicker } from "@/components/ClassColorOpacityPicker";
 import { RenameClassDialog } from "./RenameClassDialog";
@@ -24,6 +25,7 @@ import { MergeClassesDialog } from "./MergeClassesDialog";
 
 interface AnnotationsContentProps {
   id: string;
+  projectId?: string;
   className?: string;
   onShowAnnotationsChange?: (show: boolean, annotations: AnnotationSample[], annotationFiles?: AnnotationFile[]) => void;
   onImportAnnotations?: (files: File[]) => void;
@@ -146,6 +148,7 @@ function getOrAssignClassColor(className: string, existingColors: { [className: 
 
 export function AnnotationsContent({ 
   id, 
+  projectId,
   className = "", 
   onShowAnnotationsChange,
   onImportAnnotations,
@@ -161,6 +164,7 @@ export function AnnotationsContent({
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [showAnnotationChoiceModal, setShowAnnotationChoiceModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingFromBackend, setIsLoadingFromBackend] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
@@ -3708,6 +3712,13 @@ export function AnnotationsContent({
             <Upload className="w-4 h-4 mr-2" />
             {isLoading ? "Importing..." : "Import Annotations"}
           </Button>
+          <Button 
+            className="bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={() => setShowAnnotationChoiceModal(true)}
+          >
+            <Brush className="w-4 h-4 mr-2" />
+            Annotate
+          </Button>
         </div>      </div>
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
@@ -4378,6 +4389,13 @@ export function AnnotationsContent({
         onOpenChange={setMergeDialogOpen}
         classStats={selectedAnnotationData?.classStats || []}
         onMerge={(sources, mergedName) => handleMergeClasses(selectedAnnotation!, sources, mergedName)}
+      />
+      
+      <AnnotationChoiceModal
+        isOpen={showAnnotationChoiceModal}
+        onOpenChange={setShowAnnotationChoiceModal}
+        datasetId={id}
+        projectId={projectId}
       />
     </div>
   );
