@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { 
   ArrowLeft, 
   Save, 
@@ -28,6 +29,7 @@ import {
   Check,
   X,
   Layers
+  ,ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
@@ -90,6 +92,18 @@ const ImageAnnotation = () => {
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
+  // Right sidebar UI: collapsible and resizable
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [rightWidth, setRightWidth] = useState(320); // px
+  const resizingRef = useRef(false);
+  const startXRef = useRef(0);
+  const startWidthRef = useRef(0);
+  // Left sidebar UI: collapsible and resizable
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftWidth, setLeftWidth] = useState(320);
+  const leftResizingRef = useRef(false);
+  const leftStartXRef = useRef(0);
+  const leftStartWidthRef = useRef(0);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -120,6 +134,172 @@ const ImageAnnotation = () => {
       console.error('Error loading global classes:', error);
     }
   };
+
+  // Resize handlers for right sidebar
+  const onMouseMoveResize = useCallback((e: MouseEvent) => {
+    if (!resizingRef.current) return;
+    const deltaX = e.clientX - startXRef.current;
+    const newWidth = Math.max(200, Math.min(800, startWidthRef.current - deltaX));
+    setRightWidth(newWidth);
+  }, []);
+
+  const onMouseUpResize = useCallback(() => {
+    resizingRef.current = false;
+    window.removeEventListener('mousemove', onMouseMoveResize);
+    window.removeEventListener('mouseup', onMouseUpResize);
+    // Notify that a panel resize/collapse finished so layout can be recomputed
+    try {
+      window.dispatchEvent(new Event('annotation-panel-resize-end'));
+    } catch (err) {
+      // ignore
+    }
+  }, [onMouseMoveResize]);
+
+  const startResize = (e: React.MouseEvent) => {
+    resizingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = rightWidth;
+    window.addEventListener('mousemove', onMouseMoveResize);
+    window.addEventListener('mouseup', onMouseUpResize);
+  };
+
+  // Left resize handlers
+  const onMouseMoveResizeLeft = useCallback((e: MouseEvent) => {
+    if (!leftResizingRef.current) return;
+    const deltaX = e.clientX - leftStartXRef.current;
+    const newWidth = Math.max(200, Math.min(800, leftStartWidthRef.current + deltaX));
+    setLeftWidth(newWidth);
+  }, []);
+
+  const onMouseUpResizeLeft = useCallback(() => {
+    leftResizingRef.current = false;
+    window.removeEventListener('mousemove', onMouseMoveResizeLeft);
+    window.removeEventListener('mouseup', onMouseUpResizeLeft);
+    // Notify that a panel resize/collapse finished so layout can be recomputed
+    try {
+      window.dispatchEvent(new Event('annotation-panel-resize-end'));
+    } catch (err) {
+      // ignore
+    }
+  }, [onMouseMoveResizeLeft]);
+
+  const startResizeLeft = (e: React.MouseEvent) => {
+    leftResizingRef.current = true;
+    leftStartXRef.current = e.clientX;
+    leftStartWidthRef.current = leftWidth;
+    window.addEventListener('mousemove', onMouseMoveResizeLeft);
+    window.addEventListener('mouseup', onMouseUpResizeLeft);
+  };
+
+  // Smooth zoom animation refs and helpers
+  const animFrameRef = useRef<number | null>(null);
+  const scaleRef = useRef<number>(imageScale);
+  const offsetRef = useRef<{ x: number; y: number }>(imageOffset);
+  const targetScaleRef = useRef<number | null>(null);
+
+  // Panning refs (middle mouse or Space + drag)
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const spacePressedRef = useRef(false);
+
+  useEffect(() => { scaleRef.current = imageScale; }, [imageScale]);
+  useEffect(() => { offsetRef.current = imageOffset; }, [imageOffset]);
+
+  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+
+  const stopAnimation = () => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    targetScaleRef.current = null;
+  };
+
+  const animateToScale = (finalScale: number, focalImagePoint: Point, focalScreenPoint: Point) => {
+    stopAnimation();
+    targetScaleRef.current = finalScale;
+
+    const step = () => {
+      const cur = scaleRef.current || 1;
+      const delta = finalScale - cur;
+      // interpolate with easing factor for smoothness
+      const next = Math.abs(delta) < 0.0001 ? finalScale : cur + delta * 0.28;
+
+      // compute new offset so the focal image coordinate stays under the focal screen point
+      const nextOffsetX = focalScreenPoint.x - focalImagePoint.x * next;
+      const nextOffsetY = focalScreenPoint.y - focalImagePoint.y * next;
+
+      // Apply new values
+      setImageScale(next);
+      setImageOffset({ x: nextOffsetX, y: nextOffsetY });
+
+      // Continue until close enough
+      if (Math.abs(finalScale - next) > 0.0005) {
+        animFrameRef.current = requestAnimationFrame(step);
+      } else {
+        // finalize
+        setImageScale(finalScale);
+        setImageOffset({ x: focalScreenPoint.x - focalImagePoint.x * finalScale, y: focalScreenPoint.y - focalImagePoint.y * finalScale });
+        stopAnimation();
+      }
+    };
+
+    animFrameRef.current = requestAnimationFrame(step);
+  };
+
+  
+
+  // Keyboard shortcuts: press number keys 1..9 to select corresponding class in the list
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ignore when typing in inputs
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+
+      if (/^[1-9]$/.test(e.key)) {
+        const idx = parseInt(e.key, 10) - 1;
+        if (idx >= 0 && idx < classes.length) {
+          setSelectedClass(classes[idx].id);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [classes]);
+
+  // Listen for Space key down/up to enable Space+drag panning
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        spacePressedRef.current = true;
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        spacePressedRef.current = false;
+      }
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
+
+  // Keyboard shortcut to toggle the right sidebar (']' key)
+  useEffect(() => {
+    const toggleHandler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === ']') {
+        setRightCollapsed(v => !v);
+      }
+    };
+    window.addEventListener('keydown', toggleHandler);
+    return () => window.removeEventListener('keydown', toggleHandler);
+  }, []);
 
   // Save global classes to localStorage
   const saveGlobalClasses = (classesToSave: AnnotationClass[]) => {
@@ -276,14 +456,35 @@ const ImageAnnotation = () => {
       if (savedAnnotations) {
         const parsedAnnotations = JSON.parse(savedAnnotations);
         setAnnotations(parsedAnnotations);
-        
-        // Don't reload classes when switching layers/images - they should be persistent
-        // Classes are only added when creating new annotations
-        
-        toast({
-          title: 'Annotations loaded',
-          description: `Loaded ${parsedAnnotations.length} saved annotations`,
+
+        // Recompute class counts from loaded annotations so the left classes
+        // reflect the actual annotations currently loaded in the image.
+        // Build updated classes list deterministically so we can persist it immediately
+        const countsByName: { [name: string]: number } = {};
+        parsedAnnotations.forEach((a: any) => {
+          countsByName[a.label] = (countsByName[a.label] || 0) + 1;
         });
+
+        // Start from existing classes and add any missing ones
+        const existing = (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [];
+        const merged: AnnotationClass[] = [...existing];
+        Object.keys(countsByName).forEach(name => {
+          if (!merged.find(c => c.name === name)) {
+            merged.push({
+              id: `class_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
+              name,
+              color: DEFAULT_COLORS[merged.length % DEFAULT_COLORS.length],
+              visible: true,
+              count: countsByName[name] || 0
+            });
+          }
+        });
+
+        // Update counts for merged classes
+        const updatedClasses = merged.map(c => ({ ...c, count: countsByName[c.name] || 0 }));
+        setClasses(updatedClasses);
+        saveGlobalClasses(updatedClasses);
+
       } else {
         // No saved annotations, clear current ones
         setAnnotations([]);
@@ -296,6 +497,51 @@ const ImageAnnotation = () => {
       setSelectedAnnotation(null);
     }
   };
+
+  // Global statistics across all saved annotation files (all images)
+  const [globalStats, setGlobalStats] = useState<{ [className: string]: number }>({});
+
+  const computeGlobalStats = useCallback(() => {
+    try {
+      const counts: { [name: string]: number } = {};
+
+      // Iterate over all known image names and pull saved annotations for each
+      allImageNames.forEach(name => {
+        const key = `annotations_${id}_${name}`;
+        const saved = localStorage.getItem(key);
+        if (!saved) return;
+        try {
+          const parsed = JSON.parse(saved) as AnnotationShape[];
+          parsed.forEach(a => {
+            counts[a.label] = (counts[a.label] || 0) + 1;
+          });
+        } catch (err) {
+          // ignore parse errors per file
+        }
+      });
+
+      setGlobalStats(counts);
+    } catch (err) {
+      console.error('Error computing global stats', err);
+      setGlobalStats({});
+    }
+  }, [allImageNames, id]);
+
+  // Recompute global stats whenever we have changes to class list, image list or storage updates
+  useEffect(() => {
+    computeGlobalStats();
+
+    const onStorage = (e: StorageEvent) => {
+      if (!e.key) return;
+      if (e.key.startsWith(`annotations_${id}_`)) {
+        computeGlobalStats();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [computeGlobalStats]);
+
+  const hasAnyAnnotations = Object.values(globalStats).reduce((s, v) => s + v, 0) > 0;
 
   // Convert screen coordinates to image coordinates
   const screenToImageCoords = useCallback((screenX: number, screenY: number): Point => {
@@ -314,6 +560,37 @@ const ImageAnnotation = () => {
     
     return { x: imageX, y: imageY };
   }, [imageScale, imageOffset]);
+
+  // Wheel handler for zooming (use Ctrl/Cmd + wheel to zoom) - placed after screenToImageCoords
+  useEffect(() => {
+    const container = containerRef.current || canvasRef.current;
+    if (!container) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+
+      const rect = (container as HTMLElement).getBoundingClientRect();
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+
+      // Convert screen point to image coordinates using current scale/offset
+      const imagePoint = screenToImageCoords(e.clientX, e.clientY);
+
+      const zoomIntensity = 0.0015;
+      const wheel = e.deltaY;
+      const factor = Math.exp(-wheel * zoomIntensity);
+
+      const minScale = 0.02;
+      const maxScale = 20;
+      const desired = clamp((scaleRef.current || imageScale) * factor, minScale, maxScale);
+
+      animateToScale(desired, imagePoint, { x: screenX, y: screenY });
+    };
+
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, [screenToImageCoords, imageScale]);
 
   // Convert image coordinates to screen coordinates
   const imageToScreenCoords = useCallback((imageX: number, imageY: number): Point => {
@@ -393,6 +670,14 @@ const ImageAnnotation = () => {
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
 
+  // If middle button, space, or Ctrl + left/right mouse is pressed, start panning
+  if (e.button === 1 || spacePressedRef.current || ((e.button === 0 || e.button === 2) && e.ctrlKey)) {
+      e.preventDefault();
+      isPanningRef.current = true;
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
     const imageCoords = screenToImageCoords(e.clientX, e.clientY);
 
     if (activeTool === 'select') {
@@ -431,6 +716,14 @@ const ImageAnnotation = () => {
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
+    // Handle panning (middle button or space+drag)
+    if (isPanningRef.current) {
+      const deltaX = e.clientX - panStartRef.current.x;
+      const deltaY = e.clientY - panStartRef.current.y;
+      setImageOffset(prev => ({ x: prev.x + deltaX, y: prev.y + deltaY }));
+      panStartRef.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
 
     if (isDragging) {
       const deltaX = e.clientX - dragStart.x;
@@ -486,6 +779,13 @@ const ImageAnnotation = () => {
   }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords]);
 
   const handleCanvasMouseUp = useCallback(() => {
+    if (isPanningRef.current) {
+      isPanningRef.current = false;
+      // notify layout recompute
+      try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {}
+      return;
+    }
+
     if (isDragging) {
       setIsDragging(false);
     } else if (isMovingAnnotation) {
@@ -503,7 +803,13 @@ const ImageAnnotation = () => {
   }, [isDrawing, activeTool, currentPath, createAnnotation]);
 
   const handleCanvasRightClick = useCallback((e: React.MouseEvent) => {
-    e.preventDefault(); // Prevent context menu
+    // If Ctrl+right was used for panning, don't show context menu or complete polygon
+    if ((e as unknown as MouseEvent).ctrlKey) {
+      e.preventDefault();
+      return;
+    }
+
+    e.preventDefault(); // Prevent context menu for normal right-click handling
     if (isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
       // Complete polygon on right-click
       createAnnotation('polygon', currentPath);
@@ -767,6 +1073,31 @@ const ImageAnnotation = () => {
     redrawCanvas();
   };
 
+    // Recompute canvas and image scale when panels change or image changes so aspect ratio stays correct
+    useEffect(() => {
+      // If image already loaded, recompute layout to maintain aspect ratio when side panels are hidden/resized
+      if (imageRef.current) {
+        // small timeout to let layout settle after panel resize/collapse
+        const t = setTimeout(() => {
+          handleImageLoad();
+        }, 10);
+        return () => clearTimeout(t);
+      }
+      return undefined;
+      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth, currentImage, displayImage]);
+
+    // Listen for explicit resize-end notifications from resize handlers and toggles
+    useEffect(() => {
+      const onResizeEnd = () => {
+        // small timeout to allow DOM to settle
+        setTimeout(() => {
+          handleImageLoad();
+        }, 10);
+      };
+      window.addEventListener('annotation-panel-resize-end', onResizeEnd as EventListener);
+      return () => window.removeEventListener('annotation-panel-resize-end', onResizeEnd as EventListener);
+    }, [handleImageLoad]);
+
   const saveAnnotations = async () => {
     if (!currentImage || annotations.length === 0) return;
 
@@ -849,6 +1180,86 @@ const ImageAnnotation = () => {
     }
   };
 
+  // Save all annotations from all images into a single COCO file
+  const saveAllAnnotations = async () => {
+    try {
+      // Build images array and annotations array by reading per-image localStorage
+      const imagesArr: any[] = [];
+      const annotationsArr: any[] = [];
+      const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
+
+      let annId = 1;
+      let imageId = 1;
+
+      for (const name of allImageNames) {
+        const storageKey = `annotations_${id}_${name}`;
+        const saved = localStorage.getItem(storageKey);
+        if (!saved) {
+          // still add image entry to keep indexing consistent
+          imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+          imageId++;
+          continue;
+        }
+
+        let parsed: AnnotationShape[] = [];
+        try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
+
+        imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+
+        parsed.forEach((ann) => {
+          if (ann.type === 'polygon') {
+            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
+            const xs = ann.points.map(p => p.x);
+            const ys = ann.points.map(p => p.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const maxX = Math.max(...xs);
+            const maxY = Math.max(...ys);
+            const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+
+            annotationsArr.push({
+              id: annId++,
+              image_id: imageId,
+              category_id: categoryId,
+              segmentation: [segmentation],
+              area: (maxX - minX) * (maxY - minY),
+              bbox: [minX, minY, maxX - minX, maxY - minY],
+              iscrowd: 0
+            });
+          }
+        });
+
+        imageId++;
+      }
+
+      const coco = {
+        info: {
+          description: `All annotations for dataset ${id}`,
+          version: '1.0',
+          year: new Date().getFullYear(),
+          date_created: new Date().toISOString()
+        },
+        images: imagesArr,
+        categories: categoryMap,
+        annotations: annotationsArr
+      };
+
+      const dataStr = JSON.stringify(coco, null, 2);
+      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+      const fileName = `annotations_all_${id}.json`;
+
+      const link = document.createElement('a');
+      link.setAttribute('href', dataUri);
+      link.setAttribute('download', fileName);
+      link.click();
+
+      toast({ title: 'Saved', description: `Exported ${annotationsArr.length} annotations from ${imagesArr.length} images` });
+    } catch (err) {
+      console.error('Error exporting all annotations', err);
+      toast({ title: 'Export failed', description: 'Failed to export all annotations', variant: 'destructive' });
+    }
+  };
+
   const handleBack = () => {
     const backUrl = projectId 
       ? `/projects/${projectId}/datasets/${id}` 
@@ -921,18 +1332,30 @@ const ImageAnnotation = () => {
             </p>
           </div>
         </div>
-        
+
         <div className="flex items-center gap-2">
-          <Button onClick={saveAnnotations} disabled={annotations.length === 0}>
+          <Button onClick={saveAllAnnotations} disabled={!hasAnyAnnotations}>
             <Save className="w-4 h-4 mr-2" />
-            Save
+            Save All
           </Button>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar - Tools and Classes */}
-        <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
+  <div className="flex flex-1 overflow-hidden relative">
+        {/* Left Sidebar - Tools and Classes (collapsible & resizable) */}
+        <div
+          className="bg-gray-800 border-r border-gray-700 flex flex-col"
+          style={{ width: leftCollapsed ? 0 : leftWidth }}
+        >
+          <div className="p-2 border-b border-gray-700 flex items-center justify-between">
+            <div className="text-sm font-medium">Tools</div>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setLeftCollapsed(v => !v)}>
+                {leftCollapsed ? <ChevronRight className="w-4 h-4"/> : <ChevronLeft className="w-4 h-4"/>}
+              </Button>
+            </div>
+          </div>
+          {/* Tools section moved inside content below */}
           {/* Tools */}
           <div className="p-4 border-b border-gray-700">
             <h3 className="text-sm font-medium mb-3">Tools</h3>
@@ -956,40 +1379,7 @@ const ImageAnnotation = () => {
             </div>
           </div>
 
-          {/* Image Layers */}
-          <div className="p-4 border-b border-gray-700">
-            <h3 className="text-sm font-medium mb-3 flex items-center">
-              <Layers className="w-4 h-4 mr-2" />
-              Image Layers
-            </h3>
-            
-            <div className="space-y-2">
-              <div>
-                <Label htmlFor="display-layer" className="text-xs text-gray-400">
-                  Layer:
-                </Label>
-                <Select value={displayLayer || ''} onValueChange={handleLayerChange}>
-                  <SelectTrigger className="w-full mt-1">
-                    <SelectValue placeholder="Select layer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {imageCollections.map((collection) => (
-                      <SelectItem key={collection.id} value={collection.id}>
-                        {collection.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {!displayImage && currentImageName && displayLayer && (
-                <div className="text-xs text-yellow-400 bg-yellow-900/20 p-2 rounded">
-                  <div className="font-medium">Image not found</div>
-                  <div>Image "{currentImageName}" does not exist in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}</div>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Left: tools and classes only (Image Layers moved to bottom) */}
 
           {/* Classes */}
           <div className="flex-1 flex flex-col min-h-0">
@@ -1040,34 +1430,67 @@ const ImageAnnotation = () => {
 
             <ScrollArea className="flex-1">
               <div className="p-4 space-y-2">
-                {classes.map(classObj => (
-                  <div
-                    key={classObj.id}
-                    className={`p-2 rounded border cursor-pointer transition-colors ${
-                      selectedClass === classObj.id 
-                        ? 'border-blue-500 bg-blue-500/20' 
-                        : 'border-gray-600 hover:border-gray-500'
-                    }`}
-                    onClick={() => setSelectedClass(classObj.id)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div 
-                          className="w-4 h-4 rounded"
-                          style={{ backgroundColor: classObj.color }}
-                        />
-                        <span className="text-sm">{classObj.name}</span>
+                  {classes.map((classObj, idx) => (
+                    <div
+                      key={classObj.id}
+                      className={`p-2 rounded border cursor-pointer transition-colors ${
+                        selectedClass === classObj.id 
+                          ? 'border-blue-500 bg-blue-500/20' 
+                          : 'border-gray-600 hover:border-gray-500'
+                      }`}
+                      onClick={() => setSelectedClass(classObj.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-4 h-4 rounded"
+                            style={{ backgroundColor: classObj.color }}
+                          />
+                          <span className="text-sm">{classObj.name}</span>
+                        </div>
+
+                        {/* Show a small numeric shortcut hint (1..9) instead of per-class annotation counts */}
+                        {idx < 9 ? (
+                          <div className="text-xs text-gray-400 px-2 py-0.5 rounded border border-gray-700">
+                            {idx + 1}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 px-2 py-0.5 rounded border border-gray-700">
+                            {idx + 1}
+                          </div>
+                        )}
                       </div>
-                      <Badge variant="secondary" className="text-xs">
-                        {classObj.count}
-                      </Badge>
                     </div>
-                  </div>
-                ))}
+                  ))}
               </div>
             </ScrollArea>
           </div>
+          {/* Resize handle at the right edge of left sidebar */}
+          {!leftCollapsed && (
+            <div
+              className="absolute left-[--dummy] top-0 bottom-0 w-2 cursor-col-resize"
+              style={{ left: `calc(${leftWidth}px - 2px)` }}
+              onMouseDown={startResizeLeft}
+            />
+          )}
         </div>
+
+        {/* Floating expand button when left sidebar is collapsed */}
+        {leftCollapsed && (
+          <div className="absolute left-2 top-1/2 -translate-y-1/2 z-50">
+            <Button
+              size="sm"
+              onClick={() => {
+                setLeftCollapsed(false);
+                setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
+              }}
+              aria-label="Expand left panel"
+              className="bg-blue-600 text-white hover:bg-blue-700 shadow-lg rounded-full p-1"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
 
         {/* Main Canvas Area */}
         <div className="flex-1 flex flex-col">
@@ -1129,6 +1552,20 @@ const ImageAnnotation = () => {
                 </div>
               </div>
             )}
+
+            {/* Zoom & Pan hint overlay (GUI) */}
+            <div className="absolute top-4 right-4 bg-black/70 text-white px-3 py-2 rounded-lg text-xs z-20 backdrop-blur-sm max-w-[180px]">
+              <div className="flex items-center gap-2 mb-1">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-90">
+                  <path d="M21 21l-4.35-4.35" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <circle cx="11" cy="11" r="6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <div className="font-medium text-sm">Zoom & Pan</div>
+              </div>
+              <div className="text-gray-200 text-[11px]">Zoom: Hold <span className="font-semibold">Ctrl</span> (or <span className="font-semibold">⌘</span>) + scroll</div>
+              <div className="text-gray-200 text-[11px]">Pan: Middle-button drag, hold <span className="font-semibold">Space</span> + drag, or <span className="font-semibold">Ctrl</span> + left/right drag</div>
+              <div className="text-gray-300 text-[10px] mt-1">Tip: scroll over area you want to zoom into</div>
+            </div>
           </div>
 
           {/* Image Navigation */}
@@ -1181,9 +1618,11 @@ const ImageAnnotation = () => {
                       ))}
                     </SelectContent>
                   </Select>
-                  {!displayImage && currentImageName && (
+
+                  {/* If image not found in the selected layer show a small warning (moved from left panel) */}
+                  {!displayImage && currentImageName && displayLayer && (
                     <span className="text-xs text-yellow-400">
-                      Image not available in this layer
+                      Image "{currentImageName}" not available in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
                     </span>
                   )}
                 </div>
@@ -1192,74 +1631,149 @@ const ImageAnnotation = () => {
           </div>
         </div>
 
-        {/* Right Sidebar - Annotations List */}
-        <div className="w-80 bg-gray-800 border-l border-gray-700 flex flex-col">
-          <div className="p-4 border-b border-gray-700">
-            <h3 className="text-sm font-medium">Annotations ({annotations.length})</h3>
-          </div>
-          
-          <ScrollArea className="flex-1">
-            <div className="p-4 space-y-2">
-              {annotations.map((annotation, index) => (
-                <Card 
-                  key={annotation.id}
-                  className={`p-3 cursor-pointer transition-colors ${
-                    selectedAnnotation === annotation.id 
-                      ? 'border-blue-500 bg-blue-500/20' 
-                      : 'border-gray-600 hover:border-gray-500'
-                  }`}
-                  onClick={() => setSelectedAnnotation(annotation.id)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="w-3 h-3 rounded"
-                        style={{ backgroundColor: annotation.color }}
-                      />
-                      <div>
-                        <p className="text-sm font-medium">{annotation.label}</p>
-                        <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setAnnotations(prev => prev.map(a => 
-                            a.id === annotation.id 
-                              ? { ...a, visible: !a.visible }
-                              : a
-                          ));
-                        }}
-                      >
-                        {annotation.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteAnnotation(annotation.id);
-                        }}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-              
-              {annotations.length === 0 && (
-                <p className="text-center text-gray-500 py-8">
-                  No annotations yet.<br />
-                  Select a class and start drawing!
-                </p>
-              )}
+  {/* Right Sidebar - Annotations (tabs: Annotations | Statistics) - collapsible & resizable */}
+        <div
+          className="bg-gray-800 border-l border-gray-700 flex flex-col transition-all"
+          style={{ width: rightCollapsed ? 0 : rightWidth }}
+        >
+          <Tabs value={undefined} className="h-full" defaultValue="annotations">
+            <div className="p-2 border-b border-gray-700 flex items-center justify-between">
+              <TabsList className="grid grid-cols-2 flex-1">
+                <TabsTrigger value="annotations">Annotations ({annotations.length})</TabsTrigger>
+                <TabsTrigger value="statistics">Statistics</TabsTrigger>
+              </TabsList>
+              <div className="flex items-center gap-2 ml-2">
+                <Button size="sm" variant="ghost" onClick={() => setRightCollapsed(v => !v)}>
+                  {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
+                </Button>
+              </div>
             </div>
-          </ScrollArea>
+
+            <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0">
+              <ScrollArea className="flex-1">
+                <div className="p-4 space-y-2">
+                  {annotations.map((annotation) => (
+                    <Card 
+                      key={annotation.id}
+                      className={`p-3 cursor-pointer transition-colors ${
+                        selectedAnnotation === annotation.id 
+                          ? 'border-blue-500 bg-blue-500/20' 
+                          : 'border-gray-600 hover:border-gray-500'
+                      }`}
+                      onClick={() => setSelectedAnnotation(annotation.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-3 h-3 rounded"
+                            style={{ backgroundColor: annotation.color }}
+                          />
+                          <div>
+                            <p className="text-sm font-medium">{annotation.label}</p>
+                            <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAnnotations(prev => prev.map(a => 
+                                a.id === annotation.id 
+                                  ? { ...a, visible: !a.visible }
+                                  : a
+                              ));
+                            }}
+                          >
+                            {annotation.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteAnnotation(annotation.id);
+                            }}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+
+                  {annotations.length === 0 && (
+                    <p className="text-center text-gray-500 py-8">
+                      No annotations yet.<br />
+                      Select a class and start drawing!
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="statistics" className="flex-1 overflow-auto p-4">
+              <h4 className="text-sm font-medium mb-3">Class statistics (all images)</h4>
+              <div className="space-y-2">
+                {(() => {
+                  const total = Object.values(globalStats).reduce((s, v) => s + v, 0);
+                  if (classes.length === 0) {
+                    return <p className="text-xs text-gray-500">No classes defined yet</p>;
+                  }
+
+                  return (
+                    <div className="space-y-2">
+                      <div className="text-xs text-gray-400 mb-2">Total annotations across all images: <span className="text-sm text-gray-100 font-medium">{total}</span></div>
+                      {classes.map(c => {
+                        const count = globalStats[c.name] || 0;
+                        const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
+                        return (
+                          <div key={c.id} className="flex items-center justify-between p-2 border rounded border-gray-700">
+                            <div className="flex items-center gap-2">
+                              <div className="w-4 h-4 rounded" style={{ backgroundColor: c.color }} />
+                              <div>
+                                <div className="text-sm font-medium">{c.name}</div>
+                                <div className="text-xs text-gray-400">{c.visible ? 'Visible' : 'Hidden'}</div>
+                              </div>
+                            </div>
+                            <div className="text-sm text-gray-200">{count} <span className="text-xs text-gray-400">({pct}%)</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {/* Divider / handle for resizing */}
+          {!rightCollapsed && (
+            <div
+              className="absolute right-[--dummy] top-0 bottom-0 w-2 cursor-col-resize"
+              style={{ right: `calc(-2px)` }}
+              onMouseDown={startResize}
+            />
+          )}
         </div>
+
+        {/* Floating expand button when sidebar is collapsed */}
+        {rightCollapsed && (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 z-50">
+              <Button
+                size="sm"
+                onClick={() => {
+                  setRightCollapsed(false);
+                  setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
+                }}
+                aria-label="Expand right panel"
+                className="bg-blue-600 text-white hover:bg-blue-700 shadow-lg rounded-full p-1"
+              >
+                <ChevronLeft className="w-4 h-4 rotate-180" />
+              </Button>
+          </div>
+        )}
       </div>
     </div>
   );
