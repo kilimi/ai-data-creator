@@ -36,7 +36,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Image, ImageCollection } from '@/types';
 
 // Annotation types
-export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon';
+export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'auto-segment';
 
 export interface Point {
   x: number;
@@ -77,6 +77,8 @@ const ImageAnnotation = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Help popover visibility for zoom/pan instructions
+  const [showHelp, setShowHelp] = useState(false);
 
   // State
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
@@ -118,6 +120,101 @@ const ImageAnnotation = () => {
   // Class management
   const [newClassName, setNewClassName] = useState('');
   const [isAddingClass, setIsAddingClass] = useState(false);
+  // Auto-segment preview state
+  const [autoSegmentPreview, setAutoSegmentPreview] = useState<{ polygons: Point[][]; maskDataUrl?: string; imageName?: string } | null>(null);
+
+  // Start auto-segmentation by calling backend /segment
+  const startAutoSegment = useCallback(async (imgPoint: Point) => {
+    if (!displayImage && !currentImage) return;
+    const img = (displayImage || currentImage)!;
+
+    try {
+      // Build payload. Prefer sending imageUrl when available so backend can fetch directly.
+      // Creating a data URL by drawing the image into a canvas will fail if the image
+      // is cross-origin without CORS headers (tainted canvas). Only produce imageB64
+      // when there is no image URL or when imageRef is present and likely same-origin.
+      let dataUrl: string | null = null;
+
+      const hasImageUrl = Boolean(img.url);
+      if (!hasImageUrl && imageRef.current) {
+        // No accessible URL — create a data URL from the in-memory image (may still fail if cross-origin)
+        try {
+          const tmp = document.createElement('canvas');
+          tmp.width = imageRef.current.naturalWidth;
+          tmp.height = imageRef.current.naturalHeight;
+          const ctx = tmp.getContext('2d');
+          if (ctx) ctx.drawImage(imageRef.current, 0, 0);
+          dataUrl = tmp.toDataURL('image/png');
+        } catch (e) {
+          console.warn('Could not create data URL from canvas (possibly tainted):', e);
+          dataUrl = null;
+        }
+      }
+
+      const body: any = {
+        imageUrl: img.url || undefined,
+        imageB64: dataUrl || undefined,
+        point: { x: imgPoint.x, y: imgPoint.y },
+        prompt: classes.find(c => c.id === selectedClass)?.name || undefined,
+        model: 'sam_v2'
+      };
+
+  // Use configured API base URL so calls go to the backend proxy (not the dev server)
+  const apiBase = (await import('@/config/api')).API_CONFIG.baseUrl;
+  const res = await fetch(`${apiBase}/segment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) throw new Error('Segmentation failed');
+      const json = await res.json();
+      const polygons: Point[][] = (json.polygons || []).map((poly: number[][]) => poly.map((p: number[]) => ({ x: p[0], y: p[1] })));
+
+      setAutoSegmentPreview({ polygons, maskDataUrl: json.maskBase64, imageName: img.fileName });
+    } catch (err) {
+      console.error('Auto-segment failed', err);
+      toast({ title: 'Auto-segment failed', description: String(err), variant: 'destructive' });
+    }
+  }, [displayImage, currentImage, classes, selectedClass, toast]);
+
+  const acceptAutoSegment = () => {
+    if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
+    // Create an annotation per polygon (use selected class color/name)
+    const classObj = classes.find(c => c.id === selectedClass) || classes[0];
+    if (!classObj) {
+      toast({ title: 'No class selected', description: 'Please select a class before accepting auto segment', variant: 'destructive' });
+      return;
+    }
+
+    const newAnns: AnnotationShape[] = autoSegmentPreview.polygons.map(poly => ({
+      id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
+      type: 'polygon',
+      points: poly,
+      label: classObj.name,
+      color: classObj.color,
+      visible: true
+    }));
+
+    setAnnotations(prev => {
+      const updated = [...prev, ...newAnns];
+      const storageKey = `annotations_${id}_${currentImageName}`;
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+      return updated;
+    });
+
+    // update counts
+    setClasses(prev => {
+      const updated = prev.map(c => c.id === classObj.id ? { ...c, count: c.count + autoSegmentPreview.polygons.length } : c);
+      saveGlobalClasses(updated);
+      return updated;
+    });
+
+    setAutoSegmentPreview(null);
+    toast({ title: 'Auto-segment accepted', description: `Created ${newAnns.length} annotations` });
+  };
+
+  const cancelAutoSegment = () => setAutoSegmentPreview(null);
   const [editingClass, setEditingClass] = useState<string | null>(null);
   const [editingClassName, setEditingClassName] = useState('');
 
@@ -679,6 +776,15 @@ const ImageAnnotation = () => {
     }
 
     const imageCoords = screenToImageCoords(e.clientX, e.clientY);
+
+    // If Auto tool is active, trigger backend segmentation for the clicked image point
+    if (activeTool === 'auto-segment') {
+      // don't start auto-seg while drawing or while panning
+      if (!isDrawing && !isPanningRef.current) {
+        startAutoSegment(imageCoords);
+      }
+      return;
+    }
 
     if (activeTool === 'select') {
       // Check if clicking on existing annotation
@@ -1333,11 +1439,36 @@ const ImageAnnotation = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative">
           <Button onClick={saveAllAnnotations} disabled={!hasAnyAnnotations}>
             <Save className="w-4 h-4 mr-2" />
             Save All
           </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowHelp(v => !v)}
+            aria-label="Zoom & Pan help"
+            title="Zoom & Pan help"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </Button>
+
+          {showHelp && (
+            <div className="absolute right-0 top-full mt-2 z-50 w-[280px]">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Zoom & Pan</CardTitle>
+                </CardHeader>
+                <CardContent className="text-xs text-gray-200">
+                  <div className="mb-1"><strong>Zoom</strong>: Hold <kbd className="px-1 bg-black/20 rounded">Ctrl</kbd> (or <kbd className="px-1 bg-black/20 rounded">⌘</kbd>) + scroll</div>
+                  <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-black/20 rounded">Space</kbd> + drag, or <strong>Ctrl</strong> + left/right drag</div>
+                  <div className="text-xs text-gray-400 mt-1">Tip: scroll over area you want to zoom into</div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       </header>
 
@@ -1375,6 +1506,14 @@ const ImageAnnotation = () => {
               >
                 <Square className="w-4 h-4 mr-1" />
                 Polygon
+              </Button>
+              <Button
+                variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setActiveTool('auto-segment')}
+              >
+                <Download className="w-4 h-4 mr-1" />
+                Auto
               </Button>
             </div>
           </div>
@@ -1506,6 +1645,7 @@ const ImageAnnotation = () => {
                   alt={(displayImage || currentImage)?.fileName || 'Current image'}
                   className="absolute opacity-0"
                   onLoad={handleImageLoad}
+                  crossOrigin="anonymous"
                 />
                 <canvas
                   ref={canvasRef}
@@ -1553,19 +1693,34 @@ const ImageAnnotation = () => {
               </div>
             )}
 
-            {/* Zoom & Pan hint overlay (GUI) */}
-            <div className="absolute top-4 right-4 bg-black/70 text-white px-3 py-2 rounded-lg text-xs z-20 backdrop-blur-sm max-w-[180px]">
-              <div className="flex items-center gap-2 mb-1">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="opacity-90">
-                  <path d="M21 21l-4.35-4.35" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  <circle cx="11" cy="11" r="6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            {/* Auto-segment preview overlay with accept/cancel controls */}
+            {autoSegmentPreview && (
+              <div className="absolute inset-0 pointer-events-none">
+                {/* show mask image if available */}
+                {autoSegmentPreview.maskDataUrl && (
+                  <img src={autoSegmentPreview.maskDataUrl} alt="mask preview" className="absolute inset-0 w-full h-full object-contain opacity-60 pointer-events-none" />
+                )}
+
+                {/* draw polygon outlines on top using an SVG overlay */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                  {autoSegmentPreview.polygons.map((poly, i) => (
+                    <polyline
+                      key={i}
+                      points={poly.map(p => `${(p.x * imageScale + imageOffset.x).toFixed(2)},${(p.y * imageScale + imageOffset.y).toFixed(2)}`).join(' ')}
+                      fill="none"
+                      stroke="#00FFAA"
+                      strokeWidth={2}
+                    />
+                  ))}
                 </svg>
-                <div className="font-medium text-sm">Zoom & Pan</div>
+
+                {/* Controls - accept/cancel */}
+                <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex gap-2">
+                  <Button size="sm" onClick={acceptAutoSegment}>Accept</Button>
+                  <Button size="sm" variant="outline" onClick={cancelAutoSegment}>Cancel</Button>
+                </div>
               </div>
-              <div className="text-gray-200 text-[11px]">Zoom: Hold <span className="font-semibold">Ctrl</span> (or <span className="font-semibold">⌘</span>) + scroll</div>
-              <div className="text-gray-200 text-[11px]">Pan: Middle-button drag, hold <span className="font-semibold">Space</span> + drag, or <span className="font-semibold">Ctrl</span> + left/right drag</div>
-              <div className="text-gray-300 text-[10px] mt-1">Tip: scroll over area you want to zoom into</div>
-            </div>
+            )}
           </div>
 
           {/* Image Navigation */}

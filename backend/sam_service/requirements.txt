@@ -1,0 +1,9 @@
+flask
+pillow
+numpy<2
+opencv-python-headless
+gunicorn
+requests
+# Install the official Segment Anything package (builds SAM model API)
+segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
+httpx
