@@ -208,50 +208,47 @@ async def upload_images_to_collection(
             
         # Extract just the filename, not the full path (for folder uploads)
         clean_filename = os.path.basename(file.filename)
-        file_path = dataset_dir / clean_filename
+        
+        # Check if file already exists on disk (across all collections)
+        original_path = dataset_dir / clean_filename
+        final_filename = clean_filename
+        counter = 1
+        
+        # Generate unique filename if file already exists on disk
+        while original_path.exists():
+            name, ext = os.path.splitext(clean_filename)
+            final_filename = f"{name}_{counter}{ext}"
+            original_path = dataset_dir / final_filename
+            counter += 1
+        
+        file_path = original_path
         
         try:
             contents = await file.read()
             
-            # Check if image with same filename already exists in THIS collection
-            existing_image = db.query(Image).filter(
-                Image.dataset_id == dataset_id,
-                Image.collection_id == collection_id,
-                Image.file_name == clean_filename
-            ).first()
-            
-            # Write the file (overwrite if exists)
+            # Write the file with unique name
             with open(file_path, 'wb') as f:
                 f.write(contents)
             
-            # Update URL to use the new structure
-            relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{clean_filename}"
+            # Update URL to use the new structure with the final filename
+            relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{final_filename}"
             
-            if existing_image:
-                # Update existing image record in this collection
-                existing_image.file_size = len(contents)
-                existing_image.url = relative_url
-                existing_image.thumbnail_url = relative_url
-                existing_image.uploaded_at = datetime.utcnow()
-                uploaded_images.append(existing_image)
-                print(f"Updating existing image in collection {collection_id}: {clean_filename}")
-            else:
-                # Create new image record for this collection (even if same filename exists in other collections)
-                image = Image(
-                    dataset_id=dataset_id,
-                    collection_id=collection_id,  # Assign to specific collection
-                    file_name=clean_filename,
-                    file_size=len(contents),
-                    width=0,  # TODO: Extract actual dimensions
-                    height=0,  # TODO: Extract actual dimensions
-                    url=relative_url,
-                    thumbnail_url=relative_url,
-                    uploaded_at=datetime.utcnow()
-                )
-                
-                db.add(image)
-                uploaded_images.append(image)
-                print(f"Adding new image to collection {collection_id}: {clean_filename}")
+            # Always create new image record since we generate unique filenames
+            image = Image(
+                dataset_id=dataset_id,
+                collection_id=collection_id,  # Assign to specific collection
+                file_name=final_filename,  # Use the unique filename
+                file_size=len(contents),
+                width=0,  # TODO: Extract actual dimensions
+                height=0,  # TODO: Extract actual dimensions
+                url=relative_url,
+                thumbnail_url=relative_url,
+                uploaded_at=datetime.utcnow()
+            )
+            
+            db.add(image)
+            uploaded_images.append(image)
+            print(f"Adding new image to collection {collection_id}: {final_filename}")
                 
         except Exception as e:
             print(f"Error uploading file {file.filename}: {e}")
