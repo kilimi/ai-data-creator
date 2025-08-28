@@ -166,8 +166,48 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   }, [id, toast]);
 
   const handleImageUpload = (files: File[]) => {
-    const newImages = files.map(file => {
-      const imageUrl = URL.createObjectURL(file);
+    const newImages: ImageType[] = [];
+
+    const tifToPng = async (file: File): Promise<string | null> => {
+      // try dynamic import of utif; fallback to null if not available
+      try {
+  // Use global UTIF loaded from CDN (index.html). If it's missing, skip conversion.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const globalAny: any = window as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const UTIF = globalAny.UTIF as any;
+  if (!UTIF) return null;
+        const arrayBuffer = await file.arrayBuffer();
+        const ifds = UTIF.decode(arrayBuffer);
+        if (!ifds || ifds.length === 0) return null;
+        UTIF.decodeImage(arrayBuffer, ifds[0]);
+        const rgba = UTIF.toRGBA8(ifds[0]);
+        const width = ifds[0].width;
+        const height = ifds[0].height;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        const imageData = new ImageData(new Uint8ClampedArray(rgba), width, height);
+        ctx.putImageData(imageData, 0, 0);
+        return canvas.toDataURL('image/png');
+      } catch (e) {
+        // utif not available or decode failed
+        console.warn('TIFF conversion failed or utif not installed:', e);
+        return null;
+      }
+    };
+
+    const buildImageObject = async (file: File) => {
+      let imageUrl = URL.createObjectURL(file);
+      const lower = file.name.toLowerCase();
+      if (file.type === 'image/tiff' || lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+        const converted = await tifToPng(file);
+        if (converted) imageUrl = converted;
+      }
+
       return {
         id: Math.random().toString(36).substring(2, 11),
         datasetId: id || "",
@@ -180,9 +220,18 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         uploadedAt: new Date().toISOString(),
         annotationsCount: 0,
       } as ImageType;
-    });
+    };
+
+    // build images in sequence to avoid blocking too many conversions in parallel
+    (async () => {
+      for (const file of files) {
+        const imgObj = await buildImageObject(file);
+        newImages.push(imgObj);
+        setImages(prev => [...prev, imgObj]);
+      }
+    })();
     
-    setImages(prevImages => [...prevImages, ...newImages]);
+  // images are appended asynchronously above; no-op here
     
     if (dataset) {
       setDataset({

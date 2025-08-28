@@ -512,10 +512,10 @@ export default function Dataset() {
       // Update the images state with all uploaded images
       if (allUploadedImages.length > 0) {
         setImages(prevImages => {
-          // For overwritten images, we need to update existing ones and add new ones
-          const existingImages = prevImages.filter(img => 
-            !allUploadedImages.some(newImg => newImg.fileName === img.fileName)
-          );
+          // Deduplicate by image id returned from backend. Do not remove images with the same filename
+          // that belong to other collections.
+          const uploadedIds = new Set(allUploadedImages.map(i => String(i.id)));
+          const existingImages = prevImages.filter(img => !uploadedIds.has(String(img.id)));
           return [...existingImages, ...allUploadedImages];
         });
       }

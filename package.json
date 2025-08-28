@@ -64,6 +64,13 @@
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.3",
     "zod": "^3.23.8"
+  ,
+    "utif": "^3.0.0"
+  },
+  "dependenciesMeta": {
+    "utif": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",

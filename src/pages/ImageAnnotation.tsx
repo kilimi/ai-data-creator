@@ -87,6 +87,7 @@ const ImageAnnotation = () => {
   const [displayLayer, setDisplayLayer] = useState<string>('');
   const [currentImage, setCurrentImage] = useState<Image | null>(null);
   const [displayImage, setDisplayImage] = useState<Image | null>(null);
+  const [noCorrespondingImage, setNoCorrespondingImage] = useState(false);
   const [allImageNames, setAllImageNames] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTool, setActiveTool] = useState<AnnotationTool>('polygon');
@@ -122,6 +123,9 @@ const ImageAnnotation = () => {
   const [isAddingClass, setIsAddingClass] = useState(false);
   // Auto-segment preview state
   const [autoSegmentPreview, setAutoSegmentPreview] = useState<{ polygons: Point[][]; maskDataUrl?: string; imageName?: string } | null>(null);
+  // Allow editing label for auto-segmented annotations before accepting
+  const [autoSegmentLabel, setAutoSegmentLabel] = useState<string>('');
+  const [autoSegmentClassId, setAutoSegmentClassId] = useState<string | null>(null);
 
   // Start auto-segmentation by calling backend /segment
   const startAutoSegment = useCallback(async (imgPoint: Point) => {
@@ -171,7 +175,11 @@ const ImageAnnotation = () => {
       const json = await res.json();
       const polygons: Point[][] = (json.polygons || []).map((poly: number[][]) => poly.map((p: number[]) => ({ x: p[0], y: p[1] })));
 
-      setAutoSegmentPreview({ polygons, maskDataUrl: json.maskBase64, imageName: img.fileName });
+  // initialize editable label/class for preview: prefer selected class
+  const preferredClass = classes.find(c => c.id === selectedClass) || classes[0] || null;
+  setAutoSegmentPreview({ polygons, maskDataUrl: json.maskBase64, imageName: img.fileName });
+  setAutoSegmentLabel(preferredClass ? preferredClass.name : '');
+  setAutoSegmentClassId(preferredClass ? preferredClass.id : null);
     } catch (err) {
       console.error('Auto-segment failed', err);
       toast({ title: 'Auto-segment failed', description: String(err), variant: 'destructive' });
@@ -180,10 +188,14 @@ const ImageAnnotation = () => {
 
   const acceptAutoSegment = () => {
     if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
-    // Create an annotation per polygon (use selected class color/name)
-    const classObj = classes.find(c => c.id === selectedClass) || classes[0];
+    // Require selecting an existing class id for auto-seg — do not auto-create classes here
+    if (!autoSegmentClassId) {
+      toast({ title: 'No class selected', description: 'Please select a class for auto-segmented annotations', variant: 'destructive' });
+      return;
+    }
+    const classObj = classes.find(c => c.id === autoSegmentClassId) || null;
     if (!classObj) {
-      toast({ title: 'No class selected', description: 'Please select a class before accepting auto segment', variant: 'destructive' });
+      toast({ title: 'Invalid class', description: 'Selected class not found', variant: 'destructive' });
       return;
     }
 
@@ -205,7 +217,7 @@ const ImageAnnotation = () => {
 
     // update counts
     setClasses(prev => {
-      const updated = prev.map(c => c.id === classObj.id ? { ...c, count: c.count + autoSegmentPreview.polygons.length } : c);
+      const updated = prev.map(c => c.id === classObj!.id ? { ...c, count: c.count + autoSegmentPreview.polygons.length } : c);
       saveGlobalClasses(updated);
       return updated;
     });
@@ -217,6 +229,9 @@ const ImageAnnotation = () => {
   const cancelAutoSegment = () => setAutoSegmentPreview(null);
   const [editingClass, setEditingClass] = useState<string | null>(null);
   const [editingClassName, setEditingClassName] = useState('');
+  // Inline editing for individual annotation labels in right sidebar
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [editingAnnotationLabel, setEditingAnnotationLabel] = useState('');
 
   // Load global classes from localStorage
   const loadGlobalClasses = () => {
@@ -527,20 +542,28 @@ const ImageAnnotation = () => {
     }
     
     setCurrentImage(foundCurrentImage);
-
     // Find the image with this name in the display layer
     const displayCollection = collections.find(c => c.id === layerId);
     let foundDisplayImage: Image | null = null;
-    
+
     if (displayCollection) {
+      // If a specific layer is selected, only use images from that layer.
       foundDisplayImage = displayCollection.images.find(img => img.fileName === imageName) || null;
+      if (!foundDisplayImage) {
+        // No corresponding image in the selected layer — clear display image and set flag
+        setDisplayImage(null);
+        setNoCorrespondingImage(true);
+        return;
+      } else {
+        setNoCorrespondingImage(false);
+      }
     }
-    
-    // If no specific layer selected or image not found in that layer, use current image
+
+    // If no specific layer selected, or displayCollection undefined, fall back to current image
     if (!foundDisplayImage) {
       foundDisplayImage = foundCurrentImage;
     }
-    
+
     setDisplayImage(foundDisplayImage);
   };
 
@@ -950,7 +973,8 @@ const ImageAnnotation = () => {
   }, [handleKeyDown]);
 
   const redrawCanvas = useCallback(() => {
-    if (!canvasRef.current || !imageRef.current || !displayImage) return;
+    // Require canvas and an image to draw: either the displayImage (selected layer) or the currentImage (annotations source)
+    if (!canvasRef.current || !imageRef.current || (!displayImage && !currentImage)) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -1067,7 +1091,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, imageScale, imageOffset, displayImage, imageToScreenCoords]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
@@ -1286,6 +1310,37 @@ const ImageAnnotation = () => {
     }
   };
 
+  // Update an annotation's class by selecting an existing class id
+  const saveAnnotationLabel = (annotationId: string, targetClassId: string | null) => {
+    if (!annotationId || !currentImageName || !targetClassId) return;
+    const ann = annotations.find(a => a.id === annotationId);
+    if (!ann) return;
+
+    const oldLabel = ann.label;
+    const targetClass = classes.find(c => c.id === targetClassId);
+    if (!targetClass) return; // no changes if class not found
+
+    // Update annotation label
+    setAnnotations(prev => {
+  const updated = prev.map(a => a.id === annotationId ? { ...a, label: targetClass!.name, color: targetClass!.color } : a);
+      // persist
+      const storageKey = `annotations_${id}_${currentImageName}`;
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+      return updated;
+    });
+
+    // Adjust class counts: decrement old, increment new
+    setClasses(prev => {
+      const updated = prev.map(c => {
+        if (c.name === oldLabel) return { ...c, count: Math.max(0, c.count - 1) };
+        if (c.id === targetClass.id) return { ...c, count: c.count + 1 };
+        return c;
+      });
+      saveGlobalClasses(updated);
+      return updated;
+    });
+  };
+
   // Save all annotations from all images into a single COCO file
   const saveAllAnnotations = async () => {
     try {
@@ -1392,9 +1447,37 @@ const ImageAnnotation = () => {
   const handleLayerChange = (layerId: string) => {
     setDisplayLayer(layerId);
     // When layer changes, update the display image to show the current image name in the new layer
-    if (currentImageName && imageCollections.length > 0) {
-      updateCurrentImages(currentImageName, layerId, imageCollections);
+    if (imageCollections.length === 0) return;
+
+    const displayCollection = imageCollections.find(c => c.id === layerId);
+
+    if (!displayCollection) return;
+
+    // Try to find same filename in the new layer
+    let newDisplayImage = displayCollection.images.find(img => img.fileName === currentImageName) || null;
+
+    // If same filename not found, fall back to first image in the layer and update currentImageName/index
+    if (!newDisplayImage) {
+      if (displayCollection.images.length > 0) {
+        newDisplayImage = displayCollection.images[0];
+        // Update currentImageName and currentImageIndex to reflect the new displayed image
+        const newName = newDisplayImage.fileName;
+        setCurrentImageName(newName);
+        const idx = allImageNames.indexOf(newName);
+        if (idx >= 0) setCurrentImageIndex(idx);
+        // Load annotations for the newly selected image
+        loadAnnotationsForImage(newName);
+      }
+    } else {
+      // If we found the same filename in this layer, ensure annotations for that name are loaded
+      loadAnnotationsForImage(currentImageName);
     }
+
+    // Update images (this will set currentImage/displayImage appropriately)
+    updateCurrentImages(newDisplayImage ? newDisplayImage.fileName : currentImageName, layerId, imageCollections);
+
+    // Force a redraw/layout recompute shortly after changing layer
+    try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {}
   };
 
   if (isLoading) {
@@ -1661,13 +1744,23 @@ const ImageAnnotation = () => {
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center text-gray-400">
                   <div className="text-2xl mb-2">📷</div>
-                  <div className="text-lg font-medium">No Image Available</div>
-                  <div className="text-sm">
-                    Image "{currentImageName}" does not exist in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
-                  </div>
-                  <div className="text-xs mt-2 text-gray-500">
-                    Switch to a different layer or navigate to another image
-                  </div>
+                  {noCorrespondingImage && displayLayer ? (
+                    <>
+                      <div className="text-lg font-medium">No corresponding image found</div>
+                      <div className="text-sm">
+                        Image "{currentImageName}" not found in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
+                      </div>
+                      <div className="text-xs mt-2 text-gray-500">Switch to a different layer or choose another image</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-lg font-medium">No Image Available</div>
+                      <div className="text-sm">
+                        Image "{currentImageName}" does not exist in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
+                      </div>
+                      <div className="text-xs mt-2 text-gray-500">Switch to a different layer or navigate to another image</div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -1715,9 +1808,27 @@ const ImageAnnotation = () => {
                 </svg>
 
                 {/* Controls - accept/cancel */}
-                <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex gap-2">
-                  <Button size="sm" onClick={acceptAutoSegment}>Accept</Button>
-                  <Button size="sm" variant="outline" onClick={cancelAutoSegment}>Cancel</Button>
+                <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex flex-col gap-2 w-64 bg-black/60 p-3 rounded">
+                  <div className="flex gap-2">
+                    <Select value={autoSegmentClassId || ''} onValueChange={(v) => {
+                      const idVal = v || null;
+                      setAutoSegmentClassId(idVal);
+                      const c = classes.find(x => x.id === idVal);
+                      if (c) setAutoSegmentLabel(c.name);
+                    }}>
+                      <SelectTrigger className="w-36"><SelectValue placeholder="Class" /></SelectTrigger>
+                      <SelectContent>
+                        {classes.map(c => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-2">
+                    <Button size="sm" onClick={acceptAutoSegment}>Accept</Button>
+                    <Button size="sm" variant="outline" onClick={cancelAutoSegment}>Cancel</Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1824,8 +1935,28 @@ const ImageAnnotation = () => {
                             style={{ backgroundColor: annotation.color }}
                           />
                           <div>
-                            <p className="text-sm font-medium">{annotation.label}</p>
-                            <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
+                            {editingAnnotationId === annotation.id ? (
+                              <div className="flex flex-col">
+                                <Select value={editingAnnotationLabel || ''} onValueChange={(v) => setEditingAnnotationLabel(v)}>
+                                  <SelectTrigger className="w-44"><SelectValue placeholder="Select class" /></SelectTrigger>
+                                  <SelectContent>
+                                    {classes.map(c => (
+                                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <div className="flex justify-end gap-2 mt-1">
+                                  <Button size="sm" onClick={() => { saveAnnotationLabel(annotation.id, editingAnnotationLabel); setEditingAnnotationId(null); }}>Save</Button>
+                                  <Button size="sm" variant="outline" onClick={() => setEditingAnnotationId(null)}>Cancel</Button>
+                                </div>
+                                <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
+                              </div>
+                            ) : (
+                              <div>
+                                <p className="text-sm font-medium" onClick={(e) => { e.stopPropagation(); setEditingAnnotationId(annotation.id); const cls = classes.find(c => c.name === annotation.label); setEditingAnnotationLabel(cls ? cls.id : ''); }}>{annotation.label}</p>
+                                <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
@@ -1842,6 +1973,18 @@ const ImageAnnotation = () => {
                             }}
                           >
                             {annotation.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingAnnotationId(annotation.id);
+                              const cls = classes.find(c => c.name === annotation.label);
+                              setEditingAnnotationLabel(cls ? cls.id : '');
+                            }}
+                          >
+                            <Edit className="w-3 h-3" />
                           </Button>
                           <Button
                             variant="ghost"
