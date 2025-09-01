@@ -190,6 +190,28 @@ export function ImageDetailModal({
 
   if (!image) return null;
 
+  // Extract filename from URL if fileName is empty
+  const getImageName = () => {
+    console.log('getImageName: image.fileName =', image.fileName);
+    console.log('getImageName: image.url =', image.url);
+    
+    if (image.fileName && image.fileName.trim() !== '') {
+      console.log('getImageName: Using fileName:', image.fileName);
+      return image.fileName;
+    }
+    // Extract filename from URL as fallback
+    if (image.url) {
+      const urlParts = image.url.split('/');
+      const filename = urlParts[urlParts.length - 1];
+      console.log('getImageName: Extracted from URL:', filename);
+      return filename || 'Unknown Image';
+    }
+    console.log('getImageName: No URL available, returning Unknown Image');
+    return 'Unknown Image';
+  };
+
+  const imageName = getImageName();
+
   // Add annotationFileName to each annotation for display
   const annotationsWithFileName = annotations.map(ann => ({
     ...ann,
@@ -216,8 +238,15 @@ export function ImageDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-6xl max-h-[90vh] bg-gray-900 text-white border-gray-700">
-        <div className="flex items-center justify-between">
-          <DialogTitle>{image.fileName}</DialogTitle>
+        {/* Image Info Header - Image name first, then dimensions */}
+        <div className="border-b border-gray-700 pb-2 mb-4">
+          <DialogTitle className="text-sm font-medium text-white">
+            {imageName} • {imageDimensions.width > 0 ? `${imageDimensions.width} × ${imageDimensions.height}` : 'Loading...'} • {((image?.fileSize || 0) / (1024 * 1024)).toFixed(2)} MB
+          </DialogTitle>
+        </div>
+        
+        {/* Controls Row */}
+        <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-4">
             <ImageZoomControls
               zoom={zoom}
@@ -225,6 +254,8 @@ export function ImageDetailModal({
               onZoomOut={zoomOut}
               onResetZoom={resetZoom}
             />
+          </div>
+          <div className="flex items-center gap-4">
             {imageIndex !== null && imageCount !== undefined && (
               <span className="text-sm text-gray-400">{imageIndex} of {imageCount}</span>
             )}
@@ -232,9 +263,8 @@ export function ImageDetailModal({
         </div>
         <div className="flex flex-col space-y-2">
           <div className="text-sm text-gray-400">
-            {imageDimensions.width} × {imageDimensions.height} • {((image.fileSize || 0) / (1024 * 1024)).toFixed(2)} MB
             {zoom > 1 && (
-              <span className="ml-4 text-blue-400">
+              <span className="text-blue-400">
                 🔍 Scroll to zoom • Drag to pan • Double-click to reset
               </span>
             )}

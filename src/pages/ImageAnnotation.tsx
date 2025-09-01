@@ -371,6 +371,12 @@ const ImageAnnotation = () => {
   const isPanningRef = useRef(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const spacePressedRef = useRef(false);
+  
+  // Track right mouse button state for right+left click panning
+  const rightMouseDownRef = useRef(false);
+  
+  // Prevent zoom reset during/after panning
+  const preventZoomResetRef = useRef(false);
 
   useEffect(() => { scaleRef.current = imageScale; }, [imageScale]);
   useEffect(() => { offsetRef.current = imageOffset; }, [imageOffset]);
@@ -456,6 +462,35 @@ const ImageAnnotation = () => {
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
+    };
+  }, []);
+
+  // Listen for right mouse button down/up to enable right+left click panning
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      if (e.button === 2) { // Right click
+        rightMouseDownRef.current = true;
+      }
+    };
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) { // Right click
+        rightMouseDownRef.current = false;
+      }
+    };
+    const handleContextMenu = (e: MouseEvent) => {
+      // Prevent context menu when right-clicking for panning
+      if (rightMouseDownRef.current) {
+        e.preventDefault();
+      }
+    };
+    
+    window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('contextmenu', handleContextMenu);
+    return () => {
+      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('contextmenu', handleContextMenu);
     };
   }, []);
 
@@ -1115,11 +1150,14 @@ const ImageAnnotation = () => {
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
 
-  // If middle button, space, or Ctrl + left/right mouse is pressed, start panning
-  if (e.button === 1 || spacePressedRef.current || ((e.button === 0 || e.button === 2) && e.ctrlKey)) {
+    // If middle button, space, Ctrl + left/right mouse, or right+left mouse is pressed, start panning
+    if (e.button === 1 || spacePressedRef.current || ((e.button === 0 || e.button === 2) && e.ctrlKey) || (e.button === 0 && rightMouseDownRef.current)) {
       e.preventDefault();
       isPanningRef.current = true;
       panStartRef.current = { x: e.clientX, y: e.clientY };
+      // Preserve zoom when user starts panning
+      preserveZoomRef.current = true;
+      preventZoomResetRef.current = true;
       return;
     }
 
@@ -1235,8 +1273,10 @@ const ImageAnnotation = () => {
   const handleCanvasMouseUp = useCallback(() => {
     if (isPanningRef.current) {
       isPanningRef.current = false;
-      // notify layout recompute
-      try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {}
+      // Clear the prevent zoom reset flag after a short delay to allow any pending events to settle
+      setTimeout(() => {
+        preventZoomResetRef.current = false;
+      }, 100);
       return;
     }
 
@@ -1541,8 +1581,8 @@ const ImageAnnotation = () => {
     const scaleY = containerRect.height / img.naturalHeight;
     const fitToContainerScale = Math.min(scaleX, scaleY);
 
-    // Only reset zoom if this is initial load or we're explicitly not preserving zoom
-    if (!preserveZoomRef.current) {
+    // Only reset zoom if this is initial load, we're explicitly not preserving zoom, AND we're not preventing reset due to panning
+    if (!preserveZoomRef.current && !preventZoomResetRef.current) {
       setImageScale(fitToContainerScale);
       // Center image in container for new images
       const scaledWidth = img.naturalWidth * fitToContainerScale;
@@ -1574,19 +1614,21 @@ const ImageAnnotation = () => {
         return () => clearTimeout(t);
       }
       return undefined;
-      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth, imageScale]);
+      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth]);
 
     // Listen for explicit resize-end notifications from resize handlers and toggles
     useEffect(() => {
       const onResizeEnd = () => {
         // small timeout to allow DOM to settle
         setTimeout(() => {
-          handleImageLoad();
+          // Preserve zoom during panel resizes - don't reset zoom just because panels changed
+          preserveZoomRef.current = true;
+          handleImageResize();
         }, 10);
       };
       window.addEventListener('annotation-panel-resize-end', onResizeEnd as EventListener);
       return () => window.removeEventListener('annotation-panel-resize-end', onResizeEnd as EventListener);
-    }, [handleImageLoad]);
+    }, []);
 
   const saveAnnotations = async () => {
     if (!currentImage || annotations.length === 0) return;
@@ -1949,7 +1991,7 @@ const ImageAnnotation = () => {
                 </CardHeader>
                 <CardContent className="text-xs text-gray-200">
                   <div className="mb-1"><strong>Zoom</strong>: Hold <kbd className="px-1 bg-black/20 rounded">Ctrl</kbd> (or <kbd className="px-1 bg-black/20 rounded">⌘</kbd>) + scroll</div>
-                  <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-black/20 rounded">Space</kbd> + drag, or <strong>Ctrl</strong> + left/right drag</div>
+                  <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-black/20 rounded">Space</kbd> + drag, <strong>Ctrl</strong> + left/right drag, or <strong>Right + Left</strong> click drag</div>
                   <div className="text-xs text-gray-400 mt-1">Tip: scroll over area you want to zoom into</div>
                 </CardContent>
               </Card>

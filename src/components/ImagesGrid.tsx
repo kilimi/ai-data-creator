@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState, useEffect } from 'react';
 import { Upload, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -105,6 +105,14 @@ export function ImagesGrid({
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
   const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
+
+  // Debug: log the images structure
+  useEffect(() => {
+    console.log('ImagesGrid: Received images:', images);
+    if (images.length > 0) {
+      console.log('ImagesGrid: First image structure:', images[0]);
+    }
+  }, [images]);
 
   const handleDeleteClick = async (e: React.MouseEvent, imageId: string) => {
     e.stopPropagation();

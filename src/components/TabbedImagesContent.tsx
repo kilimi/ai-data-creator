@@ -61,6 +61,7 @@ export function TabbedImagesContent({
 }: TabbedImagesContentProps) {
   const [activeTab, setActiveTab] = useState(imageCollections.length > 0 ? imageCollections[0].id : "");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedClickedImage, setSelectedClickedImage] = useState<Image | null>(null); // Store the actual clicked image
   const [isAnnotationChoiceModalOpen, setIsAnnotationChoiceModalOpen] = useState(false);
   const [isAddTabDialogOpen, setIsAddTabDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -76,11 +77,26 @@ export function TabbedImagesContent({
   const activeCollection = imageCollections.find(c => c.id === activeTab);
   const allImages = imageCollections.flatMap(c => c.images);
 
+  // Debug: log the structure of imageCollections
+  useEffect(() => {
+    console.log('TabbedImagesContent: imageCollections:', imageCollections);
+    if (imageCollections.length > 0) {
+      console.log('TabbedImagesContent: First collection images:', imageCollections[0].images);
+      if (imageCollections[0].images.length > 0) {
+        console.log('TabbedImagesContent: First image structure:', imageCollections[0].images[0]);
+      }
+    }
+  }, [imageCollections]);
+
   // Open modal at clicked image index (based on all images across tabs)
   const handleImageClick = (image: Image) => {
+    console.log('TabbedImagesContent: Clicked image:', image);
+    console.log('TabbedImagesContent: All images:', allImages);
     const idx = allImages.findIndex((img) => img.id === image.id);
+    console.log('TabbedImagesContent: Found index:', idx, 'Selected image will be:', allImages[idx]);
     if (idx !== -1) {
       setSelectedImageIndex(idx);
+      setSelectedClickedImage(image); // Store the actual clicked image with all properties
       setIsModalOpen(true);
     }
   };
@@ -88,6 +104,7 @@ export function TabbedImagesContent({
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedImageIndex(null);
+    setSelectedClickedImage(null); // Clear the clicked image
   };
 
   const handleDeleteFromModal = async (imageId: string) => {
@@ -127,6 +144,7 @@ export function TabbedImagesContent({
     if (hasPrev && selectedImageIndex !== null) {
       const newIndex = selectedImageIndex - 1;
       setSelectedImageIndex(newIndex);
+      setSelectedClickedImage(allImages[newIndex]); // Update clicked image state too
     }
   };
   
@@ -134,11 +152,12 @@ export function TabbedImagesContent({
     if (hasNext && selectedImageIndex !== null) {
       const newIndex = selectedImageIndex + 1;
       setSelectedImageIndex(newIndex);
+      setSelectedClickedImage(allImages[newIndex]); // Update clicked image state too
     }
   };
 
   // Get current image and annotations (based on all images)
-  const selectedImage = selectedImageIndex !== null ? allImages[selectedImageIndex] : null;
+  const selectedImage = selectedClickedImage || (selectedImageIndex !== null ? allImages[selectedImageIndex] : null);
   const selectedImageAnnotations = selectedImage
     ? annotations.filter((anno) => {
         const matches = String(anno.imageId) === String(selectedImage.id);
