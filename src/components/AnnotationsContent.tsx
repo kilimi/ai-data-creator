@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
@@ -170,6 +170,10 @@ export function AnnotationsContent({
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [renameClassDialog, setRenameClassDialog] = useState<{ isOpen: boolean; className: string; annotationId: string }>({ isOpen: false, className: '', annotationId: '' });
   const [dirtyAnnotationIds, setDirtyAnnotationIds] = useState<Set<string>>(new Set());
+  
+  // Merge functionality state
+  const [mergeMode, setMergeMode] = useState(false);
+  const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
   
@@ -813,6 +817,151 @@ export function AnnotationsContent({
     } else if (e.key === 'Escape') {
       e.preventDefault();
       handleCancelEditName();
+    }
+  };
+
+  // Merge annotations handler
+  const handleMergeAnnotations = async () => {
+    if (selectedForMerge.size < 2) {
+      toast({
+        title: "Invalid selection",
+        description: "Please select at least 2 annotation files to merge.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const filesToMerge = annotationFiles.filter(file => selectedForMerge.has(file.id));
+    
+    try {
+      // Create merged COCO data
+      const mergedData = {
+        info: {
+          description: `Merged annotations from ${filesToMerge.map(f => f.name).join(', ')}`,
+          version: "1.0",
+          year: new Date().getFullYear(),
+          contributor: "LAI",
+          date_created: new Date().toISOString()
+        },
+        licenses: [{
+          id: 1,
+          name: "Unknown License",
+          url: ""
+        }],
+        images: [] as any[],
+        categories: [] as any[],
+        annotations: [] as any[]
+      };
+
+      const categoryMap = new Map<string, number>();
+      const imageMap = new Map<string, number>();
+      let categoryId = 1;
+      let imageId = 1;
+      let annotationId = 1;
+
+      // Process each file
+      for (const file of filesToMerge) {
+        if (!file.samples) continue;
+
+        // Extract categories
+        for (const sample of file.samples) {
+          if (!categoryMap.has(sample.className)) {
+            categoryMap.set(sample.className, categoryId);
+            mergedData.categories.push({
+              id: categoryId,
+              name: sample.className,
+              supercategory: ""
+            });
+            categoryId++;
+          }
+        }
+
+        // Extract images and annotations
+        for (const sample of file.samples) {
+          let currentImageId: number;
+          
+          // Create image entry if not exists
+          const imageKey = `${sample.imageId}_${file.name}`;
+          if (!imageMap.has(imageKey)) {
+            currentImageId = imageId;
+            imageMap.set(imageKey, currentImageId);
+            
+            // Find matching image to get dimensions
+            // Find matching image to get dimensions
+            const matchingImage = images.find(img => img.id === sample.imageId);
+            mergedData.images.push({
+              id: currentImageId,
+              width: matchingImage?.width || 640,
+              height: matchingImage?.height || 480,
+              file_name: matchingImage?.fileName || `image_${sample.imageId}`,
+              license: 1,
+              flickr_url: "",
+              coco_url: "",
+              date_captured: ""
+            });
+            imageId++;
+          } else {
+            currentImageId = imageMap.get(imageKey)!;
+          }
+
+          // Add annotation
+          mergedData.annotations.push({
+            id: annotationId,
+            image_id: currentImageId,
+            category_id: categoryMap.get(sample.className)!,
+            bbox: sample.bbox ? [
+              sample.bbox[0] * (matchingImage?.width || 640),
+              sample.bbox[1] * (matchingImage?.height || 480),
+              sample.bbox[2] * (matchingImage?.width || 640),
+              sample.bbox[3] * (matchingImage?.height || 480)
+            ] : [0, 0, 0, 0],
+            area: sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * (matchingImage?.width || 640) * (matchingImage?.height || 480) : 0),
+            iscrowd: 0,
+            segmentation: sample.segmentation || []
+          });
+          annotationId++;
+        }
+      }
+
+      // Create merged file name
+      const mergedFileName = `merged_${filesToMerge.map(f => f.name.replace(/\.[^/.]+$/, '')).join('_')}.json`;
+      
+      // Upload merged file
+      const jsonContent = JSON.stringify(mergedData, null, 2);
+      const uploadFile = new File([jsonContent], mergedFileName, { type: 'application/json' });
+      
+      if (api) {
+        const response = await api.importAnnotations(id, uploadFile);
+        if (response.success) {
+          toast({
+            title: "Annotations merged successfully",
+            description: `Created "${mergedFileName}" with ${mergedData.annotations.length} annotations from ${filesToMerge.length} files.`,
+          });
+          
+          // Reset merge mode
+          setMergeMode(false);
+          setSelectedForMerge(new Set());
+          
+          // Refresh annotation files
+          await loadAnnotationFilesFromBackend();
+        } else {
+          throw new Error(response.error || "Failed to upload merged annotation file");
+        }
+      } else {
+        toast({
+          title: "API not available",
+          description: "Cannot merge annotations without API connection.",
+          variant: "destructive",
+        });
+      }
+      
+    } catch (error) {
+      console.error('Error merging annotations:', error);
+      toast({
+        title: "Merge failed",
+        description: error instanceof Error ? error.message : "Failed to merge annotation files.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -3845,6 +3994,47 @@ export function AnnotationsContent({
                   onClick={() => handleAnnotationClick(file.id)}
                 >
                    <div className="flex items-center justify-between">
+                     {/* Checkbox for merge mode */}
+                     {mergeMode && (
+                       <div className="flex items-center mr-3">
+                         <input
+                           type="checkbox"
+                           checked={selectedForMerge.has(file.id)}
+                           onChange={(e) => {
+                             e.stopPropagation();
+                             const newSelected = new Set(selectedForMerge);
+                             if (e.target.checked) {
+                               newSelected.add(file.id);
+                             } else {
+                               newSelected.delete(file.id);
+                             }
+                             setSelectedForMerge(newSelected);
+                           }}
+                           className="w-4 h-4 text-orange-600 bg-gray-700 border-gray-600 rounded focus:ring-orange-500 focus:ring-2"
+                         />
+                       </div>
+                     )}
+                   <div className="flex items-center justify-between">
+                     {/* Checkbox for merge mode */}
+                     {mergeMode && (
+                       <div className="flex items-center mr-3">
+                         <input
+                           type="checkbox"
+                           checked={selectedForMerge.has(file.id)}
+                           onChange={(e) => {
+                             e.stopPropagation();
+                             const newSelected = new Set(selectedForMerge);
+                             if (e.target.checked) {
+                               newSelected.add(file.id);
+                             } else {
+                               newSelected.delete(file.id);
+                             }
+                             setSelectedForMerge(newSelected);
+                           }}
+                           className="w-4 h-4 text-orange-600 bg-gray-700 border-gray-600 rounded focus:ring-orange-500 focus:ring-2"
+                         />
+                       </div>
+                     )}
                      <div className="flex-1">
                        <div className="flex items-center gap-2 group">
                          {editingName?.annotationId === file.id ? (
