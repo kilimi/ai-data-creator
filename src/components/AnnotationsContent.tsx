@@ -822,6 +822,7 @@ export function AnnotationsContent({
 
   // Merge annotations handler
   const handleMergeAnnotations = async () => {
+    console.log("Merge button clicked, selected files:", selectedForMerge.size);
     if (selectedForMerge.size < 2) {
       toast({
         title: "Invalid selection",
@@ -3923,6 +3924,41 @@ export function AnnotationsContent({
             <Brush className="w-4 h-4 mr-2" />
             Annotate
           </Button>
+          
+          {/* Merge Mode Toggle */}
+          {!mergeMode ? (
+            <Button 
+              variant="outline"
+              className="border-orange-600 bg-orange-900 hover:bg-orange-800 text-orange-100"
+              onClick={() => setMergeMode(true)}
+              disabled={filteredAnnotationFiles.length < 2}
+            >
+              <Merge className="w-4 h-4 mr-2" />
+              Merge
+            </Button>
+          ) : (
+            <div className="flex gap-2">
+              <Button 
+                className="bg-green-600 hover:bg-green-700 text-white"
+                onClick={handleMergeAnnotations}
+                disabled={selectedForMerge.size < 2}
+              >
+                <CheckSquare className="w-4 h-4 mr-2" />
+                Merge Selected ({selectedForMerge.size})
+              </Button>
+              <Button 
+                variant="outline"
+                className="border-gray-600 hover:bg-gray-700"
+                onClick={() => {
+                  setMergeMode(false);
+                  setSelectedForMerge(new Set());
+                }}
+              >
+                <X className="w-4 h-4 mr-2" />
+                Cancel
+              </Button>
+            </div>
+          )}
         </div>      </div>
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
@@ -3994,46 +4030,25 @@ export function AnnotationsContent({
                   onClick={() => handleAnnotationClick(file.id)}
                 >
                    <div className="flex items-center justify-between">
-                     {/* Checkbox for merge mode */}
-                     {mergeMode && (
-                       <div className="flex items-center mr-3">
-                         <input
-                           type="checkbox"
-                           checked={selectedForMerge.has(file.id)}
-                           onChange={(e) => {
-                             e.stopPropagation();
-                             const newSelected = new Set(selectedForMerge);
-                             if (e.target.checked) {
-                               newSelected.add(file.id);
-                             } else {
-                               newSelected.delete(file.id);
-                             }
-                             setSelectedForMerge(newSelected);
-                           }}
-                           className="w-4 h-4 text-orange-600 bg-gray-700 border-gray-600 rounded focus:ring-orange-500 focus:ring-2"
-                         />
-                       </div>
-                     )}
-                   <div className="flex items-center justify-between">
-                     {/* Checkbox for merge mode */}
-                     {mergeMode && (
-                       <div className="flex items-center mr-3">
-                         <input
-                           type="checkbox"
-                           checked={selectedForMerge.has(file.id)}
-                           onChange={(e) => {
-                             e.stopPropagation();
-                             const newSelected = new Set(selectedForMerge);
-                             if (e.target.checked) {
-                               newSelected.add(file.id);
-                             } else {
-                               newSelected.delete(file.id);
-                             }
-                             setSelectedForMerge(newSelected);
-                           }}
-                           className="w-4 h-4 text-orange-600 bg-gray-700 border-gray-600 rounded focus:ring-orange-500 focus:ring-2"
-                         />
-                       </div>
+                      {/* Checkbox for merge mode */}
+                      {mergeMode && (
+                        <div className="flex items-center mr-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedForMerge.has(file.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              const newSelected = new Set(selectedForMerge);
+                              if (e.target.checked) {
+                                newSelected.add(file.id);
+                              } else {
+                                newSelected.delete(file.id);
+                              }
+                              setSelectedForMerge(newSelected);
+                            }}
+                            className="w-4 h-4 text-orange-600 bg-gray-700 border-gray-600 rounded focus:ring-orange-500 focus:ring-2"
+                          />
+                        </div>
                      )}
                      <div className="flex-1">
                        <div className="flex items-center gap-2 group">
