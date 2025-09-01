@@ -1,6 +1,6 @@
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
@@ -13,8 +13,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Dataset } from "@/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { DatabaseManager } from "@/components/DatabaseManager";
 
-const ApiSettings = () => {
+export const ApiSettings = () => {
   const { toast } = useToast();
   const [apiUrl, setApiUrl] = useState(API_CONFIG.baseUrl);
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -199,6 +200,50 @@ const ApiSettings = () => {
           </CardContent>
         </Card>
         
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Database Management</CardTitle>
+            <CardDescription>
+              Backup and restore your complete workspace including all projects, datasets, annotations, and files
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Complete Database Backup & Restore</p>
+                <p className="text-sm text-muted-foreground">
+                  Export your entire workspace or import from a previous backup
+                </p>
+              </div>
+              <DatabaseManager />
+            </div>
+          </CardContent>
+        </Card>
+        
+        {/* Danger Zone */}
+        <Card className="mb-8 border-red-200 bg-red-50/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Danger Zone
+            </CardTitle>
+            <CardDescription className="text-red-600">
+              Irreversible actions that will permanently destroy data
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-red-700">Clear All Data</p>
+                <p className="text-sm text-red-600">
+                  Permanently delete all projects, datasets, annotations, and files
+                </p>
+              </div>
+              <DatabaseManager showExport={false} showImport={false} showClear={true} showInfo={false} />
+            </div>
+          </CardContent>
+        </Card>
+        
         <div className="bg-muted/40 rounded-lg p-6">
           <h2 className="text-lg font-medium mb-3">FastAPI Integration</h2>
           <p className="text-sm text-muted-foreground mb-4">
@@ -265,4 +310,4 @@ const ApiSettings = () => {
   );
 };
 
-export default ApiSettings;
+// export default ApiSettings;

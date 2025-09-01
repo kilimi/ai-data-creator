@@ -32,7 +32,7 @@ export class ApiClient {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
       
       const response = await fetch(url, {
         ...options,
@@ -632,6 +632,211 @@ export class ApiClient {
     return this.request(`/datasets/${datasetId}/annotations/${annotationId}/content`, {
       method: 'PUT',
       body: formData
+    });
+  }
+
+  // Database backup and restore methods
+  async getDatabaseInfo(): Promise<ApiResponse<{
+    database_info: {
+      projects: number;
+      datasets: number;
+      images: number;
+      annotations: number;
+      annotation_files: number;
+      annotation_classes: number;
+      image_collections: number;
+      tasks: number;
+      augmentations: number;
+      dataset_groups: number;
+      total_records: number;
+    };
+    timestamp: string;
+  }>> {
+    return this.request('/database/info');
+  }
+
+  async exportDatabase(onProgress?: (progress: number) => void): Promise<void> {
+    try {
+      const url = `${this.config.baseUrl}/database/export`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+      }
+
+      // Track progress while reading the response
+      const reader = response.body?.getReader();
+      const contentLength = response.headers.get('Content-Length');
+      
+      if (!reader) {
+        throw new Error('Failed to read response');
+      }
+
+      let receivedLength = 0;
+      const totalLength = contentLength ? parseInt(contentLength, 10) : 0;
+      const chunks: Uint8Array[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        chunks.push(value);
+        receivedLength += value.length;
+        
+        if (onProgress) {
+          if (totalLength > 0) {
+            const progress = Math.round((receivedLength / totalLength) * 100);
+            onProgress(progress);
+          } else {
+            // Indeterminate progress - just show that something is happening
+            const cycleProgress = (receivedLength / 1024) % 100; // Cycle through 0-99 based on KB received
+            onProgress(Math.round(cycleProgress));
+          }
+        }
+      }
+
+      // Combine chunks into a single array
+      const allChunks = new Uint8Array(receivedLength);
+      let position = 0;
+      for (const chunk of chunks) {
+        allChunks.set(chunk, position);
+        position += chunk.length;
+      }
+
+      // Create blob and download
+      const blob = new Blob([allChunks], { type: 'application/json' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      
+      // Get filename from response headers or use default
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filename = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1] || 
+                     `ai_data_creator_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.json`;
+      
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+      
+      if (onProgress) {
+        onProgress(100);
+      }
+    } catch (error) {
+      throw new Error(`Database export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async exportDatabaseWithFiles(onProgress?: (progress: number) => void): Promise<void> {
+    try {
+      const url = `${this.config.baseUrl}/database/export-with-files`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/zip',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+      }
+
+      // Track progress while reading the response
+      const reader = response.body?.getReader();
+      const contentLength = response.headers.get('Content-Length');
+      
+      if (!reader) {
+        throw new Error('Failed to read response');
+      }
+
+      let receivedLength = 0;
+      const totalLength = contentLength ? parseInt(contentLength, 10) : 0;
+      const chunks: Uint8Array[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        chunks.push(value);
+        receivedLength += value.length;
+        
+        if (onProgress) {
+          if (totalLength > 0) {
+            const progress = Math.round((receivedLength / totalLength) * 100);
+            onProgress(progress);
+          } else {
+            // Indeterminate progress - just show that something is happening
+            const cycleProgress = (receivedLength / 1024) % 100; // Cycle through 0-99 based on KB received
+            onProgress(Math.round(cycleProgress));
+          }
+        }
+      }
+
+      // Combine chunks into a single array
+      const allChunks = new Uint8Array(receivedLength);
+      let position = 0;
+      for (const chunk of chunks) {
+        allChunks.set(chunk, position);
+        position += chunk.length;
+      }
+
+      // Create blob and download
+      const blob = new Blob([allChunks], { type: 'application/zip' });
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      
+      // Get filename from response headers or use default
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filename = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1] || 
+                     `ai_data_creator_full_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.zip`;
+      
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+      
+      if (onProgress) {
+        onProgress(100);
+      }
+    } catch (error) {
+      throw new Error(`Database export with files failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async importDatabase(file: File): Promise<ApiResponse<{
+    message: string;
+    metadata: any;
+    tables_imported: string[];
+  }>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    return this.request('/database/import', {
+      method: 'POST',
+      body: formData
+    });
+  }
+
+  async clearDatabase(): Promise<ApiResponse<{
+    message: string;
+    deleted_records: Record<string, number>;
+    total_records_deleted: number;
+    files_removed: number;
+    directories_cleared: string[];
+    timestamp: string;
+  }>> {
+    return this.request('/database/clear', {
+      method: 'DELETE'
     });
   }
 }

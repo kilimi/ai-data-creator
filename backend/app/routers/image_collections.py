@@ -6,6 +6,8 @@ import shutil
 from datetime import datetime
 import uuid
 from pathlib import Path
+from PIL import Image as PILImage
+import io
 
 from ..database import get_db
 from ..models import ImageCollection, Image, Dataset
@@ -203,11 +205,13 @@ async def upload_images_to_collection(
     uploaded_images = []
     
     for file in files:
-        if not file.content_type or not file.content_type.startswith('image/'):
+        # Check if file is an image by MIME type or file extension (for TIF files)
+        clean_filename = os.path.basename(file.filename or "")
+        is_image_mime = file.content_type and file.content_type.startswith('image/')
+        is_tiff_file = clean_filename.lower().endswith(('.tif', '.tiff'))
+        
+        if not (is_image_mime or is_tiff_file):
             continue
-            
-        # Extract just the filename, not the full path (for folder uploads)
-        clean_filename = os.path.basename(file.filename)
         
         # Check if file already exists on disk (across all collections)
         original_path = dataset_dir / clean_filename
@@ -232,6 +236,14 @@ async def upload_images_to_collection(
         try:
             contents = await file.read()
             
+            # Extract image dimensions using Pillow
+            width, height = 0, 0
+            try:
+                with PILImage.open(io.BytesIO(contents)) as img:
+                    width, height = img.size
+            except Exception as img_error:
+                print(f"Warning: Could not extract dimensions for {final_filename}: {img_error}")
+            
             # Write the file with unique name
             with open(file_path, 'wb') as f:
                 f.write(contents)
@@ -245,8 +257,8 @@ async def upload_images_to_collection(
                 collection_id=collection_id,  # Assign to specific collection
                 file_name=final_filename,  # Use the unique filename
                 file_size=len(contents),
-                width=0,  # TODO: Extract actual dimensions
-                height=0,  # TODO: Extract actual dimensions
+                width=width,
+                height=height,
                 url=relative_url,
                 thumbnail_url=relative_url,
                 uploaded_at=datetime.utcnow()
@@ -254,7 +266,7 @@ async def upload_images_to_collection(
             
             db.add(image)
             uploaded_images.append(image)
-            print(f"Adding new image to collection {collection_id}: {final_filename}")
+            print(f"Adding new image to collection {collection_id}: {final_filename} ({width}x{height})")
                 
         except Exception as e:
             print(f"Error uploading file {file.filename}: {e}")

@@ -60,11 +60,15 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      if (!file.type.startsWith('image/')) {
+      const fileName = file.name.toLowerCase();
+      const isImageType = file.type.startsWith('image/');
+      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
+      
+      if (!isImageType && !isTiffFile) {
         return;
       }
       
-      if (file.size > 5 * 1024 * 1024) {
+      if (file.size > 25 * 1024 * 1024) {
         return;
       }
       
@@ -270,7 +274,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,.tif,.tiff"
                 onChange={handleFileChange}
                 className="hidden"
               />

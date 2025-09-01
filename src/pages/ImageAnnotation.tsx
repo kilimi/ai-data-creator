@@ -123,33 +123,24 @@ const ImageAnnotation = () => {
         return;
       }
 
-      // Get element position relative to viewport using offsetTop
-      const elementTop = el.offsetTop;
-      const viewportHeight = scrollContainer.clientHeight;
-      const scrollHeight = scrollContainer.scrollHeight;
-      const elementHeight = el.clientHeight;
-      const currentScrollTop = scrollContainer.scrollTop;
-      
-      // Only scroll if the element is not currently visible or if we need to center it
-      const elementBottom = elementTop + elementHeight;
-      const visibleTop = currentScrollTop;
-      const visibleBottom = currentScrollTop + viewportHeight;
-      
-      // Check if element is already fully visible
-      const isFullyVisible = elementTop >= visibleTop && elementBottom <= visibleBottom;
-      
-      if (!isFullyVisible || scrollHeight > viewportHeight) {
-        // Calculate scroll position to center the element, but only if there's actually scrollable content
-        const targetScroll = Math.max(0, Math.min(
-          elementTop - (viewportHeight / 2) + (elementHeight / 2),
-          scrollHeight - viewportHeight
-        ));
-        
-        console.log('Scrolling to annotation:', selectedAnnotation, 'elementTop:', elementTop, 'viewportHeight:', viewportHeight, 'scrollHeight:', scrollHeight, 'currentScroll:', currentScrollTop, 'targetScroll:', targetScroll);
-        scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
-      } else {
-        console.log('Element already visible, no scroll needed');
+      // Calculate position relative to the scroll container's visible area
+      const elementRect = el.getBoundingClientRect();
+      const containerRect = scrollContainer.getBoundingClientRect();
+
+      // Check if the element is already visible
+      if (elementRect.top >= containerRect.top && elementRect.bottom <= containerRect.bottom) {
+        // Element is already visible, no need to scroll.
+        return;
       }
+      
+      // Calculate scroll position to center the element within the container
+      const elementTopInContainer = el.offsetTop - scrollContainer.offsetTop;
+      const desiredScrollTop = elementTopInContainer - (scrollContainer.clientHeight / 2) + (el.clientHeight / 2);
+
+      scrollContainer.scrollTo({
+        top: desiredScrollTop,
+        behavior: 'smooth'
+      });
     }, 120);
   }, [selectedAnnotation]);
 

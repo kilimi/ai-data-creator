@@ -9,7 +9,7 @@ import DatasetDetail from "./pages/DatasetDetail";
 import NotFound from "./pages/NotFound";
 import CreateDataset from "./pages/CreateDataset";
 import EditDataset from "./pages/EditDataset";
-import ApiSettings from "./pages/ApiSettings";
+import { ApiSettings } from "./pages/ApiSettings";
 import CreateProject from "./pages/CreateProject";
 import Dataset from "@/pages/Dataset";
 import ImageAnnotation from "./pages/ImageAnnotation";

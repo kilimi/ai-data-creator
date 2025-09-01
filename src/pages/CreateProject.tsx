@@ -31,7 +31,11 @@ const CreateProject = () => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      if (!file.type.startsWith('image/')) {
+      const fileName = file.name.toLowerCase();
+      const isImageType = file.type.startsWith('image/');
+      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
+      
+      if (!isImageType && !isTiffFile) {
         toast({
           title: "Error",
           description: "Please upload an image file",
@@ -40,10 +44,10 @@ const CreateProject = () => {
         return;
       }
       
-      if (file.size > 5 * 1024 * 1024) {
+      if (file.size > 25 * 1024 * 1024) {
         toast({
           title: "Error",
-          description: "Image size should be less than 5MB",
+          description: "Logo must be less than 25MB",
           variant: "destructive",
         });
         return;
@@ -252,7 +256,7 @@ const CreateProject = () => {
                         id="project-logo"
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*"
+                        accept="image/*,.tif,.tiff"
                         onChange={handleFileChange}
                         className="hidden"
                       />

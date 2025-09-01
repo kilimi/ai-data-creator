@@ -19,7 +19,7 @@ export function UploadCard({
   title,
   description,
   accept = "*",
-  maxSize = 10,
+  maxSize = 50,
   multiple = true,
   onFilesSelected,
   type = "images",
@@ -163,7 +163,7 @@ export function UploadCard({
           <p className="text-sm">{description}</p>
           <p className="text-xs">
             {type === "images" 
-              ? "Supports JPG, PNG, WEBP up to 10MB"
+              ? "Supports JPG, PNG, WEBP, TIF/TIFF up to 50MB"
               : "Supports JSON files up to 100MB"}
           </p>
           <Button 

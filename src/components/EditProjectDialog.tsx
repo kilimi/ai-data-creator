@@ -40,7 +40,11 @@ export function EditProjectDialog({ project, open, onOpenChange, onProjectUpdate
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      if (!file.type.startsWith('image/')) {
+      const fileName = file.name.toLowerCase();
+      const isImageType = file.type.startsWith('image/');
+      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
+      
+      if (!isImageType && !isTiffFile) {
         toast({
           title: "Invalid file type",
           description: "Please select an image file",
@@ -49,10 +53,10 @@ export function EditProjectDialog({ project, open, onOpenChange, onProjectUpdate
         return;
       }
       
-      if (file.size > 5 * 1024 * 1024) {
+      if (file.size > 25 * 1024 * 1024) {
         toast({
           title: "File too large",
-          description: "Image must be less than 5MB",
+          description: "Image must be less than 25MB",
           variant: "destructive",
         });
         return;
@@ -242,7 +246,7 @@ export function EditProjectDialog({ project, open, onOpenChange, onProjectUpdate
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.tif,.tiff"
                     onChange={handleFileChange}
                     className="hidden"
                   />

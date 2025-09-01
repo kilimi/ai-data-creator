@@ -8,6 +8,8 @@ import os
 from datetime import datetime
 import asyncio
 import shutil
+from PIL import Image
+import io
 import uuid
 
 from .. import models, schemas
@@ -206,11 +208,13 @@ async def upload_images(
         uploaded_images = []
         
         for file in files:
-            if not file.content_type.startswith('image/'):
-                continue
+            # Check if file is an image by MIME type or file extension (for TIF files)
+            clean_filename = os.path.basename(file.filename or "")
+            is_image_mime = file.content_type and file.content_type.startswith('image/')
+            is_tiff_file = clean_filename.lower().endswith(('.tif', '.tiff'))
             
-            # Extract just the filename, not the full path (for folder uploads)
-            clean_filename = os.path.basename(file.filename)
+            if not (is_image_mime or is_tiff_file):
+                continue
             
             # Get or create default collection for this dataset (we need it for naming)
             default_collection = db.query(models.ImageCollection).filter(
@@ -252,6 +256,14 @@ async def upload_images(
             try:
                 contents = await file.read()
                 
+                # Extract image dimensions using Pillow
+                width, height = 0, 0
+                try:
+                    with Image.open(io.BytesIO(contents)) as img:
+                        width, height = img.size
+                except Exception as img_error:
+                    print(f"Warning: Could not extract dimensions for {final_filename}: {img_error}")
+                
                 # Write the file with unique name
                 with open(file_path, 'wb') as f:
                     f.write(contents)
@@ -264,15 +276,15 @@ async def upload_images(
                     collection_id=default_collection.id,  # Assign to default collection
                     file_name=final_filename,  # Use the unique filename
                     file_size=len(contents),
-                    width=0,
-                    height=0,
+                    width=width,
+                    height=height,
                     url=relative_url,
                     thumbnail_url=relative_url,
                     annotations_count=0
                 )
                 db.add(db_image)
                 uploaded_images.append(db_image)
-                print(f"Adding new image to default collection with unique name: {final_filename}")
+                print(f"Adding new image to default collection with unique name: {final_filename} ({width}x{height})")
                     
             except Exception as e:
                 print(f"Error uploading file {file.filename}: {e}")

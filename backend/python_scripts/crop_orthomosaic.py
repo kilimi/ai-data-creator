@@ -57,16 +57,63 @@ def crop_and_save(orthomosaic_path, shapefile_path, output_dir, target_crs, merg
 
             out_meta.setdefault("compress", "lzw")
 
+            def normalize_and_save(band_data, file_path):
+                """Convert band data to PNG using histogram stretching."""
+                try:
+                    from rasterio.plot import show
+                    import matplotlib.pyplot as plt
+                    
+                    # Create a matplotlib figure
+                    fig, ax = plt.subplots(figsize=(10, 10))
+                    
+                    # Use rasterio's show function which handles normalization automatically
+                    show(band_data, ax=ax, cmap='gray')
+                    ax.axis('off')
+                    
+                    # Save as PNG
+                    plt.savefig(file_path, bbox_inches='tight', pad_inches=0, dpi=150)
+                    plt.close()
+                    
+                except ImportError:
+                    # Fallback to manual normalization if matplotlib not available
+                    valid_data = band_data[np.isfinite(band_data)]
+                    
+                    if len(valid_data) == 0:
+                        normalized_data = np.zeros_like(band_data, dtype=np.uint8)
+                    else:
+                        # Use a more aggressive percentile stretch
+                        p1, p99 = np.percentile(valid_data, (1, 99))
+                        stretched = np.clip((band_data - p1) / (p99 - p1), 0, 1)
+                        normalized_data = (stretched * 255).astype(np.uint8)
+                    
+                    img = Image.fromarray(normalized_data)
+                    img.save(file_path)
+
+            # Save each band as a separate PNG
+            for i in range(out_image.shape[0]):
+                band_path = os.path.join(shape_dir, f"band_{i+1}.png")
+                normalize_and_save(out_image[i], band_path)
+                print(f"Saved band {i+1} for {shape_id}")
+
             # Optional RGB composite
             if merge_rgb and out_image.shape[0] >= 3:
-                rgb_array = np.stack([
-                    out_image[0].astype(np.uint8),
-                    out_image[1].astype(np.uint8),
-                    out_image[2].astype(np.uint8)
-                ], axis=-1)
+                # For RGB, it's often better to normalize each channel independently
+                # to maximize contrast in each.
+                r_norm = (255 * (out_image[0] - out_image[0].min()) / (out_image[0].max() - out_image[0].min())).astype(np.uint8)
+                g_norm = (255 * (out_image[1] - out_image[1].min()) / (out_image[1].max() - out_image[1].min())).astype(np.uint8)
+                b_norm = (255 * (out_image[2] - out_image[2].min()) / (out_image[2].max() - out_image[2].min())).astype(np.uint8)
+                
+                rgb_array = np.stack([r_norm, g_norm, b_norm], axis=-1)
                 rgb_path = os.path.join(shape_dir, "rgb.png")
                 Image.fromarray(rgb_array).save(rgb_path)
                 print(f"Saved RGB composite for {shape_id}")
+
+            # If input is multispectral (more than 3 bands), save the NIR channel as a PNG
+            if out_image.shape[0] > 3:
+                # Assuming the 4th band is the NIR band.
+                nir_path = os.path.join(shape_dir, "nir.png")
+                normalize_and_save(out_image[3], nir_path)
+                print(f"Saved NIR band for {shape_id}")
 
             # Save GeoTIFF
             tif_path = os.path.join(shape_dir, f"{shape_id}.tif")

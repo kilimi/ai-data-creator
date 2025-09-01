@@ -32,10 +32,13 @@ export const ImageUploadDialog = ({
     
     const fileArray = Array.from(files);
     
-    // Filter for image files only
-    const imageFiles = fileArray.filter(file => 
-      file.type.startsWith('image/')
-    );
+    // Filter for image files - include TIF/TIFF support
+    const imageFiles = fileArray.filter(file => {
+      const fileName = file.name.toLowerCase();
+      const isImageType = file.type.startsWith('image/');
+      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
+      return isImageType || isTiffFile;
+    });
     
     setSelectedFiles(prev => [...prev, ...imageFiles]);
   };
@@ -77,7 +80,7 @@ export const ImageUploadDialog = ({
             ref={fileInputRef}
             onChange={handleFileChange}
             className="hidden"
-            accept="image/*"
+            accept="image/*,.tif,.tiff"
             multiple
           />
           
@@ -87,7 +90,7 @@ export const ImageUploadDialog = ({
             ref={folderInputRef}
             onChange={handleFileChange}
             className="hidden"
-            accept="image/*"
+            accept="image/*,.tif,.tiff"
             {...({ webkitdirectory: "true" } as any)}
             multiple
           />
@@ -124,7 +127,7 @@ export const ImageUploadDialog = ({
                   {selectedFiles.length} {selectedFiles.length === 1 ? 'image' : 'images'} selected
                 </p>
                 <p className="text-center text-sm text-gray-500 mt-1">
-                  PNG, JPG, WEBP up to 10MB each. Large batches will be uploaded in chunks of 1000.
+                  PNG, JPG, WEBP, TIF/TIFF up to 50MB each. Large batches will be uploaded in chunks of 1000.
                 </p>
                 <p className="text-center text-xs text-gray-400 mt-2">
                   Files with duplicate names will be saved with collection names (e.g., image_RGB_Images.jpg)

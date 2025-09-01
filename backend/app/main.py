@@ -63,7 +63,7 @@ async def health_check():
 
 
 # Import routers
-from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation
+from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup
 
 # Include routers
 app.include_router(projects.router)
@@ -74,3 +74,4 @@ app.include_router(dataset_groups.router)
 app.include_router(annotation_db.router)
 app.include_router(image_collections.router)
 app.include_router(segmentation.router)
+app.include_router(database_backup.router)

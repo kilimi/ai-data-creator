@@ -136,3 +136,9 @@ convert_scripts/*.json
 backend/ai_models/
 
 .sh
+
+backend/python_scripts/data/
+backend/python_scripts/*/
+backend/python_scripts/*.json
+backend/python_scripts/*.csv
+
