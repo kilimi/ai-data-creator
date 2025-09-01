@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -69,9 +69,13 @@ const DEFAULT_COLORS = [
 
 const ImageAnnotation = () => {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { api } = useApi();
   const { toast } = useToast();
+
+  // Get annotation ID from URL params if editing existing annotation
+  const annotationId = searchParams.get('annotationId');
 
   // Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -95,6 +99,60 @@ const ImageAnnotation = () => {
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
+  const [annotationName, setAnnotationName] = useState<string>("");
+
+  // When an annotation is selected (e.g., by clicking on canvas), scroll only the right list container
+  useEffect(() => {
+    if (!selectedAnnotation) return;
+    // Ensure right panel is open so the item is visible
+    setRightCollapsed(false);
+
+    // Small timeout to allow the panel to expand and DOM to render
+    setTimeout(() => {
+      // Find the annotation element first
+      const el = document.querySelector(`[data-annotation-id="${selectedAnnotation}"]`) as HTMLElement | null;
+      if (!el) {
+        console.warn('Selected annotation element not found:', selectedAnnotation);
+        return;
+      }
+
+      // Find the closest scrollable div that contains this element
+      const scrollContainer = el.closest('.overflow-y-auto') as HTMLElement | null;
+      if (!scrollContainer) {
+        console.warn('Scroll container not found for annotation');
+        return;
+      }
+
+      // Get element position relative to viewport using offsetTop
+      const elementTop = el.offsetTop;
+      const viewportHeight = scrollContainer.clientHeight;
+      const scrollHeight = scrollContainer.scrollHeight;
+      const elementHeight = el.clientHeight;
+      const currentScrollTop = scrollContainer.scrollTop;
+      
+      // Only scroll if the element is not currently visible or if we need to center it
+      const elementBottom = elementTop + elementHeight;
+      const visibleTop = currentScrollTop;
+      const visibleBottom = currentScrollTop + viewportHeight;
+      
+      // Check if element is already fully visible
+      const isFullyVisible = elementTop >= visibleTop && elementBottom <= visibleBottom;
+      
+      if (!isFullyVisible || scrollHeight > viewportHeight) {
+        // Calculate scroll position to center the element, but only if there's actually scrollable content
+        const targetScroll = Math.max(0, Math.min(
+          elementTop - (viewportHeight / 2) + (elementHeight / 2),
+          scrollHeight - viewportHeight
+        ));
+        
+        console.log('Scrolling to annotation:', selectedAnnotation, 'elementTop:', elementTop, 'viewportHeight:', viewportHeight, 'scrollHeight:', scrollHeight, 'currentScroll:', currentScrollTop, 'targetScroll:', targetScroll);
+        scrollContainer.scrollTo({ top: targetScroll, behavior: 'smooth' });
+      } else {
+        console.log('Element already visible, no scroll needed');
+      }
+    }, 120);
+  }, [selectedAnnotation]);
+
   // Right sidebar UI: collapsible and resizable
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [rightWidth, setRightWidth] = useState(320); // px
@@ -330,6 +388,7 @@ const ImageAnnotation = () => {
   const animateToScale = (finalScale: number, focalImagePoint: Point, focalScreenPoint: Point) => {
     stopAnimation();
     targetScaleRef.current = finalScale;
+    preserveZoomRef.current = true; // User is actively zooming, preserve this
 
     const step = () => {
       const cur = scaleRef.current || 1;
@@ -625,8 +684,25 @@ const ImageAnnotation = () => {
     try {
       const counts: { [name: string]: number } = {};
 
-      // Iterate over all known image names and pull saved annotations for each
-      allImageNames.forEach(name => {
+      // Build a set of image names to check. Start with known image names, then
+      // include any image names that have saved annotations in localStorage under the
+      // annotations_{id}_{imageName} key pattern. This handles cases where annotations
+      // exist but the image list (allImageNames) is incomplete or different across layers.
+      const imageNamesToCheck = new Set<string>(allImageNames);
+
+      // Scan localStorage keys for any annotations_{id}_* entries and include their image names
+      const prefix = `annotations_${id}_`;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        if (key.startsWith(prefix)) {
+          const imageName = key.substring(prefix.length);
+          if (imageName) imageNamesToCheck.add(imageName);
+        }
+      }
+
+      // Iterate over all discovered image names and count annotations
+      imageNamesToCheck.forEach(name => {
         const key = `annotations_${id}_${name}`;
         const saved = localStorage.getItem(key);
         if (!saved) return;
@@ -661,7 +737,256 @@ const ImageAnnotation = () => {
     return () => window.removeEventListener('storage', onStorage);
   }, [computeGlobalStats]);
 
+  // Load annotations from annotation file when annotationId is provided
+  const loadFromAnnotationFile = useCallback(async (annotationFileId: string) => {
+    if (!id) return;
+    
+    console.log('Loading segmentation annotations from annotation file:', annotationFileId);
+    
+    // First try to load from saved_annotations localStorage
+    const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+    if (savedAnnotations) {
+      const annotationsList = JSON.parse(savedAnnotations);
+      const targetAnnotation = annotationsList.find((ann: any) => ann.id === annotationFileId);
+      
+      if (targetAnnotation && targetAnnotation.content) {
+        console.log('Found annotation file in localStorage:', targetAnnotation.name);
+        
+        setAnnotationName(targetAnnotation.name);
+        const cocoData = targetAnnotation.content;
+        return loadAnnotationsFromCOCO(cocoData);
+      }
+    }
+    
+    // If not found in localStorage, try loading from backend
+    if (api) {
+      try {
+        // First get annotation metadata to get the name
+        const annotationResponse = await api.getAnnotation(id, annotationFileId);
+        const response = await api.getAnnotationContent(id, annotationFileId);
+        if (response.success && response.data.content) {
+          console.log('Loading segmentation annotations from backend');
+          
+          // Set annotation name if available
+          if (annotationResponse.success && annotationResponse.data?.file_name) {
+            setAnnotationName(annotationResponse.data.file_name);
+          }
+          
+          const cocoData = JSON.parse(response.data.content);
+          return loadAnnotationsFromCOCO(cocoData);
+        }
+      } catch (error) {
+        console.error('Failed to load annotation from backend:', error);
+        toast({
+          title: "Failed to load annotations",
+          description: "Could not load the selected annotation file.",
+          variant: "destructive",
+        });
+        return false;
+      }
+    }
+    
+    toast({
+      title: "Annotation file not found",
+      description: "The selected annotation file could not be found.",
+      variant: "destructive",
+    });
+    return false;
+  }, [id, api, toast]);
+
+  // Helper function to load annotations from COCO format
+  const loadAnnotationsFromCOCO = useCallback((cocoData: any) => {
+    try {
+      const newAnnotations: { [imageName: string]: AnnotationShape[] } = {};
+      const classSet = new Set<string>();
+      const classColorMap: { [name: string]: string } = {};
+      
+      // Extract classes from categories
+      if (cocoData.categories) {
+        cocoData.categories.forEach((category: any, index: number) => {
+          classSet.add(category.name);
+          // Assign colors from default palette
+          classColorMap[category.name] = DEFAULT_COLORS[index % DEFAULT_COLORS.length];
+        });
+      }
+      
+      // Create image ID to filename mapping
+      const imageIdToFilename: { [id: string]: string } = {};
+      if (cocoData.images) {
+        cocoData.images.forEach((img: any) => {
+          imageIdToFilename[img.id.toString()] = img.file_name;
+        });
+      }
+      
+      // Create category ID to name mapping
+      const categoryIdToName: { [id: string]: string } = {};
+      if (cocoData.categories) {
+        cocoData.categories.forEach((cat: any) => {
+          categoryIdToName[cat.id.toString()] = cat.name;
+        });
+      }
+      
+      // Process annotations
+      if (cocoData.annotations) {
+        cocoData.annotations.forEach((annotation: any) => {
+          const imageId = annotation.image_id.toString();
+          const imageName = imageIdToFilename[imageId];
+          const className = categoryIdToName[annotation.category_id.toString()];
+          
+          if (imageName && className && annotation.segmentation && annotation.segmentation.length > 0) {
+            const segmentation = annotation.segmentation[0]; // Take first polygon
+            
+            if (segmentation && segmentation.length >= 6) { // At least 3 points (x,y pairs)
+              const points: Point[] = [];
+              for (let i = 0; i < segmentation.length; i += 2) {
+                points.push({
+                  x: segmentation[i],
+                  y: segmentation[i + 1]
+                });
+              }
+              
+              const annotationShape: AnnotationShape = {
+                id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                type: 'polygon',
+                points,
+                label: className,
+                color: classColorMap[className] || DEFAULT_COLORS[0],
+                visible: true
+              };
+              
+              if (!newAnnotations[imageName]) {
+                newAnnotations[imageName] = [];
+              }
+              newAnnotations[imageName].push(annotationShape);
+            }
+          }
+        });
+      }
+      
+      // Save annotations to localStorage for each image
+      Object.entries(newAnnotations).forEach(([imageName, annotations]) => {
+        const storageKey = `annotations_${id}_${imageName}`;
+        localStorage.setItem(storageKey, JSON.stringify(annotations));
+      });
+      
+      // Update classes
+      const newClasses: AnnotationClass[] = Array.from(classSet).map((className, index) => ({
+        id: `class_${Date.now()}_${index}`,
+        name: className,
+        color: classColorMap[className] || DEFAULT_COLORS[index % DEFAULT_COLORS.length],
+        visible: true,
+        count: 0 // Will be updated by computeGlobalStats
+      }));
+      
+      setClasses(newClasses);
+      saveGlobalClasses(newClasses);
+      
+      // Load annotations for current image if it exists in the loaded data
+      // Try multiple ways to match the current image
+      let annotationsLoaded = false;
+      if (currentImageName) {
+        // Try exact match first
+        if (newAnnotations[currentImageName]) {
+          setAnnotations(newAnnotations[currentImageName]);
+          annotationsLoaded = true;
+        } else {
+          // Try to find a match by checking different name variations
+          const imageNames = Object.keys(newAnnotations);
+          const matchedImageName = imageNames.find(name => 
+            name === currentImageName || 
+            name.includes(currentImageName) || 
+            currentImageName.includes(name) ||
+            name.replace(/\.[^/.]+$/, '') === currentImageName.replace(/\.[^/.]+$/, '') // Remove extensions and compare
+          );
+          
+          if (matchedImageName) {
+            setAnnotations(newAnnotations[matchedImageName]);
+            annotationsLoaded = true;
+          }
+        }
+      }
+      
+      // If no current image name or no match found, try to load from the first available image
+      if (!annotationsLoaded && Object.keys(newAnnotations).length > 0) {
+        const firstImageName = Object.keys(newAnnotations)[0];
+        setAnnotations(newAnnotations[firstImageName]);
+        // Also update the current image name if it wasn't set
+        if (!currentImageName) {
+          setCurrentImageName(firstImageName);
+        }
+        annotationsLoaded = true;
+      }
+      
+      // Recompute global stats
+      computeGlobalStats();
+      
+      // Force a canvas redraw after a short delay to ensure all state updates have been processed
+      setTimeout(() => {
+        if (canvasRef.current) {
+          // Trigger a manual redraw by updating a dependency
+          setAnnotations(prev => [...prev]);
+        }
+      }, 100);
+      
+      toast({
+        title: "Annotations loaded",
+        description: `Loaded segmentation annotations for ${Object.keys(newAnnotations).length} images`,
+      });
+      
+      return true;
+    } catch (error) {
+      console.error('Error parsing COCO data:', error);
+      toast({
+        title: "Failed to parse annotations",
+        description: "The annotation file format is invalid.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  }, [id, currentImageName, computeGlobalStats, toast]);
+
+  // Load from annotation file if annotationId is provided
+  useEffect(() => {
+    if (annotationId && !isLoading) {
+      // Wait for images to be loaded before attempting to load annotation file
+      loadFromAnnotationFile(annotationId);
+    }
+  }, [annotationId, isLoading, loadFromAnnotationFile]);
+
+  // Load annotations when current image name changes
+  useEffect(() => {
+    if (currentImageName && id) {
+      const storageKey = `annotations_${id}_${currentImageName}`;
+      const stored = localStorage.getItem(storageKey);
+      
+      if (stored) {
+        try {
+          const parsedAnnotations = JSON.parse(stored);
+          setAnnotations(parsedAnnotations);
+          console.log(`Loaded annotations for ${currentImageName}:`, parsedAnnotations.length);
+        } catch (error) {
+          console.error('Error parsing stored annotations:', error);
+          setAnnotations([]);
+        }
+      } else {
+        // No annotations for this image
+        setAnnotations([]);
+      }
+    }
+  }, [currentImageName, id]);
+
   const hasAnyAnnotations = Object.values(globalStats).reduce((s, v) => s + v, 0) > 0;
+  // If globalStats is empty, check localStorage for any annotations entries as a fallback
+  const hasAnyAnnotationsStored = (() => {
+    if (hasAnyAnnotations) return true;
+    const prefix = `annotations_${id}_`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith(prefix)) return true;
+    }
+    return false;
+  })();
 
   // Convert screen coordinates to image coordinates
   const screenToImageCoords = useCallback((screenX: number, screenY: number): Point => {
@@ -1172,7 +1497,34 @@ const ImageAnnotation = () => {
     });
   };
 
+  // Keyboard shortcut for deleting selected annotation
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Only handle Delete key if we have a selected annotation and not editing text
+      if (event.key === 'Delete' && selectedAnnotation && 
+          !(event.target as HTMLElement)?.tagName.match(/INPUT|TEXTAREA|SELECT/)) {
+        event.preventDefault();
+        const confirmed = window.confirm('Delete this annotation? This cannot be undone.');
+        if (confirmed) {
+          deleteAnnotation(selectedAnnotation);
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedAnnotation]);
+
+  // Track if we should preserve zoom on resize vs reset to fit-to-screen
+  const preserveZoomRef = useRef(false);
+  
   const handleImageLoad = () => {
+    // Reset preserve flag for new image loads
+    preserveZoomRef.current = false;
+    handleImageResize();
+  };
+
+  const handleImageResize = () => {
     if (!imageRef.current || !canvasRef.current || !containerRef.current) return;
 
     const img = imageRef.current;
@@ -1187,18 +1539,23 @@ const ImageAnnotation = () => {
     // Calculate scale to fit image in container
     const scaleX = containerRect.width / img.naturalWidth;
     const scaleY = containerRect.height / img.naturalHeight;
-    const scale = Math.min(scaleX, scaleY);
+    const fitToContainerScale = Math.min(scaleX, scaleY);
 
-    setImageScale(scale);
-    
-    // Center image in container
-    const scaledWidth = img.naturalWidth * scale;
-    const scaledHeight = img.naturalHeight * scale;
-    
-    setImageOffset({
-      x: (containerRect.width - scaledWidth) / 2,
-      y: (containerRect.height - scaledHeight) / 2
-    });
+    // Only reset zoom if this is initial load or we're explicitly not preserving zoom
+    if (!preserveZoomRef.current) {
+      setImageScale(fitToContainerScale);
+      // Center image in container for new images
+      const scaledWidth = img.naturalWidth * fitToContainerScale;
+      const scaledHeight = img.naturalHeight * fitToContainerScale;
+      
+      setImageOffset({
+        x: (containerRect.width - scaledWidth) / 2,
+        y: (containerRect.height - scaledHeight) / 2
+      });
+    } else {
+      // When preserving zoom, keep the current offset - don't recenter
+      // Just update the canvas size, the scale and offset should remain unchanged
+    }
 
     redrawCanvas();
   };
@@ -1207,14 +1564,17 @@ const ImageAnnotation = () => {
     useEffect(() => {
       // If image already loaded, recompute layout to maintain aspect ratio when side panels are hidden/resized
       if (imageRef.current) {
+        // Preserve zoom when just resizing panels
+        preserveZoomRef.current = true;
+        
         // small timeout to let layout settle after panel resize/collapse
         const t = setTimeout(() => {
-          handleImageLoad();
+          handleImageResize();
         }, 10);
         return () => clearTimeout(t);
       }
       return undefined;
-      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth, currentImage, displayImage]);
+      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth, imageScale]);
 
     // Listen for explicit resize-end notifications from resize handlers and toggles
     useEffect(() => {
@@ -1421,6 +1781,32 @@ const ImageAnnotation = () => {
     }
   };
 
+  // Clear all saved annotations from localStorage for this dataset
+  const clearAllAnnotations = () => {
+    if (!id) return;
+    const confirmed = window.confirm('Delete ALL annotations for this dataset from localStorage? This cannot be undone.');
+    if (!confirmed) return;
+
+    const prefix = `annotations_${id}_`;
+    let removed = 0;
+    // Iterate backwards to safely remove keys while iterating
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith(prefix)) {
+        localStorage.removeItem(key);
+        removed++;
+      }
+    }
+
+    // Reset in-memory annotations and class counts
+    setAnnotations([]);
+    setClasses(prev => prev.map(c => ({ ...c, count: 0 })));
+    setGlobalStats({});
+
+    toast({ title: 'Annotations cleared', description: `Removed ${removed} saved annotation file(s) from localStorage` });
+  };
+
   const handleBack = () => {
     const backUrl = projectId 
       ? `/projects/${projectId}/datasets/${id}` 
@@ -1515,7 +1901,14 @@ const ImageAnnotation = () => {
             Back
           </Button>
           <div>
-            <h1 className="text-lg font-semibold">Segmentation Annotation</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-semibold">Segmentation Annotation</h1>
+              {annotationId && annotationName && (
+                <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/40 text-xs">
+                  Editing {annotationName}
+                </Badge>
+              )}
+            </div>
             <p className="text-sm text-gray-400">
               Image {currentImageIndex + 1} of {allImageNames.length}: {currentImage?.fileName || currentImageName}
             </p>
@@ -1523,9 +1916,19 @@ const ImageAnnotation = () => {
         </div>
 
         <div className="flex items-center gap-2 relative">
-          <Button onClick={saveAllAnnotations} disabled={!hasAnyAnnotations}>
+          <Button onClick={saveAllAnnotations} disabled={!hasAnyAnnotationsStored}>
             <Save className="w-4 h-4 mr-2" />
             Save All
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={clearAllAnnotations}
+            disabled={!hasAnyAnnotationsStored}
+            className="ml-2"
+            title="Delete all saved annotations from localStorage"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete All
           </Button>
 
           <Button
@@ -1915,18 +2318,27 @@ const ImageAnnotation = () => {
               </div>
             </div>
 
-            <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0">
-              <ScrollArea className="flex-1">
+            <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: 'thin' }}>
                 <div className="p-4 space-y-2">
-                  {annotations.map((annotation) => (
+                  {annotations.map((annotation) => {
+                    // Debug logging
+                    if (annotation.id === selectedAnnotation) {
+                      console.log('Rendering selected annotation:', annotation.id, 'selectedAnnotation:', selectedAnnotation);
+                    }
+                    return (
                     <Card 
                       key={annotation.id}
+                      data-annotation-id={annotation.id}
                       className={`p-3 cursor-pointer transition-colors ${
                         selectedAnnotation === annotation.id 
                           ? 'border-blue-500 bg-blue-500/20' 
                           : 'border-gray-600 hover:border-gray-500'
                       }`}
-                      onClick={() => setSelectedAnnotation(annotation.id)}
+                      onClick={() => {
+                        console.log('Card clicked, setting selectedAnnotation to:', annotation.id);
+                        setSelectedAnnotation(annotation.id);
+                      }}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -1999,7 +2411,8 @@ const ImageAnnotation = () => {
                         </div>
                       </div>
                     </Card>
-                  ))}
+                    );
+                  })}
 
                   {annotations.length === 0 && (
                     <p className="text-center text-gray-500 py-8">
@@ -2008,7 +2421,7 @@ const ImageAnnotation = () => {
                     </p>
                   )}
                 </div>
-              </ScrollArea>
+              </div>
             </TabsContent>
 
             <TabsContent value="statistics" className="flex-1 overflow-auto p-4">

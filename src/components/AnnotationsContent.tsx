@@ -1775,6 +1775,39 @@ export function AnnotationsContent({
       });
     }
   };
+
+  // Helper function to clear annotation cache before editing
+  const clearAnnotationCache = (annotationType: 'classification' | 'segmentation') => {
+    console.log(`Clearing ${annotationType} annotation cache before editing...`);
+    
+    const keysToRemove: string[] = [];
+    const prefixes = annotationType === 'classification' 
+      ? [`classifications_${id}_`, `classColors_${id}`, `annotation_settings_${id}`]
+      : [`annotations_${id}_`, `classes_${id}`, `annotation_settings_${id}`];
+    
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && prefixes.some(prefix => key.startsWith(prefix))) {
+        keysToRemove.push(key);
+      }
+    }
+    
+    // Remove all identified keys
+    keysToRemove.forEach(key => {
+      localStorage.removeItem(key);
+      console.log(`Cleared cache key: ${key}`);
+    });
+    
+    if (keysToRemove.length > 0) {
+      toast({
+        title: "Cache cleared",
+        description: `Cleared ${keysToRemove.length} cached ${annotationType} entries for fresh editing.`,
+      });
+    }
+    
+    return keysToRemove.length;
+  };
+
   const handleEditAnnotation = (annotationId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
@@ -1794,8 +1827,26 @@ export function AnnotationsContent({
     
     const file = annotationFiles.find(f => f.id === annotationId);
     if (file && detectAnnotationType(file) === 'classification') {
+      // Clear all existing annotation cache to start fresh
+      clearAnnotationCache('classification');
+      
       // Navigate to classification page with the dataset ID and annotation file ID
       navigate(`/datasets/${id}/annotate/classification?annotationId=${annotationId}`);
+    }
+  };
+
+  const handleEditSegmentationAnnotation = (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    const annotationType = detectAnnotationType(file);
+    
+    if (file && annotationType.startsWith('segmentation')) {
+      // Clear all existing annotation cache to start fresh
+      clearAnnotationCache('segmentation');
+      
+      // Navigate to segmentation page with the dataset ID and annotation file ID
+      navigate(`/datasets/${id}/annotate/segmentation?annotationId=${annotationId}`);
     }
   };
 
@@ -3063,6 +3114,7 @@ export function AnnotationsContent({
             classCount: file.category_count || 0,
             imageCount: file.image_count || 0,
             matchedImageCount: file.matched_image_count || 0,
+            totalSampleCount: file.annotation_count || 0, // Use backend annotation count as initial value
             datasetId: id,
             classStats: [],
             samples: [],
@@ -3101,6 +3153,9 @@ export function AnnotationsContent({
                 annotationFileName: file.name,
                 color: result.classColors[sample.className] || sample.color || generateRandomColor() // Ensure colors are assigned
               }));
+              
+              // Set the total sample count based on loaded samples
+              annotationFile.totalSampleCount = annotationFile.samples.length;
               
               console.log(`Full backend loading for ${file.name} - Colors:`, result.classColors);
             } else {
@@ -3886,17 +3941,21 @@ export function AnnotationsContent({
                               detectAnnotationType(file) === 'classification'
                                 ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors bg-blue-500/20 text-blue-300 border-blue-500' 
                                 : detectAnnotationType(file).startsWith('segmentation')
-                                ? 'bg-green-500/20 text-green-300 border-green-500'
+                                ? 'cursor-pointer hover:bg-green-600 hover:text-white transition-colors bg-green-500/20 text-green-300 border-green-500'
                                 : 'bg-gray-500/20 text-gray-300 border-gray-500' // nothing
                             }`}
                             onClick={(e) => {
                               if (detectAnnotationType(file) === 'classification') {
                                 handleEditClassificationAnnotation(file.id, e);
+                              } else if (detectAnnotationType(file).startsWith('segmentation')) {
+                                handleEditSegmentationAnnotation(file.id, e);
                               }
                             }}
                             title={
                               detectAnnotationType(file) === 'classification'
-                                ? 'Click to edit classification annotations' 
+                                ? 'Click to edit classification annotations'
+                                : detectAnnotationType(file).startsWith('segmentation')
+                                ? 'Click to edit segmentation annotations'
                                 : `Type: ${detectAnnotationType(file)}`
                             }
                           >
@@ -4091,6 +4150,16 @@ export function AnnotationsContent({
                              title="Edit classification annotations"
                            >
                              <Edit className="h-4 w-4" />
+                           </Button>
+                         ) : detectAnnotationType(file).startsWith('segmentation') ? (
+                           <Button 
+                             variant="ghost" 
+                             size="icon" 
+                             className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                             onClick={(e) => handleEditSegmentationAnnotation(file.id, e)}
+                             title="Edit segmentation annotations"
+                           >
+                             <Brush className="h-4 w-4" />
                            </Button>
                          ) : (
                            <>

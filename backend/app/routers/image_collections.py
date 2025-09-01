@@ -215,9 +215,15 @@ async def upload_images_to_collection(
         counter = 1
         
         # Generate unique filename if file already exists on disk
+        # Include collection name for better identification
         while original_path.exists():
             name, ext = os.path.splitext(clean_filename)
-            final_filename = f"{name}_{counter}{ext}"
+            if counter == 1:
+                # First conflict: use collection name
+                final_filename = f"{name}_{collection.name.replace(' ', '_')}{ext}"
+            else:
+                # Subsequent conflicts: use collection name + number
+                final_filename = f"{name}_{collection.name.replace(' ', '_')}_{counter}{ext}"
             original_path = dataset_dir / final_filename
             counter += 1
         

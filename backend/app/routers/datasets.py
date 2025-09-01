@@ -204,7 +204,6 @@ async def upload_images(
         dataset_dir.mkdir(parents=True, exist_ok=True)
         
         uploaded_images = []
-        overwritten_images = []
         
         for file in files:
             if not file.content_type.startswith('image/'):
@@ -212,80 +211,82 @@ async def upload_images(
             
             # Extract just the filename, not the full path (for folder uploads)
             clean_filename = os.path.basename(file.filename)
-            file_path = dataset_dir / clean_filename
+            
+            # Get or create default collection for this dataset (we need it for naming)
+            default_collection = db.query(models.ImageCollection).filter(
+                models.ImageCollection.dataset_id == dataset_id,
+                models.ImageCollection.is_default == True
+            ).first()
+            
+            if not default_collection:
+                # Create default collection if it doesn't exist
+                default_collection = models.ImageCollection(
+                    dataset_id=dataset_id,
+                    name="RGB Images",
+                    description="Default image collection",
+                    is_default=True
+                )
+                db.add(default_collection)
+                db.flush()  # Get the ID without committing the full transaction
+            
+            # Check if file already exists on disk (across all collections) and generate unique filename
+            original_path = dataset_dir / clean_filename
+            final_filename = clean_filename
+            counter = 1
+            
+            # Generate unique filename if file already exists on disk
+            # Include collection name for better identification
+            while original_path.exists():
+                name, ext = os.path.splitext(clean_filename)
+                if counter == 1:
+                    # First conflict: use collection name
+                    final_filename = f"{name}_{default_collection.name.replace(' ', '_')}{ext}"
+                else:
+                    # Subsequent conflicts: use collection name + number
+                    final_filename = f"{name}_{default_collection.name.replace(' ', '_')}_{counter}{ext}"
+                original_path = dataset_dir / final_filename
+                counter += 1
+            
+            file_path = original_path
             
             try:
                 contents = await file.read()
                 
-                # Check if image with same filename already exists in database
-                existing_image = db.query(models.Image).filter(
-                    models.Image.dataset_id == dataset_id,
-                    models.Image.file_name == clean_filename
-                ).first()
-                
-                # Write the file (overwrite if exists)
+                # Write the file with unique name
                 with open(file_path, 'wb') as f:
                     f.write(contents)
                 
-                # Update URL to use the new structure
-                relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{clean_filename}"
-                
-                if existing_image:
-                    # Update existing image record
-                    existing_image.file_size = len(contents)
-                    existing_image.url = relative_url
-                    existing_image.thumbnail_url = relative_url
-                    existing_image.uploaded_at = datetime.utcnow()
-                    overwritten_images.append(existing_image)
-                    print(f"Overwriting existing image: {clean_filename}")
-                else:
-                    # Get or create default collection for this dataset
-                    default_collection = db.query(models.ImageCollection).filter(
-                        models.ImageCollection.dataset_id == dataset_id,
-                        models.ImageCollection.is_default == True
-                    ).first()
-                    
-                    if not default_collection:
-                        # Create default collection if it doesn't exist
-                        default_collection = models.ImageCollection(
-                            dataset_id=dataset_id,
-                            name="RGB Images",
-                            description="Default image collection",
-                            is_default=True
-                        )
-                        db.add(default_collection)
-                        db.flush()  # Get the ID without committing the full transaction
-                    
-                    # Create new image record and assign to default collection
-                    db_image = models.Image(
-                        dataset_id=dataset_id,
-                        collection_id=default_collection.id,  # Assign to default collection
-                        file_name=clean_filename,
-                        file_size=len(contents),
-                        width=0,
-                        height=0,
-                        url=relative_url,
-                        thumbnail_url=relative_url,
-                        annotations_count=0
-                    )
-                    db.add(db_image)
-                    uploaded_images.append(db_image)
-                    print(f"Adding new image to default collection: {clean_filename}")
+                # Update URL to use the new structure with the final filename
+                relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{final_filename}"
+                # Always create new image record since we generate unique filenames
+                db_image = models.Image(
+                    dataset_id=dataset_id,
+                    collection_id=default_collection.id,  # Assign to default collection
+                    file_name=final_filename,  # Use the unique filename
+                    file_size=len(contents),
+                    width=0,
+                    height=0,
+                    url=relative_url,
+                    thumbnail_url=relative_url,
+                    annotations_count=0
+                )
+                db.add(db_image)
+                uploaded_images.append(db_image)
+                print(f"Adding new image to default collection with unique name: {final_filename}")
                     
             except Exception as e:
                 print(f"Error uploading file {file.filename}: {e}")
                 continue
         
-        # Update dataset image count (only add count for new images, not overwritten ones)
+        # Update dataset image count (all images are new since we create unique filenames)
         current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
         dataset.image_count = current_image_count + len(uploaded_images)
         db.commit()
         
-        # Prepare response including both new and overwritten images
+        # Prepare response with uploaded images
         response_images = []
-        all_processed_images = uploaded_images + overwritten_images
         
-        for img in all_processed_images:
+        for img in uploaded_images:
             url = f"{base_url}{img.url}" if img.url.startswith('/') else img.url
             thumbnail_url = f"{base_url}{img.thumbnail_url}" if img.thumbnail_url.startswith('/') else img.thumbnail_url
             response_images.append({
@@ -305,7 +306,7 @@ async def upload_images(
             "success": True,
             "data": {
                 "uploaded": len(uploaded_images),
-                "overwritten": len(overwritten_images),
+                "overwritten": 0,  # We no longer overwrite, always create unique filenames
                 "images": response_images
             }
         }
@@ -736,6 +737,57 @@ async def get_dataset_annotations(
     except Exception as e:
         print(f"Error in get_dataset_annotations: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get annotations: {str(e)}")
+
+
+@router.get("/datasets/{dataset_id}/annotations/{annotation_id}")
+async def get_dataset_annotation(
+    dataset_id: int,
+    annotation_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get a specific annotation file metadata"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Get the specific annotation file record from database
+        db_annotation_file = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        
+        if not db_annotation_file:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+        
+        file_info = {
+            "id": db_annotation_file.id,
+            "name": db_annotation_file.name,
+            "file_name": db_annotation_file.name,  # Add file_name for compatibility
+            "format": db_annotation_file.format or 'COCO',
+            "type": db_annotation_file.type,
+            "tags": db_annotation_file.tags,
+            "size": db_annotation_file.file_size or 0,
+            "annotation_count": db_annotation_file.annotation_count,
+            "image_count": db_annotation_file.image_count,
+            "category_count": db_annotation_file.category_count,
+            "is_processed": db_annotation_file.is_processed,
+            "processing_status": db_annotation_file.processing_status,
+            "error_message": db_annotation_file.error_message,
+            "created_at": db_annotation_file.created_at.isoformat(),
+            "modified_at": db_annotation_file.updated_at.isoformat(),
+        }
+        
+        return {
+            "success": True,
+            "data": file_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_dataset_annotation: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get annotation: {str(e)}")
 
 
 @router.get("/datasets/{dataset_id}/annotations/summary")

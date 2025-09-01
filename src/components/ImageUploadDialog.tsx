@@ -127,7 +127,7 @@ export const ImageUploadDialog = ({
                   PNG, JPG, WEBP up to 10MB each. Large batches will be uploaded in chunks of 1000.
                 </p>
                 <p className="text-center text-xs text-gray-400 mt-2">
-                  Files with duplicate names will be automatically renamed
+                  Files with duplicate names will be saved with collection names (e.g., image_RGB_Images.jpg)
                 </p>
               </div>
             )}
