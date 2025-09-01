@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, Settings, Database, Brain, Activity, Tag, Rocket, Target, BarChart3, Filter, ArrowRight, Sparkles } from "lucide-react";
+import { Plus, Search, Settings, Database, Brain, Activity, Tag, Filter, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -137,86 +137,12 @@ export default function Index() {
       <Navbar />
       
       <main className="container max-w-7xl mx-auto px-4 pt-24">
-        {/* Clean Hero Section */}
-        <div className="relative mb-12">
-          <div className="glass-card rounded-2xl p-8 lg:p-10">
-            {/* Header */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8">
-              <div className="space-y-3">
-                <div className="inline-flex items-center gap-2 bg-primary/10 text-primary px-3 py-1 rounded-full text-sm font-medium">
-                  <Rocket className="w-4 h-4" />
-                  AI Development Platform
-                </div>
-                <h1 className="text-3xl lg:text-4xl font-bold text-foreground">
-                  Welcome back to your workspace
-                </h1>
-                <p className="text-muted-foreground max-w-2xl">
-                  Continue working on your machine learning projects or start something new.
-                </p>
-              </div>
-              
-              {/* Quick Actions */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button size="lg" className="px-6 h-11 group" asChild>
-                  <Link to="/projects/new" className="flex items-center gap-2">
-                    <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-300" />
-                    New Project
-                  </Link>
-                </Button>
-                <Button variant="outline" size="lg" className="px-6 h-11" asChild>
-                  <Link to="/api-settings" className="flex items-center gap-2">
-                    <Settings className="w-5 h-5" />
-                    Settings
-                  </Link>
-                </Button>
-              </div>
-            </div>
-
-            {/* Overview Bar */}
-            {stats.totalProjects > 0 && (
-              <div className="flex items-center gap-6 text-sm text-muted-foreground border-t border-border/50 pt-6">
-                <div className="flex items-center gap-2">
-                  <Database className="w-4 h-4" />
-                  <span>{stats.totalProjects} projects</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Brain className="w-4 h-4" />
-                  <span>{stats.totalDatasets} datasets</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4" />
-                  <span>{stats.totalImages.toLocaleString()} images</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
 
         {/* Projects Section */}
         <div className="mb-8">
           {/* Section Header */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-8">
-            <div className="space-y-2">
-              <h2 className="text-3xl font-bold flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
-                  <Target className="w-5 h-5 text-primary" />
-                </div>
-                Your Projects
-              </h2>
-              <p className="text-muted-foreground text-lg">
-                Manage and monitor your AI development workspace
-              </p>
-            </div>
-            
-            {/* Quick Actions */}
-            <div className="flex items-center gap-3">
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/api-settings" className="flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  Settings
-                </Link>
-              </Button>
-            </div>
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold text-foreground mb-2">Projects</h1>
           </div>
           
           {/* Search and Filters */}

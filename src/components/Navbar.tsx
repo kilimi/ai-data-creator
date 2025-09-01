@@ -42,16 +42,11 @@ export function Navbar() {
         </div>
         
         <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "transition-colors",
-              location.pathname === "/" && "bg-accent text-accent-foreground"
-            )}
-            asChild
-          >
-            <Link to="/">Projects</Link>
+          <Button className="h-9 px-4" asChild>
+            <Link to="/projects/new" className="flex items-center gap-2">
+              <FolderOpen className="h-4 w-4" />
+              New Project
+            </Link>
           </Button>
           
           <TasksPopover />
