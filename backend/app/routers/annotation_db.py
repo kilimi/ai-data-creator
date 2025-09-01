@@ -32,6 +32,16 @@ async def process_coco_annotation_file(
         db.query(Annotation).filter(Annotation.annotation_file_id == annotation_file_id).delete()
         db.query(AnnotationClass).filter(AnnotationClass.annotation_file_id == annotation_file_id).delete()
         
+        # Reset sequence to prevent ID conflicts (important for merged files)
+        try:
+            from sqlalchemy import text
+            db.execute(text("SELECT setval('annotations_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM annotations))"))
+            db.execute(text("SELECT setval('annotation_classes_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM annotation_classes))"))
+            db.commit()
+        except Exception:
+            # If sequence reset fails, continue anyway
+            pass
+        
         # Create image name to ID mapping
         image_mapping = {}
         dataset_images = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id).all()
@@ -101,25 +111,26 @@ async def process_coco_annotation_file(
                         bbox_width = bbox[2] / img_width
                         bbox_height = bbox[3] / img_height
                 
-                # Create annotation record
-                annotation = Annotation(
-                    annotation_file_id=annotation_file_id,
-                    image_id=image_info['dataset_image_id'],
-                    dataset_id=annotation_file.dataset_id,
-                    coco_image_id=coco_image_id,
-                    coco_annotation_id=coco_ann.get('id'),
-                    category_id=category_id,
-                    category=class_name,
-                    bbox_x=bbox_x,
-                    bbox_y=bbox_y,
-                    bbox_width=bbox_width,
-                    bbox_height=bbox_height,
-                    bbox=coco_ann.get('bbox'),  # Keep original for backward compatibility
-                    segmentation=coco_ann.get('segmentation'),
-                    area=coco_ann.get('area'),
-                    confidence=1.0
-                )
+                # Create annotation record (explicitly let database auto-generate ID)
+                annotation_data = {
+                    'annotation_file_id': annotation_file_id,
+                    'image_id': image_info['dataset_image_id'],
+                    'dataset_id': annotation_file.dataset_id,
+                    'coco_image_id': coco_image_id,
+                    'coco_annotation_id': coco_ann.get('id'),
+                    'category_id': category_id,
+                    'category': class_name,
+                    'bbox_x': bbox_x,
+                    'bbox_y': bbox_y,
+                    'bbox_width': bbox_width,
+                    'bbox_height': bbox_height,
+                    'bbox': coco_ann.get('bbox'),  # Keep original for backward compatibility
+                    'segmentation': coco_ann.get('segmentation'),
+                    'area': coco_ann.get('area'),
+                    'confidence': 1.0
+                }
                 
+                annotation = Annotation(**annotation_data)
                 db.add(annotation)
                 annotation_count += 1
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
@@ -459,6 +470,16 @@ def process_coco_annotation_file_task(
         db.query(Annotation).filter(Annotation.annotation_file_id == file_id).delete()
         db.query(AnnotationClass).filter(AnnotationClass.annotation_file_id == file_id).delete()
         
+        # Reset sequence to prevent ID conflicts (important for merged files)
+        try:
+            from sqlalchemy import text
+            db.execute(text("SELECT setval('annotations_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM annotations))"))
+            db.execute(text("SELECT setval('annotation_classes_id_seq', (SELECT COALESCE(MAX(id), 0) + 1 FROM annotation_classes))"))
+            db.commit()
+        except Exception:
+            # If sequence reset fails, continue anyway
+            pass
+        
         if task:
             task.progress = 30
             db.commit()
@@ -557,25 +578,26 @@ def process_coco_annotation_file_task(
                         bbox_width = bbox[2] / img_width
                         bbox_height = bbox[3] / img_height
                 
-                # Create annotation record
-                annotation = Annotation(
-                    annotation_file_id=file_id,
-                    image_id=image_info['dataset_image_id'],
-                    dataset_id=annotation_file.dataset_id,
-                    coco_image_id=coco_image_id,
-                    coco_annotation_id=coco_ann.get('id'),
-                    category_id=category_id,
-                    category=class_name,
-                    bbox_x=bbox_x,
-                    bbox_y=bbox_y,
-                    bbox_width=bbox_width,
-                    bbox_height=bbox_height,
-                    bbox=coco_ann.get('bbox'),  # Keep original for backward compatibility
-                    segmentation=coco_ann.get('segmentation'),
-                    area=coco_ann.get('area'),
-                    confidence=1.0
-                )
+                # Create annotation record (explicitly let database auto-generate ID)
+                annotation_data = {
+                    'annotation_file_id': file_id,
+                    'image_id': image_info['dataset_image_id'],
+                    'dataset_id': annotation_file.dataset_id,
+                    'coco_image_id': coco_image_id,
+                    'coco_annotation_id': coco_ann.get('id'),
+                    'category_id': category_id,
+                    'category': class_name,
+                    'bbox_x': bbox_x,
+                    'bbox_y': bbox_y,
+                    'bbox_width': bbox_width,
+                    'bbox_height': bbox_height,
+                    'bbox': coco_ann.get('bbox'),  # Keep original for backward compatibility
+                    'segmentation': coco_ann.get('segmentation'),
+                    'area': coco_ann.get('area'),
+                    'confidence': 1.0
+                }
                 
+                annotation = Annotation(**annotation_data)
                 db.add(annotation)
                 annotation_count += 1
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1

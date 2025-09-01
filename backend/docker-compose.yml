@@ -11,6 +11,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 1G
+          cpus: "1.0"
   sam_service:
     build:
       context: ./sam_service
@@ -22,6 +30,9 @@ services:
     restart: unless-stopped
     deploy:
       resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
         reservations:
           devices:
             - driver: nvidia

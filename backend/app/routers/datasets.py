@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional, List
+from pydantic import BaseModel
 import json
 import base64
 from pathlib import Path
@@ -8,6 +9,7 @@ import os
 from datetime import datetime
 import asyncio
 import shutil
+import threading
 from PIL import Image
 import io
 import uuid
@@ -16,6 +18,11 @@ from .. import models, schemas
 from ..database import get_db, SessionLocal
 
 router = APIRouter()
+
+
+class MergeAnnotationFilesRequest(BaseModel):
+    annotation_file_ids: List[str]
+    merged_filename: Optional[str] = None
 
 
 @router.post("/datasets/", response_model=schemas.Dataset)
@@ -1287,3 +1294,475 @@ async def update_annotation_content(
         db.rollback()
         print(f"Error in update_annotation_content: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update annotation content: {str(e)}")
+
+
+async def merge_annotation_files_task(
+    task_id: int,
+    dataset_id: int,
+    file_ids: List[str],
+    merged_filename: str
+):
+    """Background task to merge annotation files and create a new merged file"""
+    # Use a fresh session inside background task
+    db = SessionLocal()
+    try:
+        # Update task status
+        task = db.query(models.Task).filter(models.Task.id == task_id).first()
+        if not task:
+            return
+            
+        task.status = "running"
+        task.started_at = datetime.utcnow()
+        task.progress = 5
+        db.commit()
+
+        # Get all annotation files to merge
+        annotation_files = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id.in_(file_ids),
+            models.AnnotationFile.dataset_id == dataset_id
+        ).all()
+
+        if len(annotation_files) < 2:
+            raise Exception("At least 2 annotation files are required for merging")
+
+        # Check if files are too large (over 50k annotations total)
+        total_annotations = sum(f.annotation_count or 0 for f in annotation_files)
+        if total_annotations > 50000:
+            print(f"Warning: Large merge operation with {total_annotations} annotations")
+            # Update task metadata to reflect large operation
+            task.task_metadata = {
+                **task.task_metadata,
+                "large_operation": True,
+                "total_source_annotations": total_annotations,
+                "estimated_duration": "5-15 minutes",
+                "optimization_enabled": True
+            }
+            db.commit()
+
+        task.progress = 10
+        db.commit()
+
+        # Get all dataset images for mapping (load once, reuse)
+        dataset_images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
+        image_lookup = {img.id: img for img in dataset_images}
+
+        task.progress = 15
+        db.commit()
+
+        # Initialize merged data structure
+        merged_data = {
+            "info": {
+                "description": f"Merged annotations from {len(annotation_files)} files: {', '.join([f.name for f in annotation_files])}",
+                "version": "1.0",
+                "year": datetime.utcnow().year,
+                "contributor": "AI Data Creator",
+                "date_created": datetime.utcnow().isoformat()
+            },
+            "licenses": [{
+                "id": 1,
+                "name": "Unknown License",
+                "url": ""
+            }],
+            "images": [],
+            "categories": [],
+            "annotations": []
+        }
+
+        # Use sets for faster duplicate detection
+        category_map = {}  # category_name -> category_id
+        image_map = {}     # original_image_id -> new_coco_image_id
+        seen_annotations = set()  # (image_id, category_id, bbox_hash) for duplicate detection
+        
+        category_id_counter = 1
+        image_id_counter = 1
+        annotation_id_counter = 1
+
+        # Process files in batches to avoid memory issues
+        for file_idx, annotation_file in enumerate(annotation_files):
+            try:
+                print(f"Processing annotation file: {annotation_file.name} ({annotation_file.annotation_count} annotations)")
+                
+                # Process categories first (usually small number)
+                classes = db.query(models.AnnotationClass).filter(
+                    models.AnnotationClass.annotation_file_id == annotation_file.id
+                ).all()
+
+                for cls in classes:
+                    if cls.class_name not in category_map:
+                        category_map[cls.class_name] = category_id_counter
+                        merged_data["categories"].append({
+                            "id": category_id_counter,
+                            "name": cls.class_name,
+                            "supercategory": ""
+                        })
+                        category_id_counter += 1
+
+                # Process annotations in batches to avoid memory overload
+                batch_size = 1000  # Process 1000 annotations at a time
+                annotation_count = annotation_file.annotation_count or 0
+                
+                for offset in range(0, annotation_count, batch_size):
+                    # Load annotations in batches
+                    annotations_batch = db.query(models.Annotation).filter(
+                        models.Annotation.annotation_file_id == annotation_file.id
+                    ).offset(offset).limit(batch_size).all()
+                    
+                    for annotation in annotations_batch:
+                        # Handle image mapping (avoid duplicates)
+                        original_image_id = annotation.image_id
+                        
+                        if original_image_id not in image_map:
+                            # Add new image entry
+                            image_info = image_lookup.get(original_image_id)
+                            if image_info:
+                                image_map[original_image_id] = image_id_counter
+                                merged_data["images"].append({
+                                    "id": image_id_counter,
+                                    "width": image_info.width or 640,
+                                    "height": image_info.height or 480,
+                                    "file_name": image_info.file_name,
+                                    "license": 1,
+                                    "flickr_url": "",
+                                    "coco_url": "",
+                                    "date_captured": ""
+                                })
+                                image_id_counter += 1
+                            else:
+                                # Skip annotation if image not found
+                                continue
+
+                        # Create annotation entry
+                        coco_image_id = image_map[original_image_id]
+                        category_id = category_map.get(annotation.category, category_map.get("unknown", 1))
+
+                        # Convert bbox for duplicate detection
+                        bbox_tuple = None
+                        if annotation.bbox and len(annotation.bbox) >= 4:
+                            # Round bbox values for duplicate detection (avoid floating point precision issues)
+                            bbox_tuple = tuple(round(coord, 2) for coord in annotation.bbox[:4])
+                        
+                        # Create a hash for duplicate detection
+                        annotation_hash = (coco_image_id, category_id, bbox_tuple)
+                        
+                        # Skip if duplicate
+                        if annotation_hash in seen_annotations:
+                            continue
+                        
+                        seen_annotations.add(annotation_hash)
+
+                        # Get image dimensions for bbox conversion
+                        image_info = image_lookup.get(original_image_id)
+                        img_width = image_info.width if image_info else 640
+                        img_height = image_info.height if image_info else 480
+
+                        # Convert bbox properly
+                        pixel_bbox = [0, 0, 0, 0]
+                        if annotation.bbox and len(annotation.bbox) >= 4:
+                            bbox = annotation.bbox
+                            # Check if bbox is normalized (values between 0 and 1)
+                            if all(0 <= coord <= 1 for coord in bbox):
+                                # Convert normalized to pixel coordinates
+                                pixel_bbox = [
+                                    bbox[0] * img_width,   # x
+                                    bbox[1] * img_height,  # y
+                                    bbox[2] * img_width,   # width
+                                    bbox[3] * img_height   # height
+                                ]
+                            else:
+                                # Already in pixel coordinates
+                                pixel_bbox = list(bbox[:4])
+
+                        merged_annotation = {
+                            "id": annotation_id_counter,
+                            "image_id": coco_image_id,
+                            "category_id": category_id,
+                            "bbox": pixel_bbox,
+                            "area": annotation.area or (pixel_bbox[2] * pixel_bbox[3] if pixel_bbox else 0),
+                            "iscrowd": 0
+                        }
+
+                        if annotation.segmentation:
+                            merged_annotation["segmentation"] = annotation.segmentation
+
+                        merged_data["annotations"].append(merged_annotation)
+                        annotation_id_counter += 1
+
+                    # Update progress within file processing
+                    file_progress = 20 + (file_idx * 60 // len(annotation_files)) + ((offset + batch_size) * 60 // len(annotation_files) // annotation_count)
+                    task.progress = min(file_progress, 80)
+                    db.commit()
+
+                print(f"Completed processing {annotation_file.name}: {len([a for a in merged_data['annotations'] if a.get('_source_file') == annotation_file.name])} annotations")
+
+            except Exception as file_error:
+                print(f"Error processing file {annotation_file.name}: {file_error}")
+                continue
+
+        task.progress = 85
+        db.commit()
+
+        # Create the merged annotation file record
+        import uuid
+        merged_file_id = str(uuid.uuid4())[:8]
+        
+        # Calculate final statistics
+        final_annotation_count = len(merged_data["annotations"])
+        final_image_count = len(merged_data["images"])
+        final_category_count = len(merged_data["categories"])
+        
+        print(f"Merge summary: {final_annotation_count} annotations, {final_image_count} images, {final_category_count} categories")
+        
+        merged_annotation_file = models.AnnotationFile(
+            id=merged_file_id,
+            dataset_id=dataset_id,
+            name=merged_filename,
+            format='COCO',
+            file_size=0,  # Will be updated after processing
+            annotation_count=final_annotation_count,
+            image_count=final_image_count,
+            category_count=final_category_count,
+            is_processed=False,
+            processing_status="pending"
+        )
+        
+        db.add(merged_annotation_file)
+        db.commit()
+
+        task.progress = 90
+        db.commit()
+
+        # For very large files, we should process them directly rather than re-parsing
+        if final_annotation_count > 10000:
+            print(f"Large merge detected ({final_annotation_count} annotations), using direct processing")
+            # Process directly without going through COCO parsing again
+            await process_merged_data_directly(db, merged_file_id, merged_data)
+        else:
+            # Use existing processing for smaller files
+            from .annotation_db import process_coco_annotation_file
+            await process_coco_annotation_file(merged_file_id, merged_data)
+
+        # Mark task as completed
+        task.status = "completed"
+        task.completed_at = datetime.utcnow()
+        task.progress = 100
+        task.task_metadata = {
+            **task.task_metadata,
+            "merged_file_id": merged_file_id,
+            "total_images": final_image_count,
+            "total_annotations": final_annotation_count,
+            "total_categories": final_category_count,
+            "source_files": [f.name for f in annotation_files],
+            "duplicates_removed": total_annotations - final_annotation_count
+        }
+        db.commit()
+
+        print(f"Annotation merge completed: {final_annotation_count} annotations, {final_image_count} images, {final_category_count} categories")
+
+    except Exception as e:
+        # Mark task as failed
+        if 'task' in locals():
+            task.status = "failed"
+            task.completed_at = datetime.utcnow()
+            task.error_message = str(e)
+            task.progress = 0
+            db.commit()
+        
+        print(f"Error in merge_annotation_files_task: {e}")
+        raise
+    finally:
+        db.close()
+
+
+async def process_merged_data_directly(db: Session, merged_file_id: str, merged_data: dict):
+    """Process merged data directly for large files to avoid memory issues"""
+    try:
+        annotation_file = db.query(models.AnnotationFile).filter(models.AnnotationFile.id == merged_file_id).first()
+        if not annotation_file:
+            return
+            
+        annotation_file.processing_status = "processing"
+        db.commit()
+
+        # Clear any existing data
+        db.query(models.Annotation).filter(models.Annotation.annotation_file_id == merged_file_id).delete()
+        db.query(models.AnnotationClass).filter(models.AnnotationClass.annotation_file_id == merged_file_id).delete()
+
+        # Process categories
+        for category in merged_data["categories"]:
+            annotation_class = models.AnnotationClass(
+                annotation_file_id=merged_file_id,
+                class_name=category["name"],
+                category_id=category["id"],
+                count=0,  # Will be updated when processing annotations
+                color='#ea384c',
+                opacity=0.25
+            )
+            db.add(annotation_class)
+
+        # Process annotations in batches to avoid memory issues
+        batch_size = 500
+        class_counts = {}
+        
+        for i in range(0, len(merged_data["annotations"]), batch_size):
+            batch = merged_data["annotations"][i:i + batch_size]
+            
+            for ann_data in batch:
+                # Find the category name
+                category_id = ann_data["category_id"]
+                category_name = next((cat["name"] for cat in merged_data["categories"] if cat["id"] == category_id), "unknown")
+                
+                # Find the image info
+                image_id = ann_data["image_id"]
+                image_info = next((img for img in merged_data["images"] if img["id"] == image_id), None)
+                
+                if not image_info:
+                    continue
+                
+                # Convert bbox back to normalized coordinates
+                bbox = ann_data.get("bbox", [0, 0, 0, 0])
+                img_width = image_info.get("width", 640)
+                img_height = image_info.get("height", 480)
+                
+                normalized_bbox = [
+                    bbox[0] / img_width if img_width > 0 else 0,
+                    bbox[1] / img_height if img_height > 0 else 0,
+                    bbox[2] / img_width if img_width > 0 else 0,
+                    bbox[3] / img_height if img_height > 0 else 0
+                ] if bbox else None
+
+                # Create annotation record
+                annotation = models.Annotation(
+                    annotation_file_id=merged_file_id,
+                    image_id=None,  # We'll need to map this to actual dataset image ID
+                    dataset_id=annotation_file.dataset_id,
+                    coco_image_id=image_id,
+                    coco_annotation_id=ann_data.get("id"),
+                    category_id=category_id,
+                    category=category_name,
+                    bbox_x=normalized_bbox[0] if normalized_bbox else None,
+                    bbox_y=normalized_bbox[1] if normalized_bbox else None,
+                    bbox_width=normalized_bbox[2] if normalized_bbox else None,
+                    bbox_height=normalized_bbox[3] if normalized_bbox else None,
+                    bbox=bbox,
+                    segmentation=ann_data.get("segmentation"),
+                    area=ann_data.get("area"),
+                    confidence=1.0
+                )
+                
+                db.add(annotation)
+                class_counts[category_name] = class_counts.get(category_name, 0) + 1
+            
+            # Commit in batches
+            db.commit()
+
+        # Update class counts
+        for class_name, count in class_counts.items():
+            annotation_class = db.query(models.AnnotationClass).filter(
+                models.AnnotationClass.annotation_file_id == merged_file_id,
+                models.AnnotationClass.class_name == class_name
+            ).first()
+            if annotation_class:
+                annotation_class.count = count
+
+        # Mark as completed
+        annotation_file.is_processed = True
+        annotation_file.processing_status = "completed"
+        db.commit()
+
+    except Exception as e:
+        if annotation_file:
+            annotation_file.processing_status = "failed"
+            annotation_file.error_message = str(e)
+            db.commit()
+        raise
+
+
+@router.post("/datasets/{dataset_id}/annotations/merge")
+async def merge_annotation_files(
+    dataset_id: int,
+    request: MergeAnnotationFilesRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Merge multiple annotation files into a single COCO file"""
+    try:
+        # Verify dataset exists
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Verify annotation files exist
+        annotation_files = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id.in_(request.annotation_file_ids),
+            models.AnnotationFile.dataset_id == dataset_id
+        ).all()
+        
+        if len(annotation_files) != len(request.annotation_file_ids):
+            raise HTTPException(status_code=404, detail="One or more annotation files not found")
+        
+        if len(annotation_files) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 annotation files are required for merging")
+        
+        # Generate merged filename if not provided
+        merged_filename = request.merged_filename
+        if not merged_filename:
+            file_names = [f.name.replace('.json', '').replace('.coco', '') for f in annotation_files]
+            merged_filename = f"merged_{'_'.join(file_names)}.json"
+        
+        # Create task
+        task = models.Task(
+            name=f"Merge Annotations: {merged_filename}",
+            description=f"Merging {len(annotation_files)} annotation files into {merged_filename}",
+            task_type="annotation_merge",
+            status="pending",
+            project_id=dataset.project_id,
+            progress=0.0,
+            task_metadata={
+                "dataset_id": dataset_id,
+                "annotation_file_ids": request.annotation_file_ids,
+                "merged_filename": merged_filename,
+                "source_files": [f.name for f in annotation_files]
+            }
+        )
+        
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        
+        # Start background task
+        def process_merge_task():
+            """Run merge processing in a separate thread with its own DB session."""
+            import threading
+            import asyncio
+            
+            async def run_merge():
+                try:
+                    await merge_annotation_files_task(
+                        task_id=task.id,
+                        dataset_id=dataset_id,
+                        file_ids=request.annotation_file_ids,
+                        merged_filename=merged_filename
+                    )
+                except Exception as e:
+                    print(f"Error in merge task: {e}")
+
+            # Run the async merge task
+            asyncio.run(run_merge())
+
+        # Start background processing thread
+        processing_thread = threading.Thread(target=process_merge_task)
+        processing_thread.daemon = True
+        processing_thread.start()
+        
+        return {
+            "success": True,
+            "task_id": task.id,
+            "message": f"Annotation merge task started for {len(annotation_files)} files",
+            "merged_filename": merged_filename
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in merge_annotation_files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start merge task: {str(e)}")

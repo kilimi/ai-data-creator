@@ -835,125 +835,36 @@ export function AnnotationsContent({
     const filesToMerge = annotationFiles.filter(file => selectedForMerge.has(file.id));
     
     try {
-      // Create merged COCO data
-      const mergedData = {
-        info: {
-          description: `Merged annotations from ${filesToMerge.map(f => f.name).join(', ')}`,
-          version: "1.0",
-          year: new Date().getFullYear(),
-          contributor: "LAI",
-          date_created: new Date().toISOString()
-        },
-        licenses: [{
-          id: 1,
-          name: "Unknown License",
-          url: ""
-        }],
-        images: [] as any[],
-        categories: [] as any[],
-        annotations: [] as any[]
-      };
-
-      const categoryMap = new Map<string, number>();
-      const imageMap = new Map<string, number>();
-      let categoryId = 1;
-      let imageId = 1;
-      let annotationId = 1;
-
-      // Process each file
-      for (const file of filesToMerge) {
-        if (!file.samples) continue;
-
-        // Extract categories
-        for (const sample of file.samples) {
-          if (!categoryMap.has(sample.className)) {
-            categoryMap.set(sample.className, categoryId);
-            mergedData.categories.push({
-              id: categoryId,
-              name: sample.className,
-              supercategory: ""
-            });
-            categoryId++;
-          }
-        }
-
-        // Extract images and annotations
-        for (const sample of file.samples) {
-          let currentImageId: number;
-          
-          // Create image entry if not exists
-          const imageKey = `${sample.imageId}_${file.name}`;
-          if (!imageMap.has(imageKey)) {
-            currentImageId = imageId;
-            imageMap.set(imageKey, currentImageId);
-            
-            // Find matching image to get dimensions
-            // Find matching image to get dimensions
-            const matchingImage = images.find(img => img.id === sample.imageId);
-            mergedData.images.push({
-              id: currentImageId,
-              width: matchingImage?.width || 640,
-              height: matchingImage?.height || 480,
-              file_name: matchingImage?.fileName || `image_${sample.imageId}`,
-              license: 1,
-              flickr_url: "",
-              coco_url: "",
-              date_captured: ""
-            });
-            imageId++;
-          } else {
-            currentImageId = imageMap.get(imageKey)!;
-          }
-
-          // Add annotation
-          mergedData.annotations.push({
-            id: annotationId,
-            image_id: currentImageId,
-            category_id: categoryMap.get(sample.className)!,
-            bbox: sample.bbox ? [
-              sample.bbox[0] * (matchingImage?.width || 640),
-              sample.bbox[1] * (matchingImage?.height || 480),
-              sample.bbox[2] * (matchingImage?.width || 640),
-              sample.bbox[3] * (matchingImage?.height || 480)
-            ] : [0, 0, 0, 0],
-            area: sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * (matchingImage?.width || 640) * (matchingImage?.height || 480) : 0),
-            iscrowd: 0,
-            segmentation: sample.segmentation || []
-          });
-          annotationId++;
-        }
+      if (!api) {
+        throw new Error("API not available");
       }
 
-      // Create merged file name
+      // Generate merged filename
       const mergedFileName = `merged_${filesToMerge.map(f => f.name.replace(/\.[^/.]+$/, '')).join('_')}.json`;
       
-      // Upload merged file
-      const jsonContent = JSON.stringify(mergedData, null, 2);
-      const uploadFile = new File([jsonContent], mergedFileName, { type: 'application/json' });
+      // Call backend merge endpoint
+      const response = await api.mergeAnnotationFiles(
+        id, 
+        Array.from(selectedForMerge), 
+        mergedFileName
+      );
       
-      if (api) {
-        const response = await api.importAnnotations(id, uploadFile);
-        if (response.success) {
-          toast({
-            title: "Annotations merged successfully",
-            description: `Created "${mergedFileName}" with ${mergedData.annotations.length} annotations from ${filesToMerge.length} files.`,
-          });
-          
-          // Reset merge mode
-          setMergeMode(false);
-          setSelectedForMerge(new Set());
-          
-          // Refresh annotation files
-          await loadAnnotationFilesFromBackend();
-        } else {
-          throw new Error(response.error || "Failed to upload merged annotation file");
-        }
-      } else {
+      if (response.success) {
         toast({
-          title: "API not available",
-          description: "Cannot merge annotations without API connection.",
-          variant: "destructive",
+          title: "Annotation merge started",
+          description: `Merging ${filesToMerge.length} annotation files into "${mergedFileName}". Check tasks for progress.`,
         });
+        
+        // Reset merge mode
+        setMergeMode(false);
+        setSelectedForMerge(new Set());
+        
+        // Refresh annotation files after a short delay to allow task to start
+        setTimeout(async () => {
+          await loadAnnotationFilesFromBackend();
+        }, 1000);
+      } else {
+        throw new Error(response.error || "Failed to start merge task");
       }
       
     } catch (error) {

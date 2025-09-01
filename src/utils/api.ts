@@ -635,6 +635,28 @@ export class ApiClient {
     });
   }
 
+  async mergeAnnotationFiles(
+    datasetId: string | number, 
+    annotationFileIds: string[], 
+    mergedFilename?: string
+  ): Promise<ApiResponse<{
+    task_id: number;
+    message: string;
+    merged_filename: string;
+    source_files?: string[];
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/merge`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        annotation_file_ids: annotationFileIds,
+        merged_filename: mergedFilename
+      })
+    });
+  }
+
   // Database backup and restore methods
   async getDatabaseInfo(): Promise<ApiResponse<{
     database_info: {
