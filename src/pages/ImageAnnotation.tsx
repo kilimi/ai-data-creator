@@ -1303,6 +1303,44 @@ const ImageAnnotation = () => {
     }
   }, [isDrawing, activeTool, currentPath, createAnnotation]);
 
+  // Reset zoom and pan to default view (fit image to container and center)
+  const resetZoomAndPan = useCallback(() => {
+    if (!imageRef.current || !canvasRef.current || !containerRef.current) return;
+
+    const img = imageRef.current;
+    const container = containerRef.current;
+    const containerRect = container.getBoundingClientRect();
+
+    // Calculate scale to fit image in container
+    const scaleX = containerRect.width / img.naturalWidth;
+    const scaleY = containerRect.height / img.naturalHeight;
+    const fitToContainerScale = Math.min(scaleX, scaleY);
+
+    // Reset to fit-to-container scale
+    setImageScale(fitToContainerScale);
+    
+    // Center image in container
+    const scaledWidth = img.naturalWidth * fitToContainerScale;
+    const scaledHeight = img.naturalHeight * fitToContainerScale;
+    
+    setImageOffset({
+      x: (containerRect.width - scaledWidth) / 2,
+      y: (containerRect.height - scaledHeight) / 2
+    });
+
+    // Update refs for smooth zoom
+    scaleRef.current = fitToContainerScale;
+    offsetRef.current = {
+      x: (containerRect.width - scaledWidth) / 2,
+      y: (containerRect.height - scaledHeight) / 2
+    };
+
+    toast({
+      title: 'View reset',
+      description: 'Zoom and pan reset to default view',
+    });
+  }, [toast]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape' && isDrawing) {
       // Cancel current drawing
@@ -1317,8 +1355,13 @@ const ImageAnnotation = () => {
       createAnnotation('polygon', currentPath);
       setIsDrawing(false);
       setCurrentPath([]);
+    } else if (e.key === 'r' || e.key === 'R') {
+      // Reset zoom and pan to default view
+      if (!isDrawing) { // Only allow reset when not drawing
+        resetZoomAndPan();
+      }
     }
-  }, [isDrawing, activeTool, currentPath, createAnnotation, toast]);
+  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -1336,14 +1379,19 @@ const ImageAnnotation = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Get device pixel ratio and canvas display size
+    const dpr = window.devicePixelRatio || 1;
+    const displayWidth = canvas.clientWidth;
+    const displayHeight = canvas.clientHeight;
+
+    // Clear canvas (use display dimensions for clearing)
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
 
     // Save context
     ctx.save();
 
     // Draw image with proper scaling and offset
-    if (imageRef.current.complete) {
+    if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
       ctx.drawImage(
         imageRef.current,
         imageOffset.x,
@@ -1564,8 +1612,21 @@ const ImageAnnotation = () => {
 
     // Set canvas size to match container
     const containerRect = container.getBoundingClientRect();
-    canvas.width = containerRect.width;
-    canvas.height = containerRect.height;
+    const dpr = window.devicePixelRatio || 1;
+    
+    // Set canvas internal size with device pixel ratio
+    canvas.width = containerRect.width * dpr;
+    canvas.height = containerRect.height * dpr;
+    
+    // Set canvas display size
+    canvas.style.width = `${containerRect.width}px`;
+    canvas.style.height = `${containerRect.height}px`;
+    
+    // Scale canvas context to match device pixel ratio
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.scale(dpr, dpr);
+    }
 
     // Calculate scale to fit image in container
     const scaleX = containerRect.width / img.naturalWidth;
@@ -1799,6 +1860,8 @@ const ImageAnnotation = () => {
       };
 
       const dataStr = JSON.stringify(coco, null, 2);
+
+      // Always download the JSON file
       const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
       const fileName = `annotations_all_${id}.json`;
 
@@ -1807,7 +1870,36 @@ const ImageAnnotation = () => {
       link.setAttribute('download', fileName);
       link.click();
 
-      toast({ title: 'Saved', description: `Exported ${annotationsArr.length} annotations from ${imagesArr.length} images` });
+      // If in edit mode (annotationId exists), also update the database
+      if (annotationId && api) {
+        try {
+          const file = new File([dataStr], annotationName || fileName, { type: 'application/json' });
+          const response = await api.updateAnnotationContent(parseInt(id), annotationId, file);
+          
+          if (response.success) {
+            toast({ 
+              title: 'Saved & Updated', 
+              description: `Exported ${annotationsArr.length} annotations from ${imagesArr.length} images and updated database annotation "${annotationName}"` 
+            });
+          } else {
+            toast({ 
+              title: 'Partially saved', 
+              description: `Exported JSON file but failed to update database: ${response.error}`,
+              variant: 'destructive'
+            });
+          }
+        } catch (updateError) {
+          console.error('Error updating annotation in database:', updateError);
+          toast({ 
+            title: 'Partially saved', 
+            description: `Exported JSON file but failed to update database annotation`,
+            variant: 'destructive'
+          });
+        }
+      } else {
+        // Not in edit mode, just show standard export message
+        toast({ title: 'Saved', description: `Exported ${annotationsArr.length} annotations from ${imagesArr.length} images` });
+      }
     } catch (err) {
       console.error('Error exporting all annotations', err);
       toast({ title: 'Export failed', description: 'Failed to export all annotations', variant: 'destructive' });
@@ -1949,9 +2041,13 @@ const ImageAnnotation = () => {
         </div>
 
         <div className="flex items-center gap-2 relative">
-          <Button onClick={saveAllAnnotations} disabled={!hasAnyAnnotationsStored}>
+          <Button 
+            onClick={saveAllAnnotations} 
+            disabled={!hasAnyAnnotationsStored}
+            title={annotationId ? 'Download COCO JSON file and update database annotation' : 'Download COCO JSON file with all annotations'}
+          >
             <Save className="w-4 h-4 mr-2" />
-            Save All
+            {annotationId ? 'Save & Update' : 'Save All'}
           </Button>
           <Button
             variant="destructive"
@@ -1962,6 +2058,16 @@ const ImageAnnotation = () => {
           >
             <Trash2 className="w-4 h-4 mr-2" />
             Delete All
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={resetZoomAndPan}
+            aria-label="Reset zoom and pan to default view"
+            title="Reset zoom and pan to default view"
+          >
+            <RotateCcw className="w-4 h-4" />
           </Button>
 
           <Button
@@ -1983,6 +2089,7 @@ const ImageAnnotation = () => {
                 <CardContent className="text-xs text-gray-200">
                   <div className="mb-1"><strong>Zoom</strong>: Hold <kbd className="px-1 bg-black/20 rounded">Ctrl</kbd> (or <kbd className="px-1 bg-black/20 rounded">⌘</kbd>) + scroll</div>
                   <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-black/20 rounded">Space</kbd> + drag, <strong>Ctrl</strong> + left/right drag, or <strong>Right + Left</strong> click drag</div>
+                  <div className="mb-1"><strong>Reset View</strong>: Press <kbd className="px-1 bg-black/20 rounded">R</kbd> or click the reset button</div>
                   <div className="text-xs text-gray-400 mt-1">Tip: scroll over area you want to zoom into</div>
                 </CardContent>
               </Card>
@@ -2164,6 +2271,10 @@ const ImageAnnotation = () => {
                   alt={(displayImage || currentImage)?.fileName || 'Current image'}
                   className="absolute opacity-0"
                   onLoad={handleImageLoad}
+                  onError={(e) => {
+                    console.error('Image failed to load:', e);
+                    console.error('Image src:', (displayImage || currentImage)?.url);
+                  }}
                   crossOrigin="anonymous"
                 />
                 <canvas

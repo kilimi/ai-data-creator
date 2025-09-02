@@ -13,6 +13,8 @@ import threading
 from PIL import Image
 import io
 import uuid
+import cv2
+import numpy as np
 
 from .. import models, schemas
 from ..database import get_db, SessionLocal
@@ -265,11 +267,160 @@ async def upload_images(
                 
                 # Extract image dimensions using Pillow
                 width, height = 0, 0
+                is_tiff_file = final_filename.lower().endswith(('.tif', '.tiff'))
+
                 try:
-                    with Image.open(io.BytesIO(contents)) as img:
-                        width, height = img.size
+                    img = Image.open(io.BytesIO(contents))
+                    width, height = img.size
+                    
+                    # Handle multi-channel TIF images by converting to 3-channel PNG
+                    if is_tiff_file and (img.mode not in ['RGB', 'L', 'P']): # L for grayscale, P for palette
+                        print(f"DEBUG: Converting multi-channel TIF image: {final_filename}, mode: {img.mode}")
+                        
+                        if img.mode == 'RGBA' or img.mode == 'CMYK':
+                            img = img.convert('RGB')
+                        else:
+                            # For other multi-band images, assume first 3 bands are R, G, B
+                            bands = img.split()
+                            if len(bands) >= 3:
+                                img = Image.merge('RGB', (bands[0], bands[1], bands[2]))
+                            else:
+                                # Not enough bands to create RGB, maybe it's grayscale with alpha
+                                img = img.convert('RGB') # Fallback
+
+                        # Change filename to png and ensure it's unique
+                        name, _ = os.path.splitext(final_filename)
+                        png_filename = f"{name}.png"
+                        
+                        png_path = dataset_dir / png_filename
+                        counter = 1
+                        while png_path.exists():
+                            png_filename = f"{name}_{counter}.png"
+                            png_path = dataset_dir / png_filename
+                            counter += 1
+                        
+                        final_filename = png_filename
+                        file_path = png_path
+                        
+                        # Save as PNG
+                        img_byte_arr = io.BytesIO()
+                        img.save(img_byte_arr, format='PNG')
+                        contents = img_byte_arr.getvalue()
+
                 except Exception as img_error:
-                    print(f"Warning: Could not extract dimensions for {final_filename}: {img_error}")
+                    print(f"Warning: PIL failed for {final_filename}: {img_error}")
+                    
+                    # Fallback to OpenCV for problematic TIF files
+                    if is_tiff_file:
+                        try:
+                            print(f"DEBUG: Trying OpenCV for {final_filename}")
+                            # Save temp file for OpenCV to read
+                            temp_path = dataset_dir / f"temp_{uuid.uuid4().hex[:8]}.tif"
+                            with open(temp_path, 'wb') as temp_file:
+                                temp_file.write(contents)
+                            
+                            # Read with OpenCV
+                            cv_img = cv2.imread(str(temp_path), cv2.IMREAD_UNCHANGED)
+                            
+                            if cv_img is not None:
+                                height, width = cv_img.shape[:2]
+                                print(f"DEBUG: OpenCV read image with shape: {cv_img.shape}")
+                                
+                                # Convert multi-channel to RGB for multispectral imagery
+                                if len(cv_img.shape) == 3:
+                                    channels = cv_img.shape[2]
+                                    print(f"DEBUG: Image has {channels} channels, dtype: {cv_img.dtype}")
+                                    
+                                    if channels == 4:
+                                        # For DJI Mavic 3M: channels are Green, Red, Red Edge, NIR
+                                        # Use NIR channel (channel 3) as grayscale for best visualization
+                                        print("DEBUG: Processing DJI Mavic 3M multispectral image - using NIR channel")
+                                        
+                                        # Extract NIR channel (most informative for vegetation)
+                                        nir_ch = cv_img[:, :, 3]     # Near Infrared channel
+                                        
+                                        # Normalize NIR channel to 0-255 range
+                                        if nir_ch.dtype != np.uint8:
+                                            nir_ch = nir_ch.astype(np.float64)
+                                            ch_min, ch_max = nir_ch.min(), nir_ch.max()
+                                            print(f"DEBUG: NIR channel range: {ch_min} to {ch_max}")
+                                            
+                                            # Handle signed data - clip negative values for NIR
+                                            if ch_min < 0:
+                                                print("DEBUG: Clipping negative NIR values (likely nodata)")
+                                                nir_ch = np.clip(nir_ch, 0, None)  # Remove negative values
+                                                ch_min = nir_ch.min()
+                                                ch_max = nir_ch.max()
+                                                print(f"DEBUG: After clipping negatives: {ch_min} to {ch_max}")
+                                            
+                                            # Apply percentile stretch for better contrast
+                                            p2, p98 = np.percentile(nir_ch[nir_ch > 0], [2, 98])
+                                            print(f"DEBUG: Using percentile stretch: {p2} to {p98}")
+                                            nir_ch = np.clip(nir_ch, p2, p98)
+                                            
+                                            # Normalize to 0-255
+                                            if p98 > p2:
+                                                nir_ch = (nir_ch - p2) / (p98 - p2) * 255
+                                            nir_ch = np.clip(nir_ch, 0, 255).astype(np.uint8)
+                                        
+                                        # Convert grayscale NIR to RGB for display
+                                        cv_img = cv2.cvtColor(nir_ch, cv2.COLOR_GRAY2RGB)
+                                        print(f"DEBUG: Created NIR grayscale RGB shape: {cv_img.shape}")
+                                        
+                                    elif channels > 4:
+                                        # For other multi-channel images, take first 3 channels
+                                        cv_img_rgb = cv_img[:, :, :3]
+                                        
+                                        # Normalize to 0-255 range if needed
+                                        if cv_img_rgb.dtype != np.uint8:
+                                            cv_img_rgb = cv_img_rgb.astype(np.float64)
+                                            cv_img_rgb = (cv_img_rgb - cv_img_rgb.min()) / (cv_img_rgb.max() - cv_img_rgb.min()) * 255
+                                            cv_img_rgb = cv_img_rgb.astype(np.uint8)
+                                        
+                                        # OpenCV uses BGR, we need RGB for PIL
+                                        cv_img = cv2.cvtColor(cv_img_rgb, cv2.COLOR_BGR2RGB)
+                                    elif channels == 3:
+                                        # Standard BGR to RGB
+                                        cv_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+                                    elif channels == 1:
+                                        # Grayscale to RGB
+                                        cv_img = cv2.cvtColor(cv_img, cv2.COLOR_GRAY2RGB)
+                                else:
+                                    # Grayscale image
+                                    cv_img = cv2.cvtColor(cv_img, cv2.COLOR_GRAY2RGB)
+                                
+                                # Convert to PNG
+                                name, _ = os.path.splitext(final_filename)
+                                png_filename = f"{name}.png"
+                                
+                                png_path = dataset_dir / png_filename
+                                counter = 1
+                                while png_path.exists():
+                                    png_filename = f"{name}_{counter}.png"
+                                    png_path = dataset_dir / png_filename
+                                    counter += 1
+                                
+                                final_filename = png_filename
+                                file_path = png_path
+                                
+                                # Save as PNG using OpenCV
+                                cv2.imwrite(str(file_path), cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR))
+                                
+                                # Read the saved PNG file content for database storage
+                                with open(file_path, 'rb') as png_file:
+                                    contents = png_file.read()
+                                
+                                print(f"DEBUG: Successfully converted TIF to PNG: {final_filename} ({width}x{height})")
+                            
+                            # Clean up temp file
+                            if temp_path.exists():
+                                os.remove(temp_path)
+                                
+                        except Exception as cv_error:
+                            print(f"Warning: OpenCV also failed for {final_filename}: {cv_error}")
+                            # Clean up temp file in case of error
+                            if 'temp_path' in locals() and temp_path.exists():
+                                os.remove(temp_path)
                 
                 # Write the file with unique name
                 with open(file_path, 'wb') as f:
@@ -1270,8 +1421,9 @@ async def update_annotation_content(
         ).delete()
         
         # Process new annotations
-        await annotation_db.process_annotation_file(
-            db, annotation_file, content_json, dataset_id
+        from .annotation_db import process_coco_annotation_file
+        await process_coco_annotation_file(
+            annotation_id, content_json
         )
         
         # Update annotation file metadata

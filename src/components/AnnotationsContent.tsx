@@ -2880,7 +2880,7 @@ export function AnnotationsContent({
           const annotationFile: AnnotationFile = {
             id: fileId,
             name: file.name,
-            date: new Date().toISOString().split('T')[0],
+            date: new Date().toISOString(), // Use full timestamp for precise sorting
             format: "COCO",
             type: finalType, // Use the auto-detected type
             classCount: result.stats.length,
@@ -3119,11 +3119,19 @@ export function AnnotationsContent({
         
         const combined = [...filteredSavedClassifications, ...lightweightFiles];
         
-        // Sort by date (newest first)
+        // Sort by date (newest first) - handle both full timestamps and date-only strings
         combined.sort((a, b) => {
           const dateA = new Date(a.date);
           const dateB = new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
+          const timeA = dateA.getTime();
+          const timeB = dateB.getTime();
+          
+          // If dates are exactly the same, sort by name for consistency
+          if (timeA === timeB) {
+            return a.name.localeCompare(b.name);
+          }
+          
+          return timeB - timeA; // Newest first
         });
         
         setAnnotationFiles(combined);
@@ -3237,11 +3245,19 @@ export function AnnotationsContent({
           return annotationFile;
         }));
         
-        // Sort by date (newest first) before setting
+        // Sort by date (newest first) before setting - handle both full timestamps and date-only strings
         processedFiles.sort((a, b) => {
           const dateA = new Date(a.date);
           const dateB = new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
+          const timeA = dateA.getTime();
+          const timeB = dateB.getTime();
+          
+          // If dates are exactly the same, sort by name for consistency
+          if (timeA === timeB) {
+            return a.name.localeCompare(b.name);
+          }
+          
+          return timeB - timeA; // Newest first
         });
         
         // Load saved classifications and merge them with backend files
@@ -3258,11 +3274,19 @@ export function AnnotationsContent({
         
         const combined = [...filteredSavedClassifications, ...processedFiles];
         
-        // Sort by date (newest first)
+        // Sort by date (newest first) - handle both full timestamps and date-only strings
         combined.sort((a, b) => {
           const dateA = new Date(a.date);
           const dateB = new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
+          const timeA = dateA.getTime();
+          const timeB = dateB.getTime();
+          
+          // If dates are exactly the same, sort by name for consistency
+          if (timeA === timeB) {
+            return a.name.localeCompare(b.name);
+          }
+          
+          return timeB - timeA; // Newest first
         });
         
         setAnnotationFiles(combined);
@@ -3422,12 +3446,20 @@ export function AnnotationsContent({
           setAnnotationFiles(annotationsWithFileNames);
         }
         
-        // Sort by date (newest first) before setting
+        // Sort by date (newest first) before setting - handle both full timestamps and date-only strings
         setAnnotationFiles(prev => {
           const sorted = [...prev].sort((a, b) => {
             const dateA = new Date(a.date);
             const dateB = new Date(b.date);
-            return dateB.getTime() - dateA.getTime();
+            const timeA = dateA.getTime();
+            const timeB = dateB.getTime();
+            
+            // If dates are exactly the same, sort by name for consistency
+            if (timeA === timeB) {
+              return a.name.localeCompare(b.name);
+            }
+            
+            return timeB - timeA; // Newest first
           });
           return sorted;
         });
@@ -3584,11 +3616,19 @@ export function AnnotationsContent({
               // Remove any existing classification files to avoid duplicates
               const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'classification');
               const combined = [...savedClassifications, ...nonClassificationFiles];
-              // Sort by date (newest first)
+              // Sort by date (newest first) - handle both full timestamps and date-only strings
               combined.sort((a, b) => {
                 const dateA = new Date(a.date);
                 const dateB = new Date(b.date);
-                return dateB.getTime() - dateA.getTime();
+                const timeA = dateA.getTime();
+                const timeB = dateB.getTime();
+                
+                // If dates are exactly the same, sort by name for consistency
+                if (timeA === timeB) {
+                  return a.name.localeCompare(b.name);
+                }
+                
+                return timeB - timeA; // Newest first
               });
               return combined;
             });
@@ -3638,11 +3678,19 @@ export function AnnotationsContent({
           // Remove any existing classification files to avoid duplicates
           const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'classification');
           const combined = [...savedClassifications, ...nonClassificationFiles];
-          // Sort by date (newest first)
+          // Sort by date (newest first) - handle both full timestamps and date-only strings
           combined.sort((a, b) => {
             const dateA = new Date(a.date);
             const dateB = new Date(b.date);
-            return dateB.getTime() - dateA.getTime();
+            const timeA = dateA.getTime();
+            const timeB = dateB.getTime();
+            
+            // If dates are exactly the same, sort by name for consistency
+            if (timeA === timeB) {
+              return a.name.localeCompare(b.name);
+            }
+            
+            return timeB - timeA; // Newest first
           });
           return combined;
         });
@@ -3927,12 +3975,20 @@ export function AnnotationsContent({
         
         {filteredAnnotationFiles
           .sort((a, b) => {
-            // Sort by date (newest first)
+            // Sort by date (newest first) - handle both full timestamps and date-only strings
             const dateA = new Date(a.date);
             const dateB = new Date(b.date);
-            return dateB.getTime() - dateA.getTime();
+            const timeA = dateA.getTime();
+            const timeB = dateB.getTime();
+            
+            // If dates are exactly the same (same timestamp), sort by name for consistency
+            if (timeA === timeB) {
+              return a.name.localeCompare(b.name);
+            }
+            
+            return timeB - timeA; // Newest first
           })
-          .map((file) => {
+          .map((file, index) => {
             return (
               <div key={file.id} className="border border-gray-700 rounded-lg overflow-hidden">
                 {/* Main annotation row */}
@@ -3941,6 +3997,13 @@ export function AnnotationsContent({
                   onClick={() => handleAnnotationClick(file.id)}
                 >
                    <div className="flex items-center justify-between">
+                      {/* Number indicator */}
+                      <div className="flex items-center mr-3 min-w-[24px]">
+                        <span className="text-xs text-muted-foreground font-mono bg-gray-800 px-2 py-1 rounded">
+                          #{index + 1}
+                        </span>
+                      </div>
+                      
                       {/* Checkbox for merge mode */}
                       {mergeMode && (
                         <div className="flex items-center mr-3">
