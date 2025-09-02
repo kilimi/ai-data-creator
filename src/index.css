@@ -44,6 +44,93 @@
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "ss01", "ss02", "cv01", "cv02";
   }
+
+  /* Custom Scrollbar Styles */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(210 30% 8%);
+    border-radius: 4px;
+    border: 1px solid hsl(210 30% 12%);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, hsl(210 20% 30%) 0%, hsl(210 20% 25%) 50%, hsl(210 20% 20%) 100%);
+    border-radius: 4px;
+    border: 1px solid hsl(210 30% 15%);
+    transition: background 0.2s ease;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, hsl(210 20% 40%) 0%, hsl(210 20% 35%) 50%, hsl(210 20% 30%) 100%);
+    border-color: hsl(210 30% 20%);
+  }
+
+  ::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(180deg, hsl(210 90% 65%) 0%, hsl(210 90% 60%) 50%, hsl(210 90% 55%) 100%);
+    border-color: hsl(210 90% 70%);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: hsl(210 30% 8%);
+    border-radius: 4px;
+  }
+
+  /* Thin scrollbar variant for specific areas */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: hsl(210 40% 6%);
+    border-radius: 3px;
+    border: 1px solid hsl(210 35% 10%);
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, hsl(210 20% 25%) 0%, hsl(210 20% 20%) 50%, hsl(210 20% 15%) 100%);
+    border-radius: 3px;
+    border: 1px solid hsl(210 30% 12%);
+    transition: all 0.2s ease;
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, hsl(210 20% 35%) 0%, hsl(210 20% 30%) 50%, hsl(210 20% 25%) 100%);
+    border-color: hsl(210 30% 18%);
+    box-shadow: 0 0 4px hsl(210 90% 60% / 0.3);
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(180deg, hsl(210 90% 65%) 0%, hsl(210 90% 60%) 50%, hsl(210 90% 55%) 100%);
+    border-color: hsl(210 90% 70%);
+    box-shadow: 0 0 6px hsl(210 90% 60% / 0.5);
+  }
+
+  /* Firefox scrollbar styles */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(210 20% 25%) hsl(210 30% 8%);
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(210 20% 20%) hsl(210 40% 6%);
+  }
+
+  /* Invisible scrollbar variant for overlay situations */
+  .scrollbar-invisible::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+  }
+
+  .scrollbar-invisible {
+    scrollbar-width: none;
+  }
 }
 
 @layer components {

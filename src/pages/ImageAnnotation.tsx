@@ -28,8 +28,10 @@ import {
   Edit,
   Check,
   X,
-  Layers
-  ,ChevronLeft, ChevronRight
+  Layers,
+  ChevronLeft, 
+  ChevronRight,
+  BarChart
 } from 'lucide-react';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
@@ -1795,6 +1797,191 @@ const ImageAnnotation = () => {
     });
   };
 
+  // Download annotations as COCO JSON file
+  const downloadAnnotationsJSON = async () => {
+    try {
+      // Build images array and annotations array by reading per-image localStorage
+      const imagesArr: any[] = [];
+      const annotationsArr: any[] = [];
+      const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
+
+      let annId = 1;
+      let imageId = 1;
+
+      for (const name of allImageNames) {
+        const storageKey = `annotations_${id}_${name}`;
+        const saved = localStorage.getItem(storageKey);
+        if (!saved) {
+          // still add image entry to keep indexing consistent
+          imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+          imageId++;
+          continue;
+        }
+
+        let parsed: AnnotationShape[] = [];
+        try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
+
+        imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+
+        parsed.forEach((ann) => {
+          if (ann.type === 'polygon') {
+            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
+            const xs = ann.points.map(p => p.x);
+            const ys = ann.points.map(p => p.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const maxX = Math.max(...xs);
+            const maxY = Math.max(...ys);
+            const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+
+            annotationsArr.push({
+              id: annId++,
+              image_id: imageId,
+              category_id: categoryId,
+              segmentation: [segmentation],
+              area: (maxX - minX) * (maxY - minY),
+              bbox: [minX, minY, maxX - minX, maxY - minY],
+              iscrowd: 0
+            });
+          }
+        });
+
+        imageId++;
+      }
+
+      const coco = {
+        info: {
+          description: `All annotations for dataset ${id}`,
+          version: '1.0',
+          year: new Date().getFullYear(),
+          date_created: new Date().toISOString()
+        },
+        images: imagesArr,
+        categories: categoryMap,
+        annotations: annotationsArr
+      };
+
+      const dataStr = JSON.stringify(coco, null, 2);
+
+      // Download the JSON file
+      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+      const fileName = `annotations_all_${id}.json`;
+
+      const link = document.createElement('a');
+      link.setAttribute('href', dataUri);
+      link.setAttribute('download', fileName);
+      link.click();
+
+      toast({ 
+        title: 'Downloaded', 
+        description: `Downloaded ${annotationsArr.length} annotations from ${imagesArr.length} images as JSON file` 
+      });
+    } catch (err) {
+      console.error('Error downloading annotations', err);
+      toast({ title: 'Download failed', description: 'Failed to download annotations', variant: 'destructive' });
+    }
+  };
+
+  // Update database with current annotations
+  const updateDatabaseAnnotations = async () => {
+    if (!annotationId || !api) {
+      toast({ 
+        title: 'Cannot update', 
+        description: 'No annotation selected for editing or API not available',
+        variant: 'destructive'
+      });
+      return;
+    }
+
+    try {
+      // Build the same COCO structure as download function
+      const imagesArr: any[] = [];
+      const annotationsArr: any[] = [];
+      const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
+
+      let annId = 1;
+      let imageId = 1;
+
+      for (const name of allImageNames) {
+        const storageKey = `annotations_${id}_${name}`;
+        const saved = localStorage.getItem(storageKey);
+        if (!saved) {
+          imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+          imageId++;
+          continue;
+        }
+
+        let parsed: AnnotationShape[] = [];
+        try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
+
+        imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+
+        parsed.forEach((ann) => {
+          if (ann.type === 'polygon') {
+            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
+            const xs = ann.points.map(p => p.x);
+            const ys = ann.points.map(p => p.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const maxX = Math.max(...xs);
+            const maxY = Math.max(...ys);
+            const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+
+            annotationsArr.push({
+              id: annId++,
+              image_id: imageId,
+              category_id: categoryId,
+              segmentation: [segmentation],
+              area: (maxX - minX) * (maxY - minY),
+              bbox: [minX, minY, maxX - minX, maxY - minY],
+              iscrowd: 0
+            });
+          }
+        });
+
+        imageId++;
+      }
+
+      const coco = {
+        info: {
+          description: `All annotations for dataset ${id}`,
+          version: '1.0',
+          year: new Date().getFullYear(),
+          date_created: new Date().toISOString()
+        },
+        images: imagesArr,
+        categories: categoryMap,
+        annotations: annotationsArr
+      };
+
+      const dataStr = JSON.stringify(coco, null, 2);
+      const fileName = annotationName || `annotations_all_${id}.json`;
+      const file = new File([dataStr], fileName, { type: 'application/json' });
+      
+      const response = await api.updateAnnotationContent(parseInt(id), annotationId, file);
+      
+      if (response.success) {
+        toast({ 
+          title: 'Database Updated', 
+          description: `Updated database annotation "${annotationName}" with ${annotationsArr.length} annotations from ${imagesArr.length} images` 
+        });
+      } else {
+        toast({ 
+          title: 'Update failed', 
+          description: `Failed to update database: ${response.error}`,
+          variant: 'destructive'
+        });
+      }
+    } catch (updateError) {
+      console.error('Error updating annotation in database:', updateError);
+      toast({ 
+        title: 'Update failed', 
+        description: 'Cannot connect to API backend or failed to update database annotation',
+        variant: 'destructive'
+      });
+    }
+  };
+
   // Save all annotations from all images into a single COCO file
   const saveAllAnnotations = async () => {
     try {
@@ -1947,11 +2134,27 @@ const ImageAnnotation = () => {
       : Math.max(currentImageIndex - 1, 0);
       
     setCurrentImageIndex(newIndex);
-  }, [currentImageIndex, allImageNames.length]);
+    const newImageName = allImageNames[newIndex];
+    setCurrentImageName(newImageName);
+    
+    // Update the currentImage object as well
+    updateCurrentImages(newImageName, displayLayer, imageCollections);
+    
+    // Load annotations for the new image
+    loadAnnotationsForImage(newImageName);
+  }, [currentImageIndex, allImageNames.length, displayLayer, imageCollections, loadAnnotationsForImage]);
 
   const goToImage = (index: number) => {
     if (index >= 0 && index < allImageNames.length) {
       setCurrentImageIndex(index);
+      const newImageName = allImageNames[index];
+      setCurrentImageName(newImageName);
+      
+      // Update the currentImage object as well
+      updateCurrentImages(newImageName, displayLayer, imageCollections);
+      
+      // Load annotations for the new image
+      loadAnnotationsForImage(newImageName);
     }
   };
 
@@ -2042,13 +2245,26 @@ const ImageAnnotation = () => {
 
         <div className="flex items-center gap-2 relative">
           <Button 
-            onClick={saveAllAnnotations} 
+            onClick={downloadAnnotationsJSON} 
             disabled={!hasAnyAnnotationsStored}
-            title={annotationId ? 'Download COCO JSON file and update database annotation' : 'Download COCO JSON file with all annotations'}
+            title="Download COCO JSON file with all annotations"
           >
-            <Save className="w-4 h-4 mr-2" />
-            {annotationId ? 'Save & Update' : 'Save All'}
+            <Download className="w-4 h-4 mr-2" />
+            Download JSON
           </Button>
+          
+          {annotationId && (
+            <Button 
+              onClick={updateDatabaseAnnotations} 
+              disabled={!hasAnyAnnotationsStored}
+              title="Update database annotation with current annotations"
+              variant="secondary"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Update Database
+            </Button>
+          )}
+          
           <Button
             variant="destructive"
             onClick={clearAllAnnotations}
@@ -2193,7 +2409,7 @@ const ImageAnnotation = () => {
               )}
             </div>
 
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 scrollbar-thin">
               <div className="p-4 space-y-2">
                   {classes.map((classObj, idx) => (
                     <div
@@ -2444,164 +2660,278 @@ const ImageAnnotation = () => {
           </div>
         </div>
 
-  {/* Right Sidebar - Annotations (tabs: Annotations | Statistics) - collapsible & resizable */}
+  {/* Right Sidebar - Annotations Panel (redesigned container) */}
         <div
-          className="bg-gray-800 border-l border-gray-700 flex flex-col transition-all"
+          className="bg-gray-900 border-l border-gray-700 flex flex-col transition-all"
           style={{ width: rightCollapsed ? 0 : rightWidth }}
         >
-          <Tabs value={undefined} className="h-full" defaultValue="annotations">
-            <div className="p-2 border-b border-gray-700 flex items-center justify-between">
-              <TabsList className="grid grid-cols-2 flex-1">
-                <TabsTrigger value="annotations">Annotations ({annotations.length})</TabsTrigger>
-                <TabsTrigger value="statistics">Statistics</TabsTrigger>
-              </TabsList>
-              <div className="flex items-center gap-2 ml-2">
-                <Button size="sm" variant="ghost" onClick={() => setRightCollapsed(v => !v)}>
-                  {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
-                </Button>
+          {/* Panel Header */}
+          <div className="bg-gray-800 border-b border-gray-600 p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                <h2 className="text-sm font-semibold text-gray-100">Annotations Panel</h2>
               </div>
+              <Button size="sm" variant="ghost" onClick={() => setRightCollapsed(v => !v)}>
+                {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
+              </Button>
             </div>
+          </div>
 
-            <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: 'thin' }}>
-                <div className="p-4 space-y-2">
-                  {annotations.map((annotation) => {
-                    // Debug logging
-                    if (annotation.id === selectedAnnotation) {
-                      console.log('Rendering selected annotation:', annotation.id, 'selectedAnnotation:', selectedAnnotation);
-                    }
-                    return (
-                    <Card 
-                      key={annotation.id}
-                      data-annotation-id={annotation.id}
-                      className={`p-3 cursor-pointer transition-colors ${
-                        selectedAnnotation === annotation.id 
-                          ? 'border-blue-500 bg-blue-500/20' 
-                          : 'border-gray-600 hover:border-gray-500'
-                      }`}
-                      onClick={() => {
-                        console.log('Card clicked, setting selectedAnnotation to:', annotation.id);
-                        setSelectedAnnotation(annotation.id);
-                      }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div 
-                            className="w-3 h-3 rounded"
-                            style={{ backgroundColor: annotation.color }}
-                          />
-                          <div>
-                            {editingAnnotationId === annotation.id ? (
-                              <div className="flex flex-col">
-                                <Select value={editingAnnotationLabel || ''} onValueChange={(v) => setEditingAnnotationLabel(v)}>
-                                  <SelectTrigger className="w-44"><SelectValue placeholder="Select class" /></SelectTrigger>
-                                  <SelectContent>
-                                    {classes.map(c => (
-                                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <div className="flex justify-end gap-2 mt-1">
-                                  <Button size="sm" onClick={() => { saveAnnotationLabel(annotation.id, editingAnnotationLabel); setEditingAnnotationId(null); }}>Save</Button>
-                                  <Button size="sm" variant="outline" onClick={() => setEditingAnnotationId(null)}>Cancel</Button>
-                                </div>
-                                <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
-                              </div>
-                            ) : (
-                              <div>
-                                <p className="text-sm font-medium" onClick={(e) => { e.stopPropagation(); setEditingAnnotationId(annotation.id); const cls = classes.find(c => c.name === annotation.label); setEditingAnnotationLabel(cls ? cls.id : ''); }}>{annotation.label}</p>
-                                <p className="text-xs text-gray-400 capitalize">{annotation.type}</p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setAnnotations(prev => prev.map(a => 
-                                a.id === annotation.id 
-                                  ? { ...a, visible: !a.visible }
-                                  : a
-                              ));
-                            }}
-                          >
-                            {annotation.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingAnnotationId(annotation.id);
-                              const cls = classes.find(c => c.name === annotation.label);
-                              setEditingAnnotationLabel(cls ? cls.id : '');
-                            }}
-                          >
-                            <Edit className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteAnnotation(annotation.id);
-                            }}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </div>
-                    </Card>
-                    );
-                  })}
-
-                  {annotations.length === 0 && (
-                    <p className="text-center text-gray-500 py-8">
-                      No annotations yet.<br />
-                      Select a class and start drawing!
-                    </p>
-                  )}
-                </div>
+          {/* Panel Content */}
+          <div className="flex-1 flex flex-col min-h-0 bg-gray-900">
+            <Tabs value={undefined} className="h-full flex flex-col" defaultValue="annotations">
+              {/* Tab Navigation */}
+              <div className="border-b border-gray-700 bg-gray-850">
+                <TabsList className="grid grid-cols-2 w-full bg-transparent border-0 p-1">
+                  <TabsTrigger 
+                    value="annotations" 
+                    className="data-[state=active]:bg-gray-700 data-[state=active]:text-white text-gray-400 text-xs"
+                  >
+                    Annotations ({annotations.length})
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="statistics" 
+                    className="data-[state=active]:bg-gray-700 data-[state=active]:text-white text-gray-400 text-xs"
+                  >
+                    Statistics
+                  </TabsTrigger>
+                </TabsList>
               </div>
-            </TabsContent>
 
-            <TabsContent value="statistics" className="flex-1 overflow-auto p-4">
-              <h4 className="text-sm font-medium mb-3">Class statistics (all images)</h4>
-              <div className="space-y-2">
-                {(() => {
-                  const total = Object.values(globalStats).reduce((s, v) => s + v, 0);
-                  if (classes.length === 0) {
-                    return <p className="text-xs text-gray-500">No classes defined yet</p>;
-                  }
-
-                  return (
+              {/* Annotations Tab */}
+              <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
+                <div className="p-3 border-b border-gray-700 bg-gray-850">
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    <span>Current Image Annotations</span>
+                    <span className="bg-gray-700 px-2 py-1 rounded text-gray-300">{annotations.length}</span>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 scrollbar-thin" style={{ scrollbarWidth: 'thin' }}>
+                  {annotations.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-32 text-center">
+                      <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-3">
+                        <Square className="w-6 h-6 text-gray-500" />
+                      </div>
+                      <p className="text-sm text-gray-500 mb-1">No annotations yet</p>
+                      <p className="text-xs text-gray-600">Select a class and start drawing!</p>
+                    </div>
+                  ) : (
                     <div className="space-y-2">
-                      <div className="text-xs text-gray-400 mb-2">Total annotations across all images: <span className="text-sm text-gray-100 font-medium">{total}</span></div>
-                      {classes.map(c => {
-                        const count = globalStats[c.name] || 0;
-                        const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
+                      {annotations.map((annotation) => {
                         return (
-                          <div key={c.id} className="flex items-center justify-between p-2 border rounded border-gray-700">
-                            <div className="flex items-center gap-2">
-                              <div className="w-4 h-4 rounded" style={{ backgroundColor: c.color }} />
-                              <div>
-                                <div className="text-sm font-medium">{c.name}</div>
-                                <div className="text-xs text-gray-400">{c.visible ? 'Visible' : 'Hidden'}</div>
+                        <div 
+                          key={annotation.id}
+                          data-annotation-id={annotation.id}
+                          className={`group border rounded-lg p-3 cursor-pointer transition-all duration-200 ${
+                            selectedAnnotation === annotation.id 
+                              ? 'border-blue-500 bg-blue-500/10 shadow-lg shadow-blue-500/20' 
+                              : 'border-gray-700 bg-gray-800/50 hover:border-gray-600 hover:bg-gray-800'
+                          }`}
+                          onClick={() => {
+                            console.log('Card clicked, setting selectedAnnotation to:', annotation.id);
+                            setSelectedAnnotation(annotation.id);
+                          }}
+                        >
+                          <div className="flex items-start justify-between">
+                            {/* Left side - Color indicator and content */}
+                            <div className="flex items-start gap-3 flex-1 min-w-0">
+                              <div 
+                                className="w-4 h-4 rounded-md border border-gray-600 flex-shrink-0 mt-0.5"
+                                style={{ backgroundColor: annotation.color }}
+                              />
+                              <div className="flex-1 min-w-0">
+                                {editingAnnotationId === annotation.id ? (
+                                  <div className="space-y-2">
+                                    <Select value={editingAnnotationLabel || ''} onValueChange={(v) => setEditingAnnotationLabel(v)}>
+                                      <SelectTrigger className="w-full h-8 text-sm bg-gray-700 border-gray-600">
+                                        <SelectValue placeholder="Select class" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {classes.map(c => (
+                                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    <div className="flex justify-end gap-1">
+                                      <Button 
+                                        size="sm" 
+                                        className="h-7 px-2 text-xs"
+                                        onClick={() => { 
+                                          saveAnnotationLabel(annotation.id, editingAnnotationLabel); 
+                                          setEditingAnnotationId(null); 
+                                        }}
+                                      >
+                                        Save
+                                      </Button>
+                                      <Button 
+                                        size="sm" 
+                                        variant="outline" 
+                                        className="h-7 px-2 text-xs"
+                                        onClick={() => setEditingAnnotationId(null)}
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <p 
+                                      className="text-sm font-medium text-gray-200 cursor-pointer hover:text-white transition-colors truncate"
+                                      onClick={(e) => { 
+                                        e.stopPropagation(); 
+                                        setEditingAnnotationId(annotation.id); 
+                                        const cls = classes.find(c => c.name === annotation.label); 
+                                        setEditingAnnotationLabel(cls ? cls.id : ''); 
+                                      }}
+                                    >
+                                      {annotation.label}
+                                    </p>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className="text-xs text-gray-500 capitalize">{annotation.type}</span>
+                                      <span className="text-xs text-gray-600">•</span>
+                                      <span className="text-xs text-gray-500">ID: {annotation.id.slice(0, 8)}</span>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
-                            <div className="text-sm text-gray-200">{count} <span className="text-xs text-gray-400">({pct}%)</span></div>
+
+                            {/* Right side - Action buttons */}
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="w-7 h-7 p-0 hover:bg-gray-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAnnotations(prev => prev.map(a => 
+                                    a.id === annotation.id 
+                                      ? { ...a, visible: !a.visible }
+                                      : a
+                                  ));
+                                }}
+                                title={annotation.visible ? "Hide annotation" : "Show annotation"}
+                              >
+                                {annotation.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="w-7 h-7 p-0 hover:bg-gray-700"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingAnnotationId(annotation.id);
+                                  const cls = classes.find(c => c.name === annotation.label);
+                                  setEditingAnnotationLabel(cls ? cls.id : '');
+                                }}
+                                title="Edit annotation"
+                              >
+                                <Edit className="w-3 h-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="w-7 h-7 p-0 hover:bg-red-600/20 hover:text-red-400"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteAnnotation(annotation.id);
+                                }}
+                                title="Delete annotation"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
                           </div>
+                        </div>
                         );
                       })}
                     </div>
-                  );
-                })()}
-              </div>
-            </TabsContent>
-          </Tabs>
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* Statistics Tab */}
+              <TabsContent value="statistics" className="flex-1 overflow-hidden m-0 p-0">
+                <div className="p-3 border-b border-gray-700 bg-gray-850">
+                  <div className="flex items-center justify-between text-xs text-gray-400">
+                    <span>Global Statistics</span>
+                    <span className="bg-gray-700 px-2 py-1 rounded text-gray-300">All Images</span>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
+                  <div className="space-y-3">
+                    {(() => {
+                      const total = Object.values(globalStats).reduce((s, v) => s + v, 0);
+                      if (classes.length === 0) {
+                        return (
+                          <div className="flex flex-col items-center justify-center h-32 text-center">
+                            <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-3">
+                              <BarChart className="w-6 h-6 text-gray-500" />
+                            </div>
+                            <p className="text-sm text-gray-500">No classes defined yet</p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <>
+                          {/* Summary Card */}
+                          <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                            <div className="text-center">
+                              <div className="text-2xl font-bold text-blue-400">{total}</div>
+                              <div className="text-xs text-gray-400">Total Annotations</div>
+                              <div className="text-xs text-gray-500 mt-1">Across all images</div>
+                            </div>
+                          </div>
+
+                          {/* Class Breakdown */}
+                          <div className="space-y-2">
+                            <h5 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Class Breakdown</h5>
+                            {classes.map(c => {
+                              const count = globalStats[c.name] || 0;
+                              const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
+                              return (
+                                <div key={c.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <div 
+                                        className="w-3 h-3 rounded border border-gray-600" 
+                                        style={{ backgroundColor: c.color }} 
+                                      />
+                                      <span className="text-sm font-medium text-gray-200">{c.name}</span>
+                                    </div>
+                                    <div className="text-sm text-gray-300 font-medium">{count}</div>
+                                  </div>
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-gray-500">{c.visible ? 'Visible' : 'Hidden'}</span>
+                                    <span className="text-gray-500">{pct}% of total</span>
+                                  </div>
+                                  {/* Progress bar */}
+                                  <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                                    <div 
+                                      className="h-full transition-all duration-300" 
+                                      style={{ 
+                                        width: `${pct}%`, 
+                                        backgroundColor: c.color,
+                                        opacity: 0.8
+                                      }} 
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
 
           {/* Divider / handle for resizing */}
           {!rightCollapsed && (
