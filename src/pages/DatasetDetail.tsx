@@ -51,7 +51,9 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [showAugmentedModal, setShowAugmentedModal] = useState(false);
   const [activeTab, setActiveTab] = useState("datasets");
   
-  // Dataset groups state
+  // Models state
+  const [modelsSearchQuery, setModelsSearchQuery] = useState("");
+  const [modelsSortOrder, setModelsSortOrder] = useState<"newest" | "oldest" | "name" | "accuracy" | "performance">("newest");
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [showAddGroupModal, setShowAddGroupModal] = useState(false);
@@ -751,15 +753,63 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
           </TabsContent>
 
           <TabsContent value="models" className="space-y-6">
+            {/* Models Section Header */}
+            <div className="flex items-center gap-2 mb-6">
+              <Brain className="h-5 w-5 text-primary" />
+              <h3 className="text-xl font-semibold">Project Models</h3>
+              <Badge variant="secondary" className="ml-2">
+                0 models
+              </Badge>
+            </div>
+            
+            {/* Search and Filter Controls for Models */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                <Input
+                  placeholder="Search models by name, type or performance..."
+                  className="pl-9"
+                  value={modelsSearchQuery}
+                  onChange={(e) => setModelsSearchQuery(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="text-muted-foreground h-4 w-4" />
+                <Select value={modelsSortOrder} onValueChange={(value) => setModelsSortOrder(value as any)}>
+                  <SelectTrigger className="min-w-[180px]">
+                    <SelectValue placeholder="Sort by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="newest">Newest first</SelectItem>
+                    <SelectItem value="oldest">Oldest first</SelectItem>
+                    <SelectItem value="name">Name (A-Z)</SelectItem>
+                    <SelectItem value="accuracy">Best accuracy</SelectItem>
+                    <SelectItem value="performance">Best performance</SelectItem>
+                  </SelectContent>
+                </Select>
+                
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  className="whitespace-nowrap ml-2"
+                  disabled
+                >
+                  <Brain className="w-4 h-4 mr-2" />
+                  Train Model
+                </Button>
+              </div>
+            </div>
+
             <div className="text-center py-16">
               <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-medium mb-2">Models</h3>
+              <h3 className="text-lg font-medium mb-2">No models found</h3>
               <p className="text-muted-foreground mb-6">
-                Model management will be available soon.
+                This project doesn't have any trained models yet. Train your first model to get started.
               </p>
               <Button variant="outline" disabled>
                 <Brain className="w-4 h-4 mr-2" />
-                Coming Soon
+                Train Model (Coming Soon)
               </Button>
             </div>
           </TabsContent>
