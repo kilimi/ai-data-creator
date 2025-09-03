@@ -14,9 +14,10 @@ import { AddGroupModal } from '@/components/AddGroupModal';
 import { EditGroupModal } from '@/components/EditGroupModal';
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
-import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users } from "lucide-react";
+import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dataset, Project, DatasetGroup } from '@/types';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -48,6 +49,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   const [showAugmentedModal, setShowAugmentedModal] = useState(false);
+  const [activeTab, setActiveTab] = useState("datasets");
   
   // Dataset groups state
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
@@ -510,228 +512,258 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
           </div>
         </div>
 
-        {/* Datasets Section Header */}
-        <div className="flex items-center gap-2 mb-6">
-          <Database className="h-5 w-5 text-primary" />
-          <h3 className="text-xl font-semibold">Project Datasets</h3>
-          <Badge variant="secondary" className="ml-2">
-            {(project?.datasets?.length || 0) + datasetGroups.length} items
-          </Badge>
-          {datasetGroups.length > 0 && (
-            <Badge variant="outline" className="ml-1">
-              <Users className="h-3 w-3 mr-1" />
-              {datasetGroups.length} groups
-            </Badge>
-          )}
-        </div>
-        
-        {/* Search and Filter Controls */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-            <Input
-              placeholder="Search datasets by name, description or tags..."
-              className="pl-9"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="text-muted-foreground h-4 w-4" />
-            <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as any)}>
-              <SelectTrigger className="min-w-[180px]">
-                <SelectValue placeholder="Sort by" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="newest">Newest first</SelectItem>
-                <SelectItem value="oldest">Oldest first</SelectItem>
-                <SelectItem value="name">Name (A-Z)</SelectItem>
-                <SelectItem value="images">Most images</SelectItem>
-                <SelectItem value="annotations">Most annotations</SelectItem>
-              </SelectContent>
-            </Select>
-            
-            
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button 
-                  variant="default" 
-                  size="sm" 
-                  className="whitespace-nowrap ml-2"
-                >
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  Create
-                  <ChevronDown className="w-4 h-4 ml-2" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem 
-                  onClick={() => setShowAddGroupModal(true)}
-                  className="flex items-center cursor-pointer"
-                >
-                  <Users className="w-4 h-4 mr-2 text-blue-600" />
-                  <span className="text-blue-600">Dataset Group</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link 
-                    to="/projects/new/dataset" 
-                    state={{ projectId: id ? parseInt(id, 10) : undefined }}
-                    className="flex items-center cursor-pointer"
-                  >
-                    <FolderPlus className="w-4 h-4 mr-2" />
-                    Dataset
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <div 
-                    onClick={() => setShowAugmentedModal(true)}
-                    className="flex items-center cursor-pointer"
-                  >
-                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
-                    <span className="text-yellow-600">Augmented Dataset</span>
-                  </div>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-        
-        {/* Tag Filter */}
-        {allTags.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-6">
-            <Button
-              variant={selectedTag === null ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSelectedTag(null)}
-              className="gap-1"
-            >
-              All Tags
-            </Button>
-            {allTags.map(tag => (
-              <Button
-                key={tag}
-                variant={selectedTag === tag ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedTag(tag)}
-                className="gap-1"
-              >
-                <Tag className="w-3 h-3" />
-                {tag}
-              </Button>
-            ))}
-          </div>
-        )}
-        
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Array(3).fill(0).map((_, i) => (
-              <DatasetCardSkeleton key={i} />
-            ))}
-          </div>
-        ) : error ? (
-          <Card className="p-6 text-center">
-            <p className="text-red-500">Error loading project: {error}</p>
-          </Card>
-        ) : !project ? (
-          <Card className="p-6 text-center">
-            <p>Project not found</p>
-          </Card>
-        ) : filteredAndSortedGroups().length > 0 || filteredAndSortedDatasets().length > 0 ? (
-          <div className="space-y-6">
-            {/* Dataset Groups */}
-            {filteredAndSortedGroups().length > 0 && (
-              <div>
-                <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
-                  <Users className="h-5 w-5 text-primary" />
-                  Dataset Groups
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredAndSortedGroups().map(group => (
-                    <DatasetGroupCard 
-                      key={group.id} 
-                      group={group}
-                      expanded={expandedGroups.has(group.id)}
-                      onToggleExpanded={() => handleToggleGroupExpanded(group.id)}
-                      onEdit={handleEditGroup}
-                      onDelete={handleDeleteGroup}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="datasets" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Datasets
+            </TabsTrigger>
+            <TabsTrigger value="models" className="flex items-center gap-2">
+              <Brain className="h-4 w-4" />
+              Models
+            </TabsTrigger>
+          </TabsList>
 
-            {/* Individual Datasets */}
-            {filteredAndSortedDatasets().length > 0 && (
-              <div>
-                <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
-                  <Database className="h-5 w-5 text-primary" />
-                  Individual Datasets
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredAndSortedDatasets().map(dataset => (
-                    <DatasetCard 
-                      key={dataset.id} 
-                      dataset={dataset}
-                      onDelete={handleDeleteDataset}
-                      onDatasetUpdated={handleDatasetUpdated}
-                    />
-                  ))}
-                </div>
+          <TabsContent value="datasets" className="space-y-6">
+            {/* Datasets Section Header */}
+            <div className="flex items-center gap-2 mb-6">
+              <Database className="h-5 w-5 text-primary" />
+              <h3 className="text-xl font-semibold">Project Datasets</h3>
+              <Badge variant="secondary" className="ml-2">
+                {(project?.datasets?.length || 0) + datasetGroups.length} items
+              </Badge>
+              {datasetGroups.length > 0 && (
+                <Badge variant="outline" className="ml-1">
+                  <Users className="h-3 w-3 mr-1" />
+                  {datasetGroups.length} groups
+                </Badge>
+              )}
+            </div>
+            
+            {/* Search and Filter Controls */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                <Input
+                  placeholder="Search datasets by name, description or tags..."
+                  className="pl-9"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="text-muted-foreground h-4 w-4" />
+                <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as any)}>
+                  <SelectTrigger className="min-w-[180px]">
+                    <SelectValue placeholder="Sort by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="newest">Newest first</SelectItem>
+                    <SelectItem value="oldest">Oldest first</SelectItem>
+                    <SelectItem value="name">Name (A-Z)</SelectItem>
+                    <SelectItem value="images">Most images</SelectItem>
+                    <SelectItem value="annotations">Most annotations</SelectItem>
+                  </SelectContent>
+                </Select>
+                
+                
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button 
+                      variant="default" 
+                      size="sm" 
+                      className="whitespace-nowrap ml-2"
+                    >
+                      <FolderPlus className="w-4 h-4 mr-2" />
+                      Create
+                      <ChevronDown className="w-4 h-4 ml-2" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem 
+                      onClick={() => setShowAddGroupModal(true)}
+                      className="flex items-center cursor-pointer"
+                    >
+                      <Users className="w-4 h-4 mr-2 text-blue-600" />
+                      <span className="text-blue-600">Dataset Group</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link 
+                        to="/projects/new/dataset" 
+                        state={{ projectId: id ? parseInt(id, 10) : undefined }}
+                        className="flex items-center cursor-pointer"
+                      >
+                        <FolderPlus className="w-4 h-4 mr-2" />
+                        Dataset
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <div 
+                        onClick={() => setShowAugmentedModal(true)}
+                        className="flex items-center cursor-pointer"
+                      >
+                        <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                        <span className="text-yellow-600">Augmented Dataset</span>
+                      </div>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+            
+            {/* Tag Filter */}
+            {allTags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-6">
+                <Button
+                  variant={selectedTag === null ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSelectedTag(null)}
+                  className="gap-1"
+                >
+                  All Tags
+                </Button>
+                {allTags.map(tag => (
+                  <Button
+                    key={tag}
+                    variant={selectedTag === tag ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSelectedTag(tag)}
+                    className="gap-1"
+                  >
+                    <Tag className="w-3 h-3" />
+                    {tag}
+                  </Button>
+                ))}
               </div>
             )}
-          </div>
-        ) : (
-          <div className="text-center py-16">
-            <Database className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <h3 className="text-lg font-medium mb-2">
-              {searchQuery || selectedTag ? 'No datasets match your search' : 'No datasets found'}
-            </h3>
-            <p className="text-muted-foreground mb-6">
-              {searchQuery || selectedTag
-                ? `No datasets matching your search criteria`
-                : "This project doesn't have any datasets yet."
-              }
-            </p>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button>
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  Create Dataset
-                  <ChevronDown className="w-4 h-4 ml-2" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="center">
-                <DropdownMenuItem 
-                  onClick={() => setShowAddGroupModal(true)}
-                  className="flex items-center cursor-pointer"
-                >
-                  <Users className="w-4 h-4 mr-2 text-blue-600" />
-                  <span className="text-blue-600">Dataset Group</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link 
-                    to="/projects/new/dataset" 
-                    state={{ projectId: id ? parseInt(id, 10) : undefined }}
-                    className="flex items-center cursor-pointer"
-                  >
-                    <FolderPlus className="w-4 h-4 mr-2" />
-                    Dataset
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <div 
-                    onClick={() => setShowAugmentedModal(true)}
-                    className="flex items-center cursor-pointer"
-                  >
-                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
-                    <span className="text-yellow-600">Augmented Dataset</span>
+            
+            {loading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {Array(3).fill(0).map((_, i) => (
+                  <DatasetCardSkeleton key={i} />
+                ))}
+              </div>
+            ) : error ? (
+              <Card className="p-6 text-center">
+                <p className="text-red-500">Error loading project: {error}</p>
+              </Card>
+            ) : !project ? (
+              <Card className="p-6 text-center">
+                <p>Project not found</p>
+              </Card>
+            ) : filteredAndSortedGroups().length > 0 || filteredAndSortedDatasets().length > 0 ? (
+              <div className="space-y-6">
+                {/* Dataset Groups */}
+                {filteredAndSortedGroups().length > 0 && (
+                  <div>
+                    <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
+                      <Users className="h-5 w-5 text-primary" />
+                      Dataset Groups
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {filteredAndSortedGroups().map(group => (
+                        <DatasetGroupCard 
+                          key={group.id} 
+                          group={group}
+                          expanded={expandedGroups.has(group.id)}
+                          onToggleExpanded={() => handleToggleGroupExpanded(group.id)}
+                          onEdit={handleEditGroup}
+                          onDelete={handleDeleteGroup}
+                        />
+                      ))}
+                    </div>
                   </div>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        )}
+                )}
+
+                {/* Individual Datasets */}
+                {filteredAndSortedDatasets().length > 0 && (
+                  <div>
+                    <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
+                      <Database className="h-5 w-5 text-primary" />
+                      Individual Datasets
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {filteredAndSortedDatasets().map(dataset => (
+                        <DatasetCard 
+                          key={dataset.id} 
+                          dataset={dataset}
+                          onDelete={handleDeleteDataset}
+                          onDatasetUpdated={handleDatasetUpdated}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-16">
+                <Database className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <h3 className="text-lg font-medium mb-2">
+                  {searchQuery || selectedTag ? 'No datasets match your search' : 'No datasets found'}
+                </h3>
+                <p className="text-muted-foreground mb-6">
+                  {searchQuery || selectedTag
+                    ? `No datasets matching your search criteria`
+                    : "This project doesn't have any datasets yet."
+                  }
+                </p>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button>
+                      <FolderPlus className="w-4 h-4 mr-2" />
+                      Create Dataset
+                      <ChevronDown className="w-4 h-4 ml-2" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center">
+                    <DropdownMenuItem 
+                      onClick={() => setShowAddGroupModal(true)}
+                      className="flex items-center cursor-pointer"
+                    >
+                      <Users className="w-4 h-4 mr-2 text-blue-600" />
+                      <span className="text-blue-600">Dataset Group</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link 
+                        to="/projects/new/dataset" 
+                        state={{ projectId: id ? parseInt(id, 10) : undefined }}
+                        className="flex items-center cursor-pointer"
+                      >
+                        <FolderPlus className="w-4 h-4 mr-2" />
+                        Dataset
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <div 
+                        onClick={() => setShowAugmentedModal(true)}
+                        className="flex items-center cursor-pointer"
+                      >
+                        <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                        <span className="text-yellow-600">Augmented Dataset</span>
+                      </div>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="models" className="space-y-6">
+            <div className="text-center py-16">
+              <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-lg font-medium mb-2">Models</h3>
+              <p className="text-muted-foreground mb-6">
+                Model management will be available soon.
+              </p>
+              <Button variant="outline" disabled>
+                <Brain className="w-4 h-4 mr-2" />
+                Coming Soon
+              </Button>
+            </div>
+          </TabsContent>
+        </Tabs>
       </section>
       
       {/* Modals */}
