@@ -14,6 +14,7 @@ import { AddGroupModal } from '@/components/AddGroupModal';
 import { EditGroupModal } from '@/components/EditGroupModal';
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
+import { TrainModelModal } from '@/components/TrainModelModal';
 import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Dataset, Project, DatasetGroup } from '@/types';
@@ -54,6 +55,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   // Models state
   const [modelsSearchQuery, setModelsSearchQuery] = useState("");
   const [modelsSortOrder, setModelsSortOrder] = useState<"newest" | "oldest" | "name" | "accuracy" | "performance">("newest");
+  const [showTrainModelModal, setShowTrainModelModal] = useState(false);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [showAddGroupModal, setShowAddGroupModal] = useState(false);
@@ -793,7 +795,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                   variant="default" 
                   size="sm" 
                   className="whitespace-nowrap ml-2"
-                  disabled
+                  onClick={() => setShowTrainModelModal(true)}
                 >
                   <Brain className="w-4 h-4 mr-2" />
                   Train Model
@@ -807,9 +809,9 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
               <p className="text-muted-foreground mb-6">
                 This project doesn't have any trained models yet. Train your first model to get started.
               </p>
-              <Button variant="outline" disabled>
+              <Button variant="outline" onClick={() => setShowTrainModelModal(true)}>
                 <Brain className="w-4 h-4 mr-2" />
-                Train Model (Coming Soon)
+                Train Model
               </Button>
             </div>
           </TabsContent>
@@ -819,6 +821,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       {/* Modals */}
       {project && (
         <>
+          <TrainModelModal
+            open={showTrainModelModal}
+            onOpenChange={setShowTrainModelModal}
+            datasets={project?.datasets || []}
+            projectId={id || ''}
+          />
+          
           <CreateAugmentedDatasetModal
             open={showAugmentedModal}
             onOpenChange={setShowAugmentedModal}
