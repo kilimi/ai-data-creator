@@ -13,9 +13,11 @@ interface DatasetHeaderProps {
   dataset?: Dataset;
   onEditDataset?: () => void;
   onDeleteDataset?: () => void;
+  // optional project context - when provided the back link goes to the project page
+  projectId?: string | null;
 }
 
-export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset }: DatasetHeaderProps) {
+export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, projectId }: DatasetHeaderProps) {
   return (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-2">
@@ -25,7 +27,7 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
           asChild
           className="h-9 w-9"
         >
-          <Link to="/datasets">
+          <Link to={projectId ? `/projects/${projectId}` : "/datasets"}>
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>

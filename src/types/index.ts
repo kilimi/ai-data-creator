@@ -8,6 +8,7 @@ export interface Dataset {
   updated_at: string;
   image_count: number;
   annotation_count: number;
+  annotation_file_count: number;
   project_id: number;
   thumbnailUrl?: string;
   logo_url?: string;

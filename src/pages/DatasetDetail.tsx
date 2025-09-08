@@ -825,6 +825,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             open={showTrainModelModal}
             onOpenChange={setShowTrainModelModal}
             datasets={project?.datasets || []}
+            datasetGroups={datasetGroups}
             projectId={id || ''}
           />
           

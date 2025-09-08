@@ -59,21 +59,42 @@ async def create_project(
 def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     try:
         projects = db.query(models.Project).offset(skip).limit(limit).all()
-        return [
-            {
+        result = []
+        for p in projects:
+            # Serialize datasets with correct annotation counts
+            datasets = []
+            if p.datasets:
+                for dataset in p.datasets:
+                    datasets.append({
+                        "id": dataset.id,
+                        "name": dataset.name,
+                        "description": dataset.description,
+                        "type": dataset.type,
+                        "tags": dataset.tags,
+                        "created_at": dataset.created_at,
+                        "updated_at": dataset.updated_at,
+                        "image_count": dataset.image_count,
+                        "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
+                        "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+                        "project_id": dataset.project_id,
+                        "thumbnailUrl": dataset.thumbnailUrl,
+                        "logo_url": dataset.logo_url,
+                        "url": dataset.url
+                    })
+            
+            result.append({
                 "id": p.id,
                 "name": p.name,
                 "description": p.description,
                 "created_at": p.created_at,
                 "updated_at": p.updated_at,
                 "is_project": p.is_project,
-                "datasets": p.datasets or [],
+                "datasets": datasets,
                 "logo_url": p.logo_url,
                 "thumbnailUrl": p.logo_url,
                 "tags": p.tags
-            }
-            for p in projects
-        ]
+            })
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
@@ -83,7 +104,40 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return project
+    
+    # Serialize datasets with correct annotation counts
+    datasets = []
+    if project.datasets:
+        for dataset in project.datasets:
+            datasets.append({
+                "id": dataset.id,
+                "name": dataset.name,
+                "description": dataset.description,
+                "type": dataset.type,
+                "tags": dataset.tags,
+                "created_at": dataset.created_at,
+                "updated_at": dataset.updated_at,
+                "image_count": dataset.image_count,
+                "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
+                "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+                "project_id": dataset.project_id,
+                "thumbnailUrl": dataset.thumbnailUrl,
+                "logo_url": dataset.logo_url,
+                "url": dataset.url
+            })
+    
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "is_project": project.is_project,
+        "datasets": datasets,
+        "logo_url": project.logo_url,
+        "thumbnailUrl": project.logo_url,
+        "tags": project.tags
+    }
 
 
 @router.put("/projects/{project_id}", response_model=schemas.Project)
@@ -203,7 +257,7 @@ async def duplicate_project(project_id: int, db: Session = Depends(get_db)):
                 tags=dataset.tags,
                 project_id=new_project.id,
                 image_count=dataset.image_count,
-                annotation_count=dataset.annotation_count
+                # annotation counts are computed on demand
             )
             db.add(new_dataset)
         db.commit()

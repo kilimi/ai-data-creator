@@ -591,12 +591,12 @@ export function AnnotationsContent({
   }>({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   
   // Auto-detect annotation type based on content with detailed segmentation types
-  const detectAnnotationType = (file: AnnotationFile): 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' => {
-    // If type is explicitly set, use it (but expand old 'segmentation' to detailed types)
-    if (file.type === 'classification') return 'classification';
-    if (file.type === 'segmentation-mask-bbox') return 'segmentation-mask-bbox';
-    if (file.type === 'segmentation-mask') return 'segmentation-mask';
-    if (file.type === 'segmentation-bbox') return 'segmentation-bbox';
+  const detectAnnotationType = (file: AnnotationFile): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {
+    // If type is explicitly set, use it (but expand old types to new ones)
+    if (file.type === 'Classification' || file.type === 'classification') return 'Classification';
+    if (file.type === 'Segmentation (mask+bbox)' || file.type === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
+    if (file.type === 'Segmentation (mask)' || file.type === 'segmentation-mask') return 'Segmentation (mask)';
+    if (file.type === 'Segmentation (bbox)' || file.type === 'segmentation-bbox') return 'Segmentation (bbox)';
     if (file.type === 'segmentation') {
       // For old 'segmentation' type, we still need to detect the detailed subtype
       if (file.samples && file.samples.length > 0) {
@@ -608,11 +608,11 @@ export function AnnotationsContent({
           (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
         );
         
-        if (hasSegmentation && hasMeaningfulBbox) return 'segmentation-mask-bbox';
-        if (hasSegmentation) return 'segmentation-mask';
-        if (hasMeaningfulBbox) return 'segmentation-bbox';
+        if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
+        if (hasSegmentation) return 'Segmentation (mask)';
+        if (hasMeaningfulBbox) return 'Segmentation (bbox)';
       }
-      return 'segmentation-bbox'; // Default fallback for old segmentation type
+      return 'Segmentation (bbox)'; // Default fallback for old segmentation type
     }
     
     // Auto-detect based on samples content
@@ -630,11 +630,11 @@ export function AnnotationsContent({
       
       // Determine detailed segmentation type
       if (hasSegmentation && hasMeaningfulBbox) {
-        return 'segmentation-mask-bbox'; // Both masks and bounding boxes
+        return 'Segmentation (mask+bbox)'; // Both masks and bounding boxes
       } else if (hasSegmentation) {
-        return 'segmentation-mask'; // Only segmentation masks
+        return 'Segmentation (mask)'; // Only segmentation masks
       } else if (hasMeaningfulBbox) {
-        return 'segmentation-bbox'; // Only bounding boxes (object detection)
+        return 'Segmentation (bbox)'; // Only bounding boxes (object detection)
       }
       
       // If all bboxes are [0,0,0,0] or missing, it's classification
@@ -643,17 +643,17 @@ export function AnnotationsContent({
         (Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
          sample.bbox[0] === 0 && sample.bbox[1] === 0 && sample.bbox[2] === 0 && sample.bbox[3] === 0)
       );
-      if (hasOnlyEmptyBbox) return 'classification';
+      if (hasOnlyEmptyBbox) return 'Classification';
     }
     
     // Check filename for hints
     if (file.name) {
       const nameLower = file.name.toLowerCase();
-      if (nameLower.includes('classification') || nameLower.includes('class')) return 'classification';
-      if (nameLower.includes('mask') && nameLower.includes('bbox')) return 'segmentation-mask-bbox';
-      if (nameLower.includes('mask')) return 'segmentation-mask';
-      if (nameLower.includes('bbox') || nameLower.includes('detection')) return 'segmentation-bbox';
-      if (nameLower.includes('segmentation') || nameLower.includes('seg')) return 'segmentation-mask-bbox';
+      if (nameLower.includes('classification') || nameLower.includes('class')) return 'Classification';
+      if (nameLower.includes('mask') && nameLower.includes('bbox')) return 'Segmentation (mask+bbox)';
+      if (nameLower.includes('mask')) return 'Segmentation (mask)';
+      if (nameLower.includes('bbox') || nameLower.includes('detection')) return 'Segmentation (bbox)';
+      if (nameLower.includes('segmentation') || nameLower.includes('seg')) return 'Segmentation (mask+bbox)';
     }
     
     // Check content for COCO classification patterns (for saved classifications)
@@ -664,18 +664,18 @@ export function AnnotationsContent({
         const hasOnlyCategories = content.annotations.every((ann: any) => 
           ann.category_id && !ann.bbox && !ann.segmentation
         );
-        if (hasOnlyCategories && content.annotations.length > 0) return 'classification';
+        if (hasOnlyCategories && content.annotations.length > 0) return 'Classification';
       }
     }
     
     // If we have annotation data but can't determine type, default to bbox segmentation
     // since most COCO annotation files are object detection (bounding boxes)
     if (file.samples && file.samples.length > 0) {
-      return 'segmentation-bbox';
+      return 'Segmentation (bbox)';
     }
     
-    // Default to "nothing" until we can analyze the content
-    return 'nothing';
+    // Default to "Other" until we can analyze the content
+    return 'Other';
   };
 
   // Handler for managing tags
@@ -1763,7 +1763,7 @@ export function AnnotationsContent({
 
     try {
       // Check if this is a classification file stored only in localStorage
-      const isClassificationFile = detectAnnotationType(fileToDelete) === 'classification';
+      const isClassificationFile = detectAnnotationType(fileToDelete) === 'Classification';
       
       if (isClassificationFile) {
         // Delete from saved_annotations localStorage
@@ -1887,7 +1887,7 @@ export function AnnotationsContent({
     e.stopPropagation();
     
     const file = annotationFiles.find(f => f.id === annotationId);
-    if (file && detectAnnotationType(file) === 'classification') {
+    if (file && detectAnnotationType(file) === 'Classification') {
       // Clear all existing annotation cache to start fresh
       clearAnnotationCache('classification');
       
@@ -2256,7 +2256,7 @@ export function AnnotationsContent({
       setImageStatusDialog({
         isOpen: true,
         type: 'breakdown',
-        files: ['Backend connection required to calculate image breakdown.'],
+        files: ['Backend connection required to calculate image coverage.'],
         annotationFileName: file.name
       });
       return;
@@ -2272,46 +2272,28 @@ export function AnnotationsContent({
     });
 
     try {
-      console.log(`Calculating image breakdown for ${file.name}...`);
+      console.log(`Loading coverage data for ${file.name}...`);
       
-      // Fetch the full annotation content from backend
-      const contentResponse = await api.getAnnotationContent(id, file.id);
+      // Use the new coverage API instead of parsing COCO content
+      const coverageResponse = await api.getAnnotationFileCoverage(id, file.id);
       
-      if (!contentResponse || !contentResponse.success || !contentResponse.data.content) {
-        throw new Error('Failed to fetch annotation content');
+      if (!coverageResponse || !coverageResponse.success || !coverageResponse.data) {
+        throw new Error('Failed to fetch coverage data');
       }
 
-      const cocoData = JSON.parse(contentResponse.data.content);
-      const allImageNames: string[] = [];
+      const coverage = coverageResponse.data;
+      const presentImages = coverage.present.map(img => img.file_name);
+      const missingImages = coverage.missing.map(img => img.file_name || `COCO ID: ${img.coco_image_id}`);
       
-      // Extract all image file names from COCO data
-      if (cocoData.images && Array.isArray(cocoData.images)) {
-        cocoData.images.forEach((img: any) => {
-          if (img.file_name) {
-            allImageNames.push(img.file_name);
-          }
-        });
-      }
-      
-      console.log(`Found ${allImageNames.length} total images in annotation file`);
-      
-      // Create a set of uploaded image file names for comparison
-      const uploadedImageNames = new Set(imagesMemo.map(img => img.fileName));
-      console.log(`Found ${uploadedImageNames.size} uploaded images in dataset`);
-      
-      // Calculate present and missing
-      const presentImages = allImageNames.filter(imageName => uploadedImageNames.has(imageName));
-      const missingImages = allImageNames.filter(imageName => !uploadedImageNames.has(imageName));
-      
-      console.log(`Breakdown: ${presentImages.length} present, ${missingImages.length} missing`);
+      console.log(`Coverage: ${coverage.present_count} present, ${coverage.missing_count} missing`);
       
       // Show breakdown dialog with buttons for each category
       const breakdownMessage = [
-        `📊 Image Breakdown for "${file.name}":`,
+        `📊 Image Coverage for "${file.name}":`,
         ``,
-        `📁 Total Images in Annotation File: ${allImageNames.length}`,
-        `✅ Present in Dataset: ${presentImages.length}`,
-        `❌ Missing from Dataset: ${missingImages.length}`,
+        `📁 Total Images Referenced: ${coverage.total_referenced_images}`,
+        `✅ Present in Dataset: ${coverage.present_count}`,
+        `❌ Missing from Dataset: ${coverage.missing_count}`,
         ``,
         `Click "Present Images" or "Missing Images" below to see the file lists.`
       ];
@@ -2321,19 +2303,19 @@ export function AnnotationsContent({
         type: 'breakdown',
         files: breakdownMessage,
         annotationFileName: file.name,
-        presentCount: presentImages.length,
-        missingCount: missingImages.length,
+        presentCount: coverage.present_count,
+        missingCount: coverage.missing_count,
         presentFiles: presentImages,
         missingFiles: missingImages,
         isLoading: false
       });
       
     } catch (error) {
-      console.error('Failed to calculate image breakdown:', error);
+      console.error('Failed to calculate image coverage:', error);
       setImageStatusDialog({
         isOpen: true,
         type: 'breakdown',
-        files: [`Failed to calculate image breakdown: ${error instanceof Error ? error.message : 'Unknown error'}`],
+        files: [`Failed to calculate image coverage: ${error instanceof Error ? error.message : 'Unknown error'}`],
         annotationFileName: file.name,
         isLoading: false
       });
@@ -2533,7 +2515,7 @@ export function AnnotationsContent({
   }, [activeTasks.size > 0, startTaskMonitoring]); // Only trigger when we go from 0 to >0 tasks
 
   // Helper function to detect annotation type from COCO content string with detailed segmentation types
-  const detectAnnotationTypeFromContent = (content: string, fileName: string): 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' => {
+  const detectAnnotationTypeFromContent = (content: string, fileName: string): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {
     try {
       const cocoData = JSON.parse(content);
       
@@ -2541,14 +2523,14 @@ export function AnnotationsContent({
       
       // Check if it's valid COCO format
       if (!cocoData.annotations || !Array.isArray(cocoData.annotations)) {
-        console.log(`${fileName}: No annotations array found, defaulting to nothing`);
-        return 'nothing';
+        console.log(`${fileName}: No annotations array found, defaulting to Other`);
+        return 'Other';
       }
       
       const annotations = cocoData.annotations;
       if (annotations.length === 0) {
-        console.log(`${fileName}: Empty annotations, defaulting to nothing`);
-        return 'nothing';
+        console.log(`${fileName}: Empty annotations, defaulting to Other`);
+        return 'Other';
       }
       
       let hasSegmentation = false;
@@ -2580,48 +2562,48 @@ export function AnnotationsContent({
       }
       
       // Determine detailed type based on analysis
-      let detectedType: 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing';
+      let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other';
       
       if (hasSegmentation && hasNonZeroBbox) {
-        detectedType = 'segmentation-mask-bbox';
-        console.log(`${fileName}: Detected as segmentation-mask-bbox (has both masks and bboxes)`);
+        detectedType = 'Segmentation (mask+bbox)';
+        console.log(`${fileName}: Detected as Segmentation (mask+bbox) (has both masks and bboxes)`);
       } else if (hasSegmentation) {
-        detectedType = 'segmentation-mask';
-        console.log(`${fileName}: Detected as segmentation-mask (has segmentation masks only)`);
+        detectedType = 'Segmentation (mask)';
+        console.log(`${fileName}: Detected as Segmentation (mask) (has segmentation masks only)`);
       } else if (hasNonZeroBbox && !hasZeroBbox) {
-        detectedType = 'segmentation-bbox'; // Has valid bounding boxes, object detection
-        console.log(`${fileName}: Detected as segmentation-bbox (has non-zero bboxes)`);
+        detectedType = 'Segmentation (bbox)'; // Has valid bounding boxes, object detection
+        console.log(`${fileName}: Detected as Segmentation (bbox) (has non-zero bboxes)`);
       } else if (hasZeroBbox && !hasNonZeroBbox) {
-        detectedType = 'classification'; // Only zero bboxes, likely classification
-        console.log(`${fileName}: Detected as classification (has only zero bboxes)`);
+        detectedType = 'Classification'; // Only zero bboxes, likely classification
+        console.log(`${fileName}: Detected as Classification (has only zero bboxes)`);
       } else if (!hasNonZeroBbox && !hasZeroBbox) {
         // No bbox data at all, check if we have category_id only
         const hasOnlyCategories = annotations.every((ann: any) => 
           ann.category_id && !ann.bbox && !ann.segmentation
         );
         if (hasOnlyCategories) {
-          detectedType = 'classification';
-          console.log(`${fileName}: Detected as classification (category_id only)`);
+          detectedType = 'Classification';
+          console.log(`${fileName}: Detected as Classification (category_id only)`);
         } else {
-          detectedType = 'nothing';
-          console.log(`${fileName}: Detected as nothing (no clear indicators, default)`);
+          detectedType = 'Other';
+          console.log(`${fileName}: Detected as Other (no clear indicators, default)`);
         }
       } else {
         // Mixed case - has both zero and non-zero bboxes, default to bbox segmentation
-        detectedType = 'segmentation-bbox';
-        console.log(`${fileName}: Detected as segmentation-bbox (mixed bbox types)`);
+        detectedType = 'Segmentation (bbox)';
+        console.log(`${fileName}: Detected as Segmentation (bbox) (mixed bbox types)`);
       }
       
       return detectedType;
       
     } catch (error) {
       console.error(`Error parsing COCO content for ${fileName}:`, error);
-      return 'nothing'; // Default fallback
+      return 'Other'; // Default fallback
     }
   };
 
   // Automatically detect annotation type from COCO format content with detailed segmentation types
-  const detectAnnotationTypeFromCOCO = (file: File): Promise<'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing'> => {
+  const detectAnnotationTypeFromCOCO = (file: File): Promise<'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other'> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -2633,15 +2615,15 @@ export function AnnotationsContent({
           
           // Check if it's valid COCO format
           if (!cocoData.annotations || !Array.isArray(cocoData.annotations)) {
-            console.log(`${file.name}: No annotations array found, defaulting to nothing`);
-            resolve('nothing');
+            console.log(`${file.name}: No annotations array found, defaulting to Other`);
+            resolve('Other');
             return;
           }
           
           const annotations = cocoData.annotations;
           if (annotations.length === 0) {
-            console.log(`${file.name}: Empty annotations, defaulting to nothing`);
-            resolve('nothing');
+            console.log(`${file.name}: Empty annotations, defaulting to Other`);
+            resolve('Other');
             return;
           }
           
@@ -2674,49 +2656,49 @@ export function AnnotationsContent({
           }
           
           // Determine detailed type based on analysis
-          let detectedType: 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing';
+          let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other';
           
           if (hasSegmentation && hasNonZeroBbox) {
-            detectedType = 'segmentation-mask-bbox';
-            console.log(`${file.name}: Detected as segmentation-mask-bbox (has both masks and bboxes)`);
+            detectedType = 'Segmentation (mask+bbox)';
+            console.log(`${file.name}: Detected as Segmentation (mask+bbox) (has both masks and bboxes)`);
           } else if (hasSegmentation) {
-            detectedType = 'segmentation-mask';
-            console.log(`${file.name}: Detected as segmentation-mask (has segmentation masks only)`);
+            detectedType = 'Segmentation (mask)';
+            console.log(`${file.name}: Detected as Segmentation (mask) (has segmentation masks only)`);
           } else if (hasNonZeroBbox && !hasZeroBbox) {
-            detectedType = 'segmentation-bbox'; // Has valid bounding boxes, object detection
-            console.log(`${file.name}: Detected as segmentation-bbox (has non-zero bboxes)`);
+            detectedType = 'Segmentation (bbox)'; // Has valid bounding boxes, object detection
+            console.log(`${file.name}: Detected as Segmentation (bbox) (has non-zero bboxes)`);
           } else if (hasZeroBbox && !hasNonZeroBbox) {
-            detectedType = 'classification'; // Only zero bboxes, likely classification
-            console.log(`${file.name}: Detected as classification (has only zero bboxes)`);
+            detectedType = 'Classification'; // Only zero bboxes, likely classification
+            console.log(`${file.name}: Detected as Classification (has only zero bboxes)`);
           } else if (!hasNonZeroBbox && !hasZeroBbox) {
             // No bbox data at all, check if we have category_id only
             const hasOnlyCategories = annotations.every((ann: any) => 
               ann.category_id && !ann.bbox && !ann.segmentation
             );
             if (hasOnlyCategories) {
-              detectedType = 'classification';
-              console.log(`${file.name}: Detected as classification (category_id only)`);
+              detectedType = 'Classification';
+              console.log(`${file.name}: Detected as Classification (category_id only)`);
             } else {
-              detectedType = 'nothing';
-              console.log(`${file.name}: Detected as nothing (no clear indicators, default)`);
+              detectedType = 'Other';
+              console.log(`${file.name}: Detected as Other (no clear indicators, default)`);
             }
           } else {
             // Mixed case - has both zero and non-zero bboxes, default to bbox segmentation
-            detectedType = 'segmentation-bbox';
-            console.log(`${file.name}: Detected as segmentation-bbox (mixed bbox types)`);
+            detectedType = 'Segmentation (bbox)';
+            console.log(`${file.name}: Detected as Segmentation (bbox) (mixed bbox types)`);
           }
           
           resolve(detectedType);
           
         } catch (error) {
           console.error(`Error parsing COCO file ${file.name}:`, error);
-          resolve('nothing'); // Default fallback
+          resolve('Other'); // Default fallback
         }
       };
       
       reader.onerror = () => {
         console.error(`Error reading file ${file.name}`);
-        resolve('nothing'); // Default fallback
+        resolve('Other'); // Default fallback
       };
       
       reader.readAsText(file);
@@ -3012,18 +2994,18 @@ export function AnnotationsContent({
     
     setIsLoadingFromBackend(true);
     try {
-      // First, load only the summary for fast initial display
-      console.log('Loading annotation files summary from backend...');
-      const summaryResponse = await api.getAnnotationsSummary(id);
-      
-      if (summaryResponse && summaryResponse.success && summaryResponse.data) {
-        const summary = summaryResponse.data;
-        console.log(`Found ${summary.file_count} annotation files with ${summary.total_annotations} total annotations`);
-        
-        // Create lightweight annotation file objects from summary
-        const lightweightFiles: AnnotationFile[] = await Promise.all(summary.files.map(async (fileSummary: any) => {
+      // Try to load annotation files from the backend (prefer full annotation metadata including `type`)
+      console.log('Loading annotation files from backend...');
+      const annotationsResponse = await api.getAnnotations(id);
+
+      if (annotationsResponse && annotationsResponse.success && annotationsResponse.data) {
+        const filesData = annotationsResponse.data;
+        console.log(`Found ${filesData.length} annotation files from backend`);
+
+        // Create lightweight annotation file objects from backend-provided list
+        const lightweightFiles: AnnotationFile[] = await Promise.all(filesData.map(async (fileSummary: any) => {
           // Always detect annotation type by loading content
-          let detectedType: 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' = 'nothing';
+          let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
           
           try {
             console.log(`Detecting annotation type for ${fileSummary.name}...`);
@@ -3033,29 +3015,29 @@ export function AnnotationsContent({
               detectedType = detectAnnotationTypeFromContent(contentResponse.data.content, fileSummary.name);
               console.log(`Auto-detected type for ${fileSummary.name}: ${detectedType}`);
             } else {
-              // Fallback to filename-based detection
-              const nameLower = fileSummary.name.toLowerCase();
-              if (nameLower.includes('classification') || nameLower.includes('class')) {
-                detectedType = 'classification';
-              } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
-                detectedType = 'segmentation-mask-bbox';
-              } else {
-                detectedType = 'segmentation-bbox'; // Default for COCO files
-              }
-              console.log(`Fallback filename-based detection for ${fileSummary.name}: ${detectedType}`);
+                // Fallback to filename-based detection
+                const nameLower = (fileSummary.name || '').toLowerCase();
+                if (nameLower.includes('classification') || nameLower.includes('class')) {
+                  detectedType = 'Classification';
+                } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
+                  detectedType = 'Segmentation (mask+bbox)';
+                } else {
+                  detectedType = 'Segmentation (bbox)'; // Default for COCO files
+                }
+                console.log(`Fallback filename-based detection for ${fileSummary.name}: ${detectedType}`);
             }
           } catch (error) {
             console.warn(`Failed to load content for type detection of ${fileSummary.name}:`, error);
             // Try to guess from filename as fallback
-            const nameLower = fileSummary.name.toLowerCase();
-            if (nameLower.includes('classification') || nameLower.includes('class')) {
-              detectedType = 'classification';
-            } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
-              detectedType = 'segmentation-mask-bbox';
-            } else {
-              detectedType = 'segmentation-bbox'; // Default for COCO files
-            }
-            console.log(`Error fallback type detection for ${fileSummary.name}: ${detectedType}`);
+              const nameLower = (fileSummary.name || '').toLowerCase();
+              if (nameLower.includes('classification') || nameLower.includes('class')) {
+                detectedType = 'Classification';
+              } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
+                detectedType = 'Segmentation (mask+bbox)';
+              } else {
+                detectedType = 'Segmentation (bbox)'; // Default for COCO files
+              }
+              console.log(`Error fallback type detection for ${fileSummary.name}: ${detectedType}`);
           }
           
           // Load class statistics without full content for faster display
@@ -3069,13 +3051,50 @@ export function AnnotationsContent({
           } catch (error) {
             console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
           }
+
+          // Load coverage data for the file
+          let coverageData = {
+            totalReferencedImages: undefined as number | undefined,
+            presentCount: undefined as number | undefined,
+            missingCount: undefined as number | undefined
+          };
           
+          // Use coverage data directly from backend response if available
+          if (fileSummary.image_coverage) {
+            coverageData = {
+              totalReferencedImages: fileSummary.image_coverage.total_referenced,
+              presentCount: fileSummary.image_coverage.present,
+              missingCount: fileSummary.image_coverage.missing
+            };
+            console.log(`Coverage from backend for ${fileSummary.name}: ${coverageData.presentCount}/${coverageData.totalReferencedImages} (${coverageData.missingCount} missing)`);
+          } else {
+            // Fallback to separate API call for older backends
+            try {
+              console.log(`Loading coverage data for ${fileSummary.name}...`);
+              const coverageResponse = await api.getAnnotationFileCoverage(id, fileSummary.id);
+              if (coverageResponse && coverageResponse.success && coverageResponse.data) {
+                const coverage = coverageResponse.data;
+                coverageData = {
+                  totalReferencedImages: coverage.total_referenced_images,
+                  presentCount: coverage.present_count,
+                  missingCount: coverage.missing_count
+                };
+                console.log(`Coverage loaded for ${fileSummary.name}: ${coverage.present_count}/${coverage.total_referenced_images} (${coverage.missing_count} missing)`);
+              }
+            } catch (error) {
+              console.warn(`Failed to load coverage for ${fileSummary.name}:`, error);
+            }
+          }
+          
+          // Prefer backend-provided `type` when present; otherwise use detectedType
+          const backendType = fileSummary.type || fileSummary.format || null;
+
           const annotationFile: AnnotationFile = {
             id: fileSummary.id,
             name: fileSummary.name,
             date: new Date().toISOString().split('T')[0], // We don't have creation date in summary
             format: 'COCO', // Default format
-            type: detectedType,
+            type: (typeof backendType === 'string' && backendType.length > 0) ? (backendType as any) : detectedType,
             classCount: classStats.length,
             imageCount: fileSummary.image_count || 0, // Use image_count from summary
             matchedImageCount: 0, // Will be calculated when needed
@@ -3099,7 +3118,11 @@ export function AnnotationsContent({
             tags: fileSummary.tags || [], // Load tags from backend summary
             // Mark as lazy-loaded so we know content isn't loaded yet
             isContentLoaded: false,
-            processing_status: fileSummary.processing_status
+            processing_status: fileSummary.processing_status,
+            // Add coverage properties
+            totalReferencedImages: coverageData.totalReferencedImages,
+            presentCount: coverageData.presentCount,
+            missingCount: coverageData.missingCount
           };
           
           return annotationFile;
@@ -3110,7 +3133,7 @@ export function AnnotationsContent({
         
         // Filter out classifications that are already in backend files (to avoid duplicates)
         const backendClassificationIds = new Set(
-          lightweightFiles.filter(file => detectAnnotationType(file) === 'classification').map(file => file.id)
+          lightweightFiles.filter(file => detectAnnotationType(file) === 'Classification').map(file => file.id)
         );
         
         const filteredSavedClassifications = savedClassifications.filter(classification => 
@@ -3172,7 +3195,7 @@ export function AnnotationsContent({
         // Load full annotation content immediately for all files (original behavior)
         const processedFiles = await Promise.all(response.data.map(async (file: any) => {
           // Always detect annotation type by loading content
-          let detectedType: 'classification' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' = 'nothing';
+          let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
           
           const annotationFile: AnnotationFile = {
             id: file.id, // Use the backend-provided ID
@@ -3230,7 +3253,7 @@ export function AnnotationsContent({
             } else {
               // Fallback to filename-based detection
               const isClassification = file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class'));
-              detectedType = isClassification ? 'classification' : 'nothing';
+              detectedType = isClassification ? 'Classification' : 'Other';
               annotationFile.type = detectedType;
               console.log(`Fallback filename-based detection for ${file.name}: ${detectedType}`);
             }
@@ -3238,7 +3261,7 @@ export function AnnotationsContent({
             console.error(`Failed to load content for ${file.name}:`, error);
             // Fallback to filename-based detection
             const isClassification = file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class'));
-            detectedType = isClassification ? 'classification' : 'nothing';
+            detectedType = isClassification ? 'Classification' : 'Other';
             annotationFile.type = detectedType;
           }
           
@@ -3265,7 +3288,7 @@ export function AnnotationsContent({
         
         // Filter out classifications that are already in backend files (to avoid duplicates)
         const backendClassificationIds = new Set(
-          processedFiles.filter(file => detectAnnotationType(file) === 'classification').map(file => file.id)
+          processedFiles.filter(file => detectAnnotationType(file) === 'Classification').map(file => file.id)
         );
         
         const filteredSavedClassifications = savedClassifications.filter(classification => 
@@ -3614,7 +3637,7 @@ export function AnnotationsContent({
           if (savedClassifications.length > 0) {
             setAnnotationFiles(prev => {
               // Remove any existing classification files to avoid duplicates
-              const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'classification');
+              const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'Classification');
               const combined = [...savedClassifications, ...nonClassificationFiles];
               // Sort by date (newest first) - handle both full timestamps and date-only strings
               combined.sort((a, b) => {
@@ -3676,7 +3699,7 @@ export function AnnotationsContent({
       if (savedClassifications.length > 0) {
         setAnnotationFiles(prev => {
           // Remove any existing classification files to avoid duplicates
-          const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'classification');
+          const nonClassificationFiles = prev.filter(file => detectAnnotationType(file) !== 'Classification');
           const combined = [...savedClassifications, ...nonClassificationFiles];
           // Sort by date (newest first) - handle both full timestamps and date-only strings
           combined.sort((a, b) => {
@@ -4117,23 +4140,23 @@ export function AnnotationsContent({
                           <Badge 
                             variant="secondary" 
                             className={`text-xs capitalize ${
-                              detectAnnotationType(file) === 'classification'
+                              detectAnnotationType(file) === 'Classification'
                                 ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors bg-blue-500/20 text-blue-300 border-blue-500' 
-                                : detectAnnotationType(file).startsWith('segmentation')
+                                : detectAnnotationType(file).startsWith('Segmentation')
                                 ? 'cursor-pointer hover:bg-green-600 hover:text-white transition-colors bg-green-500/20 text-green-300 border-green-500'
-                                : 'bg-gray-500/20 text-gray-300 border-gray-500' // nothing
+                                : 'bg-gray-500/20 text-gray-300 border-gray-500' // Other
                             }`}
                             onClick={(e) => {
-                              if (detectAnnotationType(file) === 'classification') {
+                              if (detectAnnotationType(file) === 'Classification') {
                                 handleEditClassificationAnnotation(file.id, e);
                               } else if (detectAnnotationType(file).startsWith('segmentation')) {
                                 handleEditSegmentationAnnotation(file.id, e);
                               }
                             }}
                             title={
-                              detectAnnotationType(file) === 'classification'
+                              detectAnnotationType(file) === 'Classification'
                                 ? 'Click to edit classification annotations'
-                                : detectAnnotationType(file).startsWith('segmentation')
+                                : detectAnnotationType(file).startsWith('Segmentation')
                                 ? 'Click to edit segmentation annotations'
                                 : `Type: ${detectAnnotationType(file)}`
                             }
@@ -4143,7 +4166,7 @@ export function AnnotationsContent({
                               
                               // Ensure we always show a meaningful type
                               let displayType = type;
-                              if (type === 'nothing' && file.samples && file.samples.length > 0) {
+                              if (type === 'Other' && file.samples && file.samples.length > 0) {
                                 // Try to detect again based on actual sample content
                                 const hasSegmentation = file.samples.some(sample => 
                                   sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
@@ -4154,29 +4177,29 @@ export function AnnotationsContent({
                                 );
                                 
                                 if (hasSegmentation && hasMeaningfulBbox) {
-                                  displayType = 'segmentation-mask-bbox';
+                                  displayType = 'Segmentation (mask+bbox)';
                                 } else if (hasSegmentation) {
-                                  displayType = 'segmentation-mask';
+                                  displayType = 'Segmentation (mask)';
                                 } else if (hasMeaningfulBbox) {
-                                  displayType = 'segmentation-bbox';
+                                  displayType = 'Segmentation (bbox)';
                                 } else {
-                                  displayType = 'classification';
+                                  displayType = 'Classification';
                                 }
                               }
                               
                               switch (displayType) {
-                                case 'classification':
+                                case 'Classification':
                                   return 'Classification';
-                                case 'segmentation-mask-bbox':
-                                  return 'Segmentation (mask + bbox)';
-                                case 'segmentation-mask':
+                                case 'Segmentation (mask+bbox)':
+                                  return 'Segmentation (mask+bbox)';
+                                case 'Segmentation (mask)':
                                   return 'Segmentation (mask)';
-                                case 'segmentation-bbox':
+                                case 'Segmentation (bbox)':
                                   return 'Segmentation (bbox)';
-                                case 'nothing':
-                                  return 'Unknown Type';
+                                case 'Other':
+                                  return 'Other';
                                 default:
-                                  return displayType || 'Unknown';
+                                  return displayType || 'Other';
                               }
                             })()}
                           </Badge>
@@ -4224,24 +4247,47 @@ export function AnnotationsContent({
                           </div>
                         )}
                      </div>
-                    <div className="flex items-center gap-4">                      {/* Images count */}
+                    <div className="flex items-center gap-4">                      {/* Images count with coverage */}
                       <div className="flex items-center gap-2 text-sm">
                         {(() => {
-                          // Just show total image count, calculate present/missing only when clicked
-                          const totalCount = file.imageCount || 0;
-                          
-                          return (
-                            <button
-                              className="hover:underline cursor-pointer text-blue-300 hover:text-blue-200"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleShowImageBreakdown(file);
-                              }}
-                              title={`Click to see image breakdown for ${totalCount} total images`}
-                            >
-                              {totalCount} images
-                            </button>
-                          );
+                          // If we have coverage data, show compact format
+                          if (file.totalReferencedImages !== undefined) {
+                            const presentCount = file.presentCount || 0;
+                            const totalCount = file.totalReferencedImages;
+                            const missingCount = file.missingCount || 0;
+                            
+                            return (
+                              <button
+                                className="hover:bg-gray-700 px-2 py-1 rounded transition-colors cursor-pointer text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleShowImageBreakdown(file);
+                                }}
+                                title="Click to see image details"
+                              >
+                                <span className="text-green-400">{presentCount}</span>
+                                <span className="text-gray-500">/</span>
+                                <span className="text-red-400">{missingCount}</span>
+                                <span className="text-gray-500 ml-1">({totalCount} total)</span>
+                              </button>
+                            );
+                          } else {
+                            // Just show total image count for loading state
+                            const totalCount = file.imageCount || 0;
+                            
+                            return (
+                              <button
+                                className="hover:underline cursor-pointer text-blue-300 hover:text-blue-200"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleShowImageBreakdown(file);
+                                }}
+                                title={`Click to see image coverage for ${totalCount} total images`}
+                              >
+                                {totalCount} images
+                              </button>
+                            );
+                          }
                         })()}
                       </div>
                       {/* Visibility toggles */}
@@ -4320,7 +4366,7 @@ export function AnnotationsContent({
                          >
                            <Tag className="h-4 w-4" />
                          </Button>
-                         {detectAnnotationType(file) === 'classification' ? (
+                         {detectAnnotationType(file) === 'Classification' ? (
                            <Button 
                              variant="ghost" 
                              size="icon" 
@@ -4330,7 +4376,7 @@ export function AnnotationsContent({
                            >
                              <Edit className="h-4 w-4" />
                            </Button>
-                         ) : detectAnnotationType(file).startsWith('segmentation') ? (
+                         ) : detectAnnotationType(file).startsWith('Segmentation') ? (
                            <Button 
                              variant="ghost" 
                              size="icon" 
@@ -4488,7 +4534,7 @@ export function AnnotationsContent({
         <DialogContent className="max-w-2xl bg-gray-900 text-white border-gray-700">
           <DialogHeader>
             <DialogTitle>
-              {imageStatusDialog.type === 'breakdown' ? 'Image Breakdown' :
+              {imageStatusDialog.type === 'breakdown' ? 'Image Coverage' :
                imageStatusDialog.type === 'present' ? 'Present Images' : 'Missing Images'} 
               {imageStatusDialog.type !== 'breakdown' && ` (${imageStatusDialog.files.length})`}
             </DialogTitle>

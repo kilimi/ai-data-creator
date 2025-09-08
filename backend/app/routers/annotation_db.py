@@ -7,10 +7,66 @@ import uuid
 from datetime import datetime
 
 from ..database import get_db
-from ..models import Dataset, AnnotationFile, Annotation, AnnotationClass, Image
+from ..models import Dataset, AnnotationFile, Annotation, AnnotationClass, Image, AnnotationFileImage
 from ..database import SessionLocal
 
 router = APIRouter()
+
+
+def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
+    """
+    Detect annotation type based on COCO data content.
+    
+    Returns:
+        'Segmentation (mask+bbox)' if annotations have both segmentation and bbox data
+        'Segmentation (bbox)' if annotations have bboxes but no segmentation
+        'Segmentation (mask)' if annotations have segmentation but no bbox data
+        'Classification' if only categories exist without spatial data
+        'Other' if detection fails
+    """
+    try:
+        annotations = coco_data.get('annotations', [])
+        if not annotations:
+            return 'Classification'  # Only categories, no annotations
+            
+        # Check for segmentation data and bbox data
+        has_segmentation = False
+        has_bbox = False
+        
+        for ann in annotations:
+            if ann.get('segmentation'):
+                # Check if segmentation is not empty (sometimes it's [] or null)
+                seg = ann['segmentation']
+                if seg and (isinstance(seg, list) and len(seg) > 0):
+                    has_segmentation = True
+            if ann.get('bbox') and len(ann['bbox']) >= 4:
+                # Check if bbox is not just zero values
+                bbox = ann['bbox']
+                if any(val > 0 for val in bbox):
+                    has_bbox = True
+                
+        if has_segmentation and has_bbox:
+            return 'Segmentation (mask+bbox)'
+        elif has_segmentation:
+            return 'Segmentation (mask)'
+        elif has_bbox:
+            return 'Segmentation (bbox)'
+        else:
+            return 'Classification'
+            
+    except Exception as e:
+        print(f"Error detecting annotation type: {e}")
+        return 'Other'
+
+
+def update_dataset_annotation_count(db: Session, dataset_id: int):
+    """Update the annotation count for a dataset"""
+    # Compute total annotations for dataset and return it. Do NOT write to a removed column.
+    total_annotations = db.query(func.count(Annotation.id)).filter(
+        Annotation.dataset_id == dataset_id
+    ).scalar() or 0
+    return total_annotations
+
 
 async def process_coco_annotation_file(
     annotation_file_id: str,
@@ -42,14 +98,47 @@ async def process_coco_annotation_file(
             # If sequence reset fails, continue anyway
             pass
         
-        # Create image name to ID mapping
+        # Create image name to ID mapping - prioritize default collection
         image_mapping = {}
-        dataset_images = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id).all()
+        
+        # First, try to get images from the default collection
+        from ..models import ImageCollection
+        default_collection = db.query(ImageCollection).filter(
+            ImageCollection.dataset_id == annotation_file.dataset_id,
+            ImageCollection.is_default == True
+        ).first()
+        
+        if default_collection:
+            # Use only images from the default collection for coverage tracking
+            print(f"DEBUG: Using default collection '{default_collection.name}' for coverage tracking")
+            dataset_images = db.query(Image).filter(
+                Image.dataset_id == annotation_file.dataset_id,
+                Image.collection_id == default_collection.id
+            ).all()
+        else:
+            # If no default collection, get the first collection or all images
+            first_collection = db.query(ImageCollection).filter(
+                ImageCollection.dataset_id == annotation_file.dataset_id
+            ).first()
+            
+            if first_collection:
+                print(f"DEBUG: No default collection found, using first collection '{first_collection.name}' for coverage tracking")
+                dataset_images = db.query(Image).filter(
+                    Image.dataset_id == annotation_file.dataset_id,
+                    Image.collection_id == first_collection.id
+                ).all()
+            else:
+                # Fallback: use all images (for datasets without collections)
+                print(f"DEBUG: No collections found, using all images for coverage tracking")
+                dataset_images = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id).all()
+        
         for img in dataset_images:
             image_mapping[img.file_name] = img.id
             # Also try without extension
             base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
             image_mapping[base_name] = img.id
+        
+        print(f"DEBUG: Created image mapping for {len(dataset_images)} images from collection")
         
         # Process COCO images and create mapping
         coco_image_mapping = {}
@@ -68,6 +157,8 @@ async def process_coco_annotation_file(
                     if base_name in image_mapping:
                         dataset_image_id = image_mapping[base_name]
                 
+                # Persist per-file image mapping for coverage queries
+                afi = None
                 if dataset_image_id:
                     coco_image_mapping[coco_image_id] = {
                         'dataset_image_id': dataset_image_id,
@@ -75,6 +166,23 @@ async def process_coco_annotation_file(
                         'height': coco_img.get('height', 1),
                         'file_name': file_name
                     }
+
+                # Create AnnotationFileImage entry regardless of dataset match (so we know which images were referenced)
+                try:
+                    afi = AnnotationFileImage(
+                        annotation_file_id=annotation_file_id,
+                        coco_image_id=coco_image_id,
+                        file_name=file_name,
+                        dataset_image_id=dataset_image_id,
+                        width=coco_img.get('width', None),
+                        height=coco_img.get('height', None)
+                    )
+                    db.add(afi)
+                    print(f"DEBUG: Added AnnotationFileImage for {file_name}, coco_id: {coco_image_id}")
+                except Exception as e:
+                    print(f"ERROR: Failed to create AnnotationFileImage for {file_name}: {e}")
+                    # If model not present or insert fails, continue without blocking processing
+                    pass
         
         # Process categories
         category_mapping = {}
@@ -134,6 +242,11 @@ async def process_coco_annotation_file(
                 db.add(annotation)
                 annotation_count += 1
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
+
+        # Determine annotation file type based on annotations
+        detected_type = detect_annotation_type(coco_data)
+        if annotation_file and detected_type:
+            annotation_file.type = detected_type
         
         # Create annotation classes
         for class_name, count in class_counts.items():
@@ -158,7 +271,13 @@ async def process_coco_annotation_file(
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
         annotation_file.category_count = len(class_counts)
-        annotation_file.image_count = len(coco_image_mapping)
+        # image_count should reflect number of images referenced in the file
+        annotation_file.image_count = db.query(func.count(AnnotationFileImage.id)).filter(
+            AnnotationFileImage.annotation_file_id == annotation_file_id
+        ).scalar() or 0
+        
+        # Update dataset annotation count
+        update_dataset_annotation_count(db, annotation_file.dataset_id)
         
         db.commit()
         
@@ -202,12 +321,16 @@ async def upload_coco_annotation_file(
     
     # Create annotation file record
     annotation_file_id = str(uuid.uuid4())
+    
+    # Detect annotation type from COCO data
+    detected_type = detect_annotation_type(coco_data)
+    
     annotation_file = AnnotationFile(
         id=annotation_file_id,
         dataset_id=dataset_id,
         name=file.filename,
         format="COCO",
-        type="segmentation",  # Default, can be updated later
+        type=detected_type,  # Set type based on detection
         file_size=len(content),
         is_processed=False,
         processing_status="pending"
@@ -630,6 +753,10 @@ def process_coco_annotation_file_task(
         annotation_file.annotation_count = annotation_count
         annotation_file.category_count = len(class_counts)
         annotation_file.image_count = len(coco_image_mapping)
+        # Detect type based on presence of segmentation or bboxes
+        detected_type = detect_annotation_type(coco_data)
+        if detected_type:
+            annotation_file.type = detected_type
         
         db.commit()
         
@@ -653,3 +780,50 @@ def process_coco_annotation_file_task(
             db.commit()
         
         raise e
+
+
+@router.post("/datasets/{dataset_id}/annotations/recalculate-count")
+async def recalculate_dataset_annotation_count(
+    dataset_id: int,
+    db: Session = Depends(get_db)
+):
+    """Recalculate the annotation count for a dataset"""
+    
+    # Verify dataset exists
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Update the annotation count
+    total = update_dataset_annotation_count(db, dataset_id)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Annotation count recalculated: {total}",
+        "total_annotations": total
+    }
+
+
+@router.post("/datasets/recalculate-all-counts")
+async def recalculate_all_dataset_annotation_counts(
+    db: Session = Depends(get_db)
+):
+    """Recalculate annotation counts for all datasets"""
+    
+    datasets = db.query(Dataset).all()
+    updated_count = 0
+    
+    for dataset in datasets:
+        # Compare previous computed count to new computed count
+        old_count = db.query(func.count(Annotation.id)).filter(Annotation.dataset_id == dataset.id).scalar() or 0
+        new_count = update_dataset_annotation_count(db, dataset.id)
+        if new_count != old_count:
+            updated_count += 1
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"Updated annotation counts for {updated_count} datasets"
+    }

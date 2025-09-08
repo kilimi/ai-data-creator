@@ -62,10 +62,15 @@ type AnnotationFile = {
   fileName: string;
   fileSize: number;
   uploadedAt: string;
+  type?: string; // e.g., 'coco', 'yolo', 'shapefile'
   classStats?: { className: string; count: number; color: string }[];
   samples?: AnnotationSample[];
   matchedImageCount?: number;
   tags?: string[];
+  // Coverage information
+  totalReferencedImages?: number;
+  presentCount?: number;
+  missingCount?: number;
 };
 
 interface EditDatasetProps {
@@ -94,6 +99,11 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [showAnnotationsDialog, setShowAnnotationsDialog] = useState(false);
   const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
   const [annotationFileNameToShow, setAnnotationFileNameToShow] = useState("");
+  const [coverageData, setCoverageData] = useState<{
+    present: Array<{ image_id: number; file_name: string }>;
+    missing: Array<{ coco_image_id: number; file_name: string }>;
+  } | null>(null);
+  const [showCoverageDialog, setShowCoverageDialog] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showImageUploadDialog, setShowImageUploadDialog] = useState(false);
 
@@ -142,7 +152,27 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           }
           
           if (annotationsRes?.success && annotationsRes.data) {
-            setAnnotations(annotationsRes.data);
+            const annotationsWithCoverage = [...annotationsRes.data];
+            
+            // Load coverage data for each annotation file
+            try {
+              const coverageRes = await api.getDatasetAnnotationsCoverage(id);
+              if (coverageRes?.success && coverageRes.data) {
+                // Map coverage data to annotations
+                annotationsWithCoverage.forEach(annotation => {
+                  const coverage = coverageRes.data.find((c: any) => c.annotation_file_id === annotation.id);
+                  if (coverage) {
+                    annotation.totalReferencedImages = coverage.total_referenced_images;
+                    annotation.presentCount = coverage.present_count;
+                    annotation.missingCount = coverage.missing_count;
+                  }
+                });
+              }
+            } catch (error) {
+              console.warn('Failed to load coverage data:', error);
+            }
+            
+            setAnnotations(annotationsWithCoverage);
           }
         } else {
           // Fallback to mock data if no API
@@ -405,45 +435,36 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     }
   };
 
-  const handleShowAnnotationsOnImage = (annotation: AnnotationFile) => {
-    if (annotation.samples && annotation.samples.length > 0) {
-      const matchingImageIds = new Set(
-        annotation.samples
-          .map(a => a.imageId)
-          .filter(id => images.some(img => img.id === id))
-      );
+  const handleShowCoverage = async (annotation: AnnotationFile) => {
+    if (!id) return;
+    
+    try {
+      const { useApi } = await import('@/hooks/use-api');
+      const { api } = useApi();
       
-      if (matchingImageIds.size > 0) {
-        setAnnotationsToShow(annotation.samples);
-        setAnnotationFileNameToShow(annotation.fileName);
-        setShowAnnotationsDialog(true);
-        
-        toast({
-          title: "Annotations loaded",
-          description: `Showing annotations from ${annotation.fileName}`,
-        });
-      } else {
-        const updatedSamples = [...annotation.samples];
-        for (let i = 0; i < Math.min(5, updatedSamples.length); i++) {
-          if (i < images.length) {
-            updatedSamples[i] = { ...updatedSamples[i], imageId: images[i].id };
-          }
+      if (api) {
+        const coverageRes = await api.getAnnotationFileCoverage(id, annotation.id);
+        if (coverageRes?.success && coverageRes.data) {
+          setCoverageData({
+            present: coverageRes.data.present,
+            missing: coverageRes.data.missing
+          });
+          setAnnotationFileNameToShow(annotation.fileName);
+          setShowCoverageDialog(true);
+        } else {
+          toast({
+            variant: "destructive",
+            title: "Failed to load coverage",
+            description: "Could not retrieve coverage information for this annotation file.",
+          });
         }
-        
-        setAnnotationsToShow(updatedSamples);
-        setAnnotationFileNameToShow(annotation.fileName);
-        setShowAnnotationsDialog(true);
-        
-        toast({
-          title: "Annotations loaded",
-          description: `Showing annotations from ${annotation.fileName} (modified for demo)`,
-        });
       }
-    } else {
+    } catch (error) {
+      console.error('Error loading coverage:', error);
       toast({
         variant: "destructive",
-        title: "No annotation samples",
-        description: "This file doesn't contain any annotation samples to display.",
+        title: "Coverage error",
+        description: "An error occurred while loading coverage data.",
       });
     }
   };
@@ -827,13 +848,15 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                   {annotations.length > 0 ? (
                     <div className="border border-gray-700 rounded-md max-h-[500px] overflow-y-auto mb-6">
                       <Table>
-                        <TableHeader className="bg-gray-800">
+            <TableHeader className="bg-gray-800">
                           <TableRow className="border-b-gray-700">
                             <TableHead className="text-gray-300">Filename</TableHead>
+              <TableHead className="text-gray-300">Type</TableHead>
                             <TableHead className="text-gray-300">Size</TableHead>
                             <TableHead className="text-gray-300">Date</TableHead>
                             <TableHead className="text-gray-300">Tags</TableHead>
                             <TableHead className="text-gray-300">Images</TableHead>
+                            <TableHead className="text-gray-300">Coverage</TableHead>
                             <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -846,6 +869,15 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                             >
                               <TableCell className="font-medium text-white">
                                 {annotation.fileName}
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                {annotation.type ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-700 text-gray-200 capitalize">
+                                    {annotation.type}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-gray-500">unknown</span>
+                                )}
                               </TableCell>
                               <TableCell className="text-gray-300">
                                 {(annotation.fileSize / 1024).toFixed(1)} KB
@@ -888,6 +920,27 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                   </Badge>
                                 ) : "0 matches"}
                               </TableCell>
+                              <TableCell className="text-gray-300">
+                                {annotation.totalReferencedImages !== undefined ? (
+                                  <button
+                                    className="text-xs hover:bg-gray-700 px-2 py-1 rounded transition-colors cursor-pointer"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleShowCoverage(annotation);
+                                    }}
+                                    title="Click to see image details"
+                                  >
+                                    <span className="text-green-400">{annotation.presentCount || 0}</span>
+                                    <span className="text-gray-500">/</span>
+                                    <span className="text-gray-300">{annotation.totalReferencedImages}</span>
+                                    {(annotation.missingCount || 0) > 0 && (
+                                      <span className="text-red-400"> ({annotation.missingCount} missing)</span>
+                                    )}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-500 text-xs">No data</span>
+                                )}
+                              </TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-1">
                                   <Button 
@@ -898,9 +951,9 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                     }`}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleShowAnnotationsOnImage(annotation);
+                                      handleShowCoverage(annotation);
                                     }}
-                                    title="Show annotations on images"
+                                    title="Show image coverage"
                                   >
                                     <Tag className={`h-4 w-4 ${annotation.matchedImageCount ? "text-blue-300" : "text-gray-400"}`} />
                                   </Button>
@@ -1091,13 +1144,13 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                 className="border-gray-700 bg-gray-800 hover:bg-gray-700 text-white"
                 onClick={() => {
                   if (selectedAnnotation) {
-                    handleShowAnnotationsOnImage(selectedAnnotation);
+                    handleShowCoverage(selectedAnnotation);
                     setSelectedAnnotation(null);
                   }
                 }}
               >
                 <Tag className="mr-2 h-4 w-4" />
-                Show on Images
+                Show Coverage
               </Button>
             </div>
             <Button
@@ -1181,6 +1234,58 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           setShowAnnotationsDialog(false);
         }}
       />
+
+      <Dialog open={showCoverageDialog} onOpenChange={setShowCoverageDialog}>
+        <DialogContent className="bg-gray-900 text-white border-gray-700 max-w-lg max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>Images for {annotationFileNameToShow}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 overflow-y-auto">
+            {coverageData && (
+              <>
+                {coverageData.present.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-green-400 mb-2">
+                      Present Images ({coverageData.present.length})
+                    </h3>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {coverageData.present.map((img, index) => (
+                        <div key={index} className="text-sm text-gray-300 pl-2">
+                          {img.file_name}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {coverageData.missing.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-red-400 mb-2">
+                      Missing Images ({coverageData.missing.length})
+                    </h3>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {coverageData.missing.map((img, index) => (
+                        <div key={index} className="text-sm text-gray-300 pl-2">
+                          {img.file_name || `COCO ID: ${img.coco_image_id}`}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setShowCoverageDialog(false)}
+              className="bg-gray-800 hover:bg-gray-700"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent className="bg-gray-900 text-white border-gray-700">

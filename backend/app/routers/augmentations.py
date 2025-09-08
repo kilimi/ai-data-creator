@@ -266,10 +266,11 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
         target_dataset.image_count = db.query(models.Image).filter(
             models.Image.dataset_id == target_dataset.id
         ).count()
-        
-        target_dataset.annotation_count = db.query(models.Annotation).filter(
-            models.Annotation.dataset_id == target_dataset.id
-        ).count()
+        # Recalculate annotation counts using helper to avoid relying on a persistent column
+        from ..routers.annotation_db import update_dataset_annotation_count
+        update_dataset_annotation_count(db, target_dataset.id)
+        # Refresh target_dataset from DB to update any dependent code
+        db.refresh(target_dataset)
         
         # Complete the task
         task.status = 'completed'

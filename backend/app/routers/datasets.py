@@ -66,7 +66,27 @@ async def create_dataset(
 @router.get("/datasets/", response_model=List[schemas.Dataset])
 def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     datasets = db.query(models.Dataset).offset(skip).limit(limit).all()
-    return datasets
+    
+    # Return datasets with corrected annotation counts
+    result = []
+    for dataset in datasets:
+        result.append({
+            "id": dataset.id,
+            "name": dataset.name,
+            "description": dataset.description,
+            "type": dataset.type,
+            "tags": dataset.tags,
+            "created_at": dataset.created_at,
+            "updated_at": dataset.updated_at,
+            "image_count": dataset.image_count,
+            "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
+            "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+            "project_id": dataset.project_id,
+            "thumbnailUrl": dataset.thumbnailUrl,
+            "logo_url": dataset.logo_url,
+            "url": dataset.url
+        })
+    return result
 
 
 @router.get("/datasets/{dataset_id}", response_model=schemas.Dataset)
@@ -74,7 +94,24 @@ def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    return dataset
+    
+    # Return dataset with corrected annotation count
+    return {
+        "id": dataset.id,
+        "name": dataset.name,
+        "description": dataset.description,
+        "type": dataset.type,
+        "tags": dataset.tags,
+        "created_at": dataset.created_at,
+        "updated_at": dataset.updated_at,
+        "image_count": dataset.image_count,
+        "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
+        "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+        "project_id": dataset.project_id,
+        "thumbnailUrl": dataset.thumbnailUrl,
+        "logo_url": dataset.logo_url,
+        "url": dataset.url
+    }
 
 
 @router.put("/datasets/{dataset_id}", response_model=schemas.Dataset)
@@ -564,6 +601,15 @@ async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get
             # Continue with database deletion even if file deletion fails
         
         # Delete the image record (this will also cascade delete annotations)
+        # Before deleting, clear any AnnotationFileImage references to this image
+        try:
+            from ..models import AnnotationFileImage
+            db.query(AnnotationFileImage).filter(AnnotationFileImage.dataset_image_id == image_id).update({
+                'dataset_image_id': None
+            })
+        except Exception:
+            pass
+
         db.delete(image)
         
         # Update the dataset's image count
@@ -582,6 +628,87 @@ async def delete_image(dataset_id: int, image_id: int, db: Session = Depends(get
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
+
+
+
+@router.get("/datasets/{dataset_id}/annotations/{annotation_file_id}/coverage")
+def get_annotation_file_coverage(dataset_id: int, annotation_file_id: str, db: Session = Depends(get_db)):
+    """Return coverage info for a single annotation file: which images referenced are present/missing."""
+    try:
+        # Verify file
+        af = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_file_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        if not af:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+
+        # Get all AnnotationFileImage entries for the file
+        from ..models import AnnotationFileImage
+        afi_list = db.query(AnnotationFileImage).filter(AnnotationFileImage.annotation_file_id == annotation_file_id).all()
+
+        total_referenced = len(afi_list)
+        present = []
+        missing = []
+        for afi in afi_list:
+            if afi.dataset_image_id:
+                # Ensure the referenced image still exists
+                img = db.query(models.Image).filter(models.Image.id == afi.dataset_image_id, models.Image.dataset_id == dataset_id).first()
+                if img:
+                    present.append({"image_id": img.id, "file_name": img.file_name})
+                else:
+                    missing.append({"coco_image_id": afi.coco_image_id, "file_name": afi.file_name})
+            else:
+                missing.append({"coco_image_id": afi.coco_image_id, "file_name": afi.file_name})
+
+        return {
+            "success": True,
+            "data": {
+                "annotation_file_id": annotation_file_id,
+                "total_referenced_images": total_referenced,
+                "present_count": len(present),
+                "missing_count": len(missing),
+                "present": present,
+                "missing": missing
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_annotation_file_coverage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/datasets/{dataset_id}/annotations/coverage")
+def get_dataset_annotations_coverage(dataset_id: int, db: Session = Depends(get_db)):
+    """Return coverage summary for all annotation files in a dataset."""
+    try:
+        files = db.query(models.AnnotationFile).filter(models.AnnotationFile.dataset_id == dataset_id).all()
+        result = []
+        from ..models import AnnotationFileImage
+        for f in files:
+            afi_list = db.query(AnnotationFileImage).filter(AnnotationFileImage.annotation_file_id == f.id).all()
+            total = len(afi_list)
+            present_count = 0
+            for afi in afi_list:
+                if afi.dataset_image_id:
+                    img = db.query(models.Image).filter(models.Image.id == afi.dataset_image_id, models.Image.dataset_id == dataset_id).first()
+                    if img:
+                        present_count += 1
+            result.append({
+                "annotation_file_id": f.id,
+                "name": f.name,
+                "total_referenced_images": total,
+                "present_count": present_count,
+                "missing_count": total - present_count
+            })
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        print(f"Error in get_dataset_annotations_coverage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/datasets/{dataset_id}/import-annotations")
@@ -630,7 +757,10 @@ async def import_annotations(
             raise HTTPException(status_code=400, detail="Invalid COCO format")
         
         # Use database-based storage
-        from .annotation_db import process_coco_annotation_file
+        from .annotation_db import process_coco_annotation_file, detect_annotation_type
+        
+        # Detect annotation type from COCO data
+        detected_type = detect_annotation_type(coco_data)
         
         # Create database record for the annotation file
         annotation_file_record = models.AnnotationFile(
@@ -638,6 +768,7 @@ async def import_annotations(
             dataset_id=dataset_id,
             name=file.filename,
             format='COCO',
+            type=detected_type,  # Set type based on detection
             file_size=len(contents),
             annotation_count=0,  # Will be updated by processing
             image_count=0,
@@ -648,6 +779,13 @@ async def import_annotations(
         
         db.add(annotation_file_record)
         db.commit()
+        
+        # Save the file to disk for the background task to process
+        import os
+        os.makedirs(f'/app/projects/{dataset_id}', exist_ok=True)
+        file_path = f'/app/projects/{dataset_id}/{random_id}.json'
+        with open(file_path, 'w') as f:
+            json.dump(coco_data, f)
         
         # Process the file in the background using a fresh DB session
         # Do not pass the request-scoped session `db` into background tasks
@@ -704,10 +842,14 @@ async def create_annotation_processing_task(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Only COCO JSON format is supported")
         
-        # Get basic statistics
+        # Get basic statistics and detect annotation type
         annotation_count = len(coco_data.get('annotations', []))
         image_count = len(coco_data.get('images', []))
         category_count = len(coco_data.get('categories', []))
+        
+        # Detect annotation type from the COCO data
+        from .annotation_db import detect_annotation_type
+        detected_type = detect_annotation_type(coco_data)
         
         # Create the annotation file record (initially not processed)
         annotation_file_record = models.AnnotationFile(
@@ -715,6 +857,7 @@ async def create_annotation_processing_task(
             dataset_id=dataset_id,
             name=file.filename,
             format='COCO',
+            type=detected_type,  # Set type based on detection
             file_size=len(contents),
             annotation_count=annotation_count,
             image_count=image_count,
@@ -879,6 +1022,14 @@ async def get_dataset_annotations(
         
         annotation_files = []
         for db_file in db_annotation_files:
+            # Calculate correct image coverage from AnnotationFileImage table
+            from ..models import AnnotationFileImage
+            afi_list = db.query(AnnotationFileImage).filter(AnnotationFileImage.annotation_file_id == db_file.id).all()
+            
+            total_referenced_images = len(afi_list)
+            present_count = sum(1 for afi in afi_list if afi.dataset_image_id is not None)
+            missing_count = total_referenced_images - present_count
+            
             file_info = {
                 "id": db_file.id,
                 "name": db_file.name,
@@ -887,7 +1038,12 @@ async def get_dataset_annotations(
                 "tags": db_file.tags,
                 "size": db_file.file_size or 0,
                 "annotation_count": db_file.annotation_count,
-                "image_count": db_file.image_count,
+                "image_count": total_referenced_images,  # Total images referenced in annotation file
+                "image_coverage": {
+                    "total_referenced": total_referenced_images,
+                    "present": present_count,
+                    "missing": missing_count
+                },
                 "category_count": db_file.category_count,
                 "is_processed": db_file.is_processed,
                 "processing_status": db_file.processing_status,
@@ -1664,11 +1820,16 @@ async def merge_annotation_files_task(
         
         print(f"Merge summary: {final_annotation_count} annotations, {final_image_count} images, {final_category_count} categories")
         
+        # Detect type for merged annotation file
+        from .annotation_db import detect_annotation_type
+        detected_type = detect_annotation_type(merged_data)
+        
         merged_annotation_file = models.AnnotationFile(
             id=merged_file_id,
             dataset_id=dataset_id,
             name=merged_filename,
             format='COCO',
+            type=detected_type,  # Set type based on detection
             file_size=0,  # Will be updated after processing
             annotation_count=final_annotation_count,
             image_count=final_image_count,

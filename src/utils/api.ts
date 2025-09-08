@@ -312,6 +312,28 @@ export class ApiClient {
     });
   }
 
+  // Coverage endpoints
+  async getAnnotationFileCoverage(datasetId: string | number, annotationFileId: string): Promise<ApiResponse<{
+    annotation_file_id: string;
+    total_referenced_images: number;
+    present_count: number;
+    missing_count: number;
+    present: Array<{ image_id: number; file_name: string }>;
+    missing: Array<{ coco_image_id: number; file_name: string }>;
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/coverage`);
+  }
+
+  async getDatasetAnnotationsCoverage(datasetId: string | number): Promise<ApiResponse<Array<{
+    annotation_file_id: string;
+    name: string;
+    total_referenced_images: number;
+    present_count: number;
+    missing_count: number;
+  }>>> {
+    return this.request(`/datasets/${datasetId}/annotations/coverage`);
+  }
+
   async renameAnnotation(datasetId: string | number, annotationId: string, newName: string): Promise<ApiResponse<any>> {
     const formData = new FormData();
     formData.append('new_name', newName);

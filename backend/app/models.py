@@ -50,7 +50,7 @@ class Dataset(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     image_count = Column(Integer, default=0)
-    annotation_count = Column(Integer, default=0)
+    # annotation_count is computed on demand from related annotations; remove persistent column
     project_id = Column(Integer, ForeignKey("projects.id"))
     logo = Column(LargeBinary, nullable=True)
     logo_url = Column(String, nullable=True)
@@ -83,6 +83,29 @@ class Dataset(Base):
             except json.JSONDecodeError:
                 value = []
         self._tags = value
+
+    @property
+    def actual_annotation_count(self):
+        """Get the actual annotation count, calculating it if the stored count is 0"""
+        # Compute directly from related annotations when possible
+        if hasattr(self, 'annotations') and self.annotations is not None:
+            return len(self.annotations)
+        return 0
+
+    @property
+    def actual_annotation_file_count(self):
+        """Compute annotation file count from related annotation_files table."""
+        # If relationship is loaded, return its length
+        if hasattr(self, 'annotation_files') and self.annotation_files is not None:
+            return len(self.annotation_files)
+        # Fallback to 0 when relationship isn't available
+        return 0
+
+    @property
+    def annotation_file_count(self):
+        """Compatibility alias so code can read dataset.annotation_file_count as a computed value."""
+        return self.actual_annotation_file_count
+
 
 class Image(Base):
     __tablename__ = "images"
@@ -192,6 +215,8 @@ class AnnotationFile(Base):
     dataset = relationship("Dataset", back_populates="annotation_files")
     annotations = relationship("Annotation", back_populates="annotation_file", cascade="all, delete-orphan")
     annotation_classes = relationship("AnnotationClass", back_populates="annotation_file", cascade="all, delete-orphan")
+    # Keep per-file list of images that were present in the original file (COCO images list)
+    annotation_images = relationship("AnnotationFileImage", back_populates="annotation_file", cascade="all, delete-orphan")
 
     @property
     def tags(self):
@@ -228,6 +253,22 @@ class AnnotationClass(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     annotation_file = relationship("AnnotationFile", back_populates="annotation_classes")
+
+
+class AnnotationFileImage(Base):
+    __tablename__ = "annotation_file_images"
+
+    id = Column(Integer, primary_key=True, index=True)
+    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), index=True)
+    coco_image_id = Column(Integer, nullable=True, index=True)
+    file_name = Column(String, nullable=True)
+    dataset_image_id = Column(Integer, ForeignKey("images.id"), nullable=True, index=True)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    annotation_file = relationship("AnnotationFile", back_populates="annotation_images")
 
 
 class Augmentation(Base):

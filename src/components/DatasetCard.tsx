@@ -8,7 +8,6 @@ import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, Sc
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useImageLoad } from "@/utils/animations";
-import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
@@ -28,7 +27,6 @@ interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ...props }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
-  const annotationFilesCount = useAnnotationFilesCount(dataset.id);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
   const [selectedModel, setSelectedModel] = React.useState<string>("SAM");
@@ -179,7 +177,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
         </div>
         <div className="flex items-center">
           <Layers className="h-4 w-4 mr-1.5" />
-          <span>{annotationFilesCount} {annotationFilesCount === 1 ? 'annotation file' : 'annotation files'}</span>
+          <span>{dataset.annotation_file_count || 0} {(dataset.annotation_file_count || 0) === 1 ? 'annotation file' : 'annotation files'}</span>
         </div>
       </CardFooter>
 

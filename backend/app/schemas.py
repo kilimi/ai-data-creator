@@ -26,7 +26,7 @@ class Dataset(DatasetBase):
     created_at: datetime
     updated_at: datetime
     image_count: int = 0
-    annotation_count: int = 0
+    annotation_file_count: int = 0
     project_id: int
     thumbnailUrl: Optional[str] = None
 

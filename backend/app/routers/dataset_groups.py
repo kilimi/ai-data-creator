@@ -69,12 +69,12 @@ async def create_dataset_group(
         "dataset_count": group.dataset_count,
         "url": group.url,
         "datasets": [
-            {
+                {
                 "id": d.id,
                 "name": d.name,
                 "thumbnailUrl": d.thumbnailUrl,
                 "image_count": d.image_count,
-                "annotation_count": d.annotation_count,
+                "annotation_count": d.actual_annotation_count,
                 "url": d.url
             }
             for d in datasets
@@ -125,7 +125,8 @@ async def get_dataset_groups(
                     "name": d.name,
                     "thumbnailUrl": d.thumbnailUrl,
                     "image_count": d.image_count,
-                    "annotation_count": d.annotation_count,
+                    "annotation_count": d.actual_annotation_count,  # Use the corrected count
+                    "annotation_file_count": d.actual_annotation_file_count,  # Add annotation file count
                     "tags": d.tags,
                     "url": d.url
                 }
@@ -175,7 +176,7 @@ async def get_dataset_group(
                 "description": d.description,
                 "thumbnailUrl": d.thumbnailUrl,
                 "image_count": d.image_count,
-                "annotation_count": d.annotation_count,
+                    "annotation_count": d.actual_annotation_count,
                 "tags": d.tags,
                 "url": d.url,
                 "created_at": d.created_at.isoformat()
@@ -257,12 +258,12 @@ async def update_dataset_group(
         "dataset_count": group.dataset_count,
         "url": group.url,
         "datasets": [
-            {
+                {
                 "id": d.id,
                 "name": d.name,
                 "thumbnailUrl": d.thumbnailUrl,
                 "image_count": d.image_count,
-                "annotation_count": d.annotation_count,
+                "annotation_count": d.actual_annotation_count,
                 "url": d.url
             }
             for d in datasets
@@ -347,7 +348,7 @@ async def search_datasets_and_groups(
             "description": d.description,
             "thumbnailUrl": d.thumbnailUrl,
             "image_count": d.image_count,
-            "annotation_count": d.annotation_count,
+            "annotation_count": d.actual_annotation_count,
             "tags": d.tags,
             "url": d.url,
             "created_at": d.created_at.isoformat()
@@ -411,7 +412,7 @@ async def search_datasets_and_groups(
                         "name": d.name,
                         "thumbnailUrl": d.thumbnailUrl,
                         "image_count": d.image_count,
-                        "annotation_count": d.annotation_count,
+                        "annotation_count": d.actual_annotation_count,
                         "tags": d.tags,
                         "url": d.url
                     }

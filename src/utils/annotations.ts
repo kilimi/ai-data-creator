@@ -19,7 +19,7 @@ export interface AnnotationFile {
   name: string;
   date: string;
   format: string;
-  type?: 'classification' | 'segmentation' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' | 'any'; // Add detailed annotation types
+  type?: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' | 'classification' | 'segmentation' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' | 'any'; // Support both new and old annotation types for backward compatibility
   classCount: number;
   imageCount: number;
   matchedImageCount: number;
@@ -35,6 +35,10 @@ export interface AnnotationFile {
   error_message?: string; // Error message if processing failed
   totalSampleCount?: number; // Total number of annotations in the file
   isContentLoaded?: boolean; // Whether full content has been loaded (for lazy loading)
+  // Coverage properties
+  totalReferencedImages?: number; // Total images referenced in annotation file
+  presentCount?: number; // Number of images present in dataset
+  missingCount?: number; // Number of images missing from dataset
 }
 
 // Generate distinct random colors for classes

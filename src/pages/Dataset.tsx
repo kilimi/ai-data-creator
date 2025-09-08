@@ -793,6 +793,7 @@ export default function Dataset() {
                   dataset={dataset}
                   onEditDataset={handleEditDataset}
                   onDeleteDataset={handleDeleteDataset}
+                  projectId={effectiveProjectId}
                 />
               </div>
             </div>
