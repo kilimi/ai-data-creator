@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { Navbar } from "@/components/Navbar";
 import { Dataset, Image as ImageType } from "@/types";
 import { useToast } from "@/hooks/use-toast";
+import { useApi } from "@/hooks/use-api";
 import { UploadCard } from "@/components/UploadCard";
 import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
@@ -57,21 +58,30 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getMockDataset } from "@/utils/mockData";
 
-type AnnotationFile = {
-  id: string;
+interface AnnotationFile {
+  id: number | string; // Allow both number and string IDs
   fileName: string;
   fileSize: number;
   uploadedAt: string;
-  type?: string; // e.g., 'coco', 'yolo', 'shapefile'
-  classStats?: { className: string; count: number; color: string }[];
-  samples?: AnnotationSample[];
-  matchedImageCount?: number;
-  tags?: string[];
-  // Coverage information
+  type: string;
+  classStats: Array<{
+    className: string;
+    count: number;
+    color: string;
+  }>;
+  samples: Array<{
+    id: string;
+    imageUrl: string;
+    thumbnailUrl: string;
+  }>;
+  matchedImageCount: number;
+  tags: string[];
+  annotation_count: number;
+  processing_status?: string;
   totalReferencedImages?: number;
   presentCount?: number;
   missingCount?: number;
-};
+}
 
 interface EditDatasetProps {
   projectMode?: boolean;
@@ -81,6 +91,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { api } = useApi(); // Add the useApi hook here
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,6 +123,76 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const imagesPerPage = 20;
+
+  // Polling function to check for processing completion
+  const pollForProcessingCompletion = async (annotationIds: number[]) => {
+    let attempts = 0;
+    const maxAttempts = 30; // Poll for up to 5 minutes (30 * 10 seconds)
+    
+    const poll = async () => {
+      if (attempts >= maxAttempts) {
+        toast({
+          title: "Processing taking longer than expected",
+          description: "Please refresh the page manually to see updated counts.",
+          variant: "default",
+        });
+        return;
+      }
+      
+      try {
+        if (!api) {
+          console.warn('API not available for polling');
+          return;
+        }
+        
+        const annotationsRes = await api.getAnnotations(id);
+        if (annotationsRes?.success && annotationsRes.data) {
+          const currentAnnotations = annotationsRes.data.map((apiAnnotation: any) => ({
+            id: apiAnnotation.id,
+            fileName: apiAnnotation.name || apiAnnotation.fileName,
+            fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
+            uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
+            type: apiAnnotation.type,
+            classStats: [],
+            samples: [],
+            matchedImageCount: 0,
+            tags: apiAnnotation.tags || [],
+            annotation_count: apiAnnotation.annotation_count || 0,
+            processing_status: apiAnnotation.processing_status,
+          }));
+          
+          // Check if the target annotations are still processing
+          const stillProcessing = currentAnnotations.filter(
+            ann => annotationIds.includes(ann.id) && 
+                   (ann.processing_status === 'pending' || ann.processing_status === 'processing')
+          );
+          
+          // Update the state with latest data
+          setAnnotations(currentAnnotations);
+          
+          if (stillProcessing.length === 0) {
+            // All target annotations are done processing
+            toast({
+              title: "Processing complete",
+              description: "Annotation counts have been updated.",
+            });
+            return;
+          } else {
+            // Still processing, continue polling
+            attempts++;
+            setTimeout(poll, 10000); // Poll every 10 seconds
+          }
+        }
+      } catch (error) {
+        console.warn('Error during polling:', error);
+        attempts++;
+        setTimeout(poll, 10000);
+      }
+    };
+    
+    // Start polling
+    setTimeout(poll, 5000); // Wait 5 seconds before first poll
+  };
   
   // Calculate pagination
   const totalPages = Math.ceil((images?.length || 0) / imagesPerPage);
@@ -128,17 +209,16 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       }
 
       try {
-        // Import the API hook dynamically
-        const { useApi } = await import('@/hooks/use-api');
-        const { api } = useApi();
-        
         if (api) {
+          console.log('🌐 API client available, making requests...');
           // Load real dataset data
           const [datasetRes, imagesRes, annotationsRes] = await Promise.all([
             api.getDataset(id),
             api.getImages(id),
             api.getAnnotations(id)
           ]);
+          
+          console.log('🌐 API responses received:', { datasetRes: !!datasetRes, imagesRes: !!imagesRes, annotationsRes: !!annotationsRes });
           
           if (datasetRes?.success && datasetRes.data) {
             setDataset(datasetRes.data);
@@ -152,7 +232,37 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           }
           
           if (annotationsRes?.success && annotationsRes.data) {
-            const annotationsWithCoverage = [...annotationsRes.data];
+            console.log('🔍 Raw annotations API response:', annotationsRes.data);
+            console.log('🔍 Response type:', typeof annotationsRes.data);
+            console.log('🔍 Is array:', Array.isArray(annotationsRes.data));
+            console.log('🔍 First item keys:', annotationsRes.data[0] ? Object.keys(annotationsRes.data[0]) : 'No items');
+            
+            // Transform API response to match our AnnotationFile type
+            const annotationsWithCoverage = annotationsRes.data.map((apiAnnotation: any, index: number) => {
+              console.log(`🔍 Processing annotation ${index}:`, apiAnnotation);
+              console.log(`🔍 annotation_count field:`, apiAnnotation.annotation_count);
+              console.log(`🔍 annotation_count type:`, typeof apiAnnotation.annotation_count);
+              console.log(`🔍 All fields:`, Object.keys(apiAnnotation));
+              
+              const transformed: AnnotationFile = {
+                id: apiAnnotation.id,
+                fileName: apiAnnotation.name || apiAnnotation.fileName,
+                fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
+                uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
+                type: apiAnnotation.type,
+                classStats: [], // Will be populated if needed
+                samples: [], // Will be populated if needed
+                matchedImageCount: 0, // Will be calculated from coverage
+                tags: apiAnnotation.tags || [],
+                annotation_count: apiAnnotation.annotation_count || 0,
+                processing_status: apiAnnotation.processing_status,
+                // Coverage will be added below
+              };
+              
+              console.log('🔍 Transformed annotation:', transformed);
+              console.log('🔍 Final annotation_count in transformed:', transformed.annotation_count);
+              return transformed;
+            });
             
             // Load coverage data for each annotation file
             try {
@@ -298,23 +408,9 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         const result = await api.importAnnotations(id, file);
         
         if (result.success && result.data) {
-          const { imported, skipped, message } = result.data;
+          const { imported, skipped, message, file_id } = result.data;
           
-          // Create annotation file record for UI
-          const annotationFile = {
-            id: Math.random().toString(36).substring(2, 11),
-            fileName: file.name,
-            fileSize: file.size,
-            uploadedAt: new Date().toISOString(),
-            classStats: [], // Will be populated from actual data
-            samples: [], // Will be populated from actual data
-            matchedImageCount: imported,
-            datasetId: id,
-            tags: [] // Initialize with empty tags array
-          };
-          
-          setAnnotations(prevAnnotations => [...prevAnnotations, annotationFile]);
-          
+          // Update the annotations count in the dataset  
           if (dataset) {
             setDataset({
               ...dataset,
@@ -329,6 +425,50 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         } else {
           throw new Error(result.error || 'Failed to import annotations');
         }
+      }
+      
+      // Refresh the annotations list after all imports are complete
+      // Wait for processing to complete before showing final results
+      try {
+        const refreshedAnnotationsRes = await api.getAnnotations(id);
+        if (refreshedAnnotationsRes?.success && refreshedAnnotationsRes.data) {
+          console.log('Refreshed annotations API response:', refreshedAnnotationsRes.data);
+          // Transform API response to match our AnnotationFile type
+          const refreshedAnnotations = refreshedAnnotationsRes.data.map((apiAnnotation: any) => {
+            console.log('Processing refreshed annotation:', apiAnnotation);
+            return {
+              id: apiAnnotation.id,
+              fileName: apiAnnotation.name || apiAnnotation.fileName,
+              fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
+              uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
+              type: apiAnnotation.type,
+              classStats: [], // Will be populated if needed
+              samples: [], // Will be populated if needed
+              matchedImageCount: 0, // Will be calculated from coverage
+              tags: apiAnnotation.tags || [],
+              annotation_count: apiAnnotation.annotation_count || 0,
+              processing_status: apiAnnotation.processing_status,
+            };
+          });
+          setAnnotations(refreshedAnnotations);
+          
+          // Check if any annotations are still processing
+          const processingAnnotations = refreshedAnnotations.filter(
+            ann => ann.processing_status === 'pending' || ann.processing_status === 'processing'
+          );
+          
+          if (processingAnnotations.length > 0) {
+            toast({
+              title: "Processing annotations",
+              description: `${processingAnnotations.length} annotation file(s) are still being processed. Counts will update automatically.`,
+            });
+            
+            // Poll for processing completion
+            pollForProcessingCompletion(processingAnnotations.map(a => a.id));
+          }
+        }
+      } catch (refreshError) {
+        console.warn('Failed to refresh annotations list:', refreshError);
       }
     } catch (error) {
       console.error("Error importing annotations:", error);
@@ -361,7 +501,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   };
 
   const handleDeleteAnnotation = (annotation: AnnotationFile) => {
-    const annotationCount = annotation.classStats?.reduce((acc, stat) => acc + stat.count, 0) || 0;
+    // Use the annotation_count from database instead of calculating from classStats
+    const annotationCount = annotation.annotation_count || annotation.classStats?.reduce((acc, stat) => acc + stat.count, 0) || 0;
     
     setAnnotations(prevAnnotations => 
       prevAnnotations.filter(anno => anno.id !== annotation.id)
@@ -393,10 +534,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (!selectedAnnotation || !newFilename.trim()) return;
     
     try {
-      // Import the API hook dynamically
-      const { useApi } = await import('@/hooks/use-api');
-      const { api } = useApi();
-      
       if (!api) {
         throw new Error('API client not available');
       }
@@ -855,6 +992,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                             <TableHead className="text-gray-300">Size</TableHead>
                             <TableHead className="text-gray-300">Date</TableHead>
                             <TableHead className="text-gray-300">Tags</TableHead>
+                            <TableHead className="text-gray-300">Classes</TableHead>
+                            <TableHead className="text-gray-300">Annotations</TableHead>
                             <TableHead className="text-gray-300">Images</TableHead>
                             <TableHead className="text-gray-300">Coverage</TableHead>
                             <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
@@ -912,6 +1051,28 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                     <span className="text-gray-500 text-xs">No tags</span>
                                   )}
                                 </div>
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                {annotation.classStats ? (
+                                  <Badge className="bg-green-600/50">
+                                    {annotation.classStats.length} classes
+                                  </Badge>
+                                ) : "0 classes"}
+                              </TableCell>
+                              <TableCell className="text-gray-300">
+                                {annotation.processing_status === 'pending' || annotation.processing_status === 'processing' ? (
+                                  <Badge className="bg-yellow-600/50">
+                                    Processing...
+                                  </Badge>
+                                ) : annotation.annotation_count ? (
+                                  <Badge className="bg-purple-600/50">
+                                    {annotation.annotation_count} annotations
+                                  </Badge>
+                                ) : (
+                                  <Badge className="bg-gray-600/50">
+                                    0 annotations
+                                  </Badge>
+                                )}
                               </TableCell>
                               <TableCell className="text-gray-300">
                                 {annotation.matchedImageCount ? (

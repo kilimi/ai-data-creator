@@ -245,7 +245,11 @@ export class ApiClient {
 
   // Annotations endpoints
   async getAnnotations(datasetId: string | number): Promise<ApiResponse<any[]>> {
-    return this.request<any[]>(`/datasets/${datasetId}/annotations`);
+    console.log('🔗 Making getAnnotations request for dataset:', datasetId);
+    console.log('🔗 Request URL will be:', `/datasets/${datasetId}/annotations`);
+    const result = await this.request<any[]>(`/datasets/${datasetId}/annotations`);
+    console.log('🔗 getAnnotations response:', result);
+    return result;
   }
 
   async getAnnotationsSummary(datasetId: string | number): Promise<ApiResponse<{

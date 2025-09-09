@@ -3000,7 +3000,13 @@ export function AnnotationsContent({
 
       if (annotationsResponse && annotationsResponse.success && annotationsResponse.data) {
         const filesData = annotationsResponse.data;
-        console.log(`Found ${filesData.length} annotation files from backend`);
+        console.log(`🔍 ANNOTATIONS: Found ${filesData.length} annotation files from backend`);
+        console.log('🔍 ANNOTATIONS: Raw backend data:', filesData);
+        
+        // Log each file's annotation_count specifically
+        filesData.forEach((file: any, index: number) => {
+          console.log(`🔍 ANNOTATIONS: File ${index} - ID: ${file.id}, Name: ${file.name}, annotation_count: ${file.annotation_count}`);
+        });
 
         // Create lightweight annotation file objects from backend-provided list
         const lightweightFiles: AnnotationFile[] = await Promise.all(filesData.map(async (fileSummary: any) => {
@@ -3089,6 +3095,24 @@ export function AnnotationsContent({
           // Prefer backend-provided `type` when present; otherwise use detectedType
           const backendType = fileSummary.type || fileSummary.format || null;
 
+          console.log(`🔍 LIGHTWEIGHT: Processing ${fileSummary.name} - annotation_count: ${fileSummary.annotation_count}, actual_count: ${fileSummary.actual_count}, stored_count: ${fileSummary.stored_count}`);
+          
+          // First, generate unique colors for all classes
+          const uniqueClassColors = classStats.reduce((acc, stat) => {
+            // Always assign unique colors, even if backend provides colors
+            const usedColors = new Set(Object.values(acc));
+            const assignedColor = getOrAssignClassColor(stat.className, acc, usedColors);
+            acc[stat.className] = assignedColor;
+            console.log(`Color assignment for ${stat.className}: ${assignedColor} (original: ${stat.color})`);
+            return acc;
+          }, {} as Record<string, string>);
+          
+          // Update classStats to use the new unique colors
+          const updatedClassStats = classStats.map(stat => ({
+            ...stat,
+            color: uniqueClassColors[stat.className] || stat.color
+          }));
+
           const annotationFile: AnnotationFile = {
             id: fileSummary.id,
             name: fileSummary.name,
@@ -3098,21 +3122,11 @@ export function AnnotationsContent({
             classCount: classStats.length,
             imageCount: fileSummary.image_count || 0, // Use image_count from summary
             matchedImageCount: 0, // Will be calculated when needed
-            totalSampleCount: fileSummary.actual_count || fileSummary.stored_count || 0,
+            totalSampleCount: fileSummary.annotation_count || fileSummary.actual_count || fileSummary.stored_count || 0,
             datasetId: id,
             samples: [], // Empty initially - will be loaded on demand
-            classStats: classStats,
-            classColors: classStats.reduce((acc, stat) => {
-              // Ensure we always have a color for each class
-              let assignedColor = stat.color;
-              if (!assignedColor) {
-                const usedColors = new Set(Object.values(acc));
-                assignedColor = getOrAssignClassColor(stat.className, acc, usedColors);
-              }
-              acc[stat.className] = assignedColor;
-              console.log(`Color assignment for ${stat.className}: ${assignedColor} (original: ${stat.color})`);
-              return acc;
-            }, {} as Record<string, string>),
+            classStats: updatedClassStats, // Use updated classStats with unique colors
+            classColors: uniqueClassColors, // Use the same color mapping
             isVisible: false,
             showBboxes: false,
             tags: fileSummary.tags || [], // Load tags from backend summary
@@ -3197,16 +3211,19 @@ export function AnnotationsContent({
           // Always detect annotation type by loading content
           let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
           
+          console.log(`🔍 ANNOTATIONS: Processing file ${fileSummary.id}:`, fileSummary);
+          console.log(`🔍 ANNOTATIONS: annotation_count = ${fileSummary.annotation_count}`);
+          
           const annotationFile: AnnotationFile = {
-            id: file.id, // Use the backend-provided ID
-            name: file.name || file.filename,
-            date: file.created_at ? new Date(file.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-            format: file.format || 'COCO',
+            id: fileSummary.id, // Use the backend-provided ID
+            name: fileSummary.name || fileSummary.filename,
+            date: fileSummary.created_at ? new Date(fileSummary.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+            format: fileSummary.format || 'COCO',
             type: detectedType, // Will be updated below
-            classCount: file.category_count || 0,
-            imageCount: file.image_count || 0,
-            matchedImageCount: file.matched_image_count || 0,
-            totalSampleCount: file.annotation_count || 0, // Use backend annotation count as initial value
+            classCount: fileSummary.category_count || 0,
+            imageCount: fileSummary.image_count || 0,
+            matchedImageCount: fileSummary.matched_image_count || 0,
+            totalSampleCount: fileSummary.annotation_count || 0, // Use backend annotation count as initial value
             datasetId: id,
             classStats: [],
             samples: [],
@@ -3214,10 +3231,12 @@ export function AnnotationsContent({
             showBboxes: false,
             classColors: {},
             imageMapping: {},
-            tags: file.tags || [],
-            processing_status: file.processing_status,
-            error_message: file.error_message
+            tags: fileSummary.tags || [],
+            processing_status: fileSummary.processing_status,
+            error_message: fileSummary.error_message
           };
+          
+          console.log(`🔍 ANNOTATIONS: Created annotationFile with totalSampleCount = ${annotationFile.totalSampleCount}`);
 
           // Load full content and statistics immediately
           try {
@@ -3310,6 +3329,11 @@ export function AnnotationsContent({
           }
           
           return timeB - timeA; // Newest first
+        });
+        
+        console.log('🔍 ANNOTATIONS: Final combined array before setAnnotationFiles:', combined);
+        combined.forEach((file, index) => {
+          console.log(`🔍 ANNOTATIONS: File ${index}: ${file.name} - totalSampleCount: ${file.totalSampleCount}`);
         });
         
         setAnnotationFiles(combined);
@@ -3876,7 +3900,10 @@ export function AnnotationsContent({
             {annotationFiles.length > 0 && (
               <>
                 {' • '}
-                {annotationFiles.reduce((sum, file) => sum + (file.totalSampleCount || 0), 0)} total annotations
+                {annotationFiles.reduce((sum, file) => {
+                  console.log(`🔍 DISPLAY: File ${file.name} - totalSampleCount: ${file.totalSampleCount}`);
+                  return sum + (file.totalSampleCount || 0);
+                }, 0)} total annotations
                 {' • '}
                 {new Set(annotationFiles.flatMap(file => file.classStats?.map(stat => stat.className) || [])).size} unique classes
                 {images && images.length > 0 && (
