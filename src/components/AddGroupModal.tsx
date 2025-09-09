@@ -256,11 +256,6 @@ export function AddGroupModal({
                               <Layers className="w-3 h-3 mr-1" />
                               {dataset.annotation_count || 0} annotations
                             </Badge>
-                            {dataset.type && (
-                              <Badge variant="outline" className="text-xs">
-                                {dataset.type}
-                              </Badge>
-                            )}
                           </div>
                           
                           {dataset.tags && dataset.tags.length > 0 && (

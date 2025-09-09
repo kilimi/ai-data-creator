@@ -249,9 +249,6 @@ const CreateAugmentedDataset = ({ projectMode = false }: CreateAugmentedDatasetP
                             <ImageIcon className="w-3 h-3 mr-1" />
                             {dataset.image_count || 0} images
                           </Badge>
-                          <Badge variant="outline" className="text-xs">
-                            {dataset.type}
-                          </Badge>
                         </div>
                         {dataset.description && (
                           <p className="text-sm text-muted-foreground mt-1 line-clamp-2">

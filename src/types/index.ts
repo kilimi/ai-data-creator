@@ -2,7 +2,6 @@ export interface Dataset {
   id: number;
   name: string;
   description: string;
-  type: string;
   tags: string[];
   created_at: string;
   updated_at: string;

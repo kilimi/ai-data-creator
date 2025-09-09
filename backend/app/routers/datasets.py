@@ -31,7 +31,6 @@ class MergeAnnotationFilesRequest(BaseModel):
 async def create_dataset(
     name: str = Form(...),
     description: str | None = Form(None),
-    type: str = Form(...),
     project_id: int = Form(...),
     tags: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
@@ -42,7 +41,6 @@ async def create_dataset(
         dataset_data = {
             "name": name,
             "description": description,
-            "type": type,
             "project_id": project_id,
             "tags": json.dumps(parsed_tags)
         }
@@ -74,7 +72,6 @@ def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
             "id": dataset.id,
             "name": dataset.name,
             "description": dataset.description,
-            "type": dataset.type,
             "tags": dataset.tags,
             "created_at": dataset.created_at,
             "updated_at": dataset.updated_at,
@@ -100,7 +97,6 @@ def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
         "id": dataset.id,
         "name": dataset.name,
         "description": dataset.description,
-        "type": dataset.type,
         "tags": dataset.tags,
         "created_at": dataset.created_at,
         "updated_at": dataset.updated_at,
@@ -119,7 +115,6 @@ async def update_dataset(
     dataset_id: int,
     name: str = Form(...),
     description: str | None = Form(None),
-    type: str = Form(...),
     tags: Optional[str] = Form(None),
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
@@ -132,7 +127,6 @@ async def update_dataset(
             dataset.tags = json.loads(tags)
         dataset.name = name
         dataset.description = description
-        dataset.type = type
         if logo:
             logo_data = await logo.read()
             dataset.logo = logo_data
@@ -213,7 +207,6 @@ async def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
         new_dataset = models.Dataset(
             name=f"{original_dataset.name} (Copy)",
             description=original_dataset.description,
-            type=original_dataset.type,
             _tags=original_dataset._tags,
             project_id=original_dataset.project_id,
             logo=original_dataset.logo,
@@ -684,7 +677,7 @@ def get_annotation_file_coverage(dataset_id: int, annotation_file_id: str, db: S
 def get_dataset_annotations_coverage(dataset_id: int, db: Session = Depends(get_db)):
     """Return coverage summary for all annotation files in a dataset."""
     try:
-        files = db.query(models.AnnotationFile).filter(models.AnnotationFile.dataset_id == dataset_id).all()
+        files = db.query(models.AnnotationFile).filter(models.AnnotationFile.dataset_id == dataset_id).order_by(models.AnnotationFile.created_at.desc()).all()
         result = []
         from ..models import AnnotationFileImage
         for f in files:
@@ -719,6 +712,7 @@ async def import_annotations(
     db: Session = Depends(get_db)
 ):
     """Import annotations from a file (COCO format) - Database storage only"""
+    print(f"DEBUG: import_annotations endpoint called for dataset {dataset_id}, file: {file.filename}")
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
@@ -770,9 +764,9 @@ async def import_annotations(
             format='COCO',
             type=detected_type,  # Set type based on detection
             file_size=len(contents),
-            annotation_count=0,  # Will be updated by processing
-            image_count=0,
-            category_count=0,
+            annotation_count=imported_count,  # Set initial count from COCO data
+            image_count=image_count,  # Set initial count from COCO data
+            category_count=category_count,  # Set initial count from COCO data
             is_processed=False,
             processing_status="pending"
         )
@@ -787,6 +781,7 @@ async def import_annotations(
         with open(file_path, 'w') as f:
             json.dump(coco_data, f)
         
+        print(f"DEBUG: About to add background task for annotation file {random_id}")
         # Process the file in the background using a fresh DB session
         # Do not pass the request-scoped session `db` into background tasks
         background_tasks.add_task(
@@ -794,6 +789,7 @@ async def import_annotations(
             random_id,
             coco_data
         )
+        print(f"DEBUG: Background task added for annotation file {random_id}")
         
         return {
             "success": True,
@@ -896,6 +892,9 @@ async def create_annotation_processing_task(
         db.add(task)
         db.commit()
         
+        # Save the task ID before the task object becomes detached
+        task_id = task.id
+        
         # TODO: Here you would normally dispatch the task to a task queue (Celery, RQ, etc.)
         # For now, we'll simulate immediate background processing
         from .annotation_db import process_coco_annotation_file_task
@@ -906,7 +905,7 @@ async def create_annotation_processing_task(
             session = SessionLocal()
             try:
                 # Reload the task within this session
-                task_db = session.query(models.Task).filter(models.Task.id == task.id).first()
+                task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
                 if task_db:
                     task_db.status = 'running'
                     task_db.started_at = datetime.utcnow()
@@ -915,14 +914,14 @@ async def create_annotation_processing_task(
                 
                 # Process the annotation file using the same dedicated session
                 process_coco_annotation_file_task(
-                    task_id=task.id,
+                    task_id=task_id,
                     file_id=file_id,
                     coco_data=coco_data,
                     db=session
                 )
                 
                 # Mark as completed
-                task_db = session.query(models.Task).filter(models.Task.id == task.id).first()
+                task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
                 if task_db:
                     task_db.status = 'completed'
                     task_db.completed_at = datetime.utcnow()
@@ -930,7 +929,7 @@ async def create_annotation_processing_task(
                     session.commit()
             except Exception as e:
                 # Mark as failed
-                task_db = session.query(models.Task).filter(models.Task.id == task.id).first()
+                task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
                 if task_db:
                     task_db.status = 'failed'
                     task_db.completed_at = datetime.utcnow()
@@ -947,7 +946,7 @@ async def create_annotation_processing_task(
         return {
             "success": True,
             "data": {
-                "task_id": task.id,
+                "task_id": task_id,
                 "file_id": file_id,
                 "status": "pending",
                 "message": f"Annotation processing task created for '{file.filename}'"
@@ -1015,10 +1014,10 @@ async def get_dataset_annotations(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Get all annotation file records from database
+        # Get all annotation file records from database, ordered by creation date (newest first)
         db_annotation_files = db.query(models.AnnotationFile).filter(
             models.AnnotationFile.dataset_id == dataset_id
-        ).all()
+        ).order_by(models.AnnotationFile.created_at.desc()).all()
         
         annotation_files = []
         for db_file in db_annotation_files:
@@ -2042,6 +2041,9 @@ async def merge_annotation_files(
         db.commit()
         db.refresh(task)
         
+        # Save the task ID before the task object becomes detached
+        task_id = task.id
+        
         # Start background task
         def process_merge_task():
             """Run merge processing in a separate thread with its own DB session."""
@@ -2051,7 +2053,7 @@ async def merge_annotation_files(
             async def run_merge():
                 try:
                     await merge_annotation_files_task(
-                        task_id=task.id,
+                        task_id=task_id,
                         dataset_id=dataset_id,
                         file_ids=request.annotation_file_ids,
                         merged_filename=merged_filename
@@ -2069,7 +2071,7 @@ async def merge_annotation_files(
         
         return {
             "success": True,
-            "task_id": task.id,
+            "task_id": task_id,
             "message": f"Annotation merge task started for {len(annotation_files)} files",
             "merged_filename": merged_filename
         }

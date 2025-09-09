@@ -1272,8 +1272,8 @@ export function AnnotationsContent({
             imageMapping: file.imageMapping, // IMPORTANT: Preserve full image mapping for present/missing counts
             tags: file.tags,
             classStats: file.classStats,
-            // Store total count but only relevant samples
-            totalSampleCount: file.samples?.length || 0,
+            // Store total count from database (already mapped to totalSampleCount)
+            totalSampleCount: file.totalSampleCount || 0,
             samples: limitedSamples,
             isLargeDataset: true, // Flag to indicate this is a partial dataset
             relevantSamplesCount: relevantSamples.length // Track how many samples are relevant to current dataset
@@ -1311,7 +1311,7 @@ export function AnnotationsContent({
           tags: file.tags,
           classStats: file.classStats,
           samples: file.samples,
-          totalSampleCount: file.samples?.length || 0,
+          totalSampleCount: file.totalSampleCount || 0,
           isLargeDataset: false
         }));
         
@@ -1332,7 +1332,7 @@ export function AnnotationsContent({
             showBboxes: file.showBboxes,
             classCount: file.classCount,
             imageCount: file.imageCount, // Total image count for display
-            totalSampleCount: file.samples?.length || 0,
+            totalSampleCount: file.totalSampleCount || 0,
             imageMapping: file.imageMapping, // Try to preserve for present/missing counts
             emergency: true
           }));
@@ -1358,7 +1358,7 @@ export function AnnotationsContent({
               showBboxes: file.showBboxes,
               classCount: file.classCount,
               imageCount: file.imageCount || 0, // At least preserve total count
-              totalSampleCount: file.samples?.length || 0,
+              totalSampleCount: file.totalSampleCount || 0,
               emergency: true,
               noImageMapping: true // Flag to indicate imageMapping was omitted
             }));
@@ -3246,8 +3246,8 @@ export function AnnotationsContent({
                 color: result.classColors[sample.className] || sample.color || generateRandomColor() // Ensure colors are assigned
               }));
               
-              // Set the total sample count based on loaded samples
-              annotationFile.totalSampleCount = annotationFile.samples.length;
+              // Keep the total sample count from database (don't override with samples array length)
+              // annotationFile.totalSampleCount should remain file.annotation_count from database
               
               console.log(`Full backend loading for ${file.name} - Colors:`, result.classColors);
             } else {

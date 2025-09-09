@@ -30,20 +30,6 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
   const [selectedModel, setSelectedModel] = React.useState<string>("SAM");
-  
-  // Function to get dataset type badge color
-  const getTypeColor = (type?: string) => {
-    switch (type) {
-      case "classification":
-        return "bg-blue-500";
-      case "segmentation":
-        return "bg-green-500";
-      case "panomatic":
-        return "bg-purple-500";
-      default:
-        return "bg-gray-500";
-    }
-  };
 
   const handleDatasetUpdated = (updatedDataset: Dataset) => {
     if (onDatasetUpdated) {
@@ -83,13 +69,6 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
               <div className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground">
                 {new Date(dataset.created_at).toLocaleDateString()}
               </div>
-              
-              {/* Dataset type badge */}
-              {dataset.type && (
-                <div className={`rounded-md px-1.5 py-0.5 text-xs font-medium text-white ${getTypeColor(dataset.type)}`}>
-                  {dataset.type.charAt(0).toUpperCase() + dataset.type.slice(1)}
-                </div>
-              )}
             </div>
             
             <DropdownMenu>

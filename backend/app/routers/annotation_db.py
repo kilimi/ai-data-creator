@@ -73,14 +73,17 @@ async def process_coco_annotation_file(
     coco_data: Dict[str, Any]
 ):
     """Background task to process COCO annotation file and store in database"""
+    print(f"DEBUG: Starting background processing for annotation file {annotation_file_id}")
     # Use a fresh session inside background task
     db = SessionLocal()
     try:
         # Update processing status
         annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == annotation_file_id).first()
         if not annotation_file:
+            print(f"DEBUG: Annotation file {annotation_file_id} not found")
             return
             
+        print(f"DEBUG: Found annotation file, updating status to processing")
         annotation_file.processing_status = "processing"
         db.commit()
         
@@ -267,6 +270,7 @@ async def process_coco_annotation_file(
             db.add(annotation_class)
         
         # Update annotation file status
+        print(f"DEBUG: Processing completed for {annotation_file_id}. Final annotation count: {annotation_count}")
         annotation_file.is_processed = True
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
@@ -283,6 +287,7 @@ async def process_coco_annotation_file(
         
     except Exception as e:
         # Update error status
+        print(f"DEBUG: Error processing annotation file {annotation_file_id}: {str(e)}")
         try:
             annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == annotation_file_id).first()
             if annotation_file:
@@ -572,13 +577,16 @@ def process_coco_annotation_file_task(
     db: Session
 ):
     """Process COCO annotation file as a task (for background processing)"""
+    print(f"DEBUG: Starting task processing for annotation file {file_id}, task {task_id}")
     try:
         # Get the annotation file record
         annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == file_id).first()
         if not annotation_file:
+            print(f"DEBUG: Annotation file with ID {file_id} not found")
             raise Exception(f"Annotation file with ID {file_id} not found")
         
         # Update processing status
+        print(f"DEBUG: Found annotation file {file_id}, updating status to processing")
         annotation_file.processing_status = "processing"
         db.commit()
         
@@ -664,6 +672,8 @@ def process_coco_annotation_file_task(
         annotation_count = 0
         class_counts = {}
         
+        print(f"DEBUG: Processing annotations from COCO data. Found {len(coco_data.get('annotations', []))} annotations")
+        
         if 'annotations' in coco_data:
             total_annotations = len(coco_data['annotations'])
             for i, coco_ann in enumerate(coco_data['annotations']):
@@ -748,6 +758,7 @@ def process_coco_annotation_file_task(
             db.add(annotation_class)
         
         # Update annotation file status
+        print(f"DEBUG: Task processing completed for {file_id}. Final annotation count: {annotation_count}")
         annotation_file.is_processed = True
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
@@ -759,6 +770,7 @@ def process_coco_annotation_file_task(
             annotation_file.type = detected_type
         
         db.commit()
+        print(f"DEBUG: Database committed for {file_id}. Annotation count set to: {annotation_file.annotation_count}")
         
         return {
             "success": True,

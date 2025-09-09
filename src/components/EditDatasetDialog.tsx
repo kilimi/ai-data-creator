@@ -32,7 +32,6 @@ export function EditDatasetDialog({ dataset, open, onOpenChange, onDatasetUpdate
       const formData = new FormData();
       formData.append('name', data.name.trim());
       formData.append('description', data.description?.trim() || "");
-      formData.append('type', data.type);
       formData.append('tags', JSON.stringify(data.tags || []));
 
       if (logoFile) {

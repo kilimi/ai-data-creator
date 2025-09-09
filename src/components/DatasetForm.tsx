@@ -21,9 +21,6 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 const datasetSchema = z.object({
   name: z.string().min(2, { message: "Name must be at least 2 characters" }).max(50, { message: "Name cannot exceed 50 characters" }),
   description: z.string().max(500, { message: "Description cannot exceed 500 characters" }).optional(),
-  type: z.enum(["classification", "segmentation", "panomatic"], {
-    required_error: "Please select a dataset type",
-  }),
   tags: z.array(z.string()).optional(),
 });
 
@@ -51,7 +48,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
     defaultValues: {
       name: initialData?.name || "",
       description: initialData?.description || "",
-      type: (initialData?.type as "classification" | "segmentation" | "panomatic") || "classification",
       tags: initialData?.tags || [],
     },
   });
@@ -136,46 +132,6 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
               </FormControl>
               <FormDescription>
                 A short, descriptive name for your dataset
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        
-        <FormField
-          control={form.control}
-          name="type"
-          render={({ field }) => (
-            <FormItem className="space-y-3">
-              <FormLabel>Dataset Type</FormLabel>
-              <FormControl>
-                <RadioGroup
-                  onValueChange={field.onChange}
-                  defaultValue={field.value}
-                  className="flex flex-col space-y-1"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="classification" id="classification" />
-                    <label htmlFor="classification" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                      Classification
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="segmentation" id="segmentation" />
-                    <label htmlFor="segmentation" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                      Segmentation
-                    </label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="panomatic" id="panomatic" />
-                    <label htmlFor="panomatic" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
-                      Panomatic
-                    </label>
-                  </div>
-                </RadioGroup>
-              </FormControl>
-              <FormDescription>
-                Select the type of dataset you want to create
               </FormDescription>
               <FormMessage />
             </FormItem>

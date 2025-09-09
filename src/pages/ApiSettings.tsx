@@ -288,7 +288,6 @@ export const ApiSettings = () => {
                       <h3 className="font-medium">{dataset.name}</h3>
                       <p className="text-sm text-muted-foreground line-clamp-2">{dataset.description}</p>
                     </div>
-                    <Badge variant="secondary">{dataset.type}</Badge>
                   </div>
                   <div className="flex gap-4 text-sm text-muted-foreground">
                     <span>{dataset.image_count} images</span>

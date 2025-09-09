@@ -6,7 +6,6 @@ import json
 class DatasetBase(BaseModel):
     name: str
     description: str | None = None  # Make description optional with None default
-    type: str
     tags: List[str] = []
 
     @validator('tags', pre=True)
@@ -26,9 +25,12 @@ class Dataset(DatasetBase):
     created_at: datetime
     updated_at: datetime
     image_count: int = 0
+    annotation_count: int = 0
     annotation_file_count: int = 0
     project_id: int
     thumbnailUrl: Optional[str] = None
+    logo_url: Optional[str] = None
+    url: Optional[str] = None
 
     class Config:
         from_attributes = True

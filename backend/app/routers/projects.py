@@ -69,7 +69,6 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                         "id": dataset.id,
                         "name": dataset.name,
                         "description": dataset.description,
-                        "type": dataset.type,
                         "tags": dataset.tags,
                         "created_at": dataset.created_at,
                         "updated_at": dataset.updated_at,
@@ -113,7 +112,6 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
                 "id": dataset.id,
                 "name": dataset.name,
                 "description": dataset.description,
-                "type": dataset.type,
                 "tags": dataset.tags,
                 "created_at": dataset.created_at,
                 "updated_at": dataset.updated_at,
@@ -253,7 +251,6 @@ async def duplicate_project(project_id: int, db: Session = Depends(get_db)):
             new_dataset = models.Dataset(
                 name=dataset.name,
                 description=dataset.description,
-                type=dataset.type,
                 tags=dataset.tags,
                 project_id=new_project.id,
                 image_count=dataset.image_count,

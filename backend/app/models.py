@@ -45,7 +45,6 @@ class Dataset(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     description = Column(Text, nullable=True)  # Make description nullable
-    type = Column(String)
     _tags = Column('tags', JSON, default=list)  # Renamed to _tags
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -418,6 +418,9 @@ async def clear_database(db: Session = Depends(get_db)):
     try:
         logger.warning("DANGEROUS OPERATION: Starting complete database and file system clear")
         
+        # Disable foreign key checks temporarily to avoid constraint issues
+        db.execute(text("SET session_replication_role = replica;"))
+        
         # Clear database tables in reverse dependency order
         table_order = [
             'dataset_groups',
@@ -440,34 +443,34 @@ async def clear_database(db: Session = Depends(get_db)):
                 count_before = 0
                 if table_name == 'projects':
                     count_before = db.query(models.Project).count()
-                    db.query(models.Project).delete()
+                    db.query(models.Project).delete(synchronize_session=False)
                 elif table_name == 'datasets':
                     count_before = db.query(models.Dataset).count()
-                    db.query(models.Dataset).delete()
+                    db.query(models.Dataset).delete(synchronize_session=False)
                 elif table_name == 'image_collections':
                     count_before = db.query(models.ImageCollection).count()
-                    db.query(models.ImageCollection).delete()
+                    db.query(models.ImageCollection).delete(synchronize_session=False)
                 elif table_name == 'images':
                     count_before = db.query(models.Image).count()
-                    db.query(models.Image).delete()
+                    db.query(models.Image).delete(synchronize_session=False)
                 elif table_name == 'annotation_files':
                     count_before = db.query(models.AnnotationFile).count()
-                    db.query(models.AnnotationFile).delete()
+                    db.query(models.AnnotationFile).delete(synchronize_session=False)
                 elif table_name == 'annotation_classes':
                     count_before = db.query(models.AnnotationClass).count()
-                    db.query(models.AnnotationClass).delete()
+                    db.query(models.AnnotationClass).delete(synchronize_session=False)
                 elif table_name == 'annotations':
                     count_before = db.query(models.Annotation).count()
-                    db.query(models.Annotation).delete()
+                    db.query(models.Annotation).delete(synchronize_session=False)
                 elif table_name == 'tasks':
                     count_before = db.query(models.Task).count()
-                    db.query(models.Task).delete()
+                    db.query(models.Task).delete(synchronize_session=False)
                 elif table_name == 'augmentations':
                     count_before = db.query(models.Augmentation).count()
-                    db.query(models.Augmentation).delete()
+                    db.query(models.Augmentation).delete(synchronize_session=False)
                 elif table_name == 'dataset_groups':
                     count_before = db.query(models.DatasetGroup).count()
-                    db.query(models.DatasetGroup).delete()
+                    db.query(models.DatasetGroup).delete(synchronize_session=False)
                 
                 deleted_counts[table_name] = count_before
                 logger.info(f"Cleared {count_before} records from {table_name}")
@@ -475,6 +478,9 @@ async def clear_database(db: Session = Depends(get_db)):
             except Exception as e:
                 logger.error(f"Error clearing table {table_name}: {str(e)}")
                 deleted_counts[table_name] = 0
+        
+        # Re-enable foreign key checks
+        db.execute(text("SET session_replication_role = origin;"))
         
         # Commit database changes
         db.commit()
