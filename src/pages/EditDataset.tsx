@@ -12,6 +12,7 @@ import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 import { AnnotationImagesDialog } from "@/components/AnnotationImagesDialog";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
+import { ChunkedImageUploadDialog } from "@/components/ChunkedImageUploadDialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -117,6 +118,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [showCoverageDialog, setShowCoverageDialog] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showImageUploadDialog, setShowImageUploadDialog] = useState(false);
+  const [showChunkedUploadDialog, setShowChunkedUploadDialog] = useState(false);
 
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
@@ -304,6 +306,32 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     
     fetchData();
   }, [id, toast]);
+
+  const handleChunkedImageUpload = async (files: File[]) => {
+    if (!api || !id) return;
+
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('files', file);
+    });
+
+    try {
+      const result = await api.uploadImages(id, formData);
+      if (result.success) {
+        // Refresh images list
+        // Refresh by fetching dataset again which includes images
+        if (api) {
+          const result = await api.getDataset(id);
+          if (result.success && result.data) {
+            // Dataset API doesn't return images, so this would need a separate API call
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to upload chunk:', error);
+      throw error;
+    }
+  };
 
   const handleImageUpload = (files: File[]) => {
     const newImages: ImageType[] = [];
@@ -519,8 +547,10 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       setSelectedAnnotation(null);
     }
     
-    if (annotation.samples && 
-        showAnnotationsOnImage.some(a => annotation.samples?.includes(a))) {
+    if (annotation.samples && annotation.samples.length > 0 && 
+        showAnnotationsOnImage.some(showAnno => 
+          annotation.samples?.some(sample => sample.id === showAnno.id)
+        )) {
       setShowAnnotationsOnImage([]);
     }
     
@@ -539,7 +569,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       }
 
       // Call the backend API to rename the annotation file
-      const result = await api.renameAnnotation(id, selectedAnnotation.id, newFilename.trim());
+      const result = await api.renameAnnotation(id, String(selectedAnnotation.id), newFilename.trim());
       
       if (result.success) {
         // Update local state only after successful backend update
@@ -580,7 +610,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       const { api } = useApi();
       
       if (api) {
-        const coverageRes = await api.getAnnotationFileCoverage(id, annotation.id);
+        const coverageRes = await api.getAnnotationFileCoverage(id, String(annotation.id));
         if (coverageRes?.success && coverageRes.data) {
           setCoverageData({
             present: coverageRes.data.present,
@@ -865,13 +895,22 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                         {images.length} images
                       </span>
                     </h3>
-                    <Button 
-                      onClick={() => setShowImageUploadDialog(true)}
-                      size="sm"
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      <Upload className="h-4 w-4 mr-2" /> Add Images
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button 
+                        onClick={() => setShowImageUploadDialog(true)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <Upload className="h-4 w-4 mr-2" /> Add Images
+                      </Button>
+                      <Button 
+                        onClick={() => setShowChunkedUploadDialog(true)}
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Upload className="h-4 w-4 mr-2" /> Bulk Upload
+                      </Button>
+                    </div>
                   </div>
                   
                   {images.length > 0 ? (
@@ -949,12 +988,20 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                       <p className="text-gray-400 mt-1 mb-4">
                         Click the "Add Images" button to get started
                       </p>
-                      <Button 
-                        onClick={() => setShowImageUploadDialog(true)}
-                        className="bg-blue-600 hover:bg-blue-700"
-                      >
-                        <Upload className="h-4 w-4 mr-2" /> Add Images
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button 
+                          onClick={() => setShowImageUploadDialog(true)}
+                          variant="outline"
+                        >
+                          <Upload className="h-4 w-4 mr-2" /> Add Images
+                        </Button>
+                        <Button 
+                          onClick={() => setShowChunkedUploadDialog(true)}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          <Upload className="h-4 w-4 mr-2" /> Bulk Upload
+                        </Button>
+                      </div>
                     </div>
                   )}
                   
@@ -1382,6 +1429,19 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         open={showImageUploadDialog}
         onOpenChange={setShowImageUploadDialog}
         onFilesSelected={handleImageUpload}
+      />
+      
+      <ChunkedImageUploadDialog
+        open={showChunkedUploadDialog}
+        onOpenChange={setShowChunkedUploadDialog}
+        onFilesUploaded={(count) => {
+          toast({
+            title: "Bulk upload complete",
+            description: `Successfully uploaded ${count} images`,
+          });
+        }}
+        onUploadChunk={handleChunkedImageUpload}
+        chunkSize={1000}
       />
       
       <AnnotationImagesDialog

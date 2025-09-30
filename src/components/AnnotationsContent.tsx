@@ -3211,19 +3211,19 @@ export function AnnotationsContent({
           // Always detect annotation type by loading content
           let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
           
-          console.log(`🔍 ANNOTATIONS: Processing file ${fileSummary.id}:`, fileSummary);
-          console.log(`🔍 ANNOTATIONS: annotation_count = ${fileSummary.annotation_count}`);
+          console.log(`🔍 ANNOTATIONS: Processing file ${file.id}:`, file);
+          console.log(`🔍 ANNOTATIONS: annotation_count = ${file.annotation_count}`);
           
           const annotationFile: AnnotationFile = {
-            id: fileSummary.id, // Use the backend-provided ID
-            name: fileSummary.name || fileSummary.filename,
-            date: fileSummary.created_at ? new Date(fileSummary.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-            format: fileSummary.format || 'COCO',
+            id: file.id, // Use the backend-provided ID
+            name: file.name || file.filename,
+            date: file.created_at ? new Date(file.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+            format: file.format || 'COCO',
             type: detectedType, // Will be updated below
-            classCount: fileSummary.category_count || 0,
-            imageCount: fileSummary.image_count || 0,
-            matchedImageCount: fileSummary.matched_image_count || 0,
-            totalSampleCount: fileSummary.annotation_count || 0, // Use backend annotation count as initial value
+            classCount: file.category_count || 0,
+            imageCount: file.image_count || 0,
+            matchedImageCount: file.matched_image_count || 0,
+            totalSampleCount: file.annotation_count || 0, // Use backend annotation count as initial value
             datasetId: id,
             classStats: [],
             samples: [],
@@ -3231,9 +3231,9 @@ export function AnnotationsContent({
             showBboxes: false,
             classColors: {},
             imageMapping: {},
-            tags: fileSummary.tags || [],
-            processing_status: fileSummary.processing_status,
-            error_message: fileSummary.error_message
+            tags: file.tags || [],
+            processing_status: file.processing_status,
+            error_message: file.error_message
           };
           
           console.log(`🔍 ANNOTATIONS: Created annotationFile with totalSampleCount = ${annotationFile.totalSampleCount}`);
