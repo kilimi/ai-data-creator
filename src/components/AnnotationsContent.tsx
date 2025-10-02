@@ -1902,7 +1902,7 @@ export function AnnotationsContent({
     const file = annotationFiles.find(f => f.id === annotationId);
     const annotationType = detectAnnotationType(file);
     
-    if (file && annotationType.startsWith('segmentation')) {
+    if (file && annotationType.startsWith('Segmentation')) {
       // Clear all existing annotation cache to start fresh
       clearAnnotationCache('segmentation');
       
@@ -4176,7 +4176,7 @@ export function AnnotationsContent({
                             onClick={(e) => {
                               if (detectAnnotationType(file) === 'Classification') {
                                 handleEditClassificationAnnotation(file.id, e);
-                              } else if (detectAnnotationType(file).startsWith('segmentation')) {
+                              } else if (detectAnnotationType(file).startsWith('Segmentation')) {
                                 handleEditSegmentationAnnotation(file.id, e);
                               }
                             }}

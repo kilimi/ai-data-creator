@@ -11,7 +11,7 @@ import { AnnotationSample } from "@/utils/annotations";
 import { ImageDetailModal } from "@/components/ImageDetailModal";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AddImageTabDialog } from "@/components/AddImageTabDialog";
-import { ImageUploadDialog } from "@/components/ImageUploadDialog";
+import { ChunkedImageCollectionUploadDialog } from "@/components/ChunkedImageCollectionUploadDialog";
 import { useState, useEffect } from "react";
 
 interface TabbedImagesContentProps {
@@ -66,6 +66,12 @@ export function TabbedImagesContent({
   const [isAddTabDialogOpen, setIsAddTabDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [uploadingTabId, setUploadingTabId] = useState<string>("");
+  const [uploadingTabName, setUploadingTabName] = useState<string>("");
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [currentChunk, setCurrentChunk] = useState(0);
+  const [totalChunks, setTotalChunks] = useState(0);
+  const [uploadedCount, setUploadedCount] = useState(0);
 
   // Update active tab if collections change
   useEffect(() => {
@@ -124,7 +130,9 @@ export function TabbedImagesContent({
   };
 
   const handleUploadClick = (tabId: string) => {
+    const collection = imageCollections.find(c => c.id === tabId);
     setUploadingTabId(tabId);
+    setUploadingTabName(collection?.name || "Collection");
     setIsUploadDialogOpen(true);
   };
 
@@ -134,6 +142,57 @@ export function TabbedImagesContent({
     }
     setIsUploadDialogOpen(false);
     setUploadingTabId("");
+    setUploadingTabName("");
+  };
+
+  const handleChunkedUpload = async (files: File[]) => {
+    if (!uploadingTabId) return;
+    
+    // Show progress overlay
+    setIsUploading(true);
+    setUploadProgress(0);
+    setCurrentChunk(0);
+    setUploadedCount(0);
+    
+    const CHUNK_SIZE = 1000;
+    const totalFiles = files.length;
+    const totalChunks = Math.ceil(totalFiles / CHUNK_SIZE);
+    setTotalChunks(totalChunks);
+    
+    try {
+      let totalUploaded = 0;
+      
+      // Process files in chunks with progress tracking
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const startIndex = chunkIndex * CHUNK_SIZE;
+        const endIndex = Math.min(startIndex + CHUNK_SIZE, totalFiles);
+        const chunk = files.slice(startIndex, endIndex);
+        
+        setCurrentChunk(chunkIndex + 1);
+        
+        // Upload the chunk
+        await onUploadImages(uploadingTabId, chunk);
+        
+        totalUploaded += chunk.length;
+        setUploadedCount(totalUploaded);
+        
+        // Update progress
+        const progress = ((chunkIndex + 1) / totalChunks) * 100;
+        setUploadProgress(Math.round(progress));
+        
+        // Small delay between chunks
+        if (chunkIndex < totalChunks - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    } finally {
+      // Hide progress overlay
+      setIsUploading(false);
+      setUploadProgress(0);
+      setCurrentChunk(0);
+      setTotalChunks(0);
+      setUploadedCount(0);
+    }
   };
 
   // Navigation handlers (work across all images, not just current tab)
@@ -368,11 +427,54 @@ export function TabbedImagesContent({
       />
 
       {/* Upload Dialog */}
-      <ImageUploadDialog
+      <ChunkedImageCollectionUploadDialog
         open={isUploadDialogOpen}
         onOpenChange={setIsUploadDialogOpen}
-        onFilesSelected={handleFilesSelected}
+        onFilesUploaded={(count) => {
+          // Optional: Add success feedback here
+        }}
+        onUploadChunk={handleChunkedUpload}
+        chunkSize={1000}
+        collectionName={uploadingTabName}
       />
+      
+      {/* Upload Progress Overlay */}
+      {isUploading && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border">
+            <div className="text-center space-y-4">
+              <div className="text-lg font-semibold">Uploading Images to {uploadingTabName}</div>
+              {totalChunks > 1 && (
+                <div className="text-sm text-muted-foreground">
+                  Processing chunk {currentChunk} of {totalChunks}
+                </div>
+              )}
+              <div className="space-y-2">
+                <div className="w-full bg-secondary rounded-full h-2.5">
+                  <div 
+                    className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-out" 
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {uploadProgress}% complete
+                  {uploadedCount > 0 && (
+                    <span className="ml-2">
+                      ({uploadedCount} files)
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {totalChunks > 1 
+                  ? `Uploading in ${totalChunks} chunks of 1000 files each...` 
+                  : "Please wait while your images are being uploaded..."
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

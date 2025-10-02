@@ -28,7 +28,8 @@ import {
   Tag,
   Upload,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Brush
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImageLoad } from "@/utils/animations";
@@ -74,6 +75,10 @@ interface AnnotationFile {
     id: string;
     imageUrl: string;
     thumbnailUrl: string;
+    className?: string;
+    segmentation?: number[][];
+    bbox?: [number, number, number, number];
+    imageId?: string;
   }>;
   matchedImageCount: number;
   tags: string[];
@@ -93,6 +98,56 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { api } = useApi(); // Add the useApi hook here
+
+  // Utility function to detect annotation type
+  const detectAnnotationType = (file: AnnotationFile): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {
+    // If type is explicitly set, use it (but expand old types to new ones)
+    if (file.type === 'Classification' || file.type === 'classification') return 'Classification';
+    if (file.type === 'Segmentation (mask+bbox)' || file.type === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
+    if (file.type === 'Segmentation (mask)' || file.type === 'segmentation-mask') return 'Segmentation (mask)';
+    if (file.type === 'Segmentation (bbox)' || file.type === 'segmentation-bbox') return 'Segmentation (bbox)';
+    if (file.type === 'segmentation') {
+      // For old 'segmentation' type, we still need to detect the detailed subtype
+      if (file.samples && file.samples.length > 0) {
+        const hasSegmentation = file.samples.some(sample => 
+          sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+        );
+        const hasMeaningfulBbox = file.samples.some(sample => 
+          sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+          (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+        );
+        
+        if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
+        if (hasSegmentation) return 'Segmentation (mask)';
+        if (hasMeaningfulBbox) return 'Segmentation (bbox)';
+      }
+      return 'Segmentation (bbox)'; // Default fallback for old segmentation type
+    }
+    
+    // Auto-detect based on samples content
+    if (file.samples && file.samples.length > 0) {
+      // Check if any annotation has segmentation mask data
+      const hasSegmentation = file.samples.some(sample => 
+        sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+      );
+      const hasMeaningfulBbox = file.samples.some(sample => 
+        sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
+        (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+      );
+      
+      if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
+      if (hasSegmentation) return 'Segmentation (mask)';
+      if (hasMeaningfulBbox) return 'Segmentation (bbox)';
+      
+      // Check if this looks like classification (based on presence of specific fields)
+      const looksLikeClassification = file.samples.some(sample => 
+        sample.className && !sample.segmentation && !sample.bbox
+      );
+      if (looksLikeClassification) return 'Classification';
+    }
+    
+    return 'Other';
+  };
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [loading, setLoading] = useState(true);
@@ -703,6 +758,75 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     window.open(`/datasets/${id}/annotate`, '_blank');
   };
 
+  const handleEditSegmentationAnnotation = (annotation: AnnotationFile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    console.log('Edit segmentation clicked for annotation:', annotation);
+    const annotationType = detectAnnotationType(annotation);
+    console.log('Detected annotation type:', annotationType);
+    
+    if (annotationType.startsWith('Segmentation')) {
+      // Clear annotation cache before editing
+      const clearAnnotationCache = (annotationType: 'classification' | 'segmentation') => {
+        console.log(`Clearing ${annotationType} annotation cache before editing...`);
+        
+        const keysToRemove: string[] = [];
+        const prefixes = annotationType === 'classification' 
+          ? [`classifications_${id}_`, `classColors_${id}`, `annotation_settings_${id}`]
+          : [`annotations_${id}_`, `classes_${id}`, `annotation_settings_${id}`];
+        
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && prefixes.some(prefix => key.startsWith(prefix))) {
+            keysToRemove.push(key);
+          }
+        }
+        
+        // Remove all identified keys
+        keysToRemove.forEach(key => {
+          localStorage.removeItem(key);
+          console.log(`Cleared cache key: ${key}`);
+        });
+        
+        if (keysToRemove.length > 0) {
+          toast({
+            title: "Cache cleared",
+            description: `Cleared ${keysToRemove.length} cached ${annotationType} entries for fresh editing.`,
+          });
+        }
+        
+        return keysToRemove.length;
+      };
+      
+      // Clear all existing annotation cache to start fresh
+      clearAnnotationCache('segmentation');
+      
+      // Navigate to segmentation page with the dataset ID and annotation file ID
+      const url = `/datasets/${id}/annotate/segmentation?annotationId=${annotation.id}`;
+      console.log('Navigating to:', url);
+      
+      toast({
+        title: "Opening Segmentation Editor",
+        description: `Opening annotation "${annotation.fileName}" in segmentation editor.`,
+      });
+      
+      // Try both window.open and navigation
+      const newTab = window.open(url, '_blank');
+      if (!newTab) {
+        // If popup was blocked, try direct navigation
+        console.log('Popup blocked, trying direct navigation');
+        window.location.href = url;
+      }
+    } else {
+      console.log('Not a segmentation file, type:', annotationType);
+      toast({
+        title: "Not a segmentation file",
+        description: "This annotation file is not a segmentation type and cannot be edited in the segmentation editor.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Class management handlers
   const handleRenameClass = (oldClassName: string, newClassName: string) => {
     if (!selectedAnnotation) return;
@@ -1165,6 +1289,23 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                   >
                                     <Tag className={`h-4 w-4 ${annotation.matchedImageCount ? "text-blue-300" : "text-gray-400"}`} />
                                   </Button>
+                                  {(() => {
+                                    const annotationType = detectAnnotationType(annotation);
+                                    console.log(`Annotation ${annotation.fileName} type:`, annotationType);
+                                    const isSegmentation = annotationType.startsWith('Segmentation');
+                                    console.log(`Is segmentation:`, isSegmentation);
+                                    return isSegmentation;
+                                  })() && (
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon" 
+                                      className="h-8 w-8 text-green-400 hover:bg-gray-700"
+                                      onClick={(e) => handleEditSegmentationAnnotation(annotation, e)}
+                                      title="Edit segmentation annotations"
+                                    >
+                                      <Brush className="h-4 w-4" />
+                                    </Button>
+                                  )}
                                   <Button 
                                     variant="ghost" 
                                     size="icon" 
@@ -1175,6 +1316,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                       setNewFilename(annotation.fileName);
                                       setIsRenaming(true);
                                     }}
+                                    title="Rename annotation file"
                                   >
                                     <Pencil className="h-4 w-4 text-gray-400" />
                                   </Button>
@@ -1186,6 +1328,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                       e.stopPropagation();
                                       handleDeleteAnnotation(annotation);
                                     }}
+                                    title="Delete annotation file"
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>

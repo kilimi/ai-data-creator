@@ -276,15 +276,50 @@ export default function Dataset() {
         throw new Error('Invalid collection ID');
       }
       
-      await imageCollectionsApi.uploadImagesToCollection(datasetId, collectionIdNum, files);
+      // Use chunked upload for better performance and progress tracking
+      const CHUNK_SIZE = 1000;
+      const totalFiles = files.length;
+      const totalChunks = Math.ceil(totalFiles / CHUNK_SIZE);
+      
+      let totalUploaded = 0;
+      let totalFailed = 0;
+
+      // Process files in chunks
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const startIndex = chunkIndex * CHUNK_SIZE;
+        const endIndex = Math.min(startIndex + CHUNK_SIZE, totalFiles);
+        const chunk = files.slice(startIndex, endIndex);
+        
+        try {
+          await imageCollectionsApi.uploadImagesToCollection(datasetId, collectionIdNum, chunk);
+          totalUploaded += chunk.length;
+          
+          // Small delay between chunks to avoid overwhelming the server
+          if (chunkIndex < totalChunks - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (error) {
+          console.error(`Failed to upload chunk ${chunkIndex + 1}:`, error);
+          totalFailed += chunk.length;
+          throw error; // Re-throw to trigger the component's error handling
+        }
+      }
       
       // Reload collections to get updated data with new images
       await loadImageCollections();
       
-      toast({
-        title: "Success",
-        description: `Successfully uploaded ${files.length} images to collection`,
-      });
+      if (totalFailed === 0) {
+        toast({
+          title: "Upload Complete",
+          description: `Successfully uploaded ${totalUploaded} images to collection in ${totalChunks} chunks`,
+        });
+      } else {
+        toast({
+          title: "Upload Completed with Errors",
+          description: `Uploaded ${totalUploaded} images, ${totalFailed} failed`,
+          variant: "destructive",
+        });
+      }
       
       console.log(`Files uploaded to collection: ${collectionId}`, files.map(f => f.name));
     } catch (error: any) {

@@ -94,6 +94,51 @@ export const imageCollectionsApi = {
     return response.json();
   },
 
+  // Upload images to a specific collection with chunking support
+  async uploadImagesToCollectionChunked(
+    datasetId: string, 
+    collectionId: number, 
+    files: File[],
+    onProgress?: (progress: number, chunkIndex: number, totalChunks: number) => void
+  ): Promise<{ message: string; totalUploaded: number; totalFailed: number }> {
+    const CHUNK_SIZE = 1000;
+    const totalFiles = files.length;
+    const totalChunks = Math.ceil(totalFiles / CHUNK_SIZE);
+    
+    let totalUploaded = 0;
+    let totalFailed = 0;
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const startIndex = chunkIndex * CHUNK_SIZE;
+      const endIndex = Math.min(startIndex + CHUNK_SIZE, totalFiles);
+      const chunk = files.slice(startIndex, endIndex);
+
+      try {
+        const result = await this.uploadImagesToCollection(datasetId, collectionId, chunk);
+        totalUploaded += chunk.length;
+        
+        // Update progress
+        const progress = ((chunkIndex + 1) / totalChunks) * 100;
+        onProgress?.(progress, chunkIndex + 1, totalChunks);
+        
+        // Small delay between chunks to avoid overwhelming the server
+        if (chunkIndex < totalChunks - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (error) {
+        console.error(`Failed to upload chunk ${chunkIndex + 1}:`, error);
+        totalFailed += chunk.length;
+        throw error; // Re-throw to allow component to handle the error
+      }
+    }
+
+    return {
+      message: `Successfully uploaded ${totalUploaded} images in ${totalChunks} chunks`,
+      totalUploaded,
+      totalFailed
+    };
+  },
+
   // Move an image to a different collection
   async moveImageToCollection(imageId: string, collectionId: number): Promise<void> {
     const response = await fetch(`${API_BASE}/images/${imageId}/collection`, {

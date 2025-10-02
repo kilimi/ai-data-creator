@@ -95,6 +95,9 @@ const ImageAnnotation = () => {
   const [displayImage, setDisplayImage] = useState<Image | null>(null);
   const [noCorrespondingImage, setNoCorrespondingImage] = useState(false);
   const [allImageNames, setAllImageNames] = useState<string[]>([]);
+  const [currentLayerImageNames, setCurrentLayerImageNames] = useState<string[]>([]);
+  const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
+  const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const [isLoading, setIsLoading] = useState(true);
   const [activeTool, setActiveTool] = useState<AnnotationTool>('polygon');
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
@@ -542,6 +545,7 @@ const ImageAnnotation = () => {
           
           if (defaultCollection) {
             setDisplayLayer(defaultCollection.id);
+            setMainLayer(defaultCollection.id); // Set main layer (usually RGB)
           }
           
           if (uniqueNames.length > 0) {
@@ -570,6 +574,7 @@ const ImageAnnotation = () => {
             
             setImageCollections([defaultCollection]);
             setDisplayLayer('default');
+            setMainLayer('default'); // Set main layer for fallback case
             
             const imageNames = response.data.map(img => img.fileName).sort();
             setAllImageNames(imageNames);
@@ -599,13 +604,27 @@ const ImageAnnotation = () => {
 
   // Update images when index or layer changes
   useEffect(() => {
-    if (allImageNames.length > 0 && currentImageIndex < allImageNames.length) {
-      const imageName = allImageNames[currentImageIndex];
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    if (imageList.length > 0 && currentImageIndex < imageList.length) {
+      const imageName = imageList[currentImageIndex];
       setCurrentImageName(imageName);
       updateCurrentImages(imageName, displayLayer, imageCollections);
       loadAnnotationsForImage(imageName);
     }
-  }, [currentImageIndex, allImageNames, displayLayer, imageCollections]);
+  }, [currentImageIndex, allImageNames, currentLayerImageNames, displayLayer, imageCollections]);
+
+  // Update current index when layer changes to maintain the same image if possible
+  useEffect(() => {
+    if (currentLayerImageNames.length > 0 && currentImageName) {
+      const newIndex = currentLayerImageNames.findIndex(name => name === currentImageName);
+      if (newIndex !== -1 && newIndex !== currentImageIndex) {
+        setCurrentImageIndex(newIndex);
+      } else if (newIndex === -1) {
+        // Current image not found in main layer, this shouldn't happen but handle gracefully
+        setCurrentImageIndex(0);
+      }
+    }
+  }, [currentLayerImageNames]);
 
   const updateCurrentImages = (imageName: string, layerId: string, collections: ImageCollection[]) => {
     // Find RGB collection for annotations priority
@@ -629,6 +648,16 @@ const ImageAnnotation = () => {
     }
     
     setCurrentImage(foundCurrentImage);
+    
+    // Set navigation based on main layer (usually RGB)
+    const mainLayerCollection = collections.find(c => c.id === mainLayer);
+    if (mainLayerCollection) {
+      const mainLayerImageNames = mainLayerCollection.images.map(img => img.fileName).sort();
+      setCurrentLayerImageNames(mainLayerImageNames);
+    } else {
+      setCurrentLayerImageNames([]);
+    }
+    
     // Find the image with this name in the display layer
     const displayCollection = collections.find(c => c.id === layerId);
     let foundDisplayImage: Image | null = null;
@@ -1375,7 +1404,8 @@ const ImageAnnotation = () => {
 
   const redrawCanvas = useCallback(() => {
     // Require canvas and an image to draw: either the displayImage (selected layer) or the currentImage (annotations source)
-    if (!canvasRef.current || !imageRef.current || (!displayImage && !currentImage)) return;
+    // Skip drawing during layer transitions to prevent flickering
+    if (!canvasRef.current || !imageRef.current || (!displayImage && !currentImage) || isLayerSwitching) return;
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -1497,7 +1527,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, isLayerSwitching]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
@@ -2127,14 +2157,15 @@ const ImageAnnotation = () => {
   };
 
   const navigateImage = useCallback((direction: 'prev' | 'next') => {
-    if (allImageNames.length === 0) return;
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    if (imageList.length === 0) return;
     
     const newIndex = direction === 'next' 
-      ? Math.min(currentImageIndex + 1, allImageNames.length - 1)
+      ? Math.min(currentImageIndex + 1, imageList.length - 1)
       : Math.max(currentImageIndex - 1, 0);
       
     setCurrentImageIndex(newIndex);
-    const newImageName = allImageNames[newIndex];
+    const newImageName = imageList[newIndex];
     setCurrentImageName(newImageName);
     
     // Update the currentImage object as well
@@ -2142,12 +2173,13 @@ const ImageAnnotation = () => {
     
     // Load annotations for the new image
     loadAnnotationsForImage(newImageName);
-  }, [currentImageIndex, allImageNames.length, displayLayer, imageCollections, loadAnnotationsForImage]);
+  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage]);
 
   const goToImage = (index: number) => {
-    if (index >= 0 && index < allImageNames.length) {
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    if (index >= 0 && index < imageList.length) {
       setCurrentImageIndex(index);
-      const newImageName = allImageNames[index];
+      const newImageName = imageList[index];
       setCurrentImageName(newImageName);
       
       // Update the currentImage object as well
@@ -2159,39 +2191,67 @@ const ImageAnnotation = () => {
   };
 
   const handleLayerChange = (layerId: string) => {
+    setIsLayerSwitching(true);
     setDisplayLayer(layerId);
+    
     // When layer changes, update the display image to show the current image name in the new layer
-    if (imageCollections.length === 0) return;
+    if (imageCollections.length === 0) {
+      setIsLayerSwitching(false);
+      return;
+    }
 
     const displayCollection = imageCollections.find(c => c.id === layerId);
 
-    if (!displayCollection) return;
+    if (!displayCollection) {
+      setIsLayerSwitching(false);
+      return;
+    }
 
     // Try to find same filename in the new layer
     let newDisplayImage = displayCollection.images.find(img => img.fileName === currentImageName) || null;
 
-    // If same filename not found, fall back to first image in the layer and update currentImageName/index
-    if (!newDisplayImage) {
-      if (displayCollection.images.length > 0) {
-        newDisplayImage = displayCollection.images[0];
-        // Update currentImageName and currentImageIndex to reflect the new displayed image
-        const newName = newDisplayImage.fileName;
-        setCurrentImageName(newName);
-        const idx = allImageNames.indexOf(newName);
-        if (idx >= 0) setCurrentImageIndex(idx);
-        // Load annotations for the newly selected image
-        loadAnnotationsForImage(newName);
+    // Use setTimeout to batch the state updates and reduce flickering
+    setTimeout(() => {
+      if (!newDisplayImage) {
+        // Image doesn't exist in this layer - set both states atomically to prevent flickering
+        setDisplayImage(null);
+        setNoCorrespondingImage(true);
+        // Don't change currentImageName or currentImageIndex - maintain navigation position
+      } else {
+        // Image exists in this layer - set both states atomically
+        setDisplayImage(newDisplayImage);
+        setNoCorrespondingImage(false);
+        // Ensure annotations for that name are loaded
+        loadAnnotationsForImage(currentImageName);
       }
-    } else {
-      // If we found the same filename in this layer, ensure annotations for that name are loaded
-      loadAnnotationsForImage(currentImageName);
+      
+      setIsLayerSwitching(false);
+      
+      // Debounce the redraw to prevent multiple rapid calls during state updates
+      setTimeout(() => {
+        try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {}
+      }, 10);
+    }, 50); // Small delay to batch updates
+  };
+
+  const handleMainLayerChange = (layerId: string) => {
+    setMainLayer(layerId);
+    
+    // Update the navigation list to use the new main layer
+    const mainLayerCollection = imageCollections.find(c => c.id === layerId);
+    if (mainLayerCollection) {
+      const mainLayerImageNames = mainLayerCollection.images.map(img => img.fileName).sort();
+      setCurrentLayerImageNames(mainLayerImageNames);
+      
+      // Reset to the first image in the new main layer
+      if (mainLayerImageNames.length > 0) {
+        setCurrentImageIndex(0);
+        const firstImageName = mainLayerImageNames[0];
+        setCurrentImageName(firstImageName);
+        updateCurrentImages(firstImageName, displayLayer, imageCollections);
+        loadAnnotationsForImage(firstImageName);
+      }
     }
-
-    // Update images (this will set currentImage/displayImage appropriately)
-    updateCurrentImages(newDisplayImage ? newDisplayImage.fileName : currentImageName, layerId, imageCollections);
-
-    // Force a redraw/layout recompute shortly after changing layer
-    try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {}
   };
 
   if (isLoading) {
@@ -2479,7 +2539,7 @@ const ImageAnnotation = () => {
             ref={containerRef}
             className="flex-1 relative overflow-hidden bg-gray-900"
           >
-            {(displayImage || currentImage) ? (
+            {(displayImage || currentImage) && !isLayerSwitching ? (
               <>
                 <img
                   ref={imageRef}
@@ -2503,6 +2563,13 @@ const ImageAnnotation = () => {
                   onContextMenu={handleCanvasRightClick}
                 />
               </>
+            ) : isLayerSwitching ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-gray-400">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                  <div className="text-sm">Switching layer...</div>
+                </div>
+              </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center text-gray-400">
@@ -2612,11 +2679,16 @@ const ImageAnnotation = () => {
                 
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-400">
-                    {currentImageIndex + 1} / {allImageNames.length}
+                    {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
                   </span>
+                  {currentLayerImageNames.length > 0 && (
+                    <span className="text-xs text-blue-400">
+                      ({imageCollections.find(c => c.id === displayLayer)?.name || 'layer'})
+                    </span>
+                  )}
                   {currentImageName && (
                     <span className="text-xs text-gray-500">
-                      ({currentImageName})
+                      {currentImageName}
                     </span>
                   )}
                 </div>
@@ -2625,30 +2697,30 @@ const ImageAnnotation = () => {
                   variant="outline"
                   size="sm"
                   onClick={() => goToImage(currentImageIndex + 1)}
-                  disabled={currentImageIndex === allImageNames.length - 1}
+                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
                 >
                   Next
                 </Button>
               </div>
 
-              {/* Layer Selector */}
+              {/* Display Layer Selector */}
               {imageCollections.length > 1 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-400">Layer:</span>
                   <Select value={displayLayer} onValueChange={handleLayerChange}>
-                    <SelectTrigger className="w-40">
+                    <SelectTrigger className="w-48">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {imageCollections.map(collection => (
                         <SelectItem key={collection.id} value={collection.id}>
-                          {collection.name}
+                          {collection.name} ({collection.images.length} images)
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
 
-                  {/* If image not found in the selected layer show a small warning (moved from left panel) */}
+                  {/* Warning for missing image */}
                   {!displayImage && currentImageName && displayLayer && (
                     <span className="text-xs text-yellow-400">
                       Image "{currentImageName}" not available in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
@@ -2676,6 +2748,30 @@ const ImageAnnotation = () => {
                 {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
               </Button>
             </div>
+            
+            {/* Navigation Layer Selector */}
+            {imageCollections.length > 1 && !rightCollapsed && (
+              <div className="mt-3 p-2 bg-gray-750 rounded border border-gray-600">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs text-gray-400">Navigation Layer:</span>
+                </div>
+                <Select value={mainLayer} onValueChange={handleMainLayerChange}>
+                  <SelectTrigger className="w-full h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {imageCollections.map(collection => (
+                      <SelectItem key={collection.id} value={collection.id}>
+                        {collection.name} ({collection.images.length} images)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="text-xs text-blue-400 mt-1">
+                  Controls which images are available for browsing
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Panel Content */}
