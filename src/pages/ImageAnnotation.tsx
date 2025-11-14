@@ -69,6 +69,30 @@ const DEFAULT_COLORS = [
   '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D2B4DE'
 ];
 
+// Helper function to calculate polygon area using the Shoelace formula
+const calculatePolygonArea = (points: Point[]): number => {
+  if (points.length < 3) return 0;
+  
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length;
+    area += points[i].x * points[j].y;
+    area -= points[j].x * points[i].y;
+  }
+  return Math.abs(area / 2);
+};
+
+// Helper function to format area display
+const formatArea = (area: number): string => {
+  if (area < 1000) {
+    return `${Math.round(area)}`;
+  } else if (area < 1000000) {
+    return `${(area / 1000).toFixed(1)}K`;
+  } else {
+    return `${(area / 1000000).toFixed(1)}M`;
+  }
+};
+
 const ImageAnnotation = () => {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const [searchParams] = useSearchParams();
@@ -99,6 +123,7 @@ const ImageAnnotation = () => {
   const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
   const [activeTool, setActiveTool] = useState<AnnotationTool>('polygon');
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
@@ -161,6 +186,7 @@ const ImageAnnotation = () => {
   const leftResizingRef = useRef(false);
   const leftStartXRef = useRef(0);
   const leftStartWidthRef = useRef(0);
+  const lastLoadedImageRef = useRef<string>(''); // Use ref instead of state to avoid re-renders
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -596,6 +622,8 @@ const ImageAnnotation = () => {
         });
       } finally {
         setIsLoading(false);
+        // Mark initial load as complete after a brief delay to ensure all state updates are done
+        setTimeout(() => setIsInitialLoad(false), 100);
       }
     };
 
@@ -604,6 +632,9 @@ const ImageAnnotation = () => {
 
   // Update images when index or layer changes
   useEffect(() => {
+    // Skip during initial load to prevent flickering
+    if (isInitialLoad) return;
+    
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (imageList.length > 0 && currentImageIndex < imageList.length) {
       const imageName = imageList[currentImageIndex];
@@ -611,10 +642,13 @@ const ImageAnnotation = () => {
       updateCurrentImages(imageName, displayLayer, imageCollections);
       loadAnnotationsForImage(imageName);
     }
-  }, [currentImageIndex, allImageNames, currentLayerImageNames, displayLayer, imageCollections]);
+  }, [currentImageIndex, allImageNames, currentLayerImageNames, displayLayer, imageCollections, isInitialLoad]);
 
   // Update current index when layer changes to maintain the same image if possible
   useEffect(() => {
+    // Skip during initial load to prevent flickering
+    if (isInitialLoad) return;
+    
     if (currentLayerImageNames.length > 0 && currentImageName) {
       const newIndex = currentLayerImageNames.findIndex(name => name === currentImageName);
       if (newIndex !== -1 && newIndex !== currentImageIndex) {
@@ -624,7 +658,7 @@ const ImageAnnotation = () => {
         setCurrentImageIndex(0);
       }
     }
-  }, [currentLayerImageNames]);
+  }, [currentLayerImageNames, isInitialLoad]);
 
   const updateCurrentImages = (imageName: string, layerId: string, collections: ImageCollection[]) => {
     // Find RGB collection for annotations priority
@@ -684,6 +718,16 @@ const ImageAnnotation = () => {
   };
 
   const loadAnnotationsForImage = async (imageName: string) => {
+    // Don't reload if it's the same image we just loaded AND we're not in initial load
+    // During initial load, we need to allow the load to proceed
+    if (imageName === lastLoadedImageRef.current && !isInitialLoad) {
+      console.log('Skipping duplicate load for:', imageName);
+      return;
+    }
+    
+    console.log('Loading annotations for image:', imageName);
+    lastLoadedImageRef.current = imageName;
+    
     try {
       // Try to load from localStorage first using image name (so annotations are shared across layers)
       const storageKey = `annotations_${id}_${imageName}`;
@@ -724,9 +768,12 @@ const ImageAnnotation = () => {
       } else {
         // No saved annotations, clear current ones
         setAnnotations([]);
+        // Only clear selection if there are no annotations
+        setSelectedAnnotation(null);
       }
       
-      setSelectedAnnotation(null);
+      // Don't clear selection if we just loaded annotations - let the user keep their selection
+      // Only clear if there was an error or no annotations
     } catch (error) {
       console.error('Error loading annotations:', error);
       setAnnotations([]);
@@ -1532,7 +1579,7 @@ const ImageAnnotation = () => {
   // Redraw canvas when dependencies change
   useEffect(() => {
     redrawCanvas();
-  }, [redrawCanvas]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, imageScale, imageOffset, displayImage, currentImage, isLayerSwitching]);
 
   // Redraw canvas for image scaling and offset changes
   useEffect(() => {
@@ -2888,6 +2935,14 @@ const ImageAnnotation = () => {
                                       <span className="text-xs text-gray-500 capitalize">{annotation.type}</span>
                                       <span className="text-xs text-gray-600">•</span>
                                       <span className="text-xs text-gray-500">ID: {annotation.id.slice(0, 8)}</span>
+                                      {annotation.type === 'polygon' && annotation.points && annotation.points.length >= 3 && (
+                                        <>
+                                          <span className="text-xs text-gray-600">•</span>
+                                          <span className="text-xs text-blue-400" title="Area in image coordinates">
+                                            Area: {formatArea(calculatePolygonArea(annotation.points))}
+                                          </span>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 )}
