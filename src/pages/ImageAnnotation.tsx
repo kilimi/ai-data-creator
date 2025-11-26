@@ -69,27 +69,34 @@ const DEFAULT_COLORS = [
   '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D2B4DE'
 ];
 
-// Helper function to calculate polygon area using the Shoelace formula
+// Helper function to calculate polygon area similar to OpenCV's contourArea
+// This uses the same mathematical approach as cv2.contourArea() in altitude_plant_resolution.py
+// Using the Green's theorem / Shoelace formula which OpenCV also uses internally
 const calculatePolygonArea = (points: Point[]): number => {
   if (points.length < 3) return 0;
   
+  // OpenCV uses the Shoelace formula (also called surveyor's formula)
+  // This is the same as cv2.contourArea() for simple polygons
   let area = 0;
   for (let i = 0; i < points.length; i++) {
     const j = (i + 1) % points.length;
     area += points[i].x * points[j].y;
     area -= points[j].x * points[i].y;
   }
+  
+  // Return absolute value and divide by 2 (standard formula)
+  // This matches OpenCV's contourArea calculation for non-oriented contours
   return Math.abs(area / 2);
 };
 
 // Helper function to format area display
 const formatArea = (area: number): string => {
   if (area < 1000) {
-    return `${Math.round(area)}`;
+    return `${Math.round(area)} px²`;
   } else if (area < 1000000) {
-    return `${(area / 1000).toFixed(1)}K`;
+    return `${(area / 1000).toFixed(1)}K px²`;
   } else {
-    return `${(area / 1000000).toFixed(1)}M`;
+    return `${(area / 1000000).toFixed(1)}M px²`;
   }
 };
 
@@ -207,6 +214,30 @@ const ImageAnnotation = () => {
   const [autoSegmentLabel, setAutoSegmentLabel] = useState<string>('');
   const [autoSegmentClassId, setAutoSegmentClassId] = useState<string | null>(null);
 
+  // Panel tab state
+  const [activePanelTab, setActivePanelTab] = useState<string>('annotations');
+
+  // Auto-save state
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSaveTimeRef = useRef<number>(Date.now());
+
+  // Helper function to safely save to localStorage with quota handling
+  const safeLocalStorageSet = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+        console.warn('localStorage quota exceeded, skipping cache');
+      } else {
+        console.error('Error saving to localStorage:', e);
+      }
+      return false;
+    }
+  };
+
   // Start auto-segmentation by calling backend /segment
   const startAutoSegment = useCallback(async (imgPoint: Point) => {
     if (!displayImage && !currentImage) return;
@@ -291,9 +322,12 @@ const ImageAnnotation = () => {
     setAnnotations(prev => {
       const updated = [...prev, ...newAnns];
       const storageKey = `annotations_${id}_${currentImageName}`;
-      localStorage.setItem(storageKey, JSON.stringify(updated));
+      safeLocalStorageSet(storageKey, JSON.stringify(updated));
       return updated;
     });
+
+    // Mark as unsaved
+    setHasUnsavedChanges(true);
 
     // update counts
     setClasses(prev => {
@@ -638,9 +672,13 @@ const ImageAnnotation = () => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (imageList.length > 0 && currentImageIndex < imageList.length) {
       const imageName = imageList[currentImageIndex];
-      setCurrentImageName(imageName);
-      updateCurrentImages(imageName, displayLayer, imageCollections);
-      loadAnnotationsForImage(imageName);
+      
+      // Only update if the image name actually changed
+      if (imageName !== currentImageName) {
+        setCurrentImageName(imageName);
+        updateCurrentImages(imageName, displayLayer, imageCollections);
+        loadAnnotationsForImage(imageName);
+      }
     }
   }, [currentImageIndex, allImageNames, currentLayerImageNames, displayLayer, imageCollections, isInitialLoad]);
 
@@ -718,20 +756,167 @@ const ImageAnnotation = () => {
   };
 
   const loadAnnotationsForImage = async (imageName: string) => {
-    // Don't reload if it's the same image we just loaded AND we're not in initial load
-    // During initial load, we need to allow the load to proceed
-    if (imageName === lastLoadedImageRef.current && !isInitialLoad) {
-      console.log('Skipping duplicate load for:', imageName);
+    console.log('Loading annotations for image:', imageName, '(last loaded:', lastLoadedImageRef.current, ')');
+    
+    // Only skip if it's the same image AND we already have annotations loaded
+    if (imageName === lastLoadedImageRef.current && annotations.length > 0) {
+      console.log('Annotations already loaded for:', imageName);
       return;
     }
     
-    console.log('Loading annotations for image:', imageName);
     lastLoadedImageRef.current = imageName;
     
     try {
       // Try to load from localStorage first using image name (so annotations are shared across layers)
       const storageKey = `annotations_${id}_${imageName}`;
-      const savedAnnotations = localStorage.getItem(storageKey);
+      let savedAnnotations = localStorage.getItem(storageKey);
+      
+      // If found in localStorage, validate the coordinates aren't corrupted
+      if (savedAnnotations) {
+        try {
+          const parsedAnnotations = JSON.parse(savedAnnotations);
+          
+          // Check if coordinates are abnormally large (corrupted data)
+          let hasCorruptedData = false;
+          if (parsedAnnotations.length > 0 && parsedAnnotations[0].points && parsedAnnotations[0].points.length > 0) {
+            const firstPoint = parsedAnnotations[0].points[0];
+            if (firstPoint.x > 10000 || firstPoint.y > 10000) {
+              console.warn(`Detected corrupted data in localStorage for ${imageName}, clearing and reloading from sessionStorage`);
+              hasCorruptedData = true;
+              localStorage.removeItem(storageKey);
+              savedAnnotations = null;
+            }
+          }
+        } catch (e) {
+          console.error('Error validating cached annotations:', e);
+          localStorage.removeItem(storageKey);
+          savedAnnotations = null;
+        }
+      }
+      
+      // If not in localStorage, try to load from sessionStorage COCO data
+      if (!savedAnnotations) {
+        try {
+          const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+          if (annotationFileRef) {
+            const fileData = JSON.parse(annotationFileRef);
+            const cocoData = fileData.cocoData;
+            
+            // Find annotations for this specific image from COCO data
+            if (cocoData.images && cocoData.annotations && cocoData.categories) {
+              const imageIdToFilename: { [id: string]: string } = {};
+              cocoData.images.forEach((img: any) => {
+                imageIdToFilename[img.id.toString()] = img.file_name;
+              });
+              
+              const categoryIdToName: { [id: string]: string } = {};
+              const categoryIdToColor: { [id: string]: string } = {};
+              
+              // Load or create classes first
+              const existingClasses = classes.length > 0 ? classes : (JSON.parse(localStorage.getItem(`classes_${id}`) || '[]') as AnnotationClass[]);
+              const classColorMap: { [name: string]: string } = {};
+              existingClasses.forEach(c => {
+                classColorMap[c.name] = c.color;
+              });
+              
+              cocoData.categories.forEach((cat: any, idx: number) => {
+                categoryIdToName[cat.id.toString()] = cat.name;
+                // Use existing class color if available, otherwise use default color
+                categoryIdToColor[cat.id.toString()] = classColorMap[cat.name] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+              });
+              
+              // Find image ID for this image name
+              const imageEntry = cocoData.images.find((img: any) => img.file_name === imageName);
+              if (imageEntry) {
+                const imageAnnotations: AnnotationShape[] = [];
+                
+                cocoData.annotations.forEach((annotation: any) => {
+                  if (annotation.image_id === imageEntry.id) {
+                    const className = categoryIdToName[annotation.category_id.toString()];
+                    
+                    if (className && annotation.segmentation && annotation.segmentation.length > 0) {
+                      const segmentation = annotation.segmentation[0];
+                      
+                      if (segmentation && segmentation.length >= 6) {
+                        const points: Point[] = [];
+                        
+                        // Detect if coordinates are abnormally large (backend conversion error)
+                        // Normal image coords should be < 10000 pixels
+                        const firstX = segmentation[0];
+                        const firstY = segmentation[1];
+                        const isAbnormallyLarge = firstX > 10000 || firstY > 10000;
+                        
+                        // If abnormally large, they were likely already pixel coords that got
+                        // multiplied by width/height again. Divide by image dimensions to fix.
+                        const scaleFactor = isAbnormallyLarge && imageEntry.width && imageEntry.height
+                          ? { x: imageEntry.width, y: imageEntry.height }
+                          : { x: 1, y: 1 };
+                        
+                        if (isAbnormallyLarge) {
+                          console.warn(`Detected abnormally large coordinates for ${imageName}, applying correction factor:`, scaleFactor);
+                        }
+                        
+                        for (let i = 0; i < segmentation.length; i += 2) {
+                          points.push({
+                            x: segmentation[i] / scaleFactor.x,
+                            y: segmentation[i + 1] / scaleFactor.y
+                          });
+                        }
+                        
+                        const color = categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0];
+                        imageAnnotations.push({
+                          id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                          type: 'polygon',
+                          points,
+                          label: className,
+                          color: color,
+                          visible: true
+                        });
+                      }
+                    }
+                  }
+                });
+                
+                if (imageAnnotations.length > 0) {
+                  setAnnotations(imageAnnotations);
+                  
+                  // Ensure all classes exist
+                  const classNames = new Set(existingClasses.map(c => c.name));
+                  const newClasses = [...existingClasses];
+                  
+                  imageAnnotations.forEach((ann) => {
+                    if (!classNames.has(ann.label)) {
+                      classNames.add(ann.label);
+                      newClasses.push({
+                        id: `class_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                        name: ann.label,
+                        color: ann.color,
+                        visible: true,
+                        count: 0
+                      });
+                    }
+                  });
+                  
+                  // Update class counts
+                  const countsByName: { [name: string]: number } = {};
+                  imageAnnotations.forEach((a: any) => {
+                    countsByName[a.label] = (countsByName[a.label] || 0) + 1;
+                  });
+                  
+                  const updatedClasses = newClasses.map(c => ({ ...c, count: countsByName[c.name] || 0 }));
+                  setClasses(updatedClasses);
+                  saveGlobalClasses(updatedClasses);
+                  
+                  console.log(`Loaded ${imageAnnotations.length} annotations for ${imageName} from sessionStorage`);
+                  return;
+                }
+              }
+            }
+          }
+        } catch (sessionError) {
+          console.warn('Could not load from sessionStorage:', sessionError);
+        }
+      }
       
       if (savedAnnotations) {
         const parsedAnnotations = JSON.parse(savedAnnotations);
@@ -783,49 +968,158 @@ const ImageAnnotation = () => {
 
   // Global statistics across all saved annotation files (all images)
   const [globalStats, setGlobalStats] = useState<{ [className: string]: number }>({});
+  const [globalAvgAreas, setGlobalAvgAreas] = useState<{ [className: string]: number }>({});
 
-  const computeGlobalStats = useCallback(() => {
+  const computeGlobalStats = useCallback(async () => {
     try {
-      const counts: { [name: string]: number } = {};
-
-      // Build a set of image names to check. Start with known image names, then
-      // include any image names that have saved annotations in localStorage under the
-      // annotations_{id}_{imageName} key pattern. This handles cases where annotations
-      // exist but the image list (allImageNames) is incomplete or different across layers.
-      const imageNamesToCheck = new Set<string>(allImageNames);
-
-      // Scan localStorage keys for any annotations_{id}_* entries and include their image names
-      const prefix = `annotations_${id}_`;
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (!key) continue;
-        if (key.startsWith(prefix)) {
-          const imageName = key.substring(prefix.length);
-          if (imageName) imageNamesToCheck.add(imageName);
+      // If we have an annotation file loaded, try to fetch statistics from the database
+      if (annotationId && api) {
+        try {
+          const response = await api.getAnnotation(parseInt(id), annotationId);
+          if (response.success && response.data?.statistics) {
+            console.log('Loaded statistics from database:', response.data.statistics);
+            
+            // Convert database statistics format to our format
+            const counts: { [name: string]: number } = {};
+            const avgAreas: { [name: string]: number } = {};
+            
+            Object.keys(response.data.statistics).forEach(className => {
+              const stats = response.data.statistics[className];
+              counts[className] = stats.count;
+              avgAreas[className] = stats.avgArea;
+            });
+            
+            setGlobalStats(counts);
+            setGlobalAvgAreas(avgAreas);
+            return;
+          }
+        } catch (dbError) {
+          console.warn('Could not load statistics from database, falling back to computation:', dbError);
         }
       }
+      
+      const counts: { [name: string]: number } = {};
+      const totalAreas: { [name: string]: number } = {};
 
-      // Iterate over all discovered image names and count annotations
-      imageNamesToCheck.forEach(name => {
-        const key = `annotations_${id}_${name}`;
-        const saved = localStorage.getItem(key);
-        if (!saved) return;
+      // Check if we have COCO data in sessionStorage (from loaded annotation file)
+      const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+      
+      if (annotationFileRef) {
+        // Count from sessionStorage COCO data for accurate totals
         try {
-          const parsed = JSON.parse(saved) as AnnotationShape[];
-          parsed.forEach(a => {
-            counts[a.label] = (counts[a.label] || 0) + 1;
-          });
-        } catch (err) {
-          // ignore parse errors per file
+          const fileData = JSON.parse(annotationFileRef);
+          const cocoData = fileData.cocoData;
+          
+          if (cocoData.annotations && cocoData.categories) {
+            // Build category ID to name map
+            const categoryIdToName: { [id: string]: string } = {};
+            cocoData.categories.forEach((cat: any) => {
+              categoryIdToName[cat.id.toString()] = cat.name;
+            });
+            
+            // Build image ID to dimensions map
+            const imageDimensions: { [id: string]: { width: number, height: number } } = {};
+            cocoData.images?.forEach((img: any) => {
+              imageDimensions[img.id.toString()] = { width: img.width || 1, height: img.height || 1 };
+            });
+            
+            // Count all annotations from COCO data
+            cocoData.annotations.forEach((annotation: any) => {
+              const className = categoryIdToName[annotation.category_id.toString()];
+              if (className) {
+                counts[className] = (counts[className] || 0) + 1;
+                
+                // Calculate area for segmentation annotations
+                if (annotation.segmentation && annotation.segmentation[0]) {
+                  const segmentation = annotation.segmentation[0];
+                  if (segmentation.length >= 6) {
+                    const imageDims = imageDimensions[annotation.image_id.toString()];
+                    
+                    // Detect if coordinates need scaling
+                    const firstX = segmentation[0];
+                    const firstY = segmentation[1];
+                    const isAbnormallyLarge = firstX > 10000 || firstY > 10000;
+                    const scaleFactor = isAbnormallyLarge && imageDims
+                      ? { x: imageDims.width, y: imageDims.height }
+                      : { x: 1, y: 1 };
+                    
+                    const points: Point[] = [];
+                    for (let i = 0; i < segmentation.length; i += 2) {
+                      points.push({
+                        x: segmentation[i] / scaleFactor.x,
+                        y: segmentation[i + 1] / scaleFactor.y
+                      });
+                    }
+                    
+                    const area = calculatePolygonArea(points);
+                    totalAreas[className] = (totalAreas[className] || 0) + area;
+                  }
+                }
+              }
+            });
+            
+            console.log('Computed global stats from sessionStorage:', counts);
+          }
+        } catch (e) {
+          console.error('Error computing stats from sessionStorage:', e);
         }
-      });
+      } else {
+        // Fallback: scan localStorage for cached annotations
+        // Build a set of image names to check
+        const imageNamesToCheck = new Set<string>(allImageNames);
+
+        // Scan localStorage keys for any annotations_{id}_* entries
+        const prefix = `annotations_${id}_`;
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key) continue;
+          if (key.startsWith(prefix)) {
+            const imageName = key.substring(prefix.length);
+            if (imageName) imageNamesToCheck.add(imageName);
+          }
+        }
+
+        // Iterate over all discovered image names and count annotations
+        imageNamesToCheck.forEach(name => {
+          const key = `annotations_${id}_${name}`;
+          const saved = localStorage.getItem(key);
+          if (!saved) return;
+          try {
+            const parsed = JSON.parse(saved) as AnnotationShape[];
+            parsed.forEach(a => {
+              counts[a.label] = (counts[a.label] || 0) + 1;
+              
+              // Calculate area for polygon annotations
+              if (a.type === 'polygon' && a.points && a.points.length >= 3) {
+                const area = calculatePolygonArea(a.points);
+                totalAreas[a.label] = (totalAreas[a.label] || 0) + area;
+              }
+            });
+          } catch (err) {
+            // ignore parse errors per file
+          }
+        });
+        
+        console.log('Computed global stats from localStorage:', counts);
+      }
 
       setGlobalStats(counts);
+      
+      // Calculate average areas
+      const avgAreas: { [name: string]: number } = {};
+      Object.keys(totalAreas).forEach(className => {
+        const count = counts[className] || 0;
+        if (count > 0) {
+          avgAreas[className] = totalAreas[className] / count;
+        }
+      });
+      setGlobalAvgAreas(avgAreas);
     } catch (err) {
       console.error('Error computing global stats', err);
       setGlobalStats({});
+      setGlobalAvgAreas({});
     }
-  }, [allImageNames, id]);
+  }, [allImageNames, id, annotationId, api]);
 
   // Recompute global stats whenever we have changes to class list, image list or storage updates
   useEffect(() => {
@@ -847,6 +1141,18 @@ const ImageAnnotation = () => {
     
     console.log('Loading segmentation annotations from annotation file:', annotationFileId);
     
+    // Clear all cached annotations for this dataset to ensure fresh load with correct coordinates
+    console.log('Clearing cached annotations from localStorage...');
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(`annotations_${id}_`)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    console.log(`Cleared ${keysToRemove.length} cached annotation entries`);
+    
     // First try to load from saved_annotations localStorage
     const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
     if (savedAnnotations) {
@@ -858,26 +1164,44 @@ const ImageAnnotation = () => {
         
         setAnnotationName(targetAnnotation.name);
         const cocoData = targetAnnotation.content;
-        return loadAnnotationsFromCOCO(cocoData);
+        return loadAnnotationsFromCOCO(cocoData, annotationFileId);
       }
     }
     
     // If not found in localStorage, try loading from backend
     if (api) {
       try {
+        console.log('Fetching annotation from backend for file ID:', annotationFileId);
         // First get annotation metadata to get the name
         const annotationResponse = await api.getAnnotation(id, annotationFileId);
         const response = await api.getAnnotationContent(id, annotationFileId);
+        
+        console.log('Backend response:', response);
+        
         if (response.success && response.data.content) {
-          console.log('Loading segmentation annotations from backend');
+          console.log('Loading segmentation annotations from backend, content length:', response.data.content.length);
           
           // Set annotation name if available
           if (annotationResponse.success && annotationResponse.data?.file_name) {
             setAnnotationName(annotationResponse.data.file_name);
           }
           
-          const cocoData = JSON.parse(response.data.content);
-          return loadAnnotationsFromCOCO(cocoData);
+          try {
+            const cocoData = JSON.parse(response.data.content);
+            console.log('Parsed COCO data:', {
+              images: cocoData.images?.length,
+              annotations: cocoData.annotations?.length,
+              categories: cocoData.categories?.length
+            });
+            return loadAnnotationsFromCOCO(cocoData, annotationFileId);
+          } catch (parseError) {
+            console.error('Failed to parse COCO JSON:', parseError);
+            console.error('Content preview:', response.data.content.substring(0, 500));
+            throw new Error('Invalid JSON format in annotation content');
+          }
+        } else {
+          console.error('Invalid response from backend:', response);
+          throw new Error('No content in response');
         }
       } catch (error) {
         console.error('Failed to load annotation from backend:', error);
@@ -899,9 +1223,13 @@ const ImageAnnotation = () => {
   }, [id, api, toast]);
 
   // Helper function to load annotations from COCO format
-  const loadAnnotationsFromCOCO = useCallback((cocoData: any) => {
+  const loadAnnotationsFromCOCO = useCallback(async (cocoData: any, fileId?: string) => {
     try {
-      const newAnnotations: { [imageName: string]: AnnotationShape[] } = {};
+      // Reset the last loaded image ref so annotations can be loaded fresh
+      lastLoadedImageRef.current = null;
+      
+      // Don't load all annotations at once - just prepare the data structure
+      // and load on-demand when navigating to images
       const classSet = new Set<string>();
       const classColorMap: { [name: string]: string } = {};
       
@@ -914,64 +1242,40 @@ const ImageAnnotation = () => {
         });
       }
       
-      // Create image ID to filename mapping
-      const imageIdToFilename: { [id: string]: string } = {};
-      if (cocoData.images) {
-        cocoData.images.forEach((img: any) => {
-          imageIdToFilename[img.id.toString()] = img.file_name;
-        });
+      // Store the full COCO data in sessionStorage for lazy loading
+      const annotationFileRef = {
+        id: fileId || `loaded_${Date.now()}`,
+        cocoData: cocoData,
+        imageCount: cocoData.images?.length || 0,
+        annotationCount: cocoData.annotations?.length || 0
+      };
+      
+      try {
+        // Clear old sessionStorage first
+        const sessionKey = `annotation_file_${id}`;
+        sessionStorage.removeItem(sessionKey);
+        // Then store new data
+        sessionStorage.setItem(sessionKey, JSON.stringify(annotationFileRef));
+        console.log(`Stored fresh COCO data in sessionStorage (${cocoData.images?.length} images, ${cocoData.annotations?.length} annotations)`);
+      } catch (e) {
+        console.warn('Could not save annotation file reference to sessionStorage:', e);
+        return false;
       }
       
-      // Create category ID to name mapping
-      const categoryIdToName: { [id: string]: string } = {};
-      if (cocoData.categories) {
-        cocoData.categories.forEach((cat: any) => {
-          categoryIdToName[cat.id.toString()] = cat.name;
-        });
-      }
-      
-      // Process annotations
-      if (cocoData.annotations) {
-        cocoData.annotations.forEach((annotation: any) => {
-          const imageId = annotation.image_id.toString();
-          const imageName = imageIdToFilename[imageId];
-          const className = categoryIdToName[annotation.category_id.toString()];
-          
-          if (imageName && className && annotation.segmentation && annotation.segmentation.length > 0) {
-            const segmentation = annotation.segmentation[0]; // Take first polygon
-            
-            if (segmentation && segmentation.length >= 6) { // At least 3 points (x,y pairs)
-              const points: Point[] = [];
-              for (let i = 0; i < segmentation.length; i += 2) {
-                points.push({
-                  x: segmentation[i],
-                  y: segmentation[i + 1]
-                });
-              }
-              
-              const annotationShape: AnnotationShape = {
-                id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                type: 'polygon',
-                points,
-                label: className,
-                color: classColorMap[className] || DEFAULT_COLORS[0],
-                visible: true
-              };
-              
-              if (!newAnnotations[imageName]) {
-                newAnnotations[imageName] = [];
-              }
-              newAnnotations[imageName].push(annotationShape);
-            }
+      // Clear all localStorage annotation caches for this dataset
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith(`annotations_${id}_`)) {
+            keysToRemove.push(key);
           }
-        });
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        console.log(`Cleared ${keysToRemove.length} annotation caches from localStorage`);
+      } catch (e) {
+        console.warn('Could not clear localStorage annotation caches:', e);
       }
-      
-      // Save annotations to localStorage for each image
-      Object.entries(newAnnotations).forEach(([imageName, annotations]) => {
-        const storageKey = `annotations_${id}_${imageName}`;
-        localStorage.setItem(storageKey, JSON.stringify(annotations));
-      });
       
       // Update classes
       const newClasses: AnnotationClass[] = Array.from(classSet).map((className, index) => ({
@@ -985,56 +1289,83 @@ const ImageAnnotation = () => {
       setClasses(newClasses);
       saveGlobalClasses(newClasses);
       
-      // Load annotations for current image if it exists in the loaded data
-      // Try multiple ways to match the current image
-      let annotationsLoaded = false;
-      if (currentImageName) {
-        // Try exact match first
-        if (newAnnotations[currentImageName]) {
-          setAnnotations(newAnnotations[currentImageName]);
-          annotationsLoaded = true;
-        } else {
-          // Try to find a match by checking different name variations
-          const imageNames = Object.keys(newAnnotations);
-          const matchedImageName = imageNames.find(name => 
-            name === currentImageName || 
-            name.includes(currentImageName) || 
-            currentImageName.includes(name) ||
-            name.replace(/\.[^/.]+$/, '') === currentImageName.replace(/\.[^/.]+$/, '') // Remove extensions and compare
-          );
-          
-          if (matchedImageName) {
-            setAnnotations(newAnnotations[matchedImageName]);
-            annotationsLoaded = true;
+      // Load annotations for the first 2 images to populate the statistics
+      const imageNames = cocoData.images?.slice(0, 2).map((img: any) => img.file_name) || [];
+      let loadedCount = 0;
+      
+      imageNames.forEach((imageName: string) => {
+        const imageEntry = cocoData.images.find((img: any) => img.file_name === imageName);
+        if (!imageEntry) return;
+        
+        const imageAnnotations: AnnotationShape[] = [];
+        const categoryIdToName: { [id: string]: string } = {};
+        
+        cocoData.categories.forEach((cat: any) => {
+          categoryIdToName[cat.id.toString()] = cat.name;
+        });
+        
+        cocoData.annotations.forEach((annotation: any) => {
+          if (annotation.image_id === imageEntry.id) {
+            const className = categoryIdToName[annotation.category_id.toString()];
+            
+            if (className && annotation.segmentation && annotation.segmentation.length > 0) {
+              const segmentation = annotation.segmentation[0];
+              
+              if (segmentation && segmentation.length >= 6) {
+                const points: Point[] = [];
+                
+                // Detect and fix abnormally large coordinates
+                const firstX = segmentation[0];
+                const firstY = segmentation[1];
+                const isAbnormallyLarge = firstX > 10000 || firstY > 10000;
+                const scaleFactor = isAbnormallyLarge && imageEntry.width && imageEntry.height
+                  ? { x: imageEntry.width, y: imageEntry.height }
+                  : { x: 1, y: 1 };
+                
+                for (let i = 0; i < segmentation.length; i += 2) {
+                  points.push({
+                    x: segmentation[i] / scaleFactor.x,
+                    y: segmentation[i + 1] / scaleFactor.y
+                  });
+                }
+                
+                imageAnnotations.push({
+                  id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  type: 'polygon',
+                  points,
+                  label: className,
+                  color: classColorMap[className] || DEFAULT_COLORS[0],
+                  visible: true
+                });
+              }
+            }
+          }
+        });
+        
+        if (imageAnnotations.length > 0) {
+          const storageKey = `annotations_${id}_${imageName}`;
+          try {
+            safeLocalStorageSet(storageKey, JSON.stringify(imageAnnotations));
+            loadedCount++;
+          } catch (e) {
+            console.warn(`Could not cache annotations for ${imageName}`);
           }
         }
+      });
+      
+      console.log(`Pre-loaded annotations for ${loadedCount} images`);
+      
+      // Load annotations for current image if it exists in the data
+      if (currentImageName) {
+        loadAnnotationsForImage(currentImageName);
       }
       
-      // If no current image name or no match found, try to load from the first available image
-      if (!annotationsLoaded && Object.keys(newAnnotations).length > 0) {
-        const firstImageName = Object.keys(newAnnotations)[0];
-        setAnnotations(newAnnotations[firstImageName]);
-        // Also update the current image name if it wasn't set
-        if (!currentImageName) {
-          setCurrentImageName(firstImageName);
-        }
-        annotationsLoaded = true;
-      }
-      
-      // Recompute global stats
-      computeGlobalStats();
-      
-      // Force a canvas redraw after a short delay to ensure all state updates have been processed
-      setTimeout(() => {
-        if (canvasRef.current) {
-          // Trigger a manual redraw by updating a dependency
-          setAnnotations(prev => [...prev]);
-        }
-      }, 100);
+      // Recompute global stats and wait for it to complete
+      await computeGlobalStats();
       
       toast({
         title: "Annotations loaded",
-        description: `Loaded segmentation annotations for ${Object.keys(newAnnotations).length} images`,
+        description: `Loaded annotation file with ${cocoData.images?.length || 0} images. Annotations load on-demand as you navigate.`,
       });
       
       return true;
@@ -1054,30 +1385,27 @@ const ImageAnnotation = () => {
     if (annotationId && !isLoading) {
       // Wait for images to be loaded before attempting to load annotation file
       loadFromAnnotationFile(annotationId);
-    }
-  }, [annotationId, isLoading, loadFromAnnotationFile]);
-
-  // Load annotations when current image name changes
-  useEffect(() => {
-    if (currentImageName && id) {
-      const storageKey = `annotations_${id}_${currentImageName}`;
-      const stored = localStorage.getItem(storageKey);
-      
-      if (stored) {
-        try {
-          const parsedAnnotations = JSON.parse(stored);
-          setAnnotations(parsedAnnotations);
-          console.log(`Loaded annotations for ${currentImageName}:`, parsedAnnotations.length);
-        } catch (error) {
-          console.error('Error parsing stored annotations:', error);
-          setAnnotations([]);
+    } else if (!annotationId && !isLoading && id) {
+      // Starting new annotations - clear any cached data to ensure clean slate
+      console.log('Starting new annotations - clearing cached data');
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(`annotations_${id}_`)) {
+          keysToRemove.push(key);
         }
-      } else {
-        // No annotations for this image
-        setAnnotations([]);
       }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+      
+      // Also clear sessionStorage annotation file reference
+      sessionStorage.removeItem(`annotation_file_${id}`);
+      
+      // Clear annotations state
+      setAnnotations([]);
+      
+      console.log(`Cleared ${keysToRemove.length} cached entries for new annotation session`);
     }
-  }, [currentImageName, id]);
+  }, [annotationId, isLoading, loadFromAnnotationFile, id]);
 
   const hasAnyAnnotations = Object.values(globalStats).reduce((s, v) => s + v, 0) > 0;
   // If globalStats is empty, check localStorage for any annotations entries as a fallback
@@ -1195,9 +1523,12 @@ const ImageAnnotation = () => {
       const updated = [...prev, newAnnotation];
       // Auto-save to localStorage using image name
       const storageKey = `annotations_${id}_${currentImageName}`;
-      localStorage.setItem(storageKey, JSON.stringify(updated));
+      safeLocalStorageSet(storageKey, JSON.stringify(updated));
       return updated;
     });
+    
+    // Mark as unsaved
+    setHasUnsavedChanges(true);
     
     // Update class count and save globally
     setClasses(prev => {
@@ -1331,7 +1662,8 @@ const ImageAnnotation = () => {
             }
             return ann;
           });
-          localStorage.setItem(storageKey, JSON.stringify(updatedAnnotations));
+          safeLocalStorageSet(storageKey, JSON.stringify(updatedAnnotations));
+          setHasUnsavedChanges(true);
         }
       }, 100);
       
@@ -1458,12 +1790,11 @@ const ImageAnnotation = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Get device pixel ratio and canvas display size
-    const dpr = window.devicePixelRatio || 1;
+    // Get canvas display size (the context is already scaled by dpr in handleImageResize)
     const displayWidth = canvas.clientWidth;
     const displayHeight = canvas.clientHeight;
 
-    // Clear canvas (use display dimensions for clearing)
+    // Clear canvas (use display dimensions since context is scaled by dpr)
     ctx.clearRect(0, 0, displayWidth, displayHeight);
 
     // Save context
@@ -1480,9 +1811,28 @@ const ImageAnnotation = () => {
       );
     }
 
+    console.log('Drawing annotations:', annotations.length, 'imageScale:', imageScale, 'imageOffset:', imageOffset);
+    console.log('Image natural dimensions:', imageRef.current?.naturalWidth, 'x', imageRef.current?.naturalHeight);
+
     // Draw annotations
-    annotations.forEach(annotation => {
+    annotations.forEach((annotation, idx) => {
       if (!annotation.visible) return;
+
+      if (idx === 0) {
+        // Log first annotation for debugging
+        console.log('First annotation:', {
+          type: annotation.type,
+          points: annotation.points.slice(0, 3),
+          label: annotation.label,
+          color: annotation.color
+        });
+        
+        // Log screen coordinates for first point
+        if (annotation.points.length > 0) {
+          const screenPoint = imageToScreenCoords(annotation.points[0].x, annotation.points[0].y);
+          console.log('First point image coords:', annotation.points[0], 'screen coords:', screenPoint);
+        }
+      }
 
       ctx.strokeStyle = annotation.color;
       ctx.fillStyle = annotation.color + '30'; // Semi-transparent fill
@@ -1627,9 +1977,12 @@ const ImageAnnotation = () => {
       const updated = prev.filter(a => a.id !== annotationId);
       // Auto-save to localStorage using image name
       const storageKey = `annotations_${id}_${currentImageName}`;
-      localStorage.setItem(storageKey, JSON.stringify(updated));
+      safeLocalStorageSet(storageKey, JSON.stringify(updated));
       return updated;
     });
+    
+    // Mark as unsaved
+    setHasUnsavedChanges(true);
     
     // Update class count and save globally
     const classObj = classes.find(c => c.name === annotation.label);
@@ -1800,12 +2153,15 @@ const ImageAnnotation = () => {
             const maxX = Math.max(...xs);
             const maxY = Math.max(...ys);
             
+            // Calculate actual polygon area using the same method as altitude script
+            const polygonArea = calculatePolygonArea(ann.points);
+            
             return {
               id: index + 1,
               image_id: 1,
               category_id: categoryId,
               segmentation: [segmentation],
-              area: (maxX - minX) * (maxY - minY),
+              area: polygonArea,
               bbox: [minX, minY, maxX - minX, maxY - minY],
               iscrowd: 0
             };
@@ -1816,7 +2172,7 @@ const ImageAnnotation = () => {
 
       // Save to localStorage using image name
       const storageKey = `annotations_${id}_${currentImageName}`;
-      localStorage.setItem(storageKey, JSON.stringify(annotations));
+      safeLocalStorageSet(storageKey, JSON.stringify(annotations));
       
       // Export as downloadable file
       const dataStr = JSON.stringify(cocoData, null, 2);
@@ -1858,9 +2214,12 @@ const ImageAnnotation = () => {
   const updated = prev.map(a => a.id === annotationId ? { ...a, label: targetClass!.name, color: targetClass!.color } : a);
       // persist
       const storageKey = `annotations_${id}_${currentImageName}`;
-      localStorage.setItem(storageKey, JSON.stringify(updated));
+      safeLocalStorageSet(storageKey, JSON.stringify(updated));
       return updated;
     });
+
+    // Mark as unsaved
+    setHasUnsavedChanges(true);
 
     // Adjust class counts: decrement old, increment new
     setClasses(prev => {
@@ -1911,12 +2270,15 @@ const ImageAnnotation = () => {
             const maxY = Math.max(...ys);
             const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
 
+            // Calculate actual polygon area using the same method as altitude script
+            const polygonArea = calculatePolygonArea(ann.points);
+
             annotationsArr.push({
               id: annId++,
               image_id: imageId,
               category_id: categoryId,
               segmentation: [segmentation],
-              area: (maxX - minX) * (maxY - minY),
+              area: polygonArea,
               bbox: [minX, minY, maxX - minX, maxY - minY],
               iscrowd: 0
             });
@@ -1976,6 +2338,10 @@ const ImageAnnotation = () => {
       const annotationsArr: any[] = [];
       const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
 
+      // Calculate statistics per class
+      const classCounts: { [className: string]: number } = {};
+      const classAreas: { [className: string]: number } = {};
+
       let annId = 1;
       let imageId = 1;
 
@@ -2004,12 +2370,19 @@ const ImageAnnotation = () => {
             const maxY = Math.max(...ys);
             const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
 
+            // Calculate actual polygon area using the same method as altitude script
+            const polygonArea = calculatePolygonArea(ann.points);
+            
+            // Update statistics
+            classCounts[ann.label] = (classCounts[ann.label] || 0) + 1;
+            classAreas[ann.label] = (classAreas[ann.label] || 0) + polygonArea;
+
             annotationsArr.push({
               id: annId++,
               image_id: imageId,
               category_id: categoryId,
               segmentation: [segmentation],
-              area: (maxX - minX) * (maxY - minY),
+              area: polygonArea,
               bbox: [minX, minY, maxX - minX, maxY - minY],
               iscrowd: 0
             });
@@ -2018,6 +2391,15 @@ const ImageAnnotation = () => {
 
         imageId++;
       }
+      
+      // Calculate average areas per class
+      const statistics: { [className: string]: { count: number, avgArea: number } } = {};
+      Object.keys(classCounts).forEach(className => {
+        statistics[className] = {
+          count: classCounts[className],
+          avgArea: classAreas[className] / classCounts[className]
+        };
+      });
 
       const coco = {
         info: {
@@ -2028,7 +2410,8 @@ const ImageAnnotation = () => {
         },
         images: imagesArr,
         categories: categoryMap,
-        annotations: annotationsArr
+        annotations: annotationsArr,
+        statistics: statistics  // Add statistics to COCO data
       };
 
       const dataStr = JSON.stringify(coco, null, 2);
@@ -2037,15 +2420,20 @@ const ImageAnnotation = () => {
       
       const response = await api.updateAnnotationContent(parseInt(id), annotationId, file);
       
+      console.log('Update database response:', response);
+      
       if (response.success) {
         toast({ 
           title: 'Database Updated', 
           description: `Updated database annotation "${annotationName}" with ${annotationsArr.length} annotations from ${imagesArr.length} images` 
         });
+        
+        // Refresh statistics from database
+        computeGlobalStats();
       } else {
         toast({ 
           title: 'Update failed', 
-          description: `Failed to update database: ${response.error}`,
+          description: `Failed to update database: ${response.error || 'Unknown error'}`,
           variant: 'destructive'
         });
       }
@@ -2053,11 +2441,163 @@ const ImageAnnotation = () => {
       console.error('Error updating annotation in database:', updateError);
       toast({ 
         title: 'Update failed', 
-        description: 'Cannot connect to API backend or failed to update database annotation',
+        description: updateError instanceof Error ? updateError.message : 'Cannot connect to API backend or failed to update database annotation',
         variant: 'destructive'
       });
     }
   };
+
+  // Save current image annotations to database (single image only)
+  const saveCurrentImageToDatabase = useCallback(async () => {
+    if (!annotationId || !api || !currentImageName) {
+      return;
+    }
+
+    try {
+      // Get current image dimensions
+      const img = displayImage || currentImage;
+      const imageWidth = img?.naturalWidth || 0;
+      const imageHeight = img?.naturalHeight || 0;
+
+      // Convert annotations to COCO format for this image
+      const annotationsData = annotations.map((ann, idx) => {
+        if (ann.type === 'polygon') {
+          const segmentation = ann.points.flatMap(p => [p.x, p.y]);
+          const xs = ann.points.map(p => p.x);
+          const ys = ann.points.map(p => p.y);
+          const minX = Math.min(...xs);
+          const minY = Math.min(...ys);
+          const maxX = Math.max(...xs);
+          const maxY = Math.max(...ys);
+          const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+          const polygonArea = calculatePolygonArea(ann.points);
+
+          return {
+            id: idx + 1,
+            image_id: 1,
+            category_id: categoryId,
+            category_name: ann.label,
+            segmentation: [segmentation],
+            bbox: [minX, minY, maxX - minX, maxY - minY],
+            area: polygonArea,
+            iscrowd: 0
+          };
+        }
+        return null;
+      }).filter(Boolean);
+
+      // Send to backend using fetch with PATCH method
+      const url = `${api ? 'http://localhost:9999' : ''}/datasets/${id}/annotations/${annotationId}/image/${encodeURIComponent(currentImageName)}`;
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          annotations: annotationsData,
+          image_width: imageWidth,
+          image_height: imageHeight
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        console.log('Image annotations saved:', data);
+        
+        // Update sessionStorage COCO data to reflect the saved changes
+        try {
+          const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+          if (annotationFileRef) {
+            const fileData = JSON.parse(annotationFileRef);
+            const cocoData = fileData.cocoData;
+            
+            if (cocoData && cocoData.annotations && cocoData.images) {
+              // Find the image ID for this image name
+              const imageEntry = cocoData.images.find((img: any) => img.file_name === currentImageName);
+              if (imageEntry) {
+                // Remove old annotations for this image
+                cocoData.annotations = cocoData.annotations.filter((ann: any) => ann.image_id !== imageEntry.id);
+                
+                // Add new annotations with proper COCO format
+                let nextAnnId = Math.max(0, ...cocoData.annotations.map((a: any) => a.id || 0)) + 1;
+                annotations.forEach((ann) => {
+                  if (ann.type === 'polygon') {
+                    const segmentation = ann.points.flatMap(p => [p.x, p.y]);
+                    const xs = ann.points.map(p => p.x);
+                    const ys = ann.points.map(p => p.y);
+                    const minX = Math.min(...xs);
+                    const minY = Math.min(...ys);
+                    const maxX = Math.max(...xs);
+                    const maxY = Math.max(...ys);
+                    const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+                    const polygonArea = calculatePolygonArea(ann.points);
+                    
+                    cocoData.annotations.push({
+                      id: nextAnnId++,
+                      image_id: imageEntry.id,
+                      category_id: categoryId,
+                      segmentation: [segmentation],
+                      bbox: [minX, minY, maxX - minX, maxY - minY],
+                      area: polygonArea,
+                      iscrowd: 0
+                    });
+                  }
+                });
+                
+                // Save back to sessionStorage
+                fileData.cocoData = cocoData;
+                sessionStorage.setItem(`annotation_file_${id}`, JSON.stringify(fileData));
+                console.log(`Updated sessionStorage with ${annotations.length} annotations for ${currentImageName}`);
+                
+                // Recompute global statistics to reflect the changes
+                await computeGlobalStats();
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Could not update sessionStorage:', e);
+        }
+        
+        return true;
+      } else {
+        console.error('Failed to save image annotations:', data.error || data.detail);
+        return false;
+      }
+    } catch (error) {
+      console.error('Error saving image annotations:', error);
+      return false;
+    }
+  }, [annotationId, api, currentImageName, annotations, displayImage, currentImage, classes, id]);
+
+  // Auto-save function with debouncing
+  const autoSaveToDatabase = useCallback(async () => {
+    // Only auto-save if in edit mode and there are unsaved changes
+    if (!annotationId || !hasUnsavedChanges || isAutoSaving) {
+      return;
+    }
+
+    // Debounce: only save if at least 60 seconds have passed since last save
+    const now = Date.now();
+    const timeSinceLastSave = now - lastSaveTimeRef.current;
+    if (timeSinceLastSave < 60000) {
+      return;
+    }
+
+    try {
+      setIsAutoSaving(true);
+      const success = await saveCurrentImageToDatabase();
+      if (success) {
+        setHasUnsavedChanges(false);
+        lastSaveTimeRef.current = Date.now();
+      }
+    } catch (error) {
+      console.error('Auto-save failed:', error);
+      // Don't show toast for auto-save failures to avoid interrupting user
+    } finally {
+      setIsAutoSaving(false);
+    }
+  }, [annotationId, hasUnsavedChanges, isAutoSaving, saveCurrentImageToDatabase]);
 
   // Save all annotations from all images into a single COCO file
   const saveAllAnnotations = async () => {
@@ -2096,12 +2636,15 @@ const ImageAnnotation = () => {
             const maxY = Math.max(...ys);
             const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
 
+            // Calculate actual polygon area using the same method as altitude script
+            const polygonArea = calculatePolygonArea(ann.points);
+
             annotationsArr.push({
               id: annId++,
               image_id: imageId,
               category_id: categoryId,
               segmentation: [segmentation],
-              area: (maxX - minX) * (maxY - minY),
+              area: polygonArea,
               bbox: [minX, minY, maxX - minX, maxY - minY],
               iscrowd: 0
             });
@@ -2196,6 +2739,91 @@ const ImageAnnotation = () => {
     toast({ title: 'Annotations cleared', description: `Removed ${removed} saved annotation file(s) from localStorage` });
   };
 
+  // Delete annotations for current image only
+  const deleteCurrentImageAnnotations = async () => {
+    if (!currentImageName || !id) return;
+    
+    const confirmed = window.confirm(`Delete all annotations for "${currentImageName}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    const deletedCount = annotations.length;
+
+    // Remove from localStorage
+    const storageKey = `annotations_${id}_${currentImageName}`;
+    localStorage.removeItem(storageKey);
+
+    // Also update sessionStorage COCO data to remove annotations for this image
+    try {
+      const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+      if (annotationFileRef) {
+        const fileData = JSON.parse(annotationFileRef);
+        const cocoData = fileData.cocoData;
+        
+        if (cocoData && cocoData.annotations && cocoData.images) {
+          // Find the image ID for this image name
+          const imageEntry = cocoData.images.find((img: any) => img.file_name === currentImageName);
+          if (imageEntry) {
+            // Remove all annotations for this image from COCO data
+            cocoData.annotations = cocoData.annotations.filter((ann: any) => ann.image_id !== imageEntry.id);
+            
+            // Save back to sessionStorage
+            fileData.cocoData = cocoData;
+            sessionStorage.setItem(`annotation_file_${id}`, JSON.stringify(fileData));
+            console.log(`Removed annotations for ${currentImageName} from sessionStorage COCO data`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not update sessionStorage:', e);
+    }
+
+    // Clear in-memory annotations
+    setAnnotations([]);
+    
+    // Update class counts
+    const countsByName: { [name: string]: number } = {};
+    annotations.forEach((a: any) => {
+      countsByName[a.label] = (countsByName[a.label] || 0) + 1;
+    });
+    
+    setClasses(prev => {
+      const updated = prev.map(c => ({
+        ...c,
+        count: Math.max(0, c.count - (countsByName[c.name] || 0))
+      }));
+      saveGlobalClasses(updated);
+      return updated;
+    });
+
+    // Save deletion to database if in edit mode
+    if (annotationId) {
+      const saveSuccess = await saveCurrentImageToDatabase();
+      if (saveSuccess) {
+        // Recompute global stats after successful database save
+        await computeGlobalStats();
+        setHasUnsavedChanges(false);
+        lastSaveTimeRef.current = Date.now();
+        toast({ 
+          title: 'Annotations deleted', 
+          description: `Removed ${deletedCount} annotation(s) from "${currentImageName}" and saved to database` 
+        });
+      } else {
+        toast({ 
+          title: 'Deletion saved locally', 
+          description: `Removed ${deletedCount} annotation(s) but failed to save to database. Please try saving manually.`,
+          variant: 'destructive'
+        });
+      }
+    } else {
+      // Recompute global stats even if not in edit mode
+      await computeGlobalStats();
+      toast({ 
+        title: 'Annotations deleted', 
+        description: `Removed ${deletedCount} annotation(s) from "${currentImageName}"` 
+      });
+    }
+  };
+
   const handleBack = () => {
     const backUrl = projectId 
       ? `/projects/${projectId}/datasets/${id}` 
@@ -2203,13 +2831,52 @@ const ImageAnnotation = () => {
     navigate(backUrl);
   };
 
-  const navigateImage = useCallback((direction: 'prev' | 'next') => {
+  const navigateImage = useCallback(async (direction: 'prev' | 'next') => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (imageList.length === 0) return;
+    
+    // Save current image annotations to localStorage and database before navigating
+    if (currentImageName) {
+      const storageKey = `annotations_${id}_${currentImageName}`;
+      // Try to update localStorage - but don't fail if quota exceeded
+      try {
+        if (annotations.length > 0) {
+          safeLocalStorageSet(storageKey, JSON.stringify(annotations));
+        } else {
+          localStorage.removeItem(storageKey);
+        }
+      } catch (e) {
+        if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+          console.warn('localStorage quota exceeded, relying on database save');
+        } else {
+          console.error('Error saving to localStorage:', e);
+        }
+      }
+      // Save to database if in edit mode and has changes
+      if (annotationId && hasUnsavedChanges) {
+        await saveCurrentImageToDatabase();
+        setHasUnsavedChanges(false);
+        lastSaveTimeRef.current = Date.now();
+      }
+    }
     
     const newIndex = direction === 'next' 
       ? Math.min(currentImageIndex + 1, imageList.length - 1)
       : Math.max(currentImageIndex - 1, 0);
+    
+    // Clean up localStorage - remove cached annotations for images that are far away (more than 5 images)
+    try {
+      for (let i = 0; i < imageList.length; i++) {
+        if (Math.abs(i - newIndex) > 5) {
+          const oldStorageKey = `annotations_${id}_${imageList[i]}`;
+          if (localStorage.getItem(oldStorageKey)) {
+            localStorage.removeItem(oldStorageKey);
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore cleanup errors
+    }
       
     setCurrentImageIndex(newIndex);
     const newImageName = imageList[newIndex];
@@ -2220,11 +2887,101 @@ const ImageAnnotation = () => {
     
     // Load annotations for the new image
     loadAnnotationsForImage(newImageName);
-  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage]);
+  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase]);
 
-  const goToImage = (index: number) => {
+  // Keyboard shortcuts: Arrow keys or A/D for previous/next image navigation
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ignore when typing in inputs
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+
+      // Left arrow or A key for previous image
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        navigateImage('prev');
+      }
+      // Right arrow or D key for next image
+      else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        navigateImage('next');
+      }
+    };
+
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [navigateImage]);
+
+  // Auto-save timer: check every 60 seconds if auto-save is needed
+  useEffect(() => {
+    if (!annotationId) return;
+
+    const interval = setInterval(() => {
+      autoSaveToDatabase();
+    }, 60000); // Check every 60 seconds
+
+    return () => clearInterval(interval);
+  }, [annotationId, autoSaveToDatabase]);
+
+  // Auto-save before navigating away from the page
+  useEffect(() => {
+    const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges && annotationId) {
+        // Try to save immediately
+        autoSaveToDatabase();
+        
+        // Show browser warning if there are unsaved changes
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges, annotationId, autoSaveToDatabase]);
+
+  const goToImage = async (index: number) => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (index >= 0 && index < imageList.length) {
+      // Save current image annotations to localStorage and database before navigating
+      if (currentImageName) {
+        const storageKey = `annotations_${id}_${currentImageName}`;
+        // Try to update localStorage - but don't fail if quota exceeded
+        try {
+          if (annotations.length > 0) {
+            safeLocalStorageSet(storageKey, JSON.stringify(annotations));
+          } else {
+            localStorage.removeItem(storageKey);
+          }
+        } catch (e) {
+          if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+            console.warn('localStorage quota exceeded, relying on database save');
+          } else {
+            console.error('Error saving to localStorage:', e);
+          }
+        }
+        // Save to database if in edit mode and has changes
+        if (annotationId && hasUnsavedChanges) {
+          await saveCurrentImageToDatabase();
+          setHasUnsavedChanges(false);
+          lastSaveTimeRef.current = Date.now();
+        }
+      }
+
+      // Clean up localStorage - remove cached annotations for images that are far away (more than 5 images)
+      try {
+        for (let i = 0; i < imageList.length; i++) {
+          if (Math.abs(i - index) > 5) {
+            const oldStorageKey = `annotations_${id}_${imageList[i]}`;
+            if (localStorage.getItem(oldStorageKey)) {
+              localStorage.removeItem(oldStorageKey);
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
       setCurrentImageIndex(index);
       const newImageName = imageList[index];
       setCurrentImageName(newImageName);
@@ -2234,6 +2991,82 @@ const ImageAnnotation = () => {
       
       // Load annotations for the new image
       loadAnnotationsForImage(newImageName);
+      
+      // Pre-load annotations for next 2 images in the background
+      setTimeout(() => {
+        for (let i = 1; i <= 2; i++) {
+          const nextIndex = index + i;
+          if (nextIndex < imageList.length) {
+            const nextImageName = imageList[nextIndex];
+            const storageKey = `annotations_${id}_${nextImageName}`;
+            
+            // Only pre-load if not already in localStorage
+            if (!localStorage.getItem(storageKey)) {
+              try {
+                const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+                if (annotationFileRef) {
+                  const fileData = JSON.parse(annotationFileRef);
+                  const cocoData = fileData.cocoData;
+                  
+                  // Find and cache annotations for this image
+                  const imageEntry = cocoData.images?.find((img: any) => img.file_name === nextImageName);
+                  if (imageEntry) {
+                    const imageAnnotations: any[] = [];
+                    const categoryIdToName: { [id: string]: string } = {};
+                    const categoryIdToColor: { [id: string]: string } = {};
+                    
+                    cocoData.categories?.forEach((cat: any, idx: number) => {
+                      categoryIdToName[cat.id.toString()] = cat.name;
+                      categoryIdToColor[cat.id.toString()] = DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+                    });
+                    
+                    cocoData.annotations?.forEach((annotation: any) => {
+                      if (annotation.image_id === imageEntry.id && annotation.segmentation && annotation.segmentation[0]) {
+                        const segmentation = annotation.segmentation[0];
+                        if (segmentation.length >= 6) {
+                          const points = [];
+                          
+                          // Detect and fix abnormally large coordinates
+                          const firstX = segmentation[0];
+                          const firstY = segmentation[1];
+                          const isAbnormallyLarge = firstX > 10000 || firstY > 10000;
+                          const scaleFactor = isAbnormallyLarge && imageEntry.width && imageEntry.height
+                            ? { x: imageEntry.width, y: imageEntry.height }
+                            : { x: 1, y: 1 };
+                          
+                          for (let j = 0; j < segmentation.length; j += 2) {
+                            points.push({ 
+                              x: segmentation[j] / scaleFactor.x, 
+                              y: segmentation[j + 1] / scaleFactor.y 
+                            });
+                          }
+                          const className = categoryIdToName[annotation.category_id.toString()];
+                          imageAnnotations.push({
+                            id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            type: 'polygon',
+                            points,
+                            label: className,
+                            color: categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0],
+                            visible: true
+                          });
+                        }
+                      }
+                    });
+                    
+                    if (imageAnnotations.length > 0) {
+                      safeLocalStorageSet(storageKey, JSON.stringify(imageAnnotations));
+                      console.log(`Pre-loaded ${imageAnnotations.length} annotations for ${nextImageName}`);
+                    }
+                  }
+                }
+              } catch (e) {
+                // Silently fail pre-loading
+                console.warn(`Could not pre-load annotations for ${nextImageName}:`, e);
+              }
+            }
+          }
+        }
+      }, 100);
     }
   };
 
@@ -2361,15 +3194,51 @@ const ImageAnnotation = () => {
           </Button>
           
           {annotationId && (
-            <Button 
-              onClick={updateDatabaseAnnotations} 
-              disabled={!hasAnyAnnotationsStored}
-              title="Update database annotation with current annotations"
-              variant="secondary"
-            >
-              <Save className="w-4 h-4 mr-2" />
-              Update Database
-            </Button>
+            <>
+              <Button 
+                onClick={async () => {
+                  const success = await saveCurrentImageToDatabase();
+                  if (success) {
+                    setHasUnsavedChanges(false);
+                    lastSaveTimeRef.current = Date.now();
+                    toast({ 
+                      title: 'Saved', 
+                      description: `Changes for "${currentImageName}" saved to database` 
+                    });
+                  } else {
+                    toast({ 
+                      title: 'Save failed', 
+                      description: 'Failed to save changes to database',
+                      variant: 'destructive'
+                    });
+                  }
+                }}
+                disabled={!currentImageName || annotations.length === 0}
+                title="Save current image annotations to database"
+                variant="secondary"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Save Changes
+              </Button>
+              
+              {isAutoSaving && (
+                <span className="text-sm text-muted-foreground animate-pulse">
+                  Auto-saving...
+                </span>
+              )}
+              
+              {!isAutoSaving && hasUnsavedChanges && (
+                <span className="text-sm text-yellow-600">
+                  Unsaved changes
+                </span>
+              )}
+              
+              {!isAutoSaving && !hasUnsavedChanges && annotationId && (
+                <span className="text-sm text-green-600">
+                  All saved
+                </span>
+              )}
+            </>
           )}
           
           <Button
@@ -2602,7 +3471,7 @@ const ImageAnnotation = () => {
                 />
                 <canvas
                   ref={canvasRef}
-                  className="absolute cursor-crosshair w-full h-full"
+                  className={`absolute w-full h-full ${activeTool === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
                   onMouseDown={handleCanvasMouseDown}
                   onMouseMove={handleCanvasMouseMove}
                   onMouseUp={handleCanvasMouseUp}
@@ -2823,7 +3692,7 @@ const ImageAnnotation = () => {
 
           {/* Panel Content */}
           <div className="flex-1 flex flex-col min-h-0 bg-gray-900">
-            <Tabs value={undefined} className="h-full flex flex-col" defaultValue="annotations">
+            <Tabs value={activePanelTab} onValueChange={setActivePanelTab} className="h-full flex flex-col">
               {/* Tab Navigation */}
               <div className="border-b border-gray-700 bg-gray-850">
                 <TabsList className="grid grid-cols-2 w-full bg-transparent border-0 p-1">
@@ -2845,9 +3714,23 @@ const ImageAnnotation = () => {
               {/* Annotations Tab */}
               <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
                 <div className="p-3 border-b border-gray-700 bg-gray-850">
-                  <div className="flex items-center justify-between text-xs text-gray-400">
-                    <span>Current Image Annotations</span>
-                    <span className="bg-gray-700 px-2 py-1 rounded text-gray-300">{annotations.length}</span>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <span>Current Image Annotations</span>
+                      <span className="bg-gray-700 px-2 py-1 rounded text-gray-300">{annotations.length}</span>
+                    </div>
+                    {annotations.length > 0 && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={deleteCurrentImageAnnotations}
+                        title="Delete all annotations for this image"
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />
+                        Delete All
+                      </Button>
+                    )}
                   </div>
                 </div>
                 
@@ -2862,7 +3745,7 @@ const ImageAnnotation = () => {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {annotations.map((annotation) => {
+                      {annotations.map((annotation, index) => {
                         return (
                         <div 
                           key={annotation.id}
@@ -2929,19 +3812,13 @@ const ImageAnnotation = () => {
                                         setEditingAnnotationLabel(cls ? cls.id : ''); 
                                       }}
                                     >
-                                      {annotation.label}
+                                      #{index + 1} {annotation.label}
                                     </p>
                                     <div className="flex items-center gap-2 mt-1">
-                                      <span className="text-xs text-gray-500 capitalize">{annotation.type}</span>
-                                      <span className="text-xs text-gray-600">•</span>
-                                      <span className="text-xs text-gray-500">ID: {annotation.id.slice(0, 8)}</span>
                                       {annotation.type === 'polygon' && annotation.points && annotation.points.length >= 3 && (
-                                        <>
-                                          <span className="text-xs text-gray-600">•</span>
-                                          <span className="text-xs text-blue-400" title="Area in image coordinates">
-                                            Area: {formatArea(calculatePolygonArea(annotation.points))}
-                                          </span>
-                                        </>
+                                        <span className="text-xs text-blue-400" title="Area in image coordinates">
+                                          Area: {formatArea(calculatePolygonArea(annotation.points))}
+                                        </span>
                                       )}
                                     </div>
                                   </div>
@@ -2962,6 +3839,7 @@ const ImageAnnotation = () => {
                                       ? { ...a, visible: !a.visible }
                                       : a
                                   ));
+                                  setHasUnsavedChanges(true);
                                 }}
                                 title={annotation.visible ? "Hide annotation" : "Show annotation"}
                               >
@@ -3044,6 +3922,7 @@ const ImageAnnotation = () => {
                             {classes.map(c => {
                               const count = globalStats[c.name] || 0;
                               const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
+                              const avgArea = globalAvgAreas[c.name] || 0;
                               return (
                                 <div key={c.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
                                   <div className="flex items-center justify-between mb-2">
@@ -3056,10 +3935,15 @@ const ImageAnnotation = () => {
                                     </div>
                                     <div className="text-sm text-gray-300 font-medium">{count}</div>
                                   </div>
-                                  <div className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center justify-between text-xs mb-1">
                                     <span className="text-gray-500">{c.visible ? 'Visible' : 'Hidden'}</span>
                                     <span className="text-gray-500">{pct}% of total</span>
                                   </div>
+                                  {avgArea > 0 && (
+                                    <div className="text-xs text-blue-400 mb-1" title="Average area of annotations">
+                                      Avg area: {formatArea(avgArea)}
+                                    </div>
+                                  )}
                                   {/* Progress bar */}
                                   <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
                                     <div 

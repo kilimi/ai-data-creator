@@ -153,9 +153,9 @@ class Annotation(Base):
     annotation_file_id = Column(String, ForeignKey("annotation_files.id"), nullable=True, index=True)  # Link to annotation file
     image_id = Column(Integer, ForeignKey("images.id"), index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
-    coco_image_id = Column(Integer, nullable=True)  # Original COCO image ID
-    coco_annotation_id = Column(Integer, nullable=True)  # Original COCO annotation ID
-    category_id = Column(Integer, nullable=True)  # COCO category ID
+    coco_image_id = Column(Integer, nullable=True, index=True)  # Original COCO image ID
+    coco_annotation_id = Column(Integer, nullable=True, index=True)  # Original COCO annotation ID
+    category_id = Column(Integer, nullable=True, index=True)  # COCO category ID
     category = Column(String, index=True)  # Class name
     bbox_x = Column(Float, nullable=True)  # Normalized bbox coordinates
     bbox_y = Column(Float, nullable=True)
@@ -178,9 +178,9 @@ class Task(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     description = Column(Text, nullable=True)
-    task_type = Column(String)  # 'augmentation', 'training', 'inference', etc.
-    status = Column(String, default='pending')  # 'pending', 'running', 'completed', 'failed'
-    project_id = Column(Integer, ForeignKey("projects.id"))
+    task_type = Column(String, index=True)  # 'augmentation', 'training', 'inference', etc.
+    status = Column(String, default='pending', index=True)  # 'pending', 'running', 'completed', 'failed'
+    project_id = Column(Integer, ForeignKey("projects.id"), index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
@@ -198,15 +198,16 @@ class AnnotationFile(Base):
     id = Column(String, primary_key=True, index=True)  # Use string ID to match frontend
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
     name = Column(String, index=True)
-    format = Column(String, default='COCO')  # COCO, YOLO, etc.
-    type = Column(String, nullable=True)  # classification, segmentation, depth
+    format = Column(String, default='COCO', index=True)  # COCO, YOLO, etc.
+    type = Column(String, nullable=True, index=True)  # classification, segmentation, depthation, depth
     _tags = Column('tags', JSON, default=list)  # Store tags as JSON
     file_size = Column(Integer, nullable=True)
     annotation_count = Column(Integer, default=0)
     image_count = Column(Integer, default=0)
     category_count = Column(Integer, default=0)
-    is_processed = Column(Boolean, default=False)  # Whether file has been processed into DB
-    processing_status = Column(String, default='pending')  # pending, processing, completed, failed
+    statistics = Column(JSON, nullable=True)  # Per-class annotation counts and average areas
+    is_processed = Column(Boolean, default=False, index=True)  # Whether file has been processed into DB
+    processing_status = Column(String, default='pending', index=True)  # pending, processing, completed, failed
     error_message = Column(Text, nullable=True)  # Error message if processing failed
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -274,9 +275,9 @@ class Augmentation(Base):
     __tablename__ = "augmentations"
 
     id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"), unique=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), unique=True, index=True)
     source_dataset_ids = Column(JSON)  # List of source dataset IDs
-    target_dataset_id = Column(Integer, ForeignKey("datasets.id"))
+    target_dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
     augmentation_methods = Column(JSON)  # List of augmentation method names
     method_parameters = Column(JSON)  # Parameters for each augmentation method
     augmentation_factor = Column(String, default='2')  # How many augmented images per original
@@ -294,7 +295,7 @@ class DatasetGroup(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     description = Column(Text, nullable=True)
-    project_id = Column(Integer, ForeignKey("projects.id"))
+    project_id = Column(Integer, ForeignKey("projects.id"), index=True)
     dataset_ids = Column(JSON, default=list)  # List of dataset IDs in this group
     url = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

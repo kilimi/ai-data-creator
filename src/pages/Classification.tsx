@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,6 +105,7 @@ export default function Classification() {
   const loadFromAnnotationFile = useCallback(async (annotationFileId: string) => {
     try {
       console.log('Loading classification data from annotation file:', annotationFileId);
+      console.log('Current images array length:', images.length);
       
       // First try to load from saved_annotations localStorage
       const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
@@ -133,6 +134,9 @@ export default function Classification() {
             filenameToImageId[img.fileName] = img.id;
           });
           
+          console.log('[localStorage] Created filename mapping with', Object.keys(filenameToImageId).length, 'entries');
+          console.log('[localStorage] Sample filenames from images:', images.slice(0, 3).map(img => img.fileName));
+          
           // Map annotations to classifications
           if (cocoData.annotations && cocoData.images) {
             // Create image ID to filename mapping from COCO data
@@ -147,7 +151,14 @@ export default function Classification() {
               categoryIdToName[cat.id.toString()] = cat.name;
             });
             
+            console.log('[localStorage] Processing annotations:', cocoData.annotations.length);
+            console.log('[localStorage] COCO images count:', cocoData.images.length, 'Loaded images count:', images.length);
+            console.log('[localStorage] Category mapping:', categoryIdToName);
+            console.log('[localStorage] Sample COCO filenames:', cocoData.images.slice(0, 3).map((img: any) => img.file_name));
+            
             // Process annotations
+            let matchedCount = 0;
+            let unmatchedCount = 0;
             cocoData.annotations.forEach((annotation: any) => {
               const cocoImageId = annotation.image_id.toString();
               const filename = cocoImageIdToFilename[cocoImageId];
@@ -155,14 +166,29 @@ export default function Classification() {
               const className = categoryIdToName[annotation.category_id.toString()];
               
               if (actualImageId && className) {
+                matchedCount++;
                 if (!newClassifications[actualImageId]) {
                   newClassifications[actualImageId] = [];
                 }
                 if (!newClassifications[actualImageId].includes(className)) {
                   newClassifications[actualImageId].push(className);
                 }
+              } else {
+                unmatchedCount++;
+                if (unmatchedCount <= 5) {
+                  console.log('[localStorage] Unmatched annotation:', {
+                    cocoImageId,
+                    filename,
+                    actualImageId,
+                    className,
+                    category_id: annotation.category_id
+                  });
+                }
               }
             });
+            
+            console.log('[localStorage] Matched:', matchedCount, 'Unmatched:', unmatchedCount);
+            console.log('[localStorage] After processing, classifications count:', Object.keys(newClassifications).length);
           }
           
           // Update state
@@ -197,13 +223,30 @@ export default function Classification() {
           const response = await api.getAnnotationContent(id!, annotationFileId);
           if (response.success && response.data.content) {
             console.log('Loading annotation from backend');
+            console.log('Content length:', response.data.content.length, 'bytes');
             
             // Set annotation name if available
             if (annotationResponse.success && annotationResponse.data?.file_name) {
               setAnnotationName(annotationResponse.data.file_name);
             }
             
-            const cocoData = JSON.parse(response.data.content);
+            let cocoData;
+            try {
+              cocoData = JSON.parse(response.data.content);
+              console.log('Parsed COCO data successfully');
+              console.log('Has images:', !!cocoData.images, 'count:', cocoData.images?.length);
+              console.log('Has annotations:', !!cocoData.annotations, 'count:', cocoData.annotations?.length);
+              console.log('Has categories:', !!cocoData.categories, 'count:', cocoData.categories?.length);
+            } catch (parseError) {
+              console.error('Failed to parse annotation content:', parseError);
+              console.log('Content preview (first 500 chars):', response.data.content.substring(0, 500));
+              toast({
+                title: "Error",
+                description: "Failed to parse annotation file",
+                variant: "destructive",
+              });
+              return false;
+            }
             const newClassifications: ClassificationData = {};
             const classSet = new Set<string>();
             
@@ -220,6 +263,9 @@ export default function Classification() {
               filenameToImageId[img.fileName] = img.id;
             });
             
+            console.log('[backend] Created filename mapping with', Object.keys(filenameToImageId).length, 'entries');
+            console.log('[backend] Sample filenames from images:', images.slice(0, 3).map(img => img.fileName));
+            
             // Map annotations to classifications (similar logic as above)
             if (cocoData.annotations && cocoData.images) {
               const cocoImageIdToFilename: { [id: string]: string } = {};
@@ -232,6 +278,13 @@ export default function Classification() {
                 categoryIdToName[cat.id.toString()] = cat.name;
               });
               
+              console.log('[backend] Processing annotations:', cocoData.annotations.length);
+              console.log('[backend] COCO images count:', cocoData.images.length, 'Loaded images count:', images.length);
+              console.log('[backend] Category mapping:', categoryIdToName);
+              console.log('[backend] Sample COCO filenames:', cocoData.images.slice(0, 3).map((img: any) => img.file_name));
+              
+              let matchedCount = 0;
+              let unmatchedCount = 0;
               cocoData.annotations.forEach((annotation: any) => {
                 const cocoImageId = annotation.image_id.toString();
                 const filename = cocoImageIdToFilename[cocoImageId];
@@ -239,14 +292,29 @@ export default function Classification() {
                 const className = categoryIdToName[annotation.category_id.toString()];
                 
                 if (actualImageId && className) {
+                  matchedCount++;
                   if (!newClassifications[actualImageId]) {
                     newClassifications[actualImageId] = [];
                   }
                   if (!newClassifications[actualImageId].includes(className)) {
                     newClassifications[actualImageId].push(className);
                   }
+                } else {
+                  unmatchedCount++;
+                  if (unmatchedCount <= 5) {
+                    console.log('[backend] Unmatched annotation:', {
+                      cocoImageId,
+                      filename,
+                      actualImageId,
+                      className,
+                      category_id: annotation.category_id
+                    });
+                  }
                 }
               });
+              
+              console.log('[backend] Matched:', matchedCount, 'Unmatched:', unmatchedCount);
+              console.log('[backend] After processing, classifications count:', Object.keys(newClassifications).length);
             }
             
             const loadedClasses = Array.from(classSet);
@@ -328,15 +396,8 @@ export default function Classification() {
         
         // Load existing classifications from optimized storage or annotation file
         if (annotationId) {
-          // If we have an annotation ID, load from that annotation file
-          console.log('Loading from annotation file:', annotationId);
-          // Wait for images to be loaded first
-          if (images.length > 0) {
-            await loadFromAnnotationFile(annotationId);
-          } else {
-            // If images aren't loaded yet, we'll load from annotation in a separate effect
-            console.log('Images not loaded yet, will load annotation data after images');
-          }
+          // If we have an annotation ID, it will be loaded in a separate useEffect that waits for images
+          console.log('Annotation ID detected:', annotationId, '- will load after images are ready');
         } else if (storage) {
         // Otherwise load from storage as usual
         console.log('Loading classifications from storage');
@@ -412,12 +473,21 @@ export default function Classification() {
   }, [id, api, isConfigured, toast, annotationId]);
 
   // Load annotation data when images are loaded and we have an annotationId
+  // Use ref to track if we've already loaded to prevent infinite loops
+  const annotationLoadedRef = useRef(false);
+  
   useEffect(() => {
-    if (annotationId && images.length > 0 && Object.keys(classifications).length === 0) {
-      console.log('Loading annotation data after images loaded');
+    if (annotationId && images.length > 0 && !annotationLoadedRef.current) {
+      console.log('Loading annotation data after images loaded, images count:', images.length);
+      annotationLoadedRef.current = true;
       loadFromAnnotationFile(annotationId);
     }
-  }, [annotationId, images, classifications, loadFromAnnotationFile]);
+  }, [annotationId, images, loadFromAnnotationFile]);
+  
+  // Reset the ref when annotationId changes
+  useEffect(() => {
+    annotationLoadedRef.current = false;
+  }, [annotationId]);
 
   // Load class colors from localStorage
   useEffect(() => {

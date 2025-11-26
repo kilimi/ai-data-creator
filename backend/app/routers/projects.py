@@ -58,12 +58,42 @@ async def create_project(
 @router.get("/projects/", response_model=list[schemas.Project])
 def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     try:
-        projects = db.query(models.Project).offset(skip).limit(limit).all()
+        from sqlalchemy import func
+        from sqlalchemy.orm import selectinload
+        
+        # Use eager loading to prevent N+1 queries
+        projects = db.query(models.Project).options(
+            selectinload(models.Project.datasets)
+        ).offset(skip).limit(limit).all()
+        
         result = []
         for p in projects:
-            # Serialize datasets with correct annotation counts
+            # Serialize datasets with efficient count queries
             datasets = []
             if p.datasets:
+                # Get all dataset IDs for this project
+                dataset_ids = [d.id for d in p.datasets]
+                
+                # Efficient count queries for annotations
+                annotation_counts = dict(
+                    db.query(
+                        models.Annotation.dataset_id,
+                        func.count(models.Annotation.id)
+                    ).filter(
+                        models.Annotation.dataset_id.in_(dataset_ids)
+                    ).group_by(models.Annotation.dataset_id).all()
+                )
+                
+                # Efficient count queries for annotation files
+                annotation_file_counts = dict(
+                    db.query(
+                        models.AnnotationFile.dataset_id,
+                        func.count(models.AnnotationFile.id)
+                    ).filter(
+                        models.AnnotationFile.dataset_id.in_(dataset_ids)
+                    ).group_by(models.AnnotationFile.dataset_id).all()
+                )
+                
                 for dataset in p.datasets:
                     datasets.append({
                         "id": dataset.id,
@@ -73,8 +103,8 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                         "created_at": dataset.created_at,
                         "updated_at": dataset.updated_at,
                         "image_count": dataset.image_count,
-                        "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
-                        "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+                        "annotation_count": annotation_counts.get(dataset.id, 0),
+                        "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
                         "project_id": dataset.project_id,
                         "thumbnailUrl": dataset.thumbnailUrl,
                         "logo_url": dataset.logo_url,
@@ -100,13 +130,42 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @router.get("/projects/{project_id}", response_model=schemas.Project)
 def read_project(project_id: int, db: Session = Depends(get_db)):
-    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    from sqlalchemy import func
+    from sqlalchemy.orm import selectinload
+    
+    project = db.query(models.Project).options(
+        selectinload(models.Project.datasets)
+    ).filter(models.Project.id == project_id).first()
+    
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    # Serialize datasets with correct annotation counts
+    # Serialize datasets with efficient count queries
     datasets = []
     if project.datasets:
+        # Get all dataset IDs for this project
+        dataset_ids = [d.id for d in project.datasets]
+        
+        # Efficient count queries for annotations
+        annotation_counts = dict(
+            db.query(
+                models.Annotation.dataset_id,
+                func.count(models.Annotation.id)
+            ).filter(
+                models.Annotation.dataset_id.in_(dataset_ids)
+            ).group_by(models.Annotation.dataset_id).all()
+        )
+        
+        # Efficient count queries for annotation files
+        annotation_file_counts = dict(
+            db.query(
+                models.AnnotationFile.dataset_id,
+                func.count(models.AnnotationFile.id)
+            ).filter(
+                models.AnnotationFile.dataset_id.in_(dataset_ids)
+            ).group_by(models.AnnotationFile.dataset_id).all()
+        )
+        
         for dataset in project.datasets:
             datasets.append({
                 "id": dataset.id,
@@ -116,8 +175,8 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
                 "created_at": dataset.created_at,
                 "updated_at": dataset.updated_at,
                 "image_count": dataset.image_count,
-                "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
-                "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+                "annotation_count": annotation_counts.get(dataset.id, 0),
+                "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
                 "project_id": dataset.project_id,
                 "thumbnailUrl": dataset.thumbnailUrl,
                 "logo_url": dataset.logo_url,

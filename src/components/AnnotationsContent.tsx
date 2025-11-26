@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
@@ -176,6 +176,7 @@ export function AnnotationsContent({
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
+  const [downloadImagesDialog, setDownloadImagesDialog] = useState<{ isOpen: boolean; annotationId: string; categories: Array<{ id: number; name: string }> }>({ isOpen: false, annotationId: '', categories: [] });
   
   // New state for smart annotation loading
   const [loadingAnnotations, setLoadingAnnotations] = useState<Set<string>>(new Set());
@@ -2188,6 +2189,198 @@ export function AnnotationsContent({
       toast({
         title: "Export failed",
         description: error instanceof Error ? error.message : "Failed to export annotation file.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDownloadImagesClick = async (annotationId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const file = annotationFiles.find(f => f.id === annotationId);
+    if (!file) {
+      toast({
+        title: "Error",
+        description: "Annotation file not found.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      if (api) {
+        // Get annotation content to extract categories
+        const contentResponse = await api.getAnnotationContent(id, file.id);
+        
+        if (!contentResponse || !contentResponse.success || !contentResponse.data.content) {
+          throw new Error('Failed to load annotation content from backend.');
+        }
+
+        const cocoData = JSON.parse(contentResponse.data.content);
+        
+        if (!cocoData.categories || cocoData.categories.length === 0) {
+          toast({
+            title: "No classes found",
+            description: "This annotation file has no classes defined.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Open dialog with categories
+        setDownloadImagesDialog({
+          isOpen: true,
+          annotationId: file.id,
+          categories: cocoData.categories
+        });
+
+      } else {
+        toast({
+          title: "Error",
+          description: "Backend connection not available.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error preparing download images:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to prepare image download.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDownloadImagesByClass = async (className: string) => {
+    const { annotationId } = downloadImagesDialog;
+    
+    try {
+      if (!api) {
+        throw new Error('Backend connection not available.');
+      }
+
+      toast({
+        title: "Preparing download...",
+        description: `Collecting images for class "${className}"...`,
+      });
+
+      // Get annotation content
+      const contentResponse = await api.getAnnotationContent(id, annotationId);
+      
+      if (!contentResponse || !contentResponse.success || !contentResponse.data.content) {
+        throw new Error('Failed to load annotation content from backend.');
+      }
+
+      const cocoData = JSON.parse(contentResponse.data.content);
+      
+      // Find category ID for the selected class
+      const category = cocoData.categories.find((cat: any) => cat.name === className);
+      if (!category) {
+        throw new Error(`Class "${className}" not found in annotation file.`);
+      }
+
+      // Get all image IDs that have this class
+      const imageIdsWithClass = new Set<number>();
+      cocoData.annotations.forEach((ann: any) => {
+        if (ann.category_id === category.id) {
+          imageIdsWithClass.add(ann.image_id);
+        }
+      });
+
+      if (imageIdsWithClass.size === 0) {
+        toast({
+          title: "No images found",
+          description: `No images have the class "${className}".`,
+          variant: "destructive",
+        });
+        setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [] });
+        return;
+      }
+
+      // Get filenames for these image IDs
+      const imageFilenames: string[] = [];
+      cocoData.images.forEach((img: any) => {
+        if (imageIdsWithClass.has(img.id)) {
+          imageFilenames.push(img.file_name);
+        }
+      });
+
+      // Create a mapping from filename to actual image URL
+      const filenameToImageUrl: { [filename: string]: string } = {};
+      images.forEach(img => {
+        filenameToImageUrl[img.fileName] = img.url;
+      });
+
+      // Download images as zip
+      toast({
+        title: "Downloading images...",
+        description: `Preparing ${imageFilenames.length} images for download...`,
+      });
+
+      // Create a zip file using JSZip
+      const JSZip = (await import('jszip')).default;
+      const zip = new JSZip();
+
+      // Fetch each image and add to zip
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const filename of imageFilenames) {
+        try {
+          // Get the actual image URL from the loaded images
+          const imageUrl = filenameToImageUrl[filename];
+          
+          if (!imageUrl) {
+            console.warn(`No URL found for ${filename}`);
+            failCount++;
+            continue;
+          }
+          
+          const response = await fetch(imageUrl);
+          if (!response.ok) {
+            console.warn(`Failed to fetch ${filename} from ${imageUrl}`);
+            failCount++;
+            continue;
+          }
+
+          const blob = await response.blob();
+          zip.file(filename, blob);
+          successCount++;
+        } catch (error) {
+          console.error(`Error fetching ${filename}:`, error);
+          failCount++;
+        }
+      }
+
+      if (successCount === 0) {
+        throw new Error('Failed to download any images. Make sure images are loaded in the dataset.');
+      }
+
+      // Generate zip file
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      
+      // Download zip file
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${className}_images.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Download completed",
+        description: `Downloaded ${successCount} images${failCount > 0 ? ` (${failCount} failed)` : ''}.`,
+      });
+
+      setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [] });
+
+    } catch (error) {
+      console.error('Error downloading images:', error);
+      toast({
+        title: "Download failed",
+        description: error instanceof Error ? error.message : "Failed to download images.",
         variant: "destructive",
       });
     }
@@ -4448,6 +4641,15 @@ export function AnnotationsContent({
                          <Button 
                            variant="ghost" 
                            size="icon" 
+                           className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                           onClick={(e) => handleDownloadImagesClick(file.id, e)}
+                           title="Download images by class"
+                         >
+                           <ImageDown className="h-4 w-4" />
+                         </Button>
+                         <Button 
+                           variant="ghost" 
+                           size="icon" 
                            className="h-8 w-8 text-muted-foreground hover:text-green-400"
                            onClick={(e) => handleDownloadAnnotation(file.id, e)}
                            title="Download annotation file"
@@ -4527,7 +4729,37 @@ export function AnnotationsContent({
               </div>
             );
           })
-        }        
+        }
+        
+        {/* Download Images Dialog */}
+        <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [] })}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Download Images by Class</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <p className="text-sm text-muted-foreground">
+                Select a class to download all images that have that classification:
+              </p>
+              <ScrollArea className="max-h-96">
+                <div className="space-y-2">
+                  {downloadImagesDialog.categories.map((category) => (
+                    <Button
+                      key={category.id}
+                      variant="outline"
+                      className="w-full justify-start"
+                      onClick={() => handleDownloadImagesByClass(category.name)}
+                    >
+                      <Tag className="h-4 w-4 mr-2" />
+                      {category.name}
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+          </DialogContent>
+        </Dialog>
+        
         {annotationFiles.length === 0 && (
           <div className="flex flex-col items-center justify-center text-center p-8">
             <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">

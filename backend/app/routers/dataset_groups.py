@@ -110,6 +110,13 @@ async def get_dataset_groups(
             datasets = db.query(models.Dataset).filter(
                 models.Dataset.id.in_(group.datasets_list)
             ).all()
+            
+            # Clean up deleted datasets from the group
+            existing_dataset_ids = [d.id for d in datasets]
+            if set(existing_dataset_ids) != set(group.datasets_list):
+                # Some datasets were deleted, update the group
+                group.dataset_ids = existing_dataset_ids
+                db.commit()
         
         group_data = {
             "id": group.id,
@@ -160,6 +167,14 @@ async def get_dataset_group(
         datasets = db.query(models.Dataset).filter(
             models.Dataset.id.in_(group.datasets_list)
         ).all()
+        
+        # Clean up deleted datasets from the group
+        existing_dataset_ids = [d.id for d in datasets]
+        if set(existing_dataset_ids) != set(group.datasets_list):
+            # Some datasets were deleted, update the group
+            group.dataset_ids = existing_dataset_ids
+            db.commit()
+            db.refresh(group)
     
     group_data = {
         "id": group.id,
@@ -234,10 +249,13 @@ async def update_dataset_group(
             models.Dataset.project_id == group.project_id
         ).all()
         
-        if len(datasets) != len(dataset_id_list):
-            raise HTTPException(status_code=400, detail="Some datasets not found or don't belong to this project")
+        # Filter to only existing datasets (ignore deleted ones)
+        existing_dataset_ids = [d.id for d in datasets]
+        if not existing_dataset_ids:
+            raise HTTPException(status_code=400, detail="At least one valid dataset must be selected")
         
-        group.datasets_list = dataset_id_list
+        # Use only the existing dataset IDs
+        group.datasets_list = existing_dataset_ids
     
     db.commit()
     db.refresh(group)

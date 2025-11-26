@@ -182,6 +182,14 @@ async def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
             print(f"Warning: Could not delete some physical files: {file_error}")
             # Continue with database deletion even if file deletion fails
         
+        # Remove this dataset from any dataset groups it belongs to
+        groups = db.query(models.DatasetGroup).all()
+        for group in groups:
+            if group.datasets_list and dataset_id in group.datasets_list:
+                # Remove the dataset from the group's list
+                updated_ids = [id for id in group.datasets_list if id != dataset_id]
+                group.dataset_ids = updated_ids
+        
         # Delete the dataset record (this will cascade delete images and annotations)
         db.delete(dataset)
         db.commit()
@@ -1360,40 +1368,53 @@ async def get_dataset_annotation_content(
             # Add annotations
             if include_annotations:
                 for ann in annotations_response["data"]["annotations"]:
-                    if ann["bbox"] and len(ann["bbox"]) == 4:
+                    image_id = ann["imageId"]
+                    
+                    # Build base annotation
+                    coco_ann = {
+                        "id": ann.get("cocoAnnotationId", ann["id"]),
+                        "image_id": image_id_map.get(image_id, 1) if include_images else ann["imageId"],
+                        "category_id": category_id_map.get(ann["className"], 1)
+                    }
+                    
+                    # Handle bbox and segmentation (detection/segmentation annotations)
+                    if ann.get("bbox") and len(ann["bbox"]) == 4:
+                        # Find the image for dimensions
+                        image = next((img for img in images if img.id == image_id), None) if include_images else None
+                        
                         # Convert normalized bbox back to pixel coordinates if we have image dimensions
-                        image_id = ann["imageId"]
-                        
-                        if include_images and image_id in image_id_map:
-                            # Find the image for dimensions
-                            image = next((img for img in images if img.id == image_id), None)
-                            if image:
-                                width = image.width or 1
-                                height = image.height or 1
-                                bbox = [
-                                    ann["bbox"][0] * width,   # x
-                                    ann["bbox"][1] * height,  # y  
-                                    ann["bbox"][2] * width,   # width
-                                    ann["bbox"][3] * height   # height
-                                ]
-                            else:
-                                bbox = ann["bbox"]  # Use as-is if no image found
-                        else:
-                            bbox = ann["bbox"]  # Use normalized bbox
-                        
-                        coco_ann = {
-                            "id": ann.get("cocoAnnotationId", ann["id"]),
-                            "image_id": image_id_map.get(image_id, 1) if include_images else ann["imageId"],
-                            "category_id": category_id_map.get(ann["className"], 1),
-                            "bbox": bbox,
-                            "area": ann.get("area", bbox[2] * bbox[3] if len(bbox) >= 4 else 0),
-                            "iscrowd": 0
-                        }
-                        
-                        if ann.get("segmentation"):
-                            coco_ann["segmentation"] = ann["segmentation"]
+                        if image and image.width and image.height:
+                            width = image.width
+                            height = image.height
+                            bbox = [
+                                ann["bbox"][0] * width,   # x
+                                ann["bbox"][1] * height,  # y  
+                                ann["bbox"][2] * width,   # width
+                                ann["bbox"][3] * height   # height
+                            ]
                             
-                        coco_data["annotations"].append(coco_ann)
+                            # Convert segmentation coordinates back to pixel coordinates
+                            if ann.get("segmentation"):
+                                pixel_segmentation = []
+                                for polygon in ann["segmentation"]:
+                                    pixel_polygon = []
+                                    for i in range(0, len(polygon), 2):
+                                        pixel_polygon.append(polygon[i] * width)      # x
+                                        pixel_polygon.append(polygon[i + 1] * height)  # y
+                                    pixel_segmentation.append(pixel_polygon)
+                                coco_ann["segmentation"] = pixel_segmentation
+                        else:
+                            # Use as-is if no image dimensions available
+                            bbox = ann["bbox"]
+                            if ann.get("segmentation"):
+                                coco_ann["segmentation"] = ann["segmentation"]
+                        
+                        coco_ann["bbox"] = bbox
+                        coco_ann["area"] = ann.get("area", bbox[2] * bbox[3] if len(bbox) >= 4 else 0)
+                        coco_ann["iscrowd"] = 0
+                    
+                    # Add annotation to list (works for both classification and detection/segmentation)
+                    coco_data["annotations"].append(coco_ann)
         
         content = json.dumps(coco_data, indent=2)
         
@@ -1570,6 +1591,9 @@ async def update_annotation_content(
         image_count = len(content_json.get('images', []))
         category_count = len(content_json.get('categories', []))
         
+        # Extract statistics if provided in the uploaded content
+        statistics = content_json.get('statistics', None)
+        
         # Clear existing annotations and create new ones
         db.query(models.Annotation).filter(
             models.Annotation.annotation_file_id == annotation_id
@@ -1586,6 +1610,7 @@ async def update_annotation_content(
         annotation_file.image_count = image_count
         annotation_file.category_count = category_count
         annotation_file.file_size = len(contents)
+        annotation_file.statistics = statistics  # Save statistics to database
         annotation_file.updated_at = datetime.utcnow()
         
         db.commit()
@@ -1601,6 +1626,110 @@ async def update_annotation_content(
         db.rollback()
         print(f"Error in update_annotation_content: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update annotation content: {str(e)}")
+
+
+@router.patch("/datasets/{dataset_id}/annotations/{annotation_id}/image/{image_name}")
+async def update_single_image_annotations(
+    dataset_id: int,
+    annotation_id: str,
+    image_name: str,
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """Update annotations for a single image within an annotation file"""
+    try:
+        # Validate annotation file exists
+        annotation_file = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        
+        if not annotation_file:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+
+        # Find the image by filename in the dataset
+        image = db.query(models.Image).filter(
+            models.Image.dataset_id == dataset_id,
+            models.Image.file_name == image_name
+        ).first()
+        
+        if not image:
+            raise HTTPException(status_code=404, detail=f"Image '{image_name}' not found in dataset")
+
+        # Get the annotations for this specific image from request
+        image_annotations = request.get('annotations', [])
+        image_width = request.get('image_width', 0)
+        image_height = request.get('image_height', 0)
+        
+        # Delete existing annotations for this image and annotation file
+        deleted_count = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_id,
+            models.Annotation.image_id == image.id
+        ).delete()
+        
+        # Insert new annotations for this image
+        annotation_count = 0
+        for ann_data in image_annotations:
+            annotation = models.Annotation(
+                annotation_file_id=annotation_id,
+                image_id=image.id,
+                dataset_id=dataset_id,
+                category_id=ann_data.get('category_id', 0),
+                category=ann_data.get('category_name', ''),
+                segmentation=ann_data.get('segmentation', []),
+                bbox=ann_data.get('bbox', []),
+                area=ann_data.get('area', 0.0)
+            )
+            db.add(annotation)
+            annotation_count += 1
+        
+        # Recompute statistics for this annotation file after update
+        all_annotations = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_id
+        ).all()
+        
+        # Calculate statistics by class
+        statistics = {}
+        class_areas = {}
+        class_counts = {}
+        
+        for ann in all_annotations:
+            class_name = ann.category
+            if class_name:
+                class_counts[class_name] = class_counts.get(class_name, 0) + 1
+                class_areas[class_name] = class_areas.get(class_name, 0) + (ann.area or 0)
+        
+        # Build statistics dictionary
+        for class_name, count in class_counts.items():
+            avg_area = class_areas[class_name] / count if count > 0 else 0
+            statistics[class_name] = {
+                "count": count,
+                "avgArea": avg_area
+            }
+        
+        # Update annotation file with new statistics and timestamp
+        annotation_file.statistics = statistics
+        annotation_file.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Updated {annotation_count} annotations for image '{image_name}' (deleted {deleted_count} old annotations)",
+            "image_name": image_name,
+            "annotations_added": annotation_count,
+            "annotations_removed": deleted_count,
+            "statistics": statistics
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Error in update_single_image_annotations: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update image annotations: {str(e)}")
 
 
 async def merge_annotation_files_task(

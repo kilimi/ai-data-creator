@@ -90,6 +90,120 @@ def add_performance_indexes():
             "table": "images",
             "columns": ["file_name"],
             "sql": "CREATE INDEX IF NOT EXISTS idx_images_filename ON images(file_name)"
+        },
+        {
+            "name": "idx_images_collection_id",
+            "table": "images",
+            "columns": ["collection_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_images_collection_id ON images(collection_id)"
+        },
+        
+        # Image collections indexes
+        {
+            "name": "idx_image_collections_dataset_id",
+            "table": "image_collections",
+            "columns": ["dataset_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_image_collections_dataset_id ON image_collections(dataset_id)"
+        },
+        {
+            "name": "idx_image_collections_default",
+            "table": "image_collections",
+            "columns": ["dataset_id", "is_default"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_image_collections_default ON image_collections(dataset_id, is_default)"
+        },
+        
+        # Task indexes
+        {
+            "name": "idx_tasks_project_id",
+            "table": "tasks",
+            "columns": ["project_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)"
+        },
+        {
+            "name": "idx_tasks_status",
+            "table": "tasks",
+            "columns": ["status"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
+        },
+        {
+            "name": "idx_tasks_status_created",
+            "table": "tasks",
+            "columns": ["status", "created_at"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_tasks_status_created ON tasks(status, created_at DESC)"
+        },
+        {
+            "name": "idx_tasks_project_status",
+            "table": "tasks",
+            "columns": ["project_id", "status"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status)"
+        },
+        
+        # Annotation file image indexes
+        {
+            "name": "idx_annotation_file_images_file_id",
+            "table": "annotation_file_images",
+            "columns": ["annotation_file_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotation_file_images_file_id ON annotation_file_images(annotation_file_id)"
+        },
+        {
+            "name": "idx_annotation_file_images_dataset_image_id",
+            "table": "annotation_file_images",
+            "columns": ["dataset_image_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotation_file_images_dataset_image_id ON annotation_file_images(dataset_image_id)"
+        },
+        {
+            "name": "idx_annotation_file_images_coco_id",
+            "table": "annotation_file_images",
+            "columns": ["coco_image_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotation_file_images_coco_id ON annotation_file_images(coco_image_id)"
+        },
+        
+        # Augmentation indexes
+        {
+            "name": "idx_augmentations_task_id",
+            "table": "augmentations",
+            "columns": ["task_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_augmentations_task_id ON augmentations(task_id)"
+        },
+        {
+            "name": "idx_augmentations_target_dataset",
+            "table": "augmentations",
+            "columns": ["target_dataset_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_augmentations_target_dataset ON augmentations(target_dataset_id)"
+        },
+        
+        # Dataset groups indexes
+        {
+            "name": "idx_dataset_groups_project_id",
+            "table": "dataset_groups",
+            "columns": ["project_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_dataset_groups_project_id ON dataset_groups(project_id)"
+        },
+        
+        # Additional composite indexes for common queries
+        {
+            "name": "idx_annotations_dataset_category",
+            "table": "annotations",
+            "columns": ["dataset_id", "category"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotations_dataset_category ON annotations(dataset_id, category)"
+        },
+        {
+            "name": "idx_annotations_image_category",
+            "table": "annotations",
+            "columns": ["image_id", "category"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotations_image_category ON annotations(image_id, category)"
+        },
+        {
+            "name": "idx_annotation_files_dataset_status",
+            "table": "annotation_files",
+            "columns": ["dataset_id", "processing_status"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotation_files_dataset_status ON annotation_files(dataset_id, processing_status)"
+        },
+        {
+            "name": "idx_annotation_files_dataset_type",
+            "table": "annotation_files",
+            "columns": ["dataset_id", "type"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_annotation_files_dataset_type ON annotation_files(dataset_id, type)"
         }
     ]
     
@@ -102,7 +216,11 @@ def add_performance_indexes():
             result = connection.execute(text("""
                 SELECT indexname 
                 FROM pg_indexes 
-                WHERE tablename IN ('annotations', 'annotation_files', 'annotation_classes', 'images')
+                WHERE tablename IN (
+                    'annotations', 'annotation_files', 'annotation_classes', 'images',
+                    'image_collections', 'tasks', 'annotation_file_images',
+                    'augmentations', 'dataset_groups'
+                )
             """))
             existing_indexes = [row[0] for row in result.fetchall()]
             logger.info(f"Existing indexes: {existing_indexes}")
@@ -127,7 +245,11 @@ def add_performance_indexes():
             logger.info(f"Index creation completed. Created {created_count} new indexes.")
             
             # Analyze tables for query optimization (PostgreSQL)
-            tables_to_analyze = ['annotations', 'annotation_files', 'annotation_classes', 'images']
+            tables_to_analyze = [
+                'annotations', 'annotation_files', 'annotation_classes', 'images',
+                'image_collections', 'tasks', 'annotation_file_images', 
+                'augmentations', 'dataset_groups', 'datasets', 'projects'
+            ]
             for table in tables_to_analyze:
                 try:
                     connection.execute(text(f"ANALYZE {table}"))
@@ -186,7 +308,11 @@ def check_database_performance():
                     indexname,
                     indexdef
                 FROM pg_indexes 
-                WHERE tablename IN ('annotations', 'annotation_files', 'annotation_classes', 'images')
+                WHERE tablename IN (
+                    'annotations', 'annotation_files', 'annotation_classes', 'images',
+                    'image_collections', 'tasks', 'annotation_file_images',
+                    'augmentations', 'dataset_groups', 'datasets', 'projects'
+                )
                 AND schemaname = 'public'
                 ORDER BY tablename, indexname
             """))

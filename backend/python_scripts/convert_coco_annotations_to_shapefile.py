@@ -1,67 +1,85 @@
 import json
-import geopandas as gpd
-from shapely.geometry import Polygon
-import os
 import argparse
-from rasterio.transform import Affine
+import os
+import rasterio
+from shapely.geometry import mapping, Polygon
+import fiona
 
-def load_transform(transform_path):
-    with open(transform_path, "r") as f:
-        t = json.load(f)
-    return Affine(t["a"], t["b"], t["c"], t["d"], t["e"], t["f"])
+# === Parse Command-Line Arguments ===
+parser = argparse.ArgumentParser(description="Transform COCO segmentation annotations to geospatial Shapefile using orthomosaic.")
+parser.add_argument("-i", "--images", required=True, help="Path to image folder")
+parser.add_argument("-a", "--annotations", required=True, help="Path to COCO annotation JSON")
+parser.add_argument("-o", "--orthomosaic", required=True, help="Path to orthomosaic GeoTIFF")
+parser.add_argument("-s", "--shapefile", required=True, help="Path to output Shapefile")
+args = parser.parse_args()
 
-def pixel_to_global_coords(transform, x, y):
-    return transform * (x, y)
+image_folder = args.images
+annotation_json_path = args.annotations
+orthomosaic_path = args.orthomosaic
+output_shapefile = args.shapefile
 
-def convert_coco_to_shapefile(coco_path, output_dir, crs_code, transform_path):
-    # Load COCO JSON
-    with open(coco_path, "r") as f:
-        coco_data = json.load(f)
+# === Load COCO Annotations ===
+with open(annotation_json_path) as f:
+    coco = json.load(f)
 
-    # Load single transform
-    transform = load_transform(transform_path)
+images_by_id = {img["id"]: img for img in coco["images"]}
 
-    # Prepare lookup tables
-    image_lookup = {img["id"]: img for img in coco_data["images"]}
-    category_lookup = {cat["id"]: cat["name"] for cat in coco_data["categories"]}
+# === Open Orthomosaic ===
+with rasterio.open(orthomosaic_path) as ortho:
+    transform = ortho.transform
+    crs = ortho.crs
 
-    features = []
+    # === Setup Shapefile Schema ===
+    schema = {
+        'geometry': 'Polygon',
+        'properties': {
+            'image': 'str',
+            'category': 'str',
+            'id': 'int'
+        }
+    }
 
-    for ann in coco_data["annotations"]:
-        image = image_lookup[ann["image_id"]]
-        category = category_lookup[ann["category_id"]]
-        file_name = image["file_name"]
+    with fiona.open(output_shapefile, 'w', driver='ESRI Shapefile',
+                    crs=crs.to_string(), schema=schema) as shp:
 
-        for seg in ann["segmentation"]:
-            pixel_coords = [(seg[i], seg[i + 1]) for i in range(0, len(seg), 2)]
-            global_coords = [pixel_to_global_coords(transform, x, y) for x, y in pixel_coords]
-            polygon = Polygon(global_coords)
+        for ann in coco["annotations"]:
+            image_info = images_by_id.get(ann["image_id"])
+            if not image_info:
+                continue
 
-            features.append({
-                "geometry": polygon,
-                "image_id": ann["image_id"],
-                "annotation_id": ann["id"],
-                "category": category,
-                "file_name": file_name
-            })
+            filename = image_info["file_name"]
 
-    # Create GeoDataFrame with original CRS
-    gdf = gpd.GeoDataFrame(features, crs=crs_code)
+            # Skip if no segmentation
+            if not ann.get("segmentation"):
+                continue
 
-    # Ensure output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"{output_dir}.shp")
-    gdf.to_file(output_path)
+            for seg in ann["segmentation"]:
+                if len(seg) < 6:
+                    continue  # Not a valid polygon
 
-    print(f"✅ Shapefile saved to: {output_path} with CRS: {crs_code}")
+                coords = []
+                for i in range(0, len(seg), 2):
+                    x_px, y_px = seg[i], seg[i + 1]
+                    x_geo, y_geo = transform * (x_px, y_px)
+                    coords.append((x_geo, y_geo))
 
-# === Argument Parser ===
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Convert COCO annotations to geospatial Shapefile")
-    parser.add_argument("--coco", required=True, help="Path to COCO annotation JSON file")
-    parser.add_argument("--out", required=True, help="Output directory for Shapefile")
-    parser.add_argument("--crs", default="EPSG:25832", help="Coordinate Reference System (default: EPSG:25832)")
-    parser.add_argument("--transform", required=True, help="Path to transform.json file")
+                # Ensure polygon is closed
+                if coords[0] != coords[-1]:
+                    coords.append(coords[0])
 
-    args = parser.parse_args()
-    convert_coco_to_shapefile(args.coco, args.out, args.crs, args.transform)
+                polygon = Polygon(coords)
+
+                # Skip invalid or degenerate polygons
+                if not polygon.is_valid or polygon.area == 0:
+                    continue
+
+                shp.write({
+                    'geometry': mapping(polygon),
+                    'properties': {
+                        'image': filename,
+                        'category': str(ann["category_id"]),
+                        'id': ann["id"]
+                    }
+                })
+
+print(f"✅ Shapefile saved to: {output_shapefile}")
