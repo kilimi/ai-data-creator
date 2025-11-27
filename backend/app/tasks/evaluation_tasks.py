@@ -1,0 +1,534 @@
+"""
+Celery tasks for model evaluation.
+"""
+import os
+import logging
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+import numpy as np
+import time
+from PIL import Image as PILImage
+
+from celery import Task
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.celery_app import celery_app
+from app.models import Task as TaskModel, Annotation, AnnotationClass, AnnotationFile, Dataset, Image
+
+logger = logging.getLogger(__name__)
+
+# Database setup for Celery workers
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db/lai_db')
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+class EvaluationTask(Task):
+    """Base task for evaluation with progress tracking"""
+    
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        """Called when task fails"""
+        logger.error(f"Evaluation task {task_id} failed: {exc}")
+        
+        # Update task status in database
+        db = SessionLocal()
+        try:
+            if args and len(args) > 0:
+                db_task_id = args[0]
+                task = db.query(TaskModel).filter(TaskModel.id == db_task_id).first()
+                if task:
+                    task.status = 'failed'
+                    task.completed_at = datetime.utcnow()
+                    task.error_message = str(exc)
+                    db.commit()
+        finally:
+            db.close()
+
+
+def calculate_iou(box1: List[float], box2: List[float]) -> float:
+    """Calculate IoU between two boxes [x1, y1, x2, y2]"""
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+    
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    union = area1 + area2 - intersection
+    
+    return intersection / union if union > 0 else 0
+
+
+def generate_grid_tiles(image_width: int, image_height: int, tile_size: int, overlap: float) -> List[Dict[str, int]]:
+    """
+    Generate grid tiles with overlap for an image
+    Returns list of tiles with coordinates: [{x, y, width, height}, ...]
+    """
+    tiles = []
+    stride = int(tile_size * (1 - overlap))
+    
+    for y in range(0, image_height, stride):
+        for x in range(0, image_width, stride):
+            # Calculate tile bounds
+            tile_x = x
+            tile_y = y
+            tile_w = min(tile_size, image_width - x)
+            tile_h = min(tile_size, image_height - y)
+            
+            # Only add tiles that are at least 50% of the tile_size in both dimensions
+            if tile_w >= tile_size * 0.5 and tile_h >= tile_size * 0.5:
+                tiles.append({
+                    'x': tile_x,
+                    'y': tile_y,
+                    'width': tile_w,
+                    'height': tile_h
+                })
+    
+    return tiles
+
+
+def nms_predictions(predictions: List[Dict], iou_threshold: float = 0.5) -> List[Dict]:
+    """
+    Apply Non-Maximum Suppression to merge overlapping predictions from grid tiles
+    """
+    if not predictions:
+        return []
+    
+    # Sort by confidence score (descending)
+    predictions = sorted(predictions, key=lambda x: x['conf'], reverse=True)
+    
+    keep = []
+    while predictions:
+        # Take the prediction with highest confidence
+        current = predictions.pop(0)
+        keep.append(current)
+        
+        # Remove predictions that overlap significantly with current
+        filtered = []
+        for pred in predictions:
+            # Only compare predictions of the same class
+            if pred['class_id'] != current['class_id']:
+                filtered.append(pred)
+                continue
+            
+            # Calculate IoU
+            iou = calculate_iou(current['bbox_xyxy'], pred['bbox_xyxy'])
+            
+            # Keep if IoU is below threshold
+            if iou < iou_threshold:
+                filtered.append(pred)
+        
+        predictions = filtered
+    
+    return keep
+
+
+@celery_app.task(base=EvaluationTask, bind=True, name='app.tasks.evaluation_tasks.evaluate_model')
+def evaluate_model(
+    self,
+    task_id: int,
+    training_task_id: int,
+    dataset_id: int,
+    annotation_file_id: Optional[str],
+    checkpoint: str,
+    conf_threshold: float,
+    iou_threshold: float,
+    use_grid: bool = False,
+    grid_size: int = 640,
+    grid_overlap: float = 0.2
+):
+    """
+    Run model evaluation as a background task
+    Supports grid-based inference for high-resolution images
+    """
+    db = SessionLocal()
+    
+    try:
+        # Get the task record
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if not task:
+            raise ValueError(f"Task {task_id} not found")
+        
+        # Update task status
+        task.status = 'running'
+        task.progress = 0
+        task.task_metadata = {
+            **task.task_metadata,
+            'stage': 'initializing',
+            'celery_task_id': self.request.id
+        }
+        db.commit()
+        
+        # Import YOLO here to avoid loading it at module level
+        from ultralytics import YOLO
+        
+        # Get the training task
+        training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
+        if not training_task or training_task.status != 'completed':
+            raise ValueError("Training task not found or not completed")
+        
+        # Get model path from training task metadata
+        task_metadata = training_task.task_metadata or {}
+        model_path = None
+        
+        if checkpoint == "best":
+            model_path = task_metadata.get('best_model')
+        else:
+            last_model = task_metadata.get('last_model')
+            if last_model:
+                model_path = last_model
+            elif task_metadata.get('results_dir'):
+                model_path = str(Path(task_metadata['results_dir']) / "weights" / "last.pt")
+        
+        if not model_path or not Path(model_path).exists():
+            raise ValueError(f"Model checkpoint '{checkpoint}' not found")
+        
+        logger.info(f"Loading model from {model_path}")
+        task.progress = 10
+        task.task_metadata = {**task.task_metadata, 'stage': 'loading_model'}
+        db.commit()
+        
+        # Load model
+        model = YOLO(model_path)
+        
+        # Get dataset
+        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+        if not dataset:
+            raise ValueError("Dataset not found")
+        
+        # Get class names from training task
+        class_names = task_metadata.get('class_names', [])
+        if not class_names:
+            raise ValueError("No class names found in training task")
+        
+        num_classes = len(class_names)
+        
+        task.progress = 20
+        task.task_metadata = {**task.task_metadata, 'stage': 'loading_annotations'}
+        db.commit()
+        
+        # Check if ground truth is available
+        has_ground_truth = False
+        ground_truth_annotations = {}
+        
+        if annotation_file_id:
+            annotation_file = db.query(AnnotationFile).filter(
+                AnnotationFile.id == annotation_file_id
+            ).first()
+            
+            if annotation_file:
+                has_ground_truth = True
+                annotations = db.query(Annotation).filter(
+                    Annotation.annotation_file_id == annotation_file_id
+                ).all()
+                
+                for ann in annotations:
+                    if ann.image_id not in ground_truth_annotations:
+                        ground_truth_annotations[ann.image_id] = []
+                    
+                    ann_class = db.query(AnnotationClass).filter(
+                        AnnotationClass.id == ann.annotation_class_id
+                    ).first()
+                    
+                    class_id = -1
+                    if ann_class and ann_class.name in class_names:
+                        class_id = class_names.index(ann_class.name)
+                    
+                    ground_truth_annotations[ann.image_id].append({
+                        'class_id': class_id,
+                        'bbox': [ann.bbox_x, ann.bbox_y, 
+                                ann.bbox_x + ann.bbox_width, 
+                                ann.bbox_y + ann.bbox_height]
+                    })
+        
+        task.progress = 30
+        task.task_metadata = {**task.task_metadata, 'stage': 'running_inference'}
+        db.commit()
+        
+        # Get images
+        images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        if not images:
+            raise ValueError("No images found in dataset")
+        
+        # Get project_id for constructing image paths
+        project_id = dataset.project_id
+        if not project_id:
+            raise ValueError("Dataset does not belong to a project")
+        
+        # Initialize metrics
+        confusion_matrix = np.zeros((num_classes, num_classes), dtype=int)
+        true_positives = 0
+        false_positives = 0
+        false_negatives = 0
+        predictions_count = 0
+        
+        # Store all predictions with bboxes and segmentation masks
+        all_predictions = []
+        
+        start_time = time.time()
+        total_images = len(images)
+        
+        # Run inference on each image
+        for idx, img in enumerate(images):
+            # Construct image path: projects/{project_id}/{dataset_id}/images/{file_name}
+            img_path = Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name
+            
+            # Fallback to old structure if new path doesn't exist
+            if not img_path.exists():
+                img_path = Path("data") / "images" / str(dataset_id) / img.file_name
+            
+            if not img_path.exists():
+                logger.warning(f"Image file not found: {img_path}")
+                continue
+            
+            # Store predictions for this image with bbox and segmentation
+            image_predictions = []
+            
+            # Grid-based or full-image inference
+            if use_grid:
+                # Load image to get dimensions
+                pil_image = PILImage.open(img_path)
+                image_width, image_height = pil_image.size
+                
+                # Generate grid tiles
+                tiles = generate_grid_tiles(image_width, image_height, grid_size, grid_overlap)
+                
+                # Run inference on each tile
+                for tile in tiles:
+                    # Crop tile from image
+                    tile_image = pil_image.crop((
+                        tile['x'],
+                        tile['y'],
+                        tile['x'] + tile['width'],
+                        tile['y'] + tile['height']
+                    ))
+                    
+                    # Run prediction on tile
+                    results = model.predict(
+                        source=np.array(tile_image),
+                        conf=conf_threshold,
+                        iou=iou_threshold,
+                        verbose=False
+                    )
+                    
+                    if not results or len(results) == 0:
+                        continue
+                    
+                    result = results[0]
+                    
+                    # Process predictions from this tile
+                    if result.boxes:
+                        for box_idx, box in enumerate(result.boxes):
+                            pred_class_id = int(box.cls.item())
+                            if pred_class_id < num_classes:
+                                # Get bbox in xyxy format (relative to tile)
+                                xyxy = box.xyxy[0].cpu().numpy()
+                                tile_x1, tile_y1, tile_x2, tile_y2 = xyxy
+                                
+                                # Convert to full image coordinates
+                                x1 = float(tile['x'] + tile_x1)
+                                y1 = float(tile['y'] + tile_y1)
+                                x2 = float(tile['x'] + tile_x2)
+                                y2 = float(tile['y'] + tile_y2)
+                                
+                                # Convert to xywh for COCO format
+                                bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
+                                
+                                # Get segmentation mask if available
+                                segmentation = []
+                                if hasattr(result, 'masks') and result.masks is not None:
+                                    try:
+                                        mask = result.masks.xy[box_idx]
+                                        if len(mask) > 0:
+                                            # Adjust mask coordinates to full image
+                                            segmentation = []
+                                            for point in mask:
+                                                segmentation.extend([
+                                                    float(tile['x'] + point[0]),
+                                                    float(tile['y'] + point[1])
+                                                ])
+                                    except (IndexError, AttributeError):
+                                        pass
+                                
+                                pred_data = {
+                                    'image_id': img.id,
+                                    'class_id': pred_class_id,
+                                    'bbox': bbox_xywh,
+                                    'bbox_xyxy': [x1, y1, x2, y2],
+                                    'conf': float(box.conf.item()),
+                                    'segmentation': segmentation
+                                }
+                                
+                                image_predictions.append(pred_data)
+                
+                # Apply NMS to remove duplicates from overlapping tiles
+                if image_predictions:
+                    image_predictions = nms_predictions(image_predictions, iou_threshold=0.5)
+                    predictions_count += len(image_predictions)
+                
+            else:
+                # Full image inference (original behavior)
+                results = model.predict(
+                    source=str(img_path),
+                    conf=conf_threshold,
+                    iou=iou_threshold,
+                    verbose=False
+                )
+                
+                if not results or len(results) == 0:
+                    continue
+                
+                result = results[0]
+                
+                if result.boxes:
+                    for box_idx, box in enumerate(result.boxes):
+                        pred_class_id = int(box.cls.item())
+                        if pred_class_id < num_classes:
+                            # Get bbox in xyxy format
+                            xyxy = box.xyxy[0].cpu().numpy()
+                            x1, y1, x2, y2 = xyxy
+                            
+                            # Convert to xywh for COCO format
+                            bbox_xywh = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+                            
+                            # Get segmentation mask if available
+                            segmentation = []
+                            if hasattr(result, 'masks') and result.masks is not None:
+                                try:
+                                    mask = result.masks.xy[box_idx]
+                                    if len(mask) > 0:
+                                        # Flatten the polygon points
+                                        segmentation = [float(coord) for point in mask for coord in point]
+                                except (IndexError, AttributeError):
+                                    pass
+                            
+                            pred_data = {
+                                'image_id': img.id,
+                                'class_id': pred_class_id,
+                                'bbox': bbox_xywh,
+                                'bbox_xyxy': [float(x1), float(y1), float(x2), float(y2)],
+                                'conf': float(box.conf.item()),
+                                'segmentation': segmentation
+                            }
+                            
+                            image_predictions.append(pred_data)
+                            predictions_count += 1
+            
+            # Store predictions for this image
+            if image_predictions:
+                all_predictions.extend(image_predictions)
+            
+            # If we have ground truth, calculate metrics
+            if has_ground_truth and img.id in ground_truth_annotations:
+                gt_boxes = ground_truth_annotations[img.id]
+                pred_boxes = []
+                
+                for pred in image_predictions:
+                    pred_boxes.append({
+                        'class_id': pred['class_id'],
+                        'bbox': pred['bbox_xyxy'],
+                        'conf': pred['conf']
+                    })
+                
+                # Match predictions with ground truth
+                matched_gt = set()
+                matched_pred = set()
+                
+                for i, pred in enumerate(pred_boxes):
+                    best_iou = 0
+                    best_gt_idx = -1
+                    
+                    for j, gt in enumerate(gt_boxes):
+                        if j in matched_gt or gt['class_id'] < 0:
+                            continue
+                        
+                        iou = calculate_iou(pred['bbox'], gt['bbox'])
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_gt_idx = j
+                    
+                    if best_iou >= iou_threshold:
+                        matched_pred.add(i)
+                        matched_gt.add(best_gt_idx)
+                        
+                        gt_class = gt_boxes[best_gt_idx]['class_id']
+                        pred_class = pred['class_id']
+                        
+                        if gt_class >= 0 and pred_class >= 0:
+                            confusion_matrix[gt_class][pred_class] += 1
+                            
+                            if gt_class == pred_class:
+                                true_positives += 1
+                            else:
+                                false_positives += 1
+                    else:
+                        false_positives += 1
+                
+                false_negatives += len(gt_boxes) - len(matched_gt)
+            
+            # Update progress
+            if (idx + 1) % max(1, total_images // 10) == 0:
+                progress = 30 + int((idx + 1) / total_images * 60)
+                task.progress = progress
+                db.commit()
+        
+        inference_time_ms = (time.time() - start_time) * 1000
+        
+        task.progress = 95
+        task.task_metadata = {**task.task_metadata, 'stage': 'calculating_metrics'}
+        db.commit()
+        
+        # Calculate final metrics
+        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
+        f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+        
+        # Store results in task metadata
+        results = {
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1_score': float(f1_score),
+            'map50': 0.0,
+            'map50_95': 0.0,
+            'confusion_matrix': confusion_matrix.tolist(),
+            'class_names': class_names,
+            'predictions_count': predictions_count,
+            'has_ground_truth': has_ground_truth,
+            'inference_time_ms': float(inference_time_ms),
+            'images_processed': total_images,
+            'training_task_id': training_task_id,
+            'dataset_id': dataset_id,
+            'checkpoint': checkpoint,
+            'conf_threshold': conf_threshold,
+            'iou_threshold': iou_threshold,
+            'use_grid': use_grid,
+            'grid_size': grid_size if use_grid else None,
+            'grid_overlap': grid_overlap if use_grid else None,
+            'predictions': all_predictions  # Store all predictions with bboxes and segmentation
+        }
+        
+        task.status = 'completed'
+        task.progress = 100
+        task.completed_at = datetime.utcnow()
+        task.task_metadata = {
+            **task.task_metadata,
+            'stage': 'completed',
+            'results': results
+        }
+        db.commit()
+        
+        logger.info(f"Evaluation completed: {predictions_count} predictions on {total_images} images")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error in evaluation task: {str(e)}", exc_info=True)
+        task.status = 'failed'
+        task.completed_at = datetime.utcnow()
+        task.error_message = f"Evaluation error: {str(e)}"
+        db.commit()
+        raise
+    finally:
+        db.close()

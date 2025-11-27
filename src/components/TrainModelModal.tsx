@@ -81,6 +81,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [isTraining, setIsTraining] = useState(false);
   const [showClassDialog, setShowClassDialog] = useState(false);
   const [classStats, setClassStats] = useState<any | null>(null);
+  const [customName, setCustomName] = useState('');
 
   // Weights & Biases settings
   const [saveToWandb, setSaveToWandb] = useState(false);
@@ -252,29 +253,123 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   };
 
   const handleTrain = async () => {
-    if (!canTrain()) return;
+    if (!canTrain() || !api) return;
     
     setIsTraining(true);
     
-    // TODO: Implement actual training logic
-    console.log('Training with:', {
-      datasets: selectedDatasets,
-      model: selectedModel,
-      settings: modelSettings,
-      wandb: saveToWandb ? wandbSettings : null,
-      projectId
-    });
-    
-    // Simulate training process
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    setIsTraining(false);
-    onOpenChange(false);
-    
-    // Reset form
-    setSelectedDatasets([]);
-    setSelectedModel(null);
-    setModelSettings({});
+    try {
+      // Check if model is implemented
+      if (selectedModel !== 'yolo' && selectedModel !== 'rf-detr') {
+        alert(`${selectedModel?.toUpperCase()} training is not yet implemented`);
+        setIsTraining(false);
+        return;
+      }
+
+      // Prepare dataset configurations
+      const datasetConfigs = selectedDatasets.map(sel => ({
+        dataset_id: sel.dataset.id,
+        annotation_file_id: sel.annotation,
+        image_collection: sel.imageCollection || undefined,
+        split: sel.split || { train: 80, val: 20, test: 0 }
+      }));
+
+      let response;
+      let modelName = '';
+
+      if (selectedModel === 'yolo') {
+        // Prepare YOLO training request
+        const trainingRequest = {
+          project_id: parseInt(projectId),
+          dataset_configs: datasetConfigs,
+          model_type: modelSettings.modelSize || 'yolo11n-seg.pt',
+          epochs: modelSettings.epochs || 100,
+          batch_size: modelSettings.batchSize || 16,
+          image_size: modelSettings.imageSize || 640,
+          device: modelSettings.device || '0',
+          patience: modelSettings.patience || 50,
+          optimizer: modelSettings.optimizer || 'auto',
+          learning_rate: modelSettings.learningRate || 0.01,
+          momentum: modelSettings.momentum || 0.937,
+          weight_decay: modelSettings.weightDecay || 0.0005,
+          save_period: modelSettings.savePeriod !== undefined ? modelSettings.savePeriod : -1,
+          augmentations: modelSettings.augmentations || {},
+          use_wandb: saveToWandb,
+          wandb_project: saveToWandb ? wandbSettings.project : undefined,
+          wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
+          task_name: customName.trim() || `YOLO Training - ${new Date().toLocaleString()}`
+        };
+
+        console.log('Starting YOLO training with request:', trainingRequest);
+        response = await api.startYoloTraining(trainingRequest);
+        modelName = trainingRequest.model_type;
+      } else if (selectedModel === 'rf-detr') {
+        // Prepare RT-DETR training request
+        const trainingRequest = {
+          project_id: parseInt(projectId),
+          dataset_configs: datasetConfigs,
+          model_type: modelSettings.variant || 'rtdetr-r50.pt',
+          epochs: modelSettings.epochs || 100,
+          batch_size: modelSettings.batchSize || 16,
+          image_size: modelSettings.imageSize || 640,
+          device: modelSettings.device || '0',
+          patience: modelSettings.patience || 50,
+          optimizer: modelSettings.optimizer || 'AdamW',
+          learning_rate: modelSettings.learningRate || 0.0001,
+          weight_decay: modelSettings.weightDecay || 0.0001,
+          save_period: modelSettings.savePeriod !== undefined ? modelSettings.savePeriod : -1,
+          use_wandb: saveToWandb,
+          wandb_project: saveToWandb ? wandbSettings.project : undefined,
+          wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
+          task_name: customName.trim() || `RT-DETR Training - ${new Date().toLocaleString()}`
+        };
+
+        console.log('Starting RT-DETR training with request:', trainingRequest);
+        response = await api.startRTDETRTraining(trainingRequest);
+        modelName = trainingRequest.model_type;
+      }
+      
+      console.log('Training API response:', response);
+
+      // Handle both wrapped and unwrapped responses
+      const responseData = response.data || response;
+      
+      if (response.success && (responseData.task_id || responseData.success)) {
+        const taskId = responseData.task_id;
+        console.log('Training started successfully. Task ID:', taskId);
+        
+        const message = `Training started successfully!
+        
+Task ID: ${taskId}
+Model: ${modelName}
+Datasets: ${selectedDatasets.length}
+Epochs: ${modelSettings.epochs || 100}
+
+You can monitor progress:
+• Check the Tasks panel in your project
+• Task will update progress as training runs
+• Training runs on GPU service (port 9998)
+
+The training service will update progress every epoch.`;
+        
+        alert(message);
+        
+        onOpenChange(false);
+        
+        // Reset form
+        setSelectedDatasets([]);
+        setSelectedModel(null);
+        setModelSettings({});
+      } else {
+        const errorMsg = response.error || JSON.stringify(response) || 'Unknown error';
+        console.error('Failed to start training. Full response:', response);
+        alert(`Failed to start training: ${errorMsg}`);
+      }
+    } catch (error) {
+      console.error('Error starting training:', error);
+      alert(`Error starting training: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsTraining(false);
+    }
   };
 
   const resetForm = () => {
@@ -310,6 +405,24 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           </DialogHeader>
 
           <div className="space-y-6 py-4">
+            {/* Custom Training Name */}
+            <div className="space-y-2">
+              <Label htmlFor="training-name" className="text-base font-medium">Training Name (Optional)</Label>
+              <Input
+                id="training-name"
+                type="text"
+                placeholder="e.g., My Custom YOLO Training"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                className="bg-background"
+              />
+              <p className="text-xs text-muted-foreground">
+                Leave empty to use default name: "[Model] Training - [Date/Time]"
+              </p>
+            </div>
+
+            <Separator />
+
             {/* Dataset Selection */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">

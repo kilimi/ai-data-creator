@@ -1,0 +1,59 @@
+# Exclude large project data folders
+projects/
+data/
+ai_models/
+python_scripts/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation
+*.md
+!README.md
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Migrations (already in image)
+migrations/versions/*.pyc
+
+# AI Models (should be downloaded separately or mounted)
+ai_models/
+*.pt
+*.onnx
+*.pth
+*.h5
+
+# Temporary files
+tmp/
+temp/
+*.tmp

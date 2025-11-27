@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Celery for task queuing (backend doesn't need training libraries)
+RUN pip install --no-cache-dir celery[redis]>=5.3.0 redis>=5.0.0 flower>=2.0.0
+
 # Copy the rest of the application
 COPY . .
 

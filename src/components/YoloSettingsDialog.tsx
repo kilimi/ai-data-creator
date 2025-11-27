@@ -16,8 +16,10 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Settings } from "lucide-react";
+import { Settings, Wand2 } from "lucide-react";
+import { YoloAugmentationsDialog } from "./YoloAugmentationsDialog";
 
 interface YoloSettingsDialogProps {
   open: boolean;
@@ -26,15 +28,48 @@ interface YoloSettingsDialogProps {
 }
 
 export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: YoloSettingsDialogProps) {
-  const [version, setVersion] = useState('yolo8');
+  const [version, setVersion] = useState('yolo11');
   const [size, setSize] = useState('n');
-  const [task, setTask] = useState('detection');
+  const [task, setTask] = useState('segmentation');
+  const [epochs, setEpochs] = useState(100);
+  const [batchSize, setBatchSize] = useState(16);
+  const [imageSize, setImageSize] = useState(640);
+  const [device, setDevice] = useState('0');
+  const [patience, setPatience] = useState(50);
+  const [optimizer, setOptimizer] = useState('auto');
+  const [learningRate, setLearningRate] = useState(0.01);
+  const [momentum, setMomentum] = useState(0.937);
+  const [weightDecay, setWeightDecay] = useState(0.0005);
+  const [savePeriod, setSavePeriod] = useState(-1);
+  const [showAugmentations, setShowAugmentations] = useState(false);
+  const [augmentationSettings, setAugmentationSettings] = useState<any>({});
 
   const handleSave = () => {
+    // Construct model file name based on version, size, and task
+    let modelSize = `${version}${size}`;
+    if (task === 'segmentation') {
+      modelSize += '-seg';
+    } else if (task === 'classification') {
+      modelSize += '-cls';
+    }
+    modelSize += '.pt';
+
     const settings = {
       version,
       size,
       task,
+      modelSize,
+      epochs,
+      batchSize,
+      imageSize,
+      device,
+      patience,
+      optimizer,
+      learningRate,
+      momentum,
+      weightDecay,
+      savePeriod,
+      augmentations: augmentationSettings,
     };
     onSettingsUpdate(settings);
     onOpenChange(false);
@@ -42,7 +77,7 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] bg-background z-[60]">
+      <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-y-auto bg-background z-[60]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Settings className="h-5 w-5" />
@@ -122,6 +157,168 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
               </div>
             </RadioGroup>
           </div>
+
+          {/* Training Parameters */}
+          <div className="space-y-4">
+            <Label className="text-base font-medium">Training Parameters</Label>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="epochs" className="text-sm">Epochs</Label>
+                <Input
+                  id="epochs"
+                  type="number"
+                  min={1}
+                  value={epochs}
+                  onChange={(e) => setEpochs(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="batchSize" className="text-sm">Batch Size</Label>
+                <Input
+                  id="batchSize"
+                  type="number"
+                  min={1}
+                  value={batchSize}
+                  onChange={(e) => setBatchSize(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="imageSize" className="text-sm">Image Size</Label>
+                <Input
+                  id="imageSize"
+                  type="number"
+                  min={32}
+                  step={32}
+                  value={imageSize}
+                  onChange={(e) => setImageSize(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="device" className="text-sm">Device (GPU/CPU)</Label>
+                <Input
+                  id="device"
+                  type="text"
+                  value={device}
+                  onChange={(e) => setDevice(e.target.value)}
+                  placeholder="0 for GPU, cpu for CPU"
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="patience" className="text-sm">Patience (Early Stopping)</Label>
+                <Input
+                  id="patience"
+                  type="number"
+                  min={1}
+                  value={patience}
+                  onChange={(e) => setPatience(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="optimizer" className="text-sm">Optimizer</Label>
+                <Select value={optimizer} onValueChange={setOptimizer}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-background border shadow-md z-[70]">
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="SGD">SGD</SelectItem>
+                    <SelectItem value="Adam">Adam</SelectItem>
+                    <SelectItem value="AdamW">AdamW</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="learningRate" className="text-sm">Learning Rate</Label>
+                <Input
+                  id="learningRate"
+                  type="number"
+                  step={0.001}
+                  min={0.0001}
+                  value={learningRate}
+                  onChange={(e) => setLearningRate(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="momentum" className="text-sm">Momentum</Label>
+                <Input
+                  id="momentum"
+                  type="number"
+                  step={0.001}
+                  min={0}
+                  max={1}
+                  value={momentum}
+                  onChange={(e) => setMomentum(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="weightDecay" className="text-sm">Weight Decay</Label>
+                <Input
+                  id="weightDecay"
+                  type="number"
+                  step={0.0001}
+                  min={0}
+                  value={weightDecay}
+                  onChange={(e) => setWeightDecay(Number(e.target.value))}
+                  className="bg-background"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="savePeriod" className="text-sm">
+                  Save Checkpoint Every N Epochs
+                </Label>
+                <Input
+                  id="savePeriod"
+                  type="number"
+                  min={-1}
+                  value={savePeriod}
+                  onChange={(e) => setSavePeriod(Number(e.target.value))}
+                  placeholder="-1 for only best & last"
+                  className="bg-background"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Set to -1 to save only best and last models. Set to a positive number (e.g., 10) to save checkpoints every N epochs.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Augmentations Section */}
+          <div className="space-y-3">
+            <Label className="text-base font-medium">Data Augmentations</Label>
+            <p className="text-sm text-muted-foreground">
+              Configure augmentation parameters to improve model generalization
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => setShowAugmentations(true)}
+              className="w-full"
+            >
+              <Wand2 className="w-4 h-4 mr-2" />
+              Configure Augmentations
+              {Object.keys(augmentationSettings).length > 0 && (
+                <span className="ml-2 text-xs text-muted-foreground">
+                  (Custom settings applied)
+                </span>
+              )}
+            </Button>
+          </div>
         </div>
 
         <DialogFooter>
@@ -133,6 +330,14 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Augmentations Dialog */}
+      <YoloAugmentationsDialog
+        open={showAugmentations}
+        onOpenChange={setShowAugmentations}
+        onSettingsUpdate={setAugmentationSettings}
+        currentSettings={augmentationSettings}
+      />
     </Dialog>
   );
 }

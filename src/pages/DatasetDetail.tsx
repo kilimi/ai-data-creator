@@ -15,8 +15,12 @@ import { EditGroupModal } from '@/components/EditGroupModal';
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
 import { TrainModelModal } from '@/components/TrainModelModal';
+import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
+import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
+import { EvaluateModelModal } from '@/components/EvaluateModelModal';
 import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { Dataset, Project, DatasetGroup } from '@/types';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -32,6 +36,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface DatasetDetailProps {
   projectMode?: boolean;
@@ -50,7 +61,10 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   const [showAugmentedModal, setShowAugmentedModal] = useState(false);
-  const [activeTab, setActiveTab] = useState("datasets");
+  
+  // Get initial tab from URL or default to "datasets"
+  const [searchParams, setSearchParams] = useState(new URLSearchParams(window.location.search));
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || "datasets");
   
   // Models state
   const [modelsSearchQuery, setModelsSearchQuery] = useState("");
@@ -61,6 +75,32 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [showAddGroupModal, setShowAddGroupModal] = useState(false);
   const [showEditGroupModal, setShowEditGroupModal] = useState(false);
   const [editingGroup, setEditingGroup] = useState<DatasetGroup | null>(null);
+  
+  // Training tasks state
+  const [trainingTasks, setTrainingTasks] = useState<any[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [selectedTaskError, setSelectedTaskError] = useState<{ name: string; error: string; id: number } | null>(null);
+  const [selectedTaskCommand, setSelectedTaskCommand] = useState<{ name: string; command: string; id: number } | null>(null);
+  const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
+  const [newTaskName, setNewTaskName] = useState('');
+
+  // Predictions state
+  const [showEvaluationModal, setShowEvaluationModal] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedCheckpoint, setSelectedCheckpoint] = useState<'best' | 'last'>('best');
+  const [selectedDatasetForPrediction, setSelectedDatasetForPrediction] = useState<string>('');
+  const [evaluationName, setEvaluationName] = useState<string>('');
+  const [selectedAnnotation, setSelectedAnnotation] = useState<string>('');
+  const [useGroundTruth, setUseGroundTruth] = useState(true);
+  const [confThreshold, setConfThreshold] = useState(0.25);
+  const [iouThreshold, setIouThreshold] = useState(0.45);
+  const [useGrid, setUseGrid] = useState(false);
+  const [gridSize, setGridSize] = useState(640);
+  const [gridOverlap, setGridOverlap] = useState(0.2);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [results, setResults] = useState<any | null>(null);
 
   // Update local project state when original project changes
   useEffect(() => {
@@ -86,11 +126,193 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     }
   };
 
+  const fetchTrainingTasks = async () => {
+    if (!id || !project?.id) return;
+    
+    setLoadingTasks(true);
+    try {
+      const response = await api.getTasks();
+      if (response.success) {
+        // Filter for training and evaluation tasks related to this project
+        const tasks = response.data.filter((task: any) => 
+          (task.task_type === 'yolo_training' || task.task_type === 'model_evaluation') && 
+          task.project_id === project.id
+        );
+        setTrainingTasks(tasks);
+      }
+    } catch (error) {
+      console.error('Error fetching training tasks:', error);
+    } finally {
+      setLoadingTasks(false);
+    }
+  };
+
   useEffect(() => {
     if (projectMode && id) {
       fetchDatasetGroups();
     }
   }, [projectMode, id]);
+
+  useEffect(() => {
+    if (projectMode && id && project?.id) {
+      fetchTrainingTasks();
+    }
+  }, [projectMode, id, project?.id]);
+
+  // Handle tab change and update URL
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', value);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  const handleDeleteFailedTasks = async () => {
+    if (!project?.id) return;
+    
+    const failedCount = trainingTasks.filter(t => t.status === 'failed' && t.task_type !== 'model_evaluation').length;
+    if (failedCount === 0) {
+      toast({
+        title: "No failed tasks",
+        description: "There are no failed training tasks to delete.",
+      });
+      return;
+    }
+    
+    if (!confirm(`Are you sure you want to delete ${failedCount} failed training task(s)? This action cannot be undone.`)) {
+      return;
+    }
+    
+    setDeletingFailedTasks(true);
+    try {
+      const response = await api.deleteFailedTasks(project.id);
+      if (response.success) {
+        toast({
+          title: "Success",
+          description: response.message || `Deleted ${response.data.deleted_count} failed task(s)`,
+        });
+        fetchTrainingTasks();
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete tasks",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingFailedTasks(false);
+    }
+  };
+
+  const generateTrainingCommand = (task: any) => {
+    const metadata = task.task_metadata || {};
+    const params = metadata.training_params || {};
+    const modelConfig = metadata.model_config || {};
+    
+    // Build curl command for API call
+    const apiCommand = `curl -X POST http://localhost:9999/training/yolo/start \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "project_id": ${project?.id || 'PROJECT_ID'},
+    "dataset_configs": [
+      {
+        "dataset_id": ${metadata.dataset_ids?.[0] || 'DATASET_ID'},
+        "annotation_file_id": "ANNOTATION_FILE_ID",
+        "split": {"train": 80, "val": 20, "test": 0}
+      }
+    ],
+    "model_type": "${modelConfig.model || 'yolo11n-seg.pt'}",
+    "epochs": ${params.epochs || 100},
+    "batch_size": ${params.batch_size || 16},
+    "image_size": ${params.imgsz || 640},
+    "device": "${params.device || '0'}",
+    "optimizer": "${params.optimizer || 'auto'}",
+    "learning_rate": ${params.lr0 || 0.01},
+    "momentum": ${params.momentum || 0.937},
+    "weight_decay": ${params.weight_decay || 0.0005}
+  }'`;
+
+    // Build docker exec command
+    const dockerCommand = `# Option 1: Using API (recommended)
+${apiCommand}
+
+# Option 2: Direct docker exec into celery worker
+docker compose exec celery_worker python -c "
+import sys
+sys.path.insert(0, '/app')
+from app.tasks.training_tasks import train_yolo_model
+
+task_id = ${task.id}
+training_config = {
+    'project_id': ${project?.id || 'PROJECT_ID'},
+    'dataset_configs': [{
+        'dataset_id': ${metadata.dataset_ids?.[0] || 'DATASET_ID'},
+        'annotation_file_id': 'ANNOTATION_FILE_ID',
+        'split': {'train': 80, 'val': 20, 'test': 0}
+    }],
+    'model_type': '${modelConfig.model || 'yolo11n-seg.pt'}',
+    'epochs': ${params.epochs || 100},
+    'batch_size': ${params.batch_size || 16},
+    'image_size': ${params.imgsz || 640},
+    'device': '${params.device || '0'}',
+    'optimizer': '${params.optimizer || 'auto'}',
+    'learning_rate': ${params.lr0 || 0.01},
+    'momentum': ${params.momentum || 0.937},
+    'weight_decay': ${params.weight_decay || 0.0005}
+}
+
+train_yolo_model(task_id, training_config)
+"
+
+# Option 3: Check task status
+curl http://localhost:9999/tasks/${task.id}`;
+
+    return dockerCommand;
+  };
+
+  // Helper function to extract model family from model filename
+  const getModelFamily = (modelName: string): string => {
+    if (!modelName) return '-';
+    const lower = modelName.toLowerCase();
+    if (lower.includes('yolo11')) return 'YOLO11';
+    if (lower.includes('yolo10')) return 'YOLO10';
+    if (lower.includes('yolo9')) return 'YOLO9';
+    if (lower.includes('yolo8')) return 'YOLO8';
+    if (lower.includes('yolo5')) return 'YOLO5';
+    if (lower.includes('yolo')) return 'YOLO';
+    if (lower.includes('rtdetr') || lower.includes('rt-detr')) return 'RT-DETR';
+    if (lower.includes('mask') || lower.includes('rcnn')) return 'Mask R-CNN';
+    return 'YOLO';
+  };
+
+  // Helper function to extract model size from model filename
+  const getModelSize = (modelName: string): string => {
+    if (!modelName) return '-';
+    const lower = modelName.toLowerCase();
+    // Extract size letter (n, s, m, l, x)
+    if (lower.includes('yolo')) {
+      const match = modelName.match(/yolo\d*([nsmxl])/i);
+      if (match) {
+        const size = match[1].toLowerCase();
+        const sizeMap: Record<string, string> = {
+          'n': 'Nano',
+          's': 'Small',
+          'm': 'Medium',
+          'l': 'Large',
+          'x': 'X-Large'
+        };
+        return sizeMap[size] || size.toUpperCase();
+      }
+    }
+    // RT-DETR sizes
+    if (lower.includes('rtdetr') || lower.includes('rt-detr')) {
+      if (lower.includes('r50')) return 'R50';
+      if (lower.includes('r101')) return 'R101';
+      if (lower.includes('l')) return 'Large';
+      if (lower.includes('x')) return 'X-Large';
+    }
+    return '-';
+  };
 
   const handleToggleGroupExpanded = (groupId: number) => {
     setExpandedGroups(prev => {
@@ -489,7 +711,6 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   return (
     <div className="min-h-screen pb-16">
       <Navbar />
-      
       <section className="container max-w-7xl mx-auto px-4 pt-24 pb-6">
         {/* Breadcrumb Navigation */}
         <ProjectBreadcrumb 
@@ -517,8 +738,8 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+          <TabsList className="grid w-full grid-cols-3 mb-6">
             <TabsTrigger value="datasets" className="flex items-center gap-2">
               <Database className="h-4 w-4" />
               Datasets
@@ -526,6 +747,10 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             <TabsTrigger value="models" className="flex items-center gap-2">
               <Brain className="h-4 w-4" />
               Models
+            </TabsTrigger>
+            <TabsTrigger value="predictions" className="flex items-center gap-2">
+              <Brain className="h-4 w-4" />
+              Model Evaluation
             </TabsTrigger>
           </TabsList>
 
@@ -760,7 +985,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
               <Brain className="h-5 w-5 text-primary" />
               <h3 className="text-xl font-semibold">Project Models</h3>
               <Badge variant="secondary" className="ml-2">
-                0 models
+                {trainingTasks.filter(t => t.task_type !== 'model_evaluation').length} models
               </Badge>
             </div>
             
@@ -800,20 +1025,458 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
                   <Brain className="w-4 h-4 mr-2" />
                   Train Model
                 </Button>
+                
+                {trainingTasks.filter(t => t.status === 'failed' && t.task_type !== 'model_evaluation').length > 0 && (
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    className="whitespace-nowrap ml-2"
+                    onClick={handleDeleteFailedTasks}
+                    disabled={deletingFailedTasks}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    {deletingFailedTasks ? 'Deleting...' : `Delete Failed Tasks (${trainingTasks.filter(t => t.status === 'failed' && t.task_type !== 'model_evaluation').length})`}
+                  </Button>
+                )}
               </div>
             </div>
 
-            <div className="text-center py-16">
-              <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-medium mb-2">No models found</h3>
-              <p className="text-muted-foreground mb-6">
-                This project doesn't have any trained models yet. Train your first model to get started.
-              </p>
-              <Button variant="outline" onClick={() => setShowTrainModelModal(true)}>
+            {loadingTasks ? (
+              <div className="text-center py-16">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                <p className="text-muted-foreground mt-4">Loading training tasks...</p>
+              </div>
+            ) : trainingTasks.filter(t => t.task_type !== 'model_evaluation').length > 0 ? (
+              <div className="border border-gray-800 rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-gray-900 border-b border-gray-800">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Started</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Size</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Epochs</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-gray-950 divide-y divide-gray-800">
+                    {trainingTasks.filter(t => t.task_type !== 'model_evaluation').map((task) => {
+                      const metadata = task.task_metadata || {};
+                      const isRunning = task.status === 'running';
+                      const isFailed = task.status === 'failed';
+                      const isCompleted = task.status === 'completed';
+                      
+                      return (
+                        <tr 
+                          key={task.id} 
+                          className="hover:bg-gray-900 transition-colors cursor-pointer"
+                          onClick={() => {
+                            // Use evaluation modal for evaluation tasks, training modal for training tasks
+                            setSelectedTaskId(task.id);
+                          }}
+                        >
+                          <td className="px-4 py-3 text-sm text-gray-300">#{task.id}</td>
+                          <td className="px-4 py-3 text-sm text-gray-200">{task.name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {new Date(task.created_at).toLocaleString('en-GB', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {isRunning && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                Running
+                              </span>
+                            )}
+                            {isFailed && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id });
+                                }}
+                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 cursor-pointer transition-colors"
+                              >
+                                Failed
+                              </button>
+                            )}
+                            {isCompleted && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                                Completed
+                              </span>
+                            )}
+                            {task.status === 'pending' && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400 border border-gray-500/30">
+                                Pending
+                              </span>
+                            )}
+                            {task.status === 'stopped' && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                                Stopped
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 max-w-[120px]">
+                                <div className="w-full bg-gray-800 rounded-full h-2">
+                                  <div
+                                    className={`h-2 rounded-full transition-all ${
+                                      isFailed ? 'bg-red-500' : 
+                                      isCompleted ? 'bg-green-500' : 
+                                      task.status === 'stopped' ? 'bg-orange-500' : 
+                                      'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${task.progress}%` }}
+                                  />
+                                </div>
+                              </div>
+                              <span className="text-xs text-gray-400 min-w-[35px]">{task.progress}%</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {(() => {
+                              // For evaluation tasks, show "Evaluation"
+                              if (task.task_type === 'model_evaluation') {
+                                return 'Evaluation';
+                              }
+                              // For training tasks
+                              const modelName = metadata.model_config?.model || metadata.model_type || '';
+                              const family = getModelFamily(modelName);
+                              // Show just the base model type (YOLO, RT-DETR, etc.) without version
+                              if (family.includes('YOLO')) return 'YOLO';
+                              if (family.includes('DETR')) return 'RT-DETR';
+                              return family;
+                            })()}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {(() => {
+                              // For evaluation tasks, show checkpoint type
+                              if (task.task_type === 'model_evaluation') {
+                                return metadata.checkpoint || 'best';
+                              }
+                              // For training tasks
+                              const modelName = metadata.model_config?.model || metadata.model_type || '';
+                              const family = getModelFamily(modelName);
+                              const size = getModelSize(modelName);
+                              return size !== '-' ? size : family;
+                            })()}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {(() => {
+                              // For evaluation tasks, show images processed
+                              if (task.task_type === 'model_evaluation') {
+                                if (isCompleted && metadata.results?.images_processed) {
+                                  return `${metadata.results.images_processed} imgs`;
+                                }
+                                return '-';
+                              }
+                              // For training tasks, show epochs
+                              // Show current/total epochs if running, or last epoch if stopped/completed/failed
+                              if (isRunning && metadata.current_epoch && metadata.epochs) {
+                                return `${metadata.current_epoch}/${metadata.epochs}`;
+                              } else if ((isCompleted || isFailed || task.status === 'stopped') && metadata.current_epoch) {
+                                // Show last epoch reached
+                                return metadata.current_epoch;
+                              } else if (metadata.training_params?.epochs || metadata.epochs) {
+                                return metadata.training_params?.epochs || metadata.epochs;
+                              }
+                              return '-';
+                            })()}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTaskCommand({ name: task.name, command: generateTrainingCommand(task), id: task.id });
+                                }}
+                                className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+                                title="View CLI command"
+                              >
+                                <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                CLI
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenamingTask({ id: task.id, name: task.name });
+                                  setNewTaskName(task.name);
+                                }}
+                                className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+                                title="Rename task"
+                              >
+                                <Pencil className="w-3 h-3 mr-1" />
+                                Rename
+                              </button>
+                              {(isRunning || task.status === 'pending') && (
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!confirm(`Are you sure you want to stop training task "${task.name}"?`)) {
+                                      return;
+                                    }
+                                    try {
+                                      const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, {
+                                        method: 'PATCH'
+                                      });
+                                      if (response.ok) {
+                                        toast({
+                                          title: "Training Stopped",
+                                          description: `Task "${task.name}" has been cancelled.`
+                                        });
+                                        fetchTrainingTasks();
+                                      } else {
+                                        throw new Error('Failed to cancel task');
+                                      }
+                                    } catch (error) {
+                                      toast({
+                                        title: "Error",
+                                        description: "Failed to stop training task",
+                                        variant: "destructive"
+                                      });
+                                    }
+                                  }}
+                                  className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
+                                  title="Stop training"
+                                >
+                                  <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                  </svg>
+                                  Stop
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-16">
+                <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <h3 className="text-lg font-medium mb-2">No models found</h3>
+                <p className="text-muted-foreground mb-6">
+                  This project doesn't have any trained models yet. Train your first model to get started.
+                </p>
+                <Button variant="outline" onClick={() => setShowTrainModelModal(true)}>
+                  <Brain className="w-4 h-4 mr-2" />
+                  Train Model
+                </Button>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="predictions" className="space-y-6">
+            {/* Model Evaluation Section Header */}
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Brain className="h-5 w-5 text-primary" />
+                <h3 className="text-xl font-semibold">Model Evaluation</h3>
+                <Badge variant="secondary" className="ml-2">
+                  {trainingTasks.filter(t => t.task_type === 'model_evaluation').length} evaluations
+                </Badge>
+              </div>
+              
+              <Button 
+                variant="default" 
+                size="sm" 
+                className="whitespace-nowrap"
+                onClick={() => setShowEvaluationModal(true)}
+              >
                 <Brain className="w-4 h-4 mr-2" />
-                Train Model
+                New Evaluation
               </Button>
             </div>
+
+            {/* Evaluation Tasks Table */}
+            {loadingTasks ? (
+              <div className="text-center py-16">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                <p className="text-muted-foreground mt-4">Loading evaluation tasks...</p>
+              </div>
+            ) : trainingTasks.filter(t => t.task_type === 'model_evaluation').length > 0 ? (
+              <div className="border border-gray-800 rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-gray-900 border-b border-gray-800">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Started</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Checkpoint</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Images</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-gray-950 divide-y divide-gray-800">
+                    {trainingTasks.filter(t => t.task_type === 'model_evaluation').map((task) => {
+                      const metadata = task.task_metadata || {};
+                      const isRunning = task.status === 'running';
+                      const isFailed = task.status === 'failed';
+                      const isCompleted = task.status === 'completed';
+                      
+                      return (
+                        <tr 
+                          key={task.id} 
+                          className="hover:bg-gray-900 transition-colors cursor-pointer"
+                          onClick={() => {
+                            setSelectedTaskId(task.id);
+                          }}
+                        >
+                          <td className="px-4 py-3 text-sm text-gray-300">#{task.id}</td>
+                          <td className="px-4 py-3 text-sm text-gray-200">{task.name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {new Date(task.created_at).toLocaleString('en-GB', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            {isRunning && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                Running
+                              </span>
+                            )}
+                            {isFailed && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id });
+                                }}
+                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 cursor-pointer transition-colors"
+                              >
+                                Failed
+                              </button>
+                            )}
+                            {isCompleted && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                                Completed
+                              </span>
+                            )}
+                            {task.status === 'pending' && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400 border border-gray-500/30">
+                                Pending
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 max-w-[120px]">
+                                <div className="w-full bg-gray-800 rounded-full h-2">
+                                  <div
+                                    className={`h-2 rounded-full transition-all ${
+                                      isFailed ? 'bg-red-500' : 
+                                      isCompleted ? 'bg-green-500' : 
+                                      'bg-blue-500'
+                                    }`}
+                                    style={{ width: `${task.progress}%` }}
+                                  />
+                                </div>
+                              </div>
+                              <span className="text-xs text-gray-400 min-w-[35px]">{task.progress}%</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {(() => {
+                              const modelName = metadata.model_config?.model || metadata.model_type || '';
+                              const family = getModelFamily(modelName);
+                              if (family.includes('YOLO')) return 'YOLO';
+                              if (family.includes('DETR')) return 'RT-DETR';
+                              return family || 'Evaluation';
+                            })()}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {metadata.checkpoint || 'best'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-400">
+                            {isCompleted && metadata.results?.images_processed ? `${metadata.results.images_processed}` : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenamingTask({ id: task.id, name: task.name });
+                                  setNewTaskName(task.name);
+                                }}
+                                className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+                                title="Rename task"
+                              >
+                                <Pencil className="w-3 h-3 mr-1" />
+                                Rename
+                              </button>
+                              {isFailed && (
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"?`)) {
+                                      return;
+                                    }
+                                    try {
+                                      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
+                                        method: 'DELETE'
+                                      });
+                                      if (response.ok) {
+                                        toast({
+                                          title: "Task Deleted",
+                                          description: `Evaluation task "${task.name}" has been deleted.`
+                                        });
+                                        fetchTrainingTasks();
+                                      } else {
+                                        throw new Error('Failed to delete task');
+                                      }
+                                    } catch (error) {
+                                      toast({
+                                        title: "Error",
+                                        description: "Failed to delete evaluation task",
+                                        variant: "destructive"
+                                      });
+                                    }
+                                  }}
+                                  className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
+                                  title="Delete failed task"
+                                >
+                                  <Trash2 className="w-3 h-3 mr-1" />
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-16">
+                <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+                <h3 className="text-lg font-medium mb-2">No Evaluations Yet</h3>
+                <p className="text-muted-foreground mb-6">
+                  Start evaluating your trained models to analyze their performance.
+                </p>
+                <Button onClick={() => setShowEvaluationModal(true)}>
+                  <Brain className="w-4 h-4 mr-2" />
+                  New Evaluation
+                </Button>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </section>
@@ -823,7 +1486,13 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
         <>
           <TrainModelModal
             open={showTrainModelModal}
-            onOpenChange={setShowTrainModelModal}
+            onOpenChange={(open) => {
+              setShowTrainModelModal(open);
+              if (!open) {
+                // Refresh training tasks after modal closes
+                setTimeout(() => fetchTrainingTasks(), 1000);
+              }
+            }}
             datasets={project?.datasets || []}
             datasetGroups={datasetGroups}
             projectId={id || ''}
@@ -850,6 +1519,217 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
             group={editingGroup}
             availableDatasets={project.datasets || []}
             onGroupUpdated={handleGroupUpdated}
+          />
+          
+          {/* Error Details Modal */}
+          <Dialog open={!!selectedTaskError} onOpenChange={() => setSelectedTaskError(null)}>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-500" />
+                  Training Failed - Task #{selectedTaskError?.id}
+                </DialogTitle>
+                <DialogDescription>
+                  {selectedTaskError?.name}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="mt-4">
+                <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-red-800 dark:text-red-200 mb-2">Error Details:</h4>
+                  <pre className="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap font-mono">
+                    {selectedTaskError?.error}
+                  </pre>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* CLI Command Modal */}
+          <Dialog open={!!selectedTaskCommand} onOpenChange={() => setSelectedTaskCommand(null)}>
+            <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  CLI Commands - Task #{selectedTaskCommand?.id}
+                </DialogTitle>
+                <DialogDescription>
+                  {selectedTaskCommand?.name}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="mt-4 space-y-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Copy and paste these commands in your terminal to run training without the GUI:
+                </p>
+                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                  <pre className="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
+                    {selectedTaskCommand?.command}
+                  </pre>
+                </div>
+                <Button
+                  onClick={() => {
+                    if (selectedTaskCommand?.command) {
+                      navigator.clipboard.writeText(selectedTaskCommand.command);
+                    }
+                  }}
+                  className="w-full"
+                >
+                  Copy All Commands
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Rename Task Modal */}
+          <Dialog open={!!renamingTask} onOpenChange={() => setRenamingTask(null)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Pencil className="w-5 h-5" />
+                  Rename Training Task
+                </DialogTitle>
+                <DialogDescription>
+                  Task #{renamingTask?.id}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="mt-4 space-y-4">
+                <div>
+                  <Label htmlFor="taskName">Task Name</Label>
+                  <Input
+                    id="taskName"
+                    value={newTaskName}
+                    onChange={(e) => setNewTaskName(e.target.value)}
+                    placeholder="Enter new task name"
+                    className="mt-2"
+                  />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => setRenamingTask(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (!renamingTask || !newTaskName.trim()) return;
+                      
+                      try {
+                        const response = await fetch(`http://localhost:9999/tasks/${renamingTask.id}`, {
+                          method: 'PATCH',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            name: newTaskName.trim()
+                          })
+                        });
+                        
+                        if (response.ok) {
+                          toast({
+                            title: "Task Renamed",
+                            description: `Task renamed to "${newTaskName.trim()}"`
+                          });
+                          setRenamingTask(null);
+                          fetchTrainingTasks();
+                        } else {
+                          throw new Error('Failed to rename task');
+                        }
+                      } catch (error) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to rename task",
+                          variant: "destructive"
+                        });
+                      }
+                    }}
+                    disabled={!newTaskName.trim() || newTaskName.trim() === renamingTask?.name}
+                  >
+                    Rename
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Training/Evaluation Details Modals */}
+          {selectedTaskId && (() => {
+            const selectedTask = trainingTasks.find(t => t.id === selectedTaskId);
+            const isEvaluation = selectedTask?.task_type === 'model_evaluation';
+            
+            return isEvaluation ? (
+              <EvaluationDetailsModal
+                open={true}
+                onOpenChange={(open) => !open && setSelectedTaskId(null)}
+                taskId={selectedTaskId}
+              />
+            ) : (
+              <TrainingDetailsModal
+                open={true}
+                onOpenChange={(open) => !open && setSelectedTaskId(null)}
+                taskId={selectedTaskId}
+              />
+            );
+          })()}
+
+          {/* Evaluate Model Modal */}
+          <EvaluateModelModal
+            open={showEvaluationModal}
+            onOpenChange={setShowEvaluationModal}
+            trainingTasks={trainingTasks}
+            datasets={project?.datasets || []}
+            onEvaluate={async (params) => {
+              try {
+                const response = await fetch('http://localhost:9999/predictions/evaluate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    task_id: params.taskId,
+                    dataset_id: params.datasetId,
+                    annotation_file_id: params.annotationFileId,
+                    checkpoint: params.checkpoint,
+                    conf_threshold: params.confThreshold,
+                    iou_threshold: params.iouThreshold,
+                    evaluation_name: params.evaluationName || null,
+                    use_grid: params.useGrid,
+                    grid_size: params.gridSize,
+                    grid_overlap: params.gridOverlap
+                  })
+                });
+
+                if (!response.ok) {
+                  let errorMessage = 'Evaluation failed';
+                  try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorData.message || errorMessage;
+                  } catch (e) {
+                    const errorText = await response.text();
+                    if (errorText) errorMessage = errorText;
+                  }
+                  throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+                
+                toast({
+                  title: "Evaluation Started",
+                  description: `Task "${data.task_name}" has been created. Check the Models tab for progress.`
+                });
+                
+                // Refresh tasks and switch to models tab
+                await fetchTrainingTasks();
+                handleTabChange('models');
+              } catch (error) {
+                console.error('Error evaluating model:', error);
+                toast({
+                  title: "Evaluation Failed",
+                  description: error instanceof Error ? error.message : "An error occurred",
+                  variant: "destructive"
+                });
+                throw error;
+              }
+            }}
           />
         </>
       )}

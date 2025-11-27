@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Settings, FolderOpen, Sparkles } from "lucide-react";
+import { Settings, FolderOpen, Sparkles, Brain } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TasksPopover } from "./TasksPopover";
 

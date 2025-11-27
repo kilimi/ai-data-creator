@@ -3,12 +3,21 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime
 import logging
+from celery import Celery
+from pydantic import BaseModel
 
 from .. import models, schemas
 from ..database import get_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Initialize Celery app for task control
+celery_app = Celery('tasks', broker='redis://redis:6379/0', backend='redis://redis:6379/0')
+
+
+class TaskUpdateRequest(BaseModel):
+    name: Optional[str] = None
 
 
 @router.get("/tasks/", response_model=List[schemas.Task])
@@ -118,23 +127,64 @@ async def get_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/tasks/{task_id}/cancel")
 async def cancel_task(task_id: int, db: Session = Depends(get_db)):
-    """Cancel a task"""
+    """Cancel a task and terminate its Celery process"""
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    if task.status in ['completed', 'failed', 'cancelled']:
+    if task.status in ['completed', 'failed', 'cancelled', 'stopped']:
         raise HTTPException(status_code=400, detail=f"Cannot cancel task with status '{task.status}'")
     
-    task.status = 'cancelled'
+    # Get the Celery task ID from metadata
+    celery_task_id = None
+    if task.task_metadata and isinstance(task.task_metadata, dict):
+        celery_task_id = task.task_metadata.get('celery_task_id')
+    
+    # Revoke the Celery task to kill the process
+    if celery_task_id:
+        try:
+            # Terminate=True will kill the worker process
+            celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
+            logger.info(f"Revoked Celery task {celery_task_id} for task {task_id}")
+        except Exception as e:
+            logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
+    
+    # Update task status in database
+    task.status = 'stopped'
     task.completed_at = datetime.utcnow()
-    task.error_message = 'Task cancelled by user'
+    task.error_message = 'Task stopped by user'
     db.commit()
     
     return {
         "success": True,
-        "message": "Task cancelled successfully",
-        "task_id": task_id
+        "message": "Task stopped successfully",
+        "task_id": task_id,
+        "celery_task_revoked": celery_task_id is not None
+    }
+
+
+@router.patch("/tasks/{task_id}")
+async def update_task(task_id: int, update: TaskUpdateRequest, db: Session = Depends(get_db)):
+    """Update task properties like name"""
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # Update name if provided
+    if update.name is not None:
+        task.name = update.name
+    
+    db.commit()
+    db.refresh(task)
+    
+    return {
+        "success": True,
+        "message": "Task updated successfully",
+        "task": {
+            "id": task.id,
+            "name": task.name,
+            "status": task.status
+        }
     }
 
 
@@ -167,6 +217,47 @@ async def delete_task(task_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete task: {str(e)}")
+
+
+@router.delete("/projects/{project_id}/tasks/failed")
+async def delete_failed_tasks(project_id: int, db: Session = Depends(get_db)):
+    """Delete all failed tasks for a project"""
+    try:
+        # Get all failed tasks for this project
+        failed_tasks = db.query(models.Task).filter(
+            models.Task.project_id == project_id,
+            models.Task.status == 'failed'
+        ).all()
+        
+        if not failed_tasks:
+            return {
+                "success": True,
+                "message": "No failed tasks to delete",
+                "deleted_count": 0
+            }
+        
+        deleted_count = len(failed_tasks)
+        
+        # Delete associated augmentations if they exist
+        for task in failed_tasks:
+            augmentation = db.query(models.Augmentation).filter(
+                models.Augmentation.task_id == task.id
+            ).first()
+            if augmentation:
+                db.delete(augmentation)
+            db.delete(task)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} failed task(s)",
+            "deleted_count": deleted_count
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete tasks: {str(e)}")
 
 
 @router.patch("/tasks/{task_id}/retry")

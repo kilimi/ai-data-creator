@@ -94,6 +94,23 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                     ).group_by(models.AnnotationFile.dataset_id).all()
                 )
                 
+                # Get annotation files for each dataset
+                annotation_files_by_dataset = {}
+                annotation_files = db.query(models.AnnotationFile).filter(
+                    models.AnnotationFile.dataset_id.in_(dataset_ids)
+                ).all()
+                
+                for ann_file in annotation_files:
+                    if ann_file.dataset_id not in annotation_files_by_dataset:
+                        annotation_files_by_dataset[ann_file.dataset_id] = []
+                    annotation_files_by_dataset[ann_file.dataset_id].append({
+                        "id": ann_file.id,
+                        "file_name": ann_file.name,
+                        "name": ann_file.name,
+                        "annotation_count": ann_file.annotation_count,
+                        "created_at": ann_file.created_at
+                    })
+                
                 for dataset in p.datasets:
                     datasets.append({
                         "id": dataset.id,
@@ -105,6 +122,7 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                         "image_count": dataset.image_count,
                         "annotation_count": annotation_counts.get(dataset.id, 0),
                         "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
+                        "annotation_files": annotation_files_by_dataset.get(dataset.id, []),
                         "project_id": dataset.project_id,
                         "thumbnailUrl": dataset.thumbnailUrl,
                         "logo_url": dataset.logo_url,
@@ -166,6 +184,23 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
             ).group_by(models.AnnotationFile.dataset_id).all()
         )
         
+        # Get annotation files for each dataset
+        annotation_files_by_dataset = {}
+        annotation_files = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.dataset_id.in_(dataset_ids)
+        ).all()
+        
+        for ann_file in annotation_files:
+            if ann_file.dataset_id not in annotation_files_by_dataset:
+                annotation_files_by_dataset[ann_file.dataset_id] = []
+            annotation_files_by_dataset[ann_file.dataset_id].append({
+                "id": ann_file.id,
+                "file_name": ann_file.name,
+                "name": ann_file.name,
+                "annotation_count": ann_file.annotation_count,
+                "created_at": ann_file.created_at
+            })
+        
         for dataset in project.datasets:
             datasets.append({
                 "id": dataset.id,
@@ -177,6 +212,7 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
                 "image_count": dataset.image_count,
                 "annotation_count": annotation_counts.get(dataset.id, 0),
                 "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
+                "annotation_files": annotation_files_by_dataset.get(dataset.id, []),
                 "project_id": dataset.project_id,
                 "thumbnailUrl": dataset.thumbnailUrl,
                 "logo_url": dataset.logo_url,

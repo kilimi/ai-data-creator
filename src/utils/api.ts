@@ -620,6 +620,19 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Delete all failed tasks for a project
+   */
+  async deleteFailedTasks(projectId: number): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+    deleted_count: number;
+  }>> {
+    return this.request(`/projects/${projectId}/tasks/failed`, {
+      method: 'DELETE'
+    });
+  }
+
   async getAnnotationContent(
     datasetId: string | number, 
     annotationId: string,
@@ -780,6 +793,117 @@ export class ApiClient {
     } catch (error) {
       throw new Error(`Database export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Start YOLO model training
+   */
+  async startYoloTraining(request: {
+    project_id: number;
+    dataset_configs: Array<{
+      dataset_id: number;
+      annotation_file_id: string;
+      image_collection?: string;
+      split?: {
+        train: number;
+        val: number;
+        test: number;
+      };
+    }>;
+    model_type?: string;
+    epochs?: number;
+    batch_size?: number;
+    image_size?: number;
+    device?: string;
+    task_name?: string;
+    patience?: number;
+    optimizer?: string;
+    learning_rate?: number;
+    momentum?: number;
+    weight_decay?: number;
+    use_wandb?: boolean;
+    wandb_project?: string;
+    wandb_entity?: string;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    task_id: number;
+    message: string;
+    task: {
+      id: number;
+      name: string;
+      status: string;
+      progress: number;
+    };
+  }>> {
+    return this.request('/training/yolo/start', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    });
+  }
+
+  /**
+   * Start RT-DETR model training
+   */
+  async startRTDETRTraining(request: {
+    project_id: number;
+    dataset_configs: Array<{
+      dataset_id: number;
+      annotation_file_id: string;
+      image_collection?: string;
+      split?: {
+        train: number;
+        val: number;
+        test: number;
+      };
+    }>;
+    model_type?: string;
+    epochs?: number;
+    batch_size?: number;
+    image_size?: number;
+    device?: string;
+    task_name?: string;
+    patience?: number;
+    optimizer?: string;
+    learning_rate?: number;
+    weight_decay?: number;
+    use_wandb?: boolean;
+    wandb_project?: string;
+    wandb_entity?: string;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    task_id: number;
+    message: string;
+    task: {
+      id: number;
+      name: string;
+      status: string;
+      progress: number;
+    };
+  }>> {
+    return this.request('/training/rtdetr', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    });
+  }
+
+  /**
+   * Get training task status
+   */
+  async getTrainingStatus(taskId: number): Promise<ApiResponse<{
+    success: boolean;
+    task: {
+      id: number;
+      name: string;
+      status: string;
+      progress: number;
+      created_at?: string;
+      started_at?: string;
+      completed_at?: string;
+      error_message?: string;
+      metadata?: any;
+    };
+  }>> {
+    return this.request(`/training/task/${taskId}/status`);
   }
 
   async exportDatabaseWithFiles(onProgress?: (progress: number) => void): Promise<void> {
