@@ -208,6 +208,8 @@ const ImageAnnotation = () => {
   // Class management
   const [newClassName, setNewClassName] = useState('');
   const [isAddingClass, setIsAddingClass] = useState(false);
+  const [editingClassId, setEditingClassId] = useState<string | null>(null);
+  const [editingClassName, setEditingClassName] = useState('');
   // Auto-segment preview state
   const [autoSegmentPreview, setAutoSegmentPreview] = useState<{ polygons: Point[][]; maskDataUrl?: string; imageName?: string } | null>(null);
   // Allow editing label for auto-segmented annotations before accepting
@@ -341,8 +343,6 @@ const ImageAnnotation = () => {
   };
 
   const cancelAutoSegment = () => setAutoSegmentPreview(null);
-  const [editingClass, setEditingClass] = useState<string | null>(null);
-  const [editingClassName, setEditingClassName] = useState('');
   // Inline editing for individual annotation labels in right sidebar
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [editingAnnotationLabel, setEditingAnnotationLabel] = useState('');
@@ -1969,6 +1969,119 @@ const ImageAnnotation = () => {
     });
   };
 
+  const deleteClass = (classId: string) => {
+    const classToDelete = classes.find(c => c.id === classId);
+    if (!classToDelete) return;
+
+    // Check if there are annotations using this class
+    const annotationsWithClass = annotations.filter(a => a.label === classToDelete.name);
+    if (annotationsWithClass.length > 0) {
+      const confirmed = window.confirm(
+        `This class has ${annotationsWithClass.length} annotation(s). Deleting it will also remove all annotations using this class. Continue?`
+      );
+      if (!confirmed) return;
+
+      // Delete all annotations using this class
+      setAnnotations(prev => {
+        const updated = prev.filter(a => a.label !== classToDelete.name);
+        if (currentImageName) {
+          const storageKey = `annotations_${id}_${currentImageName}`;
+          safeLocalStorageSet(storageKey, JSON.stringify(updated));
+        }
+        return updated;
+      });
+    }
+
+    // Remove the class
+    setClasses(prev => {
+      const updated = prev.filter(c => c.id !== classId);
+      saveGlobalClasses(updated);
+      return updated;
+    });
+
+    // Clear selection if deleted class was selected
+    if (selectedClass === classId) {
+      setSelectedClass(null);
+    }
+
+    setHasUnsavedChanges(true);
+
+    toast({
+      title: 'Class deleted',
+      description: `Class "${classToDelete.name}" has been removed`,
+    });
+  };
+
+  const startEditingClass = (classId: string, currentName: string) => {
+    setEditingClassId(classId);
+    setEditingClassName(currentName);
+  };
+
+  const saveEditingClass = () => {
+    if (!editingClassId || !editingClassName.trim()) {
+      setEditingClassId(null);
+      setEditingClassName('');
+      return;
+    }
+
+    const oldClass = classes.find(c => c.id === editingClassId);
+    if (!oldClass) return;
+
+    const oldName = oldClass.name;
+    const newName = editingClassName.trim();
+
+    if (oldName === newName) {
+      setEditingClassId(null);
+      setEditingClassName('');
+      return;
+    }
+
+    // Check if new name already exists
+    if (classes.some(c => c.name === newName && c.id !== editingClassId)) {
+      toast({
+        variant: 'destructive',
+        title: 'Name already exists',
+        description: `A class named "${newName}" already exists`,
+      });
+      return;
+    }
+
+    // Update class name
+    setClasses(prev => {
+      const updated = prev.map(c => 
+        c.id === editingClassId ? { ...c, name: newName } : c
+      );
+      saveGlobalClasses(updated);
+      return updated;
+    });
+
+    // Update all annotations with the old class name
+    setAnnotations(prev => {
+      const updated = prev.map(a => 
+        a.label === oldName ? { ...a, label: newName } : a
+      );
+      if (currentImageName) {
+        const storageKey = `annotations_${id}_${currentImageName}`;
+        safeLocalStorageSet(storageKey, JSON.stringify(updated));
+      }
+      return updated;
+    });
+
+    setEditingClassId(null);
+    setEditingClassName('');
+    setHasUnsavedChanges(true);
+
+    toast({
+      title: 'Class renamed',
+      description: `"${oldName}" has been renamed to "${newName}"`,
+    });
+  };
+
+  const cancelEditingClass = () => {
+    setEditingClassId(null);
+    setEditingClassName('');
+  };
+
   const deleteAnnotation = (annotationId: string) => {
     const annotation = annotations.find(a => a.id === annotationId);
     if (!annotation || !currentImageName) return;
@@ -3395,25 +3508,89 @@ const ImageAnnotation = () => {
                           ? 'border-blue-500 bg-blue-500/20' 
                           : 'border-gray-600 hover:border-gray-500'
                       }`}
-                      onClick={() => setSelectedClass(classObj.id)}
+                      onClick={() => {
+                        if (editingClassId !== classObj.id) {
+                          setSelectedClass(classObj.id);
+                        }
+                      }}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
                           <div 
-                            className="w-4 h-4 rounded"
+                            className="w-4 h-4 rounded flex-shrink-0"
                             style={{ backgroundColor: classObj.color }}
                           />
-                          <span className="text-sm">{classObj.name}</span>
+                          {editingClassId === classObj.id ? (
+                            <div className="flex items-center gap-1 flex-1">
+                              <Input
+                                value={editingClassName}
+                                onChange={(e) => setEditingClassName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveEditingClass();
+                                  if (e.key === 'Escape') cancelEditingClass();
+                                }}
+                                className="h-6 text-sm py-0 px-1"
+                                autoFocus
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 w-6 p-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  saveEditingClass();
+                                }}
+                              >
+                                <Check className="w-3 h-3 text-green-500" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 w-6 p-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cancelEditingClass();
+                                }}
+                              >
+                                <X className="w-3 h-3 text-gray-400" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-sm truncate">{classObj.name}</span>
+                          )}
                         </div>
 
-                        {/* Show a small numeric shortcut hint (1..9) instead of per-class annotation counts */}
-                        {idx < 9 ? (
-                          <div className="text-xs text-gray-400 px-2 py-0.5 rounded border border-gray-700">
-                            {idx + 1}
-                          </div>
-                        ) : (
-                          <div className="text-xs text-gray-400 px-2 py-0.5 rounded border border-gray-700">
-                            {idx + 1}
+                        {editingClassId !== classObj.id && (
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 hover:bg-gray-700"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startEditingClass(classObj.id, classObj.name);
+                              }}
+                              title="Rename class"
+                            >
+                              <Edit className="w-3 h-3 text-blue-400" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 hover:bg-gray-700"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteClass(classObj.id);
+                              }}
+                              title="Delete class"
+                            >
+                              <Trash2 className="w-3 h-3 text-red-400" />
+                            </Button>
+                            {/* Shortcut hint */}
+                            <div className="text-xs text-gray-400 px-1.5 py-0.5 rounded border border-gray-700 ml-1">
+                              {idx + 1}
+                            </div>
                           </div>
                         )}
                       </div>
