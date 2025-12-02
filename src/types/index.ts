@@ -8,6 +8,13 @@ export interface Dataset {
   image_count: number;
   annotation_count: number;
   annotation_file_count: number;
+  annotation_files?: Array<{
+    id: string;
+    file_name: string;
+    name: string;
+    annotation_count: number;
+    created_at: string;
+  }>;
   project_id: number;
   thumbnailUrl?: string;
   logo_url?: string;

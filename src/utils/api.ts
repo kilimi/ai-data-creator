@@ -476,6 +476,22 @@ export class ApiClient {
     });
   }
 
+  async deleteClassAnnotations(
+    datasetId: string | number,
+    annotationFileId: string,
+    className: string
+  ): Promise<ApiResponse<{ 
+    success: boolean; 
+    message: string; 
+    deleted_count: number;
+    remaining_annotations: number;
+    remaining_classes: number;
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/class/${encodeURIComponent(className)}`, {
+      method: 'DELETE'
+    });
+  }
+
   async uploadCocoAnnotationFile(
     datasetId: string | number,
     file: File
@@ -671,6 +687,26 @@ export class ApiClient {
     return this.request(`/datasets/${datasetId}/annotations/${annotationId}/content`, {
       method: 'PUT',
       body: formData
+    });
+  }
+
+  async deleteAnnotationClass(datasetId: string | number, annotationId: string, className: string): Promise<ApiResponse<{
+    deleted_count: number;
+    remaining_annotations: number;
+    remaining_categories: number;
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}/class/${encodeURIComponent(className)}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async duplicateAnnotationFile(datasetId: string | number, annotationId: string): Promise<ApiResponse<{
+    new_file_id: string;
+    new_file_name: string;
+    annotation_count: number;
+  }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}/duplicate`, {
+      method: 'POST'
     });
   }
 

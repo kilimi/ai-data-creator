@@ -27,6 +27,7 @@ class Dataset(DatasetBase):
     image_count: int = 0
     annotation_count: int = 0
     annotation_file_count: int = 0
+    annotation_files: List[dict] = []
     project_id: int
     thumbnailUrl: Optional[str] = None
     logo_url: Optional[str] = None

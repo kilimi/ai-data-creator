@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -6,6 +5,7 @@ import json
 import base64
 from pathlib import Path
 import shutil
+import sys
 
 from .. import models, schemas
 from ..database import get_db
@@ -202,6 +202,8 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
             })
         
         for dataset in project.datasets:
+            # Debug print statement
+            print(f"[DEBUG] Dataset {dataset.id} annotation_files: {annotation_files_by_dataset.get(dataset.id, [])}", file=sys.stderr)
             datasets.append({
                 "id": dataset.id,
                 "name": dataset.name,
@@ -219,6 +221,8 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
                 "url": dataset.url
             })
     
+    # Debug print statement for final datasets
+    print(f"[DEBUG] Final datasets: {datasets}", file=sys.stderr)
     return {
         "id": project.id,
         "name": project.name,

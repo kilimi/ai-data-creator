@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, LargeBinary, JSON, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean, LargeBinary, JSON, Float, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import json
@@ -174,6 +174,12 @@ class Annotation(Base):
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        # Composite index for common query pattern: filtering by project_id, status, and ordering by created_at
+        Index('idx_task_project_status_created', 'project_id', 'status', 'created_at'),
+        # Composite index for task type queries
+        Index('idx_task_project_type_created', 'project_id', 'task_type', 'created_at'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
@@ -181,7 +187,7 @@ class Task(Base):
     task_type = Column(String, index=True)  # 'augmentation', 'training', 'inference', etc.
     status = Column(String, default='pending', index=True)  # 'pending', 'running', 'completed', 'failed'
     project_id = Column(Integer, ForeignKey("projects.id"), index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)  # Add index for ordering
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)

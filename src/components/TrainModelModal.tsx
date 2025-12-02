@@ -304,10 +304,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'rf-detr') {
         // Prepare RT-DETR training request
+        const modelType = modelSettings.variant || 'rtdetrv2-s';
         const trainingRequest = {
           project_id: parseInt(projectId),
           dataset_configs: datasetConfigs,
-          model_type: modelSettings.variant || 'rtdetr-r50.pt',
+          model_type: modelType.endsWith('.pt') ? modelType : `${modelType}.pt`,
           epochs: modelSettings.epochs || 100,
           batch_size: modelSettings.batchSize || 16,
           image_size: modelSettings.imageSize || 640,

@@ -33,16 +33,17 @@ async def get_tasks(
     try:
         query = db.query(models.Task)
         
+        # Apply filters in order of selectivity (most selective first)
+        # This helps the query optimizer use indexes efficiently
         if project_id:
             query = query.filter(models.Task.project_id == project_id)
-        if task_type:
-            query = query.filter(models.Task.task_type == task_type)
         if status:
             query = query.filter(models.Task.status == status)
+        if task_type:
+            query = query.filter(models.Task.task_type == task_type)
         
-        # Use execution options for better connection management
-        query = query.execution_options(autocommit=True)
-        
+        # Order by created_at descending (most recent first)
+        # Use index on created_at for better performance
         return query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
     except Exception as e:
         logger.error(f"Database error in get_tasks: {e}")
@@ -140,20 +141,26 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
     if task.task_metadata and isinstance(task.task_metadata, dict):
         celery_task_id = task.task_metadata.get('celery_task_id')
     
-    # Revoke the Celery task to kill the process
-    if celery_task_id:
-        try:
-            # Terminate=True will kill the worker process
-            celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
-            logger.info(f"Revoked Celery task {celery_task_id} for task {task_id}")
-        except Exception as e:
-            logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
-    
-    # Update task status in database
+    # Update task status in database FIRST so training loop can detect it
     task.status = 'stopped'
     task.completed_at = datetime.utcnow()
     task.error_message = 'Task stopped by user'
     db.commit()
+    
+    # Revoke the Celery task to kill the process
+    if celery_task_id:
+        try:
+            # Use SIGTERM first for graceful shutdown, then SIGKILL as fallback
+            celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')
+            logger.info(f"Sent SIGTERM to Celery task {celery_task_id} for task {task_id}")
+            
+            # Also try immediate revoke with SIGKILL as backup
+            import time
+            time.sleep(0.5)  # Give it a moment to respond to SIGTERM
+            celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
+            logger.info(f"Sent SIGKILL to Celery task {celery_task_id} for task {task_id}")
+        except Exception as e:
+            logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
     
     return {
         "success": True,
@@ -196,9 +203,17 @@ async def delete_task(task_id: int, db: Session = Depends(get_db)):
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         
-        # Check if task is still running
+        # Check if task is still running - only warn for active tasks
         if task.status in ['pending', 'running']:
-            raise HTTPException(status_code=400, detail="Cannot delete a running task. Cancel it first.")
+            # Try to cancel it first
+            if task.task_metadata and isinstance(task.task_metadata, dict):
+                celery_task_id = task.task_metadata.get('celery_task_id')
+                if celery_task_id:
+                    try:
+                        celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
+                        logger.info(f"Terminated Celery task {celery_task_id} before deletion")
+                    except Exception as e:
+                        logger.error(f"Failed to terminate Celery task {celery_task_id}: {e}")
         
         # Delete associated augmentation if exists
         augmentation = db.query(models.Augmentation).filter(models.Augmentation.task_id == task_id).first()
@@ -285,6 +300,129 @@ async def retry_task(task_id: int, db: Session = Depends(get_db)):
         "success": True,
         "message": "Task reset to pending status",
         "task_id": task_id
+    }
+
+
+@router.post("/tasks/{task_id}/rerun")
+async def rerun_task(task_id: int, db: Session = Depends(get_db)):
+    """Rerun a model evaluation task with the same parameters"""
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    if task.task_type != 'model_evaluation':
+        raise HTTPException(status_code=400, detail="Only model evaluation tasks can be rerun")
+    
+    # Allow rerunning completed, failed, cancelled, or stopped tasks
+    if task.status not in ['completed', 'failed', 'cancelled', 'stopped']:
+        raise HTTPException(status_code=400, detail=f"Cannot rerun task with status '{task.status}'")
+    
+    # Get parameters from task metadata
+    metadata = task.task_metadata or {}
+    training_task_id = metadata.get('training_task_id')
+    dataset_id = metadata.get('dataset_id')
+    annotation_file_id = metadata.get('annotation_file_id')
+    checkpoint = metadata.get('checkpoint', 'best')
+    conf_threshold = metadata.get('conf_threshold', 0.25)
+    iou_threshold = metadata.get('iou_threshold', 0.45)
+    use_grid = metadata.get('use_grid', False)
+    grid_size = metadata.get('grid_size', 640)
+    grid_overlap = metadata.get('grid_overlap', 0.2)
+    
+    if not training_task_id or not dataset_id:
+        raise HTTPException(status_code=400, detail="Task metadata is missing required parameters")
+    
+    # Validate training task exists
+    training_task = db.query(models.Task).filter(models.Task.id == training_task_id).first()
+    if not training_task or training_task.status != 'completed':
+        raise HTTPException(status_code=404, detail="Training task not found or not completed")
+    
+    # Validate dataset exists
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Get annotation file name if provided
+    annotation_file_name = None
+    if annotation_file_id:
+        from ..models import AnnotationFile
+        annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == annotation_file_id).first()
+        if annotation_file:
+            annotation_file_name = annotation_file.name
+    
+    # Generate new task name, removing existing (Rerun) suffix if present
+    base_name = task.name
+    if base_name.endswith(" (Rerun)"):
+        base_name = base_name[:-8]  # Remove " (Rerun)"
+    new_task_name = f"{base_name} (Rerun)"
+    
+    # Create new evaluation task with same parameters
+    new_task = models.Task(
+        name=new_task_name,
+        task_type="model_evaluation",
+        status="pending",
+        project_id=task.project_id,
+        progress=0,
+        task_metadata={
+            "training_task_id": training_task_id,
+            "training_task_name": metadata.get('training_task_name'),
+            "dataset_id": dataset_id,
+            "dataset_name": metadata.get('dataset_name'),
+            "annotation_file_id": annotation_file_id,
+            "annotation_file_name": annotation_file_name,
+            "checkpoint": checkpoint,
+            "conf_threshold": conf_threshold,
+            "iou_threshold": iou_threshold,
+            "model_type": metadata.get('model_type', 'Unknown'),
+            "has_ground_truth": annotation_file_id is not None,
+            "use_grid": use_grid,
+            "grid_size": grid_size,
+            "grid_overlap": grid_overlap
+        }
+    )
+    db.add(new_task)
+    db.commit()
+    db.refresh(new_task)
+    
+    # Start Celery task
+    try:
+        from app.tasks.evaluation_tasks import evaluate_model as evaluate_model_task
+        
+        celery_task = evaluate_model_task.delay(
+            new_task.id,
+            training_task_id,
+            dataset_id,
+            annotation_file_id,
+            checkpoint,
+            conf_threshold,
+            iou_threshold,
+            use_grid,
+            grid_size,
+            grid_overlap
+        )
+        
+        # Update task with Celery ID
+        new_task.task_metadata = {
+            **new_task.task_metadata,
+            'celery_task_id': celery_task.id
+        }
+        db.commit()
+        
+        logger.info(f"Started rerun evaluation task {new_task.id} with Celery task {celery_task.id}")
+        
+    except Exception as e:
+        logger.error(f"Error starting rerun evaluation: {str(e)}", exc_info=True)
+        # Update task status to failed
+        new_task.status = 'failed'
+        new_task.error_message = f"Failed to start evaluation: {str(e)}"
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to start evaluation: {str(e)}")
+    
+    return {
+        "success": True,
+        "message": "Evaluation task rerun started",
+        "task_id": new_task.id,
+        "task_name": new_task.name
     }
 
 

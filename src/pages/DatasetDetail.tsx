@@ -18,7 +18,7 @@ import { TrainModelModal } from '@/components/TrainModelModal';
 import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain } from "lucide-react";
+import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain, RotateCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Dataset, Project, DatasetGroup } from '@/types';
@@ -127,7 +127,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   };
 
   const fetchTrainingTasks = async () => {
-    if (!id || !project?.id) return;
+    if (!id || !project?.id || !api) return;
     
     setLoadingTasks(true);
     try {
@@ -135,10 +135,14 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       if (response.success) {
         // Filter for training and evaluation tasks related to this project
         const tasks = response.data.filter((task: any) => 
-          (task.task_type === 'yolo_training' || task.task_type === 'model_evaluation') && 
+          (task.task_type === 'yolo_training' || 
+           task.task_type === 'training' || 
+           task.task_type === 'model_evaluation') && 
           task.project_id === project.id
         );
         setTrainingTasks(tasks);
+      } else {
+        console.error('Failed to fetch training tasks:', response.error);
       }
     } catch (error) {
       console.error('Error fetching training tasks:', error);
@@ -157,7 +161,14 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     if (projectMode && id && project?.id) {
       fetchTrainingTasks();
     }
-  }, [projectMode, id, project?.id]);
+  }, [projectMode, id, project?.id, api]);
+
+  // Fetch training tasks when switching to models or predictions tab
+  useEffect(() => {
+    if ((activeTab === 'models' || activeTab === 'predictions') && project?.id && api && trainingTasks.length === 0) {
+      fetchTrainingTasks();
+    }
+  }, [activeTab, project?.id, api]);
 
   // Handle tab change and update URL
   const handleTabChange = (value: string) => {
@@ -289,7 +300,8 @@ curl http://localhost:9999/tasks/${task.id}`;
   const getModelSize = (modelName: string): string => {
     if (!modelName) return '-';
     const lower = modelName.toLowerCase();
-    // Extract size letter (n, s, m, l, x)
+    
+    // YOLO sizes (nano, small, medium, large, x-large)
     if (lower.includes('yolo')) {
       const match = modelName.match(/yolo\d*([nsmxl])/i);
       if (match) {
@@ -304,13 +316,22 @@ curl http://localhost:9999/tasks/${task.id}`;
         return sizeMap[size] || size.toUpperCase();
       }
     }
+    
     // RT-DETR sizes
     if (lower.includes('rtdetr') || lower.includes('rt-detr')) {
+      // Check for RTDETRv2 models
+      if (lower.includes('rtdetrv2-s') || lower.includes('v2-s')) return 'V2-S';
+      if (lower.includes('rtdetrv2-m') || lower.includes('v2-m')) return 'V2-M';
+      // Check for ResNet backbone sizes (r18, r34, r50, r101)
+      if (lower.includes('r18')) return 'R18';
+      if (lower.includes('r34')) return 'R34';
       if (lower.includes('r50')) return 'R50';
       if (lower.includes('r101')) return 'R101';
-      if (lower.includes('l')) return 'Large';
-      if (lower.includes('x')) return 'X-Large';
+      // Check for L/X sizes (with or without .pt extension)
+      if (lower.match(/rtdetr-l(\.|$)/)) return 'L';
+      if (lower.match(/rtdetr-x(\.|$)/)) return 'X';
     }
+    
     return '-';
   };
 
@@ -1046,6 +1067,22 @@ curl http://localhost:9999/tasks/${task.id}`;
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
                 <p className="text-muted-foreground mt-4">Loading training tasks...</p>
               </div>
+            ) : !isConnected ? (
+              <div className="text-center py-16">
+                <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
+                <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
+                <p className="text-muted-foreground mb-6">
+                  Unable to connect to the backend server. Please check your API settings and ensure the server is running.
+                </p>
+                <div className="flex gap-3 justify-center">
+                  <Button variant="outline" onClick={() => window.location.reload()}>
+                    Retry
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link to="/api-settings">Check Settings</Link>
+                  </Button>
+                </div>
+              </div>
             ) : trainingTasks.filter(t => t.task_type !== 'model_evaluation').length > 0 ? (
               <div className="border border-gray-800 rounded-lg overflow-hidden">
                 <table className="w-full">
@@ -1162,7 +1199,7 @@ curl http://localhost:9999/tasks/${task.id}`;
                                 return metadata.checkpoint || 'best';
                               }
                               // For training tasks
-                              const modelName = metadata.model_config?.model || metadata.model_type || '';
+                              const modelName = metadata.model_config?.model || metadata.model_variant || metadata.model_type || '';
                               const family = getModelFamily(modelName);
                               const size = getModelSize(modelName);
                               return size !== '-' ? size : family;
@@ -1305,6 +1342,22 @@ curl http://localhost:9999/tasks/${task.id}`;
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
                 <p className="text-muted-foreground mt-4">Loading evaluation tasks...</p>
               </div>
+            ) : !isConnected ? (
+              <div className="text-center py-16">
+                <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
+                <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
+                <p className="text-muted-foreground mb-6">
+                  Unable to connect to the backend server. Please check your API settings and ensure the server is running.
+                </p>
+                <div className="flex gap-3 justify-center">
+                  <Button variant="outline" onClick={() => window.location.reload()}>
+                    Retry
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link to="/api-settings">Check Settings</Link>
+                  </Button>
+                </div>
+              </div>
             ) : trainingTasks.filter(t => t.task_type === 'model_evaluation').length > 0 ? (
               <div className="border border-gray-800 rounded-lg overflow-hidden">
                 <table className="w-full">
@@ -1415,47 +1468,76 @@ curl http://localhost:9999/tasks/${task.id}`;
                                   setRenamingTask({ id: task.id, name: task.name });
                                   setNewTaskName(task.name);
                                 }}
-                                className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+                                className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
                                 title="Rename task"
                               >
-                                <Pencil className="w-3 h-3 mr-1" />
-                                Rename
+                                <Pencil className="w-3.5 h-3.5" />
                               </button>
-                              {isFailed && (
+                              {(isCompleted || isFailed || task.status === 'stopped') && (
                                 <button
                                   onClick={async (e) => {
                                     e.stopPropagation();
-                                    if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"?`)) {
-                                      return;
-                                    }
                                     try {
-                                      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
-                                        method: 'DELETE'
+                                      const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, {
+                                        method: 'POST'
                                       });
                                       if (response.ok) {
+                                        const data = await response.json();
                                         toast({
-                                          title: "Task Deleted",
-                                          description: `Evaluation task "${task.name}" has been deleted.`
+                                          title: "Task Rerun Started",
+                                          description: `Evaluation task "${data.task_name}" has been created.`
                                         });
                                         fetchTrainingTasks();
                                       } else {
-                                        throw new Error('Failed to delete task');
+                                        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                                        throw new Error(errorData.detail || 'Failed to rerun task');
                                       }
                                     } catch (error) {
                                       toast({
                                         title: "Error",
-                                        description: "Failed to delete evaluation task",
+                                        description: error instanceof Error ? error.message : "Failed to rerun evaluation task",
                                         variant: "destructive"
                                       });
                                     }
                                   }}
-                                  className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
-                                  title="Delete failed task"
+                                  className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-blue-800 text-blue-300 border border-blue-700 hover:bg-blue-700 hover:text-white transition-colors"
+                                  title="Rerun with same parameters"
                                 >
-                                  <Trash2 className="w-3 h-3 mr-1" />
-                                  Delete
+                                  <RotateCw className="w-3.5 h-3.5" />
                                 </button>
                               )}
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"?`)) {
+                                    return;
+                                  }
+                                  try {
+                                    const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
+                                      method: 'DELETE'
+                                    });
+                                    if (response.ok) {
+                                      toast({
+                                        title: "Task Deleted",
+                                        description: `Evaluation task "${task.name}" has been deleted.`
+                                      });
+                                      fetchTrainingTasks();
+                                    } else {
+                                      throw new Error('Failed to delete task');
+                                    }
+                                  } catch (error) {
+                                    toast({
+                                      title: "Error",
+                                      description: "Failed to delete evaluation task",
+                                      variant: "destructive"
+                                    });
+                                  }
+                                }}
+                                className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
+                                title="Delete task"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1678,7 +1760,7 @@ curl http://localhost:9999/tasks/${task.id}`;
             open={showEvaluationModal}
             onOpenChange={setShowEvaluationModal}
             trainingTasks={trainingTasks}
-            datasets={project?.datasets || []}
+            projectId={id || ''}
             onEvaluate={async (params) => {
               try {
                 const response = await fetch('http://localhost:9999/predictions/evaluate', {

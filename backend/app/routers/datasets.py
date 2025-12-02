@@ -1342,6 +1342,7 @@ async def get_dataset_annotation_content(
             })
         
         # Process images and annotations more efficiently
+        image_id_map = {}  # Initialize outside the if block
         if include_images or include_annotations:
             # Get unique image IDs from annotations to minimize image queries
             image_ids = set()
@@ -1354,7 +1355,6 @@ async def get_dataset_annotation_content(
                     models.Image.id.in_(list(image_ids))
                 ).all()
                 
-                image_id_map = {}
                 for i, image in enumerate(images):
                     coco_image_id = i + 1
                     image_id_map[image.id] = coco_image_id
@@ -1364,11 +1364,39 @@ async def get_dataset_annotation_content(
                         "width": image.width or 1,
                         "height": image.height or 1
                     })
+            elif image_ids:
+                # Load images even if not including in output, for bbox conversion
+                images = db.query(models.Image).filter(
+                    models.Image.id.in_(list(image_ids))
+                ).all()
+                
+                for i, image in enumerate(images):
+                    coco_image_id = i + 1
+                    image_id_map[image.id] = coco_image_id
+                    if include_images:
+                        coco_data["images"].append({
+                            "id": coco_image_id,
+                            "file_name": image.file_name,
+                            "width": image.width or 1,
+                            "height": image.height or 1
+                        })
             
             # Add annotations
             if include_annotations:
+                # Build image dimension map for coordinate conversion
+                image_dims = {}
+                if image_ids:
+                    images_for_dims = db.query(models.Image).filter(
+                        models.Image.id.in_(list(image_ids))
+                    ).all()
+                    for img in images_for_dims:
+                        image_dims[img.id] = (img.width or 1, img.height or 1)
+                
                 for ann in annotations_response["data"]["annotations"]:
                     image_id = ann["imageId"]
+                    
+                    # Get image dimensions for this annotation
+                    img_width, img_height = image_dims.get(image_id, (1, 1))
                     
                     # Build base annotation
                     coco_ann = {
@@ -1377,41 +1405,57 @@ async def get_dataset_annotation_content(
                         "category_id": category_id_map.get(ann["className"], 1)
                     }
                     
-                    # Handle bbox and segmentation (detection/segmentation annotations)
+                    # Handle bbox - check if it needs conversion
+                    # The bbox field may be stored in pixel coordinates (original COCO) or normalized
+                    # The individual bbox_x, bbox_y fields are always normalized
                     if ann.get("bbox") and len(ann["bbox"]) == 4:
-                        # Find the image for dimensions
-                        image = next((img for img in images if img.id == image_id), None) if include_images else None
+                        bbox = ann["bbox"]
                         
-                        # Convert normalized bbox back to pixel coordinates if we have image dimensions
-                        if image and image.width and image.height:
-                            width = image.width
-                            height = image.height
-                            bbox = [
-                                ann["bbox"][0] * width,   # x
-                                ann["bbox"][1] * height,  # y  
-                                ann["bbox"][2] * width,   # width
-                                ann["bbox"][3] * height   # height
-                            ]
-                            
-                            # Convert segmentation coordinates back to pixel coordinates
-                            if ann.get("segmentation"):
-                                pixel_segmentation = []
-                                for polygon in ann["segmentation"]:
-                                    pixel_polygon = []
-                                    for i in range(0, len(polygon), 2):
-                                        pixel_polygon.append(polygon[i] * width)      # x
-                                        pixel_polygon.append(polygon[i + 1] * height)  # y
-                                    pixel_segmentation.append(pixel_polygon)
-                                coco_ann["segmentation"] = pixel_segmentation
+                        # Check if bbox is already in pixel coordinates (values > 2) or normalized (values <= 1)
+                        # If any value is > 2, assume it's already in pixel format
+                        is_already_pixel = any(abs(val) > 2 for val in bbox)
+                        
+                        if is_already_pixel:
+                            # Already in pixel coordinates, use as-is
+                            coco_ann["bbox"] = bbox
                         else:
-                            # Use as-is if no image dimensions available
-                            bbox = ann["bbox"]
-                            if ann.get("segmentation"):
-                                coco_ann["segmentation"] = ann["segmentation"]
+                            # Normalized coordinates, convert to pixels
+                            coco_ann["bbox"] = [
+                                bbox[0] * img_width,
+                                bbox[1] * img_height,
+                                bbox[2] * img_width,
+                                bbox[3] * img_height
+                            ]
                         
-                        coco_ann["bbox"] = bbox
-                        coco_ann["area"] = ann.get("area", bbox[2] * bbox[3] if len(bbox) >= 4 else 0)
+                        # Calculate area from the pixel bbox (width * height)
+                        coco_ann["area"] = coco_ann["bbox"][2] * coco_ann["bbox"][3]
                         coco_ann["iscrowd"] = 0
+                        
+                        # Handle segmentation - check if it's normalized or pixel coordinates
+                        if ann.get("segmentation") and isinstance(ann["segmentation"], list):
+                            segmentation = ann["segmentation"]
+                            pixel_segmentation = []
+                            
+                            for polygon in segmentation:
+                                if isinstance(polygon, list) and len(polygon) > 0:
+                                    # Check if already in pixel format (any value > 2)
+                                    is_already_pixel = any(abs(val) > 2 for val in polygon)
+                                    
+                                    if is_already_pixel:
+                                        # Already pixel coordinates, use as-is
+                                        pixel_segmentation.append(polygon)
+                                    else:
+                                        # Normalized coordinates, convert to pixels
+                                        pixel_polygon = []
+                                        for i in range(0, len(polygon), 2):
+                                            if i + 1 < len(polygon):
+                                                pixel_polygon.append(polygon[i] * img_width)
+                                                pixel_polygon.append(polygon[i + 1] * img_height)
+                                        if pixel_polygon:
+                                            pixel_segmentation.append(pixel_polygon)
+                            
+                            if pixel_segmentation:
+                                coco_ann["segmentation"] = pixel_segmentation
                     
                     # Add annotation to list (works for both classification and detection/segmentation)
                     coco_data["annotations"].append(coco_ann)
@@ -1438,6 +1482,132 @@ async def get_dataset_annotation_content(
     except Exception as e:
         print(f"Error in get_dataset_annotation_content: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get annotation content: {str(e)}")
+
+
+@router.post("/datasets/{dataset_id}/annotations/{annotation_id}/duplicate")
+async def duplicate_annotation_file(
+    dataset_id: int,
+    annotation_id: str,
+    db: Session = Depends(get_db)
+):
+    """Duplicate an annotation file with all its annotations (database-only)"""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Find the original annotation file
+        original_file = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        
+        if not original_file:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+        
+        # Generate unique name for the copy
+        base_name = original_file.name.rsplit('.', 1)[0] if '.' in original_file.name else original_file.name
+        extension = '.' + original_file.name.rsplit('.', 1)[1] if '.' in original_file.name else ''
+        
+        copy_index = 1
+        new_name = f"{base_name}_copy{extension}"
+        
+        while db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.dataset_id == dataset_id,
+            models.AnnotationFile.name == new_name
+        ).first():
+            copy_index += 1
+            new_name = f"{base_name}_copy{copy_index}{extension}"
+        
+        # Create new annotation file entry
+        import uuid
+        new_file_id = str(uuid.uuid4())
+        
+        new_file = models.AnnotationFile(
+            id=new_file_id,
+            dataset_id=dataset_id,
+            name=new_name,
+            format=original_file.format,
+            type=original_file.type,
+            annotation_count=original_file.annotation_count,
+            image_count=original_file.image_count,
+            category_count=original_file.category_count,
+            file_size=original_file.file_size,
+            statistics=original_file.statistics,
+            _tags=original_file.tags[:] if original_file.tags else [],
+            processing_status="completed",
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(new_file)
+        db.flush()
+        
+        # Copy all annotations
+        original_annotations = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_id
+        ).all()
+        
+        for orig_ann in original_annotations:
+            new_annotation = models.Annotation(
+                annotation_file_id=new_file_id,
+                image_id=orig_ann.image_id,
+                dataset_id=dataset_id,
+                category_id=orig_ann.category_id,
+                category=orig_ann.category,
+                segmentation=orig_ann.segmentation[:] if orig_ann.segmentation else None,
+                bbox=orig_ann.bbox[:] if orig_ann.bbox else None,
+                area=orig_ann.area
+            )
+            db.add(new_annotation)
+        
+        # Copy annotation classes
+        original_classes = db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_id
+        ).all()
+        
+        for orig_class in original_classes:
+            new_class = models.AnnotationClass(
+                annotation_file_id=new_file_id,
+                class_name=orig_class.class_name,
+                category_id=orig_class.category_id,
+                count=orig_class.count,
+                color=orig_class.color,
+                opacity=orig_class.opacity
+            )
+            db.add(new_class)
+        
+        # Copy annotation file images mapping
+        original_images = db.query(models.AnnotationFileImage).filter(
+            models.AnnotationFileImage.annotation_file_id == annotation_id
+        ).all()
+        
+        for orig_img in original_images:
+            new_img = models.AnnotationFileImage(
+                annotation_file_id=new_file_id,
+                coco_image_id=orig_img.coco_image_id,
+                file_name=orig_img.file_name,
+                dataset_image_id=orig_img.dataset_image_id,
+                width=orig_img.width,
+                height=orig_img.height
+            )
+            db.add(new_img)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Annotation file duplicated successfully",
+            "new_file_id": new_file_id,
+            "new_file_name": new_name,
+            "annotation_count": len(original_annotations)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Error in duplicate_annotation_file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to duplicate annotation file: {str(e)}")
 
 
 @router.put("/datasets/{dataset_id}/annotations/{annotation_id}/rename")
@@ -1626,6 +1796,78 @@ async def update_annotation_content(
         db.rollback()
         print(f"Error in update_annotation_content: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update annotation content: {str(e)}")
+
+
+@router.delete("/datasets/{dataset_id}/annotations/{annotation_id}/class/{class_name}")
+async def delete_annotation_class(
+    dataset_id: int,
+    annotation_id: str,
+    class_name: str,
+    db: Session = Depends(get_db)
+):
+    """Delete all annotations for a specific class from an annotation file"""
+    try:
+        # Validate annotation file exists
+        annotation_file = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        
+        if not annotation_file:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+
+        # Debug: Check what classes exist
+        existing_annotations = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_id
+        ).all()
+        unique_categories = set(ann.category for ann in existing_annotations if ann.category)
+        print(f"DEBUG: Attempting to delete class '{class_name}' from annotation file '{annotation_id}'")
+        print(f"DEBUG: Existing categories in file: {unique_categories}")
+        print(f"DEBUG: Total annotations in file: {len(existing_annotations)}")
+        
+        # Delete annotations with this class/category
+        deleted_count = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_id,
+            models.Annotation.category == class_name
+        ).delete(synchronize_session=False)
+        
+        print(f"DEBUG: Deleted {deleted_count} annotations")
+        
+        # Delete the class entry itself
+        db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_id,
+            models.AnnotationClass.class_name == class_name
+        ).delete(synchronize_session=False)
+        
+        # Update annotation file metadata
+        remaining_annotation_count = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_id
+        ).count()
+        
+        remaining_category_count = db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_id
+        ).count()
+        
+        annotation_file.annotation_count = remaining_annotation_count
+        annotation_file.category_count = remaining_category_count
+        annotation_file.updated_at = datetime.utcnow()
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} annotations for class '{class_name}'",
+            "deleted_count": deleted_count,
+            "remaining_annotations": remaining_annotation_count,
+            "remaining_categories": remaining_category_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"Error in delete_annotation_class: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete class: {str(e)}")
 
 
 @router.patch("/datasets/{dataset_id}/annotations/{annotation_id}/image/{image_name}")
@@ -1917,8 +2159,24 @@ async def merge_annotation_files_task(
                             "iscrowd": 0
                         }
 
+                        # Denormalize segmentation from database (stored as 0-1) to pixel coordinates
                         if annotation.segmentation:
-                            merged_annotation["segmentation"] = annotation.segmentation
+                            if isinstance(annotation.segmentation, list):
+                                denormalized_segmentation = []
+                                for polygon in annotation.segmentation:
+                                    if isinstance(polygon, list) and len(polygon) >= 6:
+                                        denormalized_polygon = []
+                                        for i in range(0, len(polygon), 2):
+                                            # Convert normalized (0-1) coordinates to pixel coordinates
+                                            x_norm = polygon[i]
+                                            y_norm = polygon[i + 1] if i + 1 < len(polygon) else 0
+                                            denormalized_polygon.append(x_norm * img_width)
+                                            denormalized_polygon.append(y_norm * img_height)
+                                        denormalized_segmentation.append(denormalized_polygon)
+                                merged_annotation["segmentation"] = denormalized_segmentation
+                            else:
+                                # RLE or other format - keep as-is
+                                merged_annotation["segmentation"] = annotation.segmentation
 
                         merged_data["annotations"].append(merged_annotation)
                         annotation_id_counter += 1

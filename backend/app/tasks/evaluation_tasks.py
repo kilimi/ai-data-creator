@@ -225,24 +225,41 @@ def evaluate_model(
                     Annotation.annotation_file_id == annotation_file_id
                 ).all()
                 
+                logger.info(f"Loading {len(annotations)} ground truth annotations from annotation file {annotation_file_id}")
+                
                 for ann in annotations:
                     if ann.image_id not in ground_truth_annotations:
                         ground_truth_annotations[ann.image_id] = []
                     
-                    ann_class = db.query(AnnotationClass).filter(
-                        AnnotationClass.id == ann.annotation_class_id
-                    ).first()
+                    # Get bbox from either individual fields or JSON bbox field
+                    bbox_x, bbox_y, bbox_width, bbox_height = None, None, None, None
+                    if ann.bbox_x is not None and ann.bbox_y is not None and ann.bbox_width is not None and ann.bbox_height is not None:
+                        bbox_x, bbox_y = ann.bbox_x, ann.bbox_y
+                        bbox_width, bbox_height = ann.bbox_width, ann.bbox_height
+                    elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+                        bbox_x, bbox_y = ann.bbox[0], ann.bbox[1]
+                        bbox_width, bbox_height = ann.bbox[2], ann.bbox[3]
                     
+                    # Skip annotations with missing bbox data
+                    if bbox_x is None or bbox_y is None or bbox_width is None or bbox_height is None:
+                        logger.warning(f"Skipping annotation {ann.id} with incomplete bbox data")
+                        continue
+                    
+                    # Use category (class name) directly from annotation
                     class_id = -1
-                    if ann_class and ann_class.name in class_names:
-                        class_id = class_names.index(ann_class.name)
+                    if ann.category and ann.category in class_names:
+                        class_id = class_names.index(ann.category)
                     
                     ground_truth_annotations[ann.image_id].append({
                         'class_id': class_id,
-                        'bbox': [ann.bbox_x, ann.bbox_y, 
-                                ann.bbox_x + ann.bbox_width, 
-                                ann.bbox_y + ann.bbox_height]
+                        'bbox': [bbox_x, bbox_y, 
+                                bbox_x + bbox_width, 
+                                bbox_y + bbox_height]
                     })
+            else:
+                logger.warning(f"Annotation file {annotation_file_id} not found")
+        else:
+            logger.info("No annotation file specified - metrics will not be calculated")
         
         task.progress = 30
         task.task_metadata = {**task.task_metadata, 'stage': 'running_inference'}
@@ -293,11 +310,18 @@ def evaluate_model(
                 pil_image = PILImage.open(img_path)
                 image_width, image_height = pil_image.size
                 
+                # Create grid_images directory
+                grid_output_dir = Path("projects") / str(project_id) / "training" / f"task_{training_task_id}" / "grid_images"
+                grid_output_dir.mkdir(parents=True, exist_ok=True)
+                
                 # Generate grid tiles
                 tiles = generate_grid_tiles(image_width, image_height, grid_size, grid_overlap)
                 
+                # Track all tile results for visualization
+                tile_results = []
+                
                 # Run inference on each tile
-                for tile in tiles:
+                for tile_idx, tile in enumerate(tiles):
                     # Crop tile from image
                     tile_image = pil_image.crop((
                         tile['x'],
@@ -311,13 +335,34 @@ def evaluate_model(
                         source=np.array(tile_image),
                         conf=conf_threshold,
                         iou=iou_threshold,
-                        verbose=False
+                        verbose=False,
+                        save=False  # Don't save via ultralytics
                     )
                     
                     if not results or len(results) == 0:
                         continue
                     
                     result = results[0]
+                    
+                    # Save annotated tile image
+                    if result.boxes and len(result.boxes) > 0:
+                        try:
+                            # Get the annotated image from result
+                            annotated_img = result.plot()  # Returns numpy array with annotations
+                            annotated_pil = PILImage.fromarray(annotated_img)
+                            
+                            # Save with tile coordinates in filename
+                            tile_filename = f"{img.file_name.rsplit('.', 1)[0]}_tile_{tile_idx}_{tile['x']}_{tile['y']}.jpg"
+                            tile_save_path = grid_output_dir / tile_filename
+                            annotated_pil.save(tile_save_path, quality=90)
+                            
+                            tile_results.append({
+                                'tile_idx': tile_idx,
+                                'saved_path': str(tile_save_path),
+                                'detections': len(result.boxes)
+                            })
+                        except Exception as e:
+                            logger.warning(f"Failed to save tile image: {e}")
                     
                     # Process predictions from this tile
                     if result.boxes:
@@ -368,6 +413,51 @@ def evaluate_model(
                 if image_predictions:
                     image_predictions = nms_predictions(image_predictions, iou_threshold=0.5)
                     predictions_count += len(image_predictions)
+                    
+                    # Save full image with all predictions overlaid
+                    try:
+                        import cv2
+                        img_array = np.array(pil_image)
+                        
+                        # Convert RGB to BGR for OpenCV
+                        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+                            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                        else:
+                            img_bgr = img_array
+                        
+                        # Draw each prediction
+                        for pred in image_predictions:
+                            x1, y1, x2, y2 = [int(v) for v in pred['bbox_xyxy']]
+                            class_id = pred['class_id']
+                            conf = pred['conf']
+                            
+                            # Draw bounding box
+                            color = (0, 255, 0)  # Green
+                            cv2.rectangle(img_bgr, (x1, y1), (x2, y2), color, 2)
+                            
+                            # Draw label
+                            label = f"{class_names[class_id]}: {conf:.2f}"
+                            label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                            cv2.rectangle(img_bgr, (x1, y1 - label_size[1] - 4), 
+                                        (x1 + label_size[0], y1), color, -1)
+                            cv2.putText(img_bgr, label, (x1, y1 - 2), 
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+                            
+                            # Draw segmentation mask if available
+                            if pred['segmentation']:
+                                seg = pred['segmentation']
+                                points = np.array([[seg[i], seg[i+1]] for i in range(0, len(seg), 2)], np.int32)
+                                points = points.reshape((-1, 1, 2))
+                                cv2.polylines(img_bgr, [points], True, (255, 0, 0), 2)
+                        
+                        # Save full annotated image
+                        full_img_filename = f"{img.file_name.rsplit('.', 1)[0]}_grid_full.jpg"
+                        full_img_path = grid_output_dir / full_img_filename
+                        cv2.imwrite(str(full_img_path), img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                        
+                        logger.info(f"Saved grid result: {full_img_path} with {len(image_predictions)} predictions")
+                    except Exception as e:
+                        logger.warning(f"Failed to save full annotated image: {e}")
                 
             else:
                 # Full image inference (original behavior)
@@ -433,6 +523,8 @@ def evaluate_model(
                         'conf': pred['conf']
                     })
                 
+                logger.info(f"Image {img.id}: Matching {len(pred_boxes)} predictions with {len(gt_boxes)} ground truth boxes")
+                
                 # Match predictions with ground truth
                 matched_gt = set()
                 matched_pred = set()
@@ -457,6 +549,8 @@ def evaluate_model(
                         gt_class = gt_boxes[best_gt_idx]['class_id']
                         pred_class = pred['class_id']
                         
+                        logger.debug(f"Match found: pred_class={pred_class}, gt_class={gt_class}, IoU={best_iou:.3f}")
+                        
                         if gt_class >= 0 and pred_class >= 0:
                             confusion_matrix[gt_class][pred_class] += 1
                             
@@ -466,8 +560,11 @@ def evaluate_model(
                                 false_positives += 1
                     else:
                         false_positives += 1
+                        if best_iou > 0:
+                            logger.debug(f"No match: best IoU={best_iou:.3f} < threshold={iou_threshold}")
                 
                 false_negatives += len(gt_boxes) - len(matched_gt)
+                logger.info(f"Image {img.id} results: TP={len(matched_pred)}, FP={len(pred_boxes)-len(matched_pred)}, FN={len(gt_boxes)-len(matched_gt)}")
             
             # Update progress
             if (idx + 1) % max(1, total_images // 10) == 0:
@@ -482,9 +579,11 @@ def evaluate_model(
         db.commit()
         
         # Calculate final metrics
+        logger.info(f"Final counts: TP={true_positives}, FP={false_positives}, FN={false_negatives}")
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
         recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
         f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+        logger.info(f"Metrics: Precision={precision:.3f}, Recall={recall:.3f}, F1={f1_score:.3f}")
         
         # Store results in task metadata
         results = {

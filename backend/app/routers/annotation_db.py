@@ -221,7 +221,35 @@ async def process_coco_annotation_file(
                         bbox_y = bbox[1] / img_height
                         bbox_width = bbox[2] / img_width
                         bbox_height = bbox[3] / img_height
-                
+
+                # Normalize segmentation coordinates to relative (0..1) if present and polygon format
+                segmentation_normalized = None
+                if 'segmentation' in coco_ann and coco_ann['segmentation']:
+                    seg = coco_ann['segmentation']
+                    # COCO segmentation may be a list of polygons (list of lists) or RLE (dict/string)
+                    if isinstance(seg, list):
+                        try:
+                            img_width = image_info.get('width', 1) or 1
+                            img_height = image_info.get('height', 1) or 1
+                            normalized_polygons = []
+                            for polygon in seg:
+                                if not isinstance(polygon, list):
+                                    continue
+                                normalized = []
+                                for i in range(0, len(polygon), 2):
+                                    x = polygon[i]
+                                    y = polygon[i + 1] if i + 1 < len(polygon) else 0
+                                    normalized.append(x / img_width)
+                                    normalized.append(y / img_height)
+                                normalized_polygons.append(normalized)
+                            segmentation_normalized = normalized_polygons
+                        except Exception as e:
+                            # Fallback to storing raw segmentation if normalization fails
+                            segmentation_normalized = coco_ann.get('segmentation')
+                    else:
+                        # RLE or other formats: store as-is
+                        segmentation_normalized = coco_ann.get('segmentation')
+
                 # Create annotation record (explicitly let database auto-generate ID)
                 annotation_data = {
                     'annotation_file_id': annotation_file_id,
@@ -236,7 +264,7 @@ async def process_coco_annotation_file(
                     'bbox_width': bbox_width,
                     'bbox_height': bbox_height,
                     'bbox': coco_ann.get('bbox'),  # Keep original for backward compatibility
-                    'segmentation': coco_ann.get('segmentation'),
+                    'segmentation': segmentation_normalized,
                     'area': coco_ann.get('area'),
                     'confidence': 1.0
                 }
@@ -408,7 +436,7 @@ async def get_annotation_data(
             "id": ann.id,
             "imageId": ann.image_id,
             "className": ann.category,
-            "bbox": [ann.bbox_x, ann.bbox_y, ann.bbox_width, ann.bbox_height] if all(v is not None for v in [ann.bbox_x, ann.bbox_y, ann.bbox_width, ann.bbox_height]) else None,
+            "bbox": ann.bbox,  # Use the bbox JSON field directly
             "segmentation": ann.segmentation,
             "area": ann.area,
             "confidence": ann.confidence,
@@ -568,6 +596,70 @@ async def update_annotation(
         "success": True,
         "message": "Annotation updated successfully"
     }
+
+
+@router.delete("/datasets/{dataset_id}/annotations/{annotation_file_id}/class/{class_name}")
+async def delete_class_annotations(
+    dataset_id: int,
+    annotation_file_id: str,
+    class_name: str,
+    db: Session = Depends(get_db)
+):
+    """Delete all annotations of a specific class from an annotation file"""
+    
+    # Verify annotation file exists
+    annotation_file = db.query(AnnotationFile).filter(
+        and_(
+            AnnotationFile.id == annotation_file_id,
+            AnnotationFile.dataset_id == dataset_id
+        )
+    ).first()
+    
+    if not annotation_file:
+        raise HTTPException(status_code=404, detail="Annotation file not found")
+    
+    try:
+        # Delete all annotations with this class name
+        deleted_count = db.query(Annotation).filter(
+            and_(
+                Annotation.annotation_file_id == annotation_file_id,
+                Annotation.category == class_name
+            )
+        ).delete()
+        
+        # Delete the annotation class record
+        db.query(AnnotationClass).filter(
+            and_(
+                AnnotationClass.annotation_file_id == annotation_file_id,
+                AnnotationClass.class_name == class_name
+            )
+        ).delete()
+        
+        # Update annotation file counts
+        remaining_annotation_count = db.query(func.count(Annotation.id)).filter(
+            Annotation.annotation_file_id == annotation_file_id
+        ).scalar() or 0
+        
+        remaining_class_count = db.query(func.count(AnnotationClass.id)).filter(
+            AnnotationClass.annotation_file_id == annotation_file_id
+        ).scalar() or 0
+        
+        annotation_file.annotation_count = remaining_annotation_count
+        annotation_file.category_count = remaining_class_count
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Deleted {deleted_count} annotations for class '{class_name}'",
+            "deleted_count": deleted_count,
+            "remaining_annotations": remaining_annotation_count,
+            "remaining_classes": remaining_class_count
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete class annotations: {str(e)}")
 
 
 def process_coco_annotation_file_task(

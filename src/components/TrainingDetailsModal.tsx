@@ -69,30 +69,44 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   useEffect(() => {
     if (open && taskId) {
       fetchTaskDetails();
-      // Poll for updates if task is running
-      const interval = setInterval(() => {
-        if (task?.status === 'running') {
-          fetchTaskDetails();
-        }
-      }, 3000);
-      return () => clearInterval(interval);
     }
+  }, [open, taskId, api]);
+
+  useEffect(() => {
+    if (!open || !taskId) return;
+    
+    // Poll for updates if task is running
+    const interval = setInterval(() => {
+      if (task?.status === 'running') {
+        fetchTaskDetails();
+      }
+    }, 3000);
+    return () => clearInterval(interval);
   }, [open, taskId, task?.status]);
 
   const fetchTaskDetails = async () => {
-    if (!api) return;
+    if (!api) {
+      setLoading(false);
+      setError('API not available');
+      return;
+    }
     
     try {
       setLoading(true);
+      setError(null);
       const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch task details: ${response.status}`);
+      }
+      
       const data = await response.json();
       console.log('Task metadata structure:', data.task_metadata);
       console.log('Training params:', data.task_metadata?.training_params);
       setTask(data);
-      setError(null);
     } catch (err) {
       console.error('Error fetching task details:', err);
-      setError('Failed to load training details');
+      setError(err instanceof Error ? err.message : 'Failed to load training details');
     } finally {
       setLoading(false);
     }
@@ -681,7 +695,6 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                                 tick={{ fill: '#9CA3AF', fontSize: 12 }}
                                 label={{ value: 'Epoch', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
                                 domain={[0, 'dataMax']}
-                              />
                               />
                               <YAxis 
                                 stroke="#9CA3AF"

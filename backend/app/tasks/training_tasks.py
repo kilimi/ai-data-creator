@@ -130,6 +130,12 @@ def train_yolo_model(self, task_id: int, training_config: Dict[str, Any]):
             try:
                 task = self.db.query(TaskModel).filter(TaskModel.id == self.task_id).first()
                 if task:
+                    # Check if task has been stopped
+                    if task.status == 'stopped':
+                        logger.info(f"Task {self.task_id} has been stopped, stopping training")
+                        trainer.stop = True  # Signal trainer to stop
+                        return
+                    
                     task.progress = min(progress, 90)
                     task.task_metadata = {
                         **(task.task_metadata or {}),
@@ -177,10 +183,12 @@ def train_yolo_model(self, task_id: int, training_config: Dict[str, Any]):
         output_base.mkdir(parents=True, exist_ok=True)
         
         dataset_dir = output_base / "dataset"
+        model_type = training_config.get('model_type', 'yolo11n-seg.pt')
         dataset_info = prepare_yolo_dataset(
             db,
             training_config['dataset_configs'],
-            dataset_dir
+            dataset_dir,
+            model_type=model_type
         )
         
         logger.info(f"Dataset prepared: {dataset_info}")
@@ -418,36 +426,19 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         db.commit()
         
         # Load model
-        model_type = training_config.get('model_type', 'rtdetr-r50.pt')
+        model_type = training_config.get('model_type', 'rtdetrv2-s.pt')
         logger.info(f"Loading RT-DETR model: {model_type}")
-        model = RTDETR(model_type)
         
-        # Progress callback
-        class ProgressCallback:
-            def __init__(self, task_id, db_session):
-                self.task_id = task_id
-                self.db = db_session
-                self.last_progress = 0
-                
-            def __call__(self, trainer):
-                """Called during training"""
-                if hasattr(trainer, 'epoch') and hasattr(trainer, 'epochs'):
-                    progress = int((trainer.epoch / trainer.epochs) * 100)
-                    
-                    # Only update if progress changed
-                    if progress != self.last_progress:
-                        task = self.db.query(TaskModel).filter(TaskModel.id == self.task_id).first()
-                        if task:
-                            task.progress = progress
-                            task.task_metadata = {
-                                **task.task_metadata,
-                                "stage": "training",
-                                "current_epoch": trainer.epoch,
-                                "total_epochs": trainer.epochs
-                            }
-                            self.db.commit()
-                            self.last_progress = progress
-                            logger.info(f"Task {self.task_id} progress: {progress}%")
+        # Ultralytics will automatically download the model if it doesn't exist
+        # Valid RT-DETR models: rtdetrv2-s.pt, rtdetrv2-m.pt, rtdetr-l.pt, rtdetr-x.pt
+        try:
+            model = RTDETR(model_type)
+        except Exception as e:
+            logger.error(f"Failed to load model {model_type}: {e}")
+            # Try with just the base name without .pt
+            base_name = model_type.replace('.pt', '')
+            logger.info(f"Retrying with model name: {base_name}")
+            model = RTDETR(base_name)
         
         # Training arguments
         train_args = {
@@ -467,9 +458,11 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
             'save': True,
             'save_period': 10,  # Save checkpoint every 10 epochs
             'cache': False,  # Don't cache images in RAM
-            'workers': 8,
-            'callbacks': [ProgressCallback(task_id, db)]
+            'workers': 8
         }
+        
+        # Note: RT-DETR doesn't support custom callbacks like YOLO does
+        # Progress updates will need to be handled differently
         
         # W&B integration
         if training_config.get('use_wandb', False):

@@ -79,14 +79,27 @@ class RTDETRTrainingRequest(BaseModel):
 def prepare_yolo_dataset(
     db: Session,
     dataset_configs: List[Dict[str, Any]],
-    output_dir: Path
+    output_dir: Path,
+    model_type: str = "yolo11n-seg.pt"
 ) -> Dict[str, Any]:
     """
     Prepare YOLO format dataset from database annotations.
     
+    Args:
+        db: Database session
+        dataset_configs: List of dataset configurations
+        output_dir: Output directory for the dataset
+        model_type: YOLO model type (e.g., 'yolo11n-seg.pt' for segmentation)
+    
     Returns:
         Dict with paths and class names
     """
+    # Determine if this is a segmentation model
+    is_segmentation_model = '-seg' in model_type.lower()
+    
+    # Track skipped annotations
+    skipped_annotations = {'missing_seg': 0, 'missing_bbox': 0, 'missing_both': 0}
+    
     # Create directory structure
     train_images_dir = output_dir / "images" / "train"
     val_images_dir = output_dir / "images" / "val"
@@ -102,6 +115,10 @@ def prepare_yolo_dataset(
     # Collect all classes across all datasets
     all_classes = set()
     class_mapping = {}
+    
+    # Track annotation types for validation
+    has_segmentation = False
+    has_bbox_only = False
     
     # First pass: collect all unique classes
     for config in dataset_configs:
@@ -240,6 +257,23 @@ def prepare_yolo_dataset(
                     if class_id is None:
                         continue
                     
+                    # For segmentation models, skip annotations without both segmentation and bbox
+                    if is_segmentation_model:
+                        has_seg = annotation.segmentation and len(annotation.segmentation) > 0
+                        has_bbox = (annotation.bbox or 
+                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
+                        
+                        if not (has_seg and has_bbox):
+                            # Track which type of data is missing
+                            if not has_seg and not has_bbox:
+                                skipped_annotations['missing_both'] += 1
+                            elif not has_seg:
+                                skipped_annotations['missing_seg'] += 1
+                            else:
+                                skipped_annotations['missing_bbox'] += 1
+                            logger.debug(f"Skipping annotation {annotation.id} - missing seg or bbox (has_seg={has_seg}, has_bbox={has_bbox})")
+                            continue
+                    
                     # Get image dimensions
                     img_width = image.width or 1
                     img_height = image.height or 1
@@ -254,21 +288,34 @@ def prepare_yolo_dataset(
                             else:
                                 polygon = seg
                             
-                            # Normalize polygon coordinates
-                            normalized_coords = []
-                            for i in range(0, len(polygon), 2):
-                                if i + 1 < len(polygon):
-                                    norm_x = polygon[i] / img_width
-                                    norm_y = polygon[i + 1] / img_height
-                                    normalized_coords.extend([norm_x, norm_y])
-                            
-                            # YOLO segmentation format: class_id x1 y1 x2 y2 ...
-                            if normalized_coords:
-                                coords_str = ' '.join(f"{c:.6f}" for c in normalized_coords)
-                                label_lines.append(f"{class_id} {coords_str}")
+                            # Only process if polygon has valid data
+                            if len(polygon) >= 6:  # At least 3 points (6 coordinates)
+                                # Check if coordinates are already normalized (0-1) or in pixel coordinates
+                                # If any value is > 2, assume pixel coordinates that need normalization
+                                needs_normalization = any(abs(val) > 2 for val in polygon)
+                                
+                                normalized_coords = []
+                                if needs_normalization:
+                                    # Pixel coordinates - normalize them
+                                    for i in range(0, len(polygon), 2):
+                                        if i + 1 < len(polygon):
+                                            norm_x = polygon[i] / img_width
+                                            norm_y = polygon[i + 1] / img_height
+                                            normalized_coords.extend([norm_x, norm_y])
+                                else:
+                                    # Already normalized - use as is
+                                    normalized_coords = polygon
+                                
+                                # YOLO segmentation format: class_id x1 y1 x2 y2 ...
+                                if normalized_coords and len(normalized_coords) >= 6:
+                                    coords_str = ' '.join(f"{c:.6f}" for c in normalized_coords)
+                                    label_lines.append(f"{class_id} {coords_str}")
+                                    has_segmentation = True
+                                    continue  # Skip bbox processing for this annotation
                     
                     # Handle bbox (COCO format: [x, y, width, height])
                     elif annotation.bbox:
+                        has_bbox_only = True
                         bbox = annotation.bbox
                         if isinstance(bbox, list) and len(bbox) == 4:
                             x, y, w, h = bbox
@@ -317,6 +364,48 @@ def prepare_yolo_dataset(
                 
                 total_images[split_name] += 1
     
+    # Log annotation type summary
+    logger.info(f"Annotation summary - has_segmentation: {has_segmentation}, has_bbox_only: {has_bbox_only}")
+    logger.info(f"Model type: {model_type}, is_segmentation_model: {is_segmentation_model}")
+    
+    # Log skipped annotations
+    total_skipped = sum(skipped_annotations.values())
+    if total_skipped > 0:
+        logger.warning(f"⚠️ Skipped {total_skipped} annotations during dataset preparation:")
+        if skipped_annotations['missing_seg'] > 0:
+            logger.warning(f"  - {skipped_annotations['missing_seg']} annotations missing segmentation data")
+        if skipped_annotations['missing_bbox'] > 0:
+            logger.warning(f"  - {skipped_annotations['missing_bbox']} annotations missing bounding box data")
+        if skipped_annotations['missing_both'] > 0:
+            logger.warning(f"  - {skipped_annotations['missing_both']} annotations missing both segmentation and bbox data")
+        logger.warning(f"  Reason: Segmentation models require both polygon and bounding box data for each annotation.")
+    
+    # Validate annotation format matches model type
+    if is_segmentation_model and not has_segmentation:
+        if has_bbox_only:
+            raise ValueError(
+                f"ERROR ❌ Model type '{model_type}' requires segmentation annotations (polygons), "
+                f"but only bounding box annotations were found.\n\n"
+                f"To fix this:\n"
+                f"1. Use a detection model (e.g., 'yolo11n.pt' instead of 'yolo11n-seg.pt'), OR\n"
+                f"2. Create segmentation annotations (polygons) for your dataset instead of bounding boxes.\n\n"
+                f"See https://docs.ultralytics.com/datasets/segment/ for segmentation dataset format."
+            )
+        else:
+            raise ValueError(
+                f"ERROR ❌ No valid annotations found for training.\n"
+                f"Model type '{model_type}' requires segmentation annotations (polygons).\n\n"
+                f"Please check:\n"
+                f"1. Your dataset has annotations uploaded\n"
+                f"2. The annotations contain segmentation data (polygons)\n"
+                f"3. The annotation file is properly linked to images"
+            )
+    elif not is_segmentation_model and has_segmentation and not has_bbox_only:
+        logger.warning(
+            f"Model type '{model_type}' is a detection model, but segmentation annotations were found. "
+            f"Consider using a segmentation model (e.g., 'yolo11n-seg.pt') to utilize polygon annotations."
+        )
+    
     # Create data.yaml file for YOLO
     if not class_mapping:
         raise ValueError("No annotation classes found. Make sure your datasets have annotations with classes defined.")
@@ -324,8 +413,14 @@ def prepare_yolo_dataset(
     if total_images['train'] == 0 and total_images['val'] == 0:
         raise ValueError("No images were processed. Check that your datasets have images with annotations.")
     
+    # Get absolute path - ensure it starts with /app in Docker context
+    abs_path = output_dir.absolute()
+    if not str(abs_path).startswith('/app/'):
+        # If path is relative or doesn't start with /app, prepend /app
+        abs_path = Path('/app') / output_dir
+    
     yaml_content = {
-        'path': str(output_dir.absolute()),
+        'path': str(abs_path),
         'train': 'images/train',
         'val': 'images/val',
         'test': 'images/test' if total_images['test'] > 0 else None,
@@ -344,6 +439,9 @@ def prepare_yolo_dataset(
         f.write(f"val: {yaml_content['val']}\n")
         if yaml_content['test']:
             f.write(f"test: {yaml_content['test']}\n")
+        # Add task type for segmentation models
+        if is_segmentation_model:
+            f.write("task: segment\n")
         f.write(f"nc: {yaml_content['nc']}\n")
         f.write("names:\n")
         for idx, name in yaml_content['names'].items():
@@ -419,10 +517,12 @@ async def train_yolo_model_task(
         output_base.mkdir(parents=True, exist_ok=True)
         
         dataset_dir = output_base / "dataset"
+        model_type = training_config.get('model_type', 'yolo11n-seg.pt')
         dataset_info = prepare_yolo_dataset(
             db,
             training_config['dataset_configs'],
-            dataset_dir
+            dataset_dir,
+            model_type=model_type
         )
         
         logger.info(f"Dataset prepared: {dataset_info}")
@@ -720,32 +820,7 @@ async def start_rtdetr_training(
     Start RT-DETR model training using Celery task queue.
     """
     try:
-        # Prepare dataset
-        output_dir = Path(f"projects/{request.project_id}/training/rtdetr_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        dataset_info = prepare_yolo_dataset(  # RT-DETR uses YOLO format
-            db=db,
-            dataset_configs=request.dataset_configs,
-            output_dir=output_dir
-        )
-        
-        # Create data.yaml for RT-DETR
-        data_yaml = {
-            'path': str(output_dir.absolute()),
-            'train': 'images/train',
-            'val': 'images/val',
-            'test': 'images/test',
-            'names': {i: name for i, name in enumerate(dataset_info['classes'])},
-            'nc': len(dataset_info['classes'])
-        }
-        
-        yaml_path = output_dir / "data.yaml"
-        with open(yaml_path, 'w') as f:
-            import yaml
-            yaml.dump(data_yaml, f)
-        
-        # Create task record
+        # Create task record first to get task_id
         task_name = request.task_name or f"RT-DETR Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         task = Task(
             project_id=request.project_id,
@@ -758,13 +833,46 @@ async def start_rtdetr_training(
                 "model_variant": request.model_type,
                 "training_params": request.dict(exclude={'project_id', 'dataset_configs', 'task_name'}),
                 "dataset_configs": request.dataset_configs,
-                "output_dir": str(output_dir),
-                "data_yaml": str(yaml_path),
-                "num_classes": len(dataset_info['classes']),
-                "classes": dataset_info['classes']
             }
         )
         db.add(task)
+        db.commit()
+        db.refresh(task)
+        
+        # Create output directory using task_id (same as YOLO)
+        output_dir = Path(f"projects/{request.project_id}/training/task_{task.id}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        dataset_info = prepare_yolo_dataset(  # RT-DETR uses YOLO format
+            db=db,
+            dataset_configs=request.dataset_configs,
+            output_dir=output_dir,
+            model_type=request.model_type
+        )
+        
+        # Create data.yaml for RT-DETR
+        data_yaml = {
+            'path': str(output_dir.absolute()),
+            'train': 'images/train',
+            'val': 'images/val',
+            'test': 'images/test',
+            'names': {i: name for i, name in enumerate(dataset_info['class_names'])},
+            'nc': len(dataset_info['class_names'])
+        }
+        
+        yaml_path = output_dir / "data.yaml"
+        with open(yaml_path, 'w') as f:
+            import yaml
+            yaml.dump(data_yaml, f)
+        
+        # Update task with dataset info
+        task.task_metadata = {
+            **task.task_metadata,
+            "output_dir": str(output_dir),
+            "data_yaml": str(yaml_path),
+            "num_classes": len(dataset_info['class_names']),
+            "classes": dataset_info['class_names']
+        }
         db.commit()
         db.refresh(task)
         

@@ -5,13 +5,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Brain, Database } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useApi } from "@/hooks/use-api";
+import { Dataset } from "@/types";
 
 interface EvaluateModelModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   trainingTasks: any[];
-  datasets: any[];
+  projectId: string;
   onEvaluate: (params: {
     taskId: number;
     datasetId: number;
@@ -30,9 +32,10 @@ export function EvaluateModelModal({
   open,
   onOpenChange,
   trainingTasks,
-  datasets,
+  projectId,
   onEvaluate
 }: EvaluateModelModalProps) {
+  const { api } = useApi();
   const [evaluationName, setEvaluationName] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<'best' | 'last'>('best');
@@ -45,8 +48,52 @@ export function EvaluateModelModal({
   const [gridSize, setGridSize] = useState(640);
   const [gridOverlap, setGridOverlap] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [loadingDatasets, setLoadingDatasets] = useState(false);
+
+  // Fetch datasets when modal opens
+  useEffect(() => {
+    if (!open || !api || !projectId) return;
+    
+    const fetchDatasets = async () => {
+      setLoadingDatasets(true);
+      try {
+        const response = await api.getProject(projectId);
+        if (response.success && response.data) {
+          console.log('[EvaluateModelModal] API Response:', response.data);
+          console.log('[EvaluateModelModal] Datasets from API:', response.data.datasets);
+          setDatasets(response.data.datasets || []);
+          
+          // Log each dataset's annotation_files
+          response.data.datasets?.forEach((dataset: any) => {
+            console.log(`[EvaluateModelModal] Dataset ${dataset.id} (${dataset.name}):`, {
+              annotation_file_count: dataset.annotation_file_count,
+              annotation_files: dataset.annotation_files,
+              has_annotation_files_property: 'annotation_files' in dataset
+            });
+          });
+        }
+      } catch (error) {
+        console.error('[EvaluateModelModal] Error fetching datasets:', error);
+      } finally {
+        setLoadingDatasets(false);
+      }
+    };
+    
+    fetchDatasets();
+  }, [open, api, projectId]);
 
   const selectedDatasetData = datasets.find(d => d.id.toString() === selectedDataset);
+  
+  // Debug logging for selection changes
+  useEffect(() => {
+    if (selectedDataset) {
+      console.log('[EvaluateModelModal] Dataset selection changed to:', selectedDataset);
+      console.log('[EvaluateModelModal] Selected dataset data:', selectedDatasetData);
+      console.log('[EvaluateModelModal] Annotation files count:', selectedDatasetData?.annotation_files?.length || 0);
+      console.log('[EvaluateModelModal] Annotation files:', selectedDatasetData?.annotation_files);
+    }
+  }, [selectedDataset, selectedDatasetData]);
 
   const handleSubmit = async () => {
     if (!selectedModel || !selectedDataset) return;

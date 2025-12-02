@@ -50,6 +50,23 @@ function toCOCOFormat(file: AnnotationFile) {
     name,
     supercategory: ""
   }));
+  // Try to get images array from props (if available)
+  // This function is called in a closure, so we need to access images from the closure if possible
+  // We'll use a fallback if not available
+  let imagesArr = [];
+  try {
+    // @ts-ignore
+    if (typeof images !== 'undefined' && Array.isArray(images)) imagesArr = images;
+  } catch {}
+
+  // Helper to get image info by id
+  function getImageInfo(imageId) {
+    if (!imagesArr.length) return { width: 640, height: 480 };
+    const found = imagesArr.find(img => img.id === imageId || img.id === String(imageId));
+    if (found && found.width && found.height) return { width: found.width, height: found.height };
+    return { width: 640, height: 480 };
+  }
+
   return {
     info: {
       description: `Annotations for ${file.name}`,
@@ -63,31 +80,53 @@ function toCOCOFormat(file: AnnotationFile) {
       name: "Unknown License",
       url: ""
     }],
-    images: Object.entries(file.imageMapping || {}).map(([imageId, fileName]) => ({
-      id: parseInt(imageId),
-      width: 640, // Default width
-      height: 480, // Default height
-      file_name: fileName,
-      license: 1,
-      flickr_url: "",
-      coco_url: "",
-      date_captured: ""
-    })),
+    images: Object.entries(file.imageMapping || {}).map(([imageId, fileName]) => {
+      const { width, height } = getImageInfo(imageId);
+      return {
+        id: parseInt(imageId),
+        width,
+        height,
+        file_name: fileName,
+        license: 1,
+        flickr_url: "",
+        coco_url: "",
+        date_captured: ""
+      };
+    }),
     categories,
-    annotations: (file.samples || []).map((sample, index) => ({
-      id: index + 1,
-      image_id: parseInt(sample.imageId),
-      category_id: categoryMap.get(sample.className) || 1,
-      bbox: sample.bbox ? [
-        sample.bbox[0] * 640,
-        sample.bbox[1] * 480,
-        sample.bbox[2] * 640,
-        sample.bbox[3] * 480
-      ] : [0, 0, 0, 0],
-      area: sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * 640 * 480 : 0),
-      iscrowd: 0,
-      segmentation: sample.segmentation || []
-    }))
+    annotations: (file.samples || []).map((sample, index) => {
+      const { width, height } = getImageInfo(sample.imageId);
+      const bbox = sample.bbox ? [
+        sample.bbox[0] * width,
+        sample.bbox[1] * height,
+        sample.bbox[2] * width,
+        sample.bbox[3] * height
+      ] : [0, 0, 0, 0];
+      const area = sample.area || (sample.bbox ? sample.bbox[2] * sample.bbox[3] * width * height : 0);
+      let segmentation = [];
+      if (Array.isArray(sample.segmentation) && sample.segmentation.length > 0) {
+        segmentation = sample.segmentation.map(poly => {
+          if (!Array.isArray(poly) || poly.length < 6) return poly;
+          const maxAbs = Math.max(...poly.map(v => Math.abs(v)));
+          if (maxAbs <= 1.5) {
+            // Normalized: scale to pixel coords
+            return poly.map((v, i) => (i % 2 === 0 ? v * width : v * height));
+          } else {
+            // Already pixel coords: export as-is
+            return poly;
+          }
+        });
+      }
+      return {
+        id: index + 1,
+        image_id: parseInt(sample.imageId),
+        category_id: categoryMap.get(sample.className) || 1,
+        bbox,
+        area,
+        iscrowd: 0,
+        segmentation
+      };
+    })
   };
 }
 
@@ -3944,39 +3983,66 @@ export function AnnotationsContent({
 
   const handleDeleteClass = async (annotationId: string, className: string) => {
     try {
-      const updatedFiles = annotationFiles.map(file => {
-        if (file.id === annotationId) {
-          const updatedClassStats = file.classStats?.filter(stat => stat.className !== className);
-          const updatedSamples = file.samples?.filter(sample => sample.className !== className);
-          const updatedClassColors = { ...file.classColors };
-          delete updatedClassColors[className];
-          return {
-            ...file,
-            classStats: updatedClassStats,
-            samples: updatedSamples,
-            classColors: updatedClassColors,
-          };
-        }
-        return file;
-      });
-      // Mark as dirty
-      markDirty(annotationId);
-      let success = true;
+      console.log('Deleting class:', className, 'from annotation:', annotationId);
       if (api) {
-        const fileToUpdate = updatedFiles.find(file => file.id === annotationId);
-        if (fileToUpdate) {
-          const jsonContent = JSON.stringify(toCOCOFormat(fileToUpdate), null, 2);
-          const updatedFile = new File([jsonContent], fileToUpdate.name, { type: 'application/json' });
-          const response = await api.updateAnnotationContent(id, annotationId, updatedFile);
-          if (!response.success) {
-            success = false;
-            throw new Error(response.error || "Failed to update annotation file on server");
-          }
+        // Use the optimized backend endpoint that deletes directly from database
+        const response = await api.deleteAnnotationClass(id, annotationId, className);
+        console.log('Delete response:', response);
+        if (!response.success) {
+          throw new Error(response.error || "Failed to delete class");
         }
+        
+        if (selectedClass === className) {
+          setSelectedClass(null);
+        }
+        
+        // Clear the cache to force reload
+        setCurrentPageAnnotations(prev => {
+          const newCache = { ...prev };
+          delete newCache[annotationId];
+          return newCache;
+        });
+        
+        // Only reload if the annotation file is currently visible
+        if (visibleAnnotations.has(annotationId)) {
+          // Reload annotations for the current page to get fresh data from database
+          await loadAnnotationsForCurrentPage(annotationId, true);
+        } else {
+          // If not visible, just update the metadata
+          setAnnotationFiles(prev => prev.map(file => 
+            file.id === annotationId
+              ? {
+                  ...file,
+                  annotation_count: response.data?.remaining_annotations,
+                  category_count: response.data?.remaining_categories,
+                  currentPageLoaded: false, // Mark as needing reload when made visible
+                }
+              : file
+          ));
+        }
+        
+        toast({
+          title: "Class deleted",
+          description: `Deleted ${response.data?.deleted_count || 0} annotations for class '${className}'.`,
+        });
       } else {
+        // Fallback for localStorage mode
+        const updatedFiles = annotationFiles.map(file => {
+          if (file.id === annotationId) {
+            const updatedClassStats = file.classStats?.filter(stat => stat.className !== className);
+            const updatedSamples = file.samples?.filter(sample => sample.className !== className);
+            const updatedClassColors = { ...file.classColors };
+            delete updatedClassColors[className];
+            return {
+              ...file,
+              classStats: updatedClassStats,
+              samples: updatedSamples,
+              classColors: updatedClassColors,
+            };
+          }
+          return file;
+        });
         localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
-      }
-      if (success) {
         setAnnotationFiles(updatedFiles);
         if (selectedClass === className) {
           setSelectedClass(null);
@@ -4028,54 +4094,57 @@ export function AnnotationsContent({
       });
       return;
     }
-    // Create a deep copy and new name
-    const newId = Math.random().toString(36).substring(2, 11);
-    const baseName = file.name.replace(/(\.[^/.]+)?$/, "");
-    let copyIndex = 2;
-    let newName = `${baseName}_copy`;
-    // Ensure unique name
-    while (annotationFiles.some(f => f.name === newName || f.name === `${baseName}_copy${copyIndex}`)) {
-      newName = `${baseName}_copy${copyIndex}`;
-      copyIndex++;
-    }
-    const duplicatedFile = {
-      ...file,
-      id: newId,
-      name: newName,
-      date: new Date().toISOString().split('T')[0],
-      samples: file.samples ? file.samples.map(sample => ({ ...sample, annotationFileName: newName })) : [],
-    };
-    let success = true;
-    if (api) {
-      try {
-        // Upload to backend
-        const jsonContent = JSON.stringify(toCOCOFormat(duplicatedFile), null, 2);
-        const uploadFile = new File([jsonContent], newName, { type: 'application/json' });
-        const response = await api.importAnnotations(id, uploadFile);
+    
+    try {
+      if (api) {
+        // Use the backend endpoint to duplicate directly in database
+        const response = await api.duplicateAnnotationFile(id, annotationId);
         if (!response.success) {
-          success = false;
-          throw new Error(response.error || "Failed to upload duplicated annotation file");
+          throw new Error(response.error || "Failed to duplicate annotation file");
         }
-        // Refresh annotation files from backend
+        
+        // Refresh annotation files from backend to get the new file
         await loadAnnotationFilesFromBackend();
-      } catch (error) {
-        success = false;
+        
         toast({
-          title: "Duplicate failed",
-          description: error instanceof Error ? error.message : "Failed to duplicate annotation file.",
-          variant: "destructive",
+          title: "Annotation duplicated",
+          description: `Created a copy: ${response.data?.new_file_name} with ${response.data?.annotation_count || 0} annotations`,
+        });
+      } else {
+        // Fallback for localStorage mode
+        const newId = Math.random().toString(36).substring(2, 11);
+        const baseName = file.name.replace(/(\.[^/.]+)?$/, "");
+        let copyIndex = 2;
+        let newName = `${baseName}_copy`;
+        
+        while (annotationFiles.some(f => f.name === newName || f.name === `${baseName}_copy${copyIndex}`)) {
+          newName = `${baseName}_copy${copyIndex}`;
+          copyIndex++;
+        }
+        
+        const duplicatedFile = {
+          ...file,
+          id: newId,
+          name: newName,
+          date: new Date().toISOString().split('T')[0],
+          samples: file.samples ? file.samples.map(sample => ({ ...sample, annotationFileName: newName })) : [],
+        };
+        
+        const updatedFiles = [...annotationFiles, duplicatedFile];
+        setAnnotationFiles(updatedFiles);
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+        
+        toast({
+          title: "Annotation duplicated",
+          description: `Created a copy: ${newName}`,
         });
       }
-    } else {
-      // Add to localStorage
-      const updatedFiles = [...annotationFiles, duplicatedFile];
-      setAnnotationFiles(updatedFiles);
-      localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
-    }
-    if (success) {
+    } catch (error) {
+      console.error('Error duplicating annotation:', error);
       toast({
-        title: "Annotation duplicated",
-        description: `Created a copy: ${newName}`,
+        title: "Duplicate failed",
+        description: error instanceof Error ? error.message : "Failed to duplicate annotation file.",
+        variant: "destructive",
       });
     }
   };
@@ -4607,28 +4676,26 @@ export function AnnotationsContent({
                              <Brush className="h-4 w-4" />
                            </Button>
                          ) : (
-                           <>
-                             <Button 
-                               variant="ghost" 
-                               size="icon" 
-                               className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                               onClick={(e) => handleStartEditName(file.id, file.name, e)}
-                               title="Edit annotation name"
-                             >
-                               <Edit className="h-4 w-4" />
-                             </Button>
-                             <Button
-                               variant="ghost"
-                               size="icon"
-                               className="h-8 w-8 text-muted-foreground hover:text-blue-400"
-                               onClick={(e) => handleDuplicateAnnotation(file.id, e)}
-                               title="Duplicate annotation file"
-                             >
-                               {/* Copy icon SVG */}
-                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" strokeWidth="2"/><rect x="3" y="3" width="13" height="13" rx="2" strokeWidth="2"/></svg>
-                             </Button>
-                           </>
+                           <Button 
+                             variant="ghost" 
+                             size="icon" 
+                             className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                             onClick={(e) => handleStartEditName(file.id, file.name, e)}
+                             title="Edit annotation name"
+                           >
+                             <Edit className="h-4 w-4" />
+                           </Button>
                          )}
+                         <Button
+                           variant="ghost"
+                           size="icon"
+                           className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                           onClick={(e) => handleDuplicateAnnotation(file.id, e)}
+                           title="Duplicate annotation file"
+                         >
+                           {/* Copy icon SVG */}
+                           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" strokeWidth="2"/><rect x="3" y="3" width="13" height="13" rx="2" strokeWidth="2"/></svg>
+                         </Button>
                          <Button 
                            variant="ghost" 
                            size="icon" 

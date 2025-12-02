@@ -27,7 +27,7 @@ interface RFDETRSettingsDialogProps {
 }
 
 export function RFDETRSettingsDialog({ open, onOpenChange, onSettingsUpdate }: RFDETRSettingsDialogProps) {
-  const [variant, setVariant] = useState('rtdetr-r50');
+  const [variant, setVariant] = useState('rtdetrv2-s');
   const [imageSize, setImageSize] = useState('640');
   const [epochs, setEpochs] = useState('300');
   const [batchSize, setBatchSize] = useState('16');
@@ -65,10 +65,10 @@ export function RFDETRSettingsDialog({ open, onOpenChange, onSettingsUpdate }: R
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-background border shadow-md z-[70]">
-                <SelectItem value="rtdetr-r18">RT-DETR-R18 - Fastest</SelectItem>
-                <SelectItem value="rtdetr-r34">RT-DETR-R34 - Balanced</SelectItem>
-                <SelectItem value="rtdetr-r50">RT-DETR-R50 - Recommended</SelectItem>
-                <SelectItem value="rtdetr-r101">RT-DETR-R101 - Most Accurate</SelectItem>
+                <SelectItem value="rtdetrv2-s">RTDETRv2-S - Small (Fast)</SelectItem>
+                <SelectItem value="rtdetrv2-m">RTDETRv2-M - Medium (Recommended)</SelectItem>
+                <SelectItem value="rtdetr-l">RT-DETR-L - Large</SelectItem>
+                <SelectItem value="rtdetr-x">RT-DETR-X - Extra Large (Most Accurate)</SelectItem>
               </SelectContent>
             </Select>
           </div>

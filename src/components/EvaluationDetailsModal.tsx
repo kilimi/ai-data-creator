@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Activity, Target, Gauge, Download } from "lucide-react";
+import { Brain, TrendingUp, Activity, Target, Gauge, Download, Eye } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -48,32 +48,43 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [launchingFiftyOne, setLaunchingFiftyOne] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
     if (open && taskId) {
       fetchTaskDetails();
-      // Poll for updates if task is running
-      const interval = setInterval(() => {
-        if (task?.status === 'running') {
-          fetchTaskDetails();
-        }
-      }, 3000);
-      return () => clearInterval(interval);
     }
+  }, [open, taskId]);
+
+  useEffect(() => {
+    if (!open || !taskId) return;
+    
+    // Poll for updates if task is running
+    const interval = setInterval(() => {
+      if (task?.status === 'running') {
+        fetchTaskDetails();
+      }
+    }, 3000);
+    return () => clearInterval(interval);
   }, [open, taskId, task?.status]);
 
   const fetchTaskDetails = async () => {
     try {
       setLoading(true);
+      setError(null);
       const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch evaluation details: ${response.status}`);
+      }
+      
       const data = await response.json();
       console.log('Evaluation task details:', data);
       setTask(data);
-      setError(null);
     } catch (err) {
       console.error('Error fetching evaluation details:', err);
-      setError('Failed to load evaluation details');
+      setError(err instanceof Error ? err.message : 'Failed to load evaluation details');
     } finally {
       setLoading(false);
     }
@@ -147,6 +158,44 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
     }
   };
 
+  const viewInFiftyOne = async () => {
+    if (!task || task.status !== 'completed') return;
+    
+    setLaunchingFiftyOne(true);
+    try {
+      const response = await fetch(`http://localhost:9999/predictions/view-fiftyone/${taskId}`, {
+        method: 'POST'
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to launch FiftyOne' }));
+        throw new Error(errorData.detail || 'Failed to launch FiftyOne');
+      }
+      
+      const data = await response.json();
+      
+      toast({
+        title: "FiftyOne Launched",
+        description: data.message || "FiftyOne is starting. Check http://localhost:5151"
+      });
+      
+      // Open FiftyOne in new tab after a short delay
+      setTimeout(() => {
+        window.open('http://localhost:5151', '_blank');
+      }, 2000);
+      
+    } catch (err) {
+      console.error('Error launching FiftyOne:', err);
+      toast({
+        title: "Launch Failed",
+        description: err instanceof Error ? err.message : "Failed to launch FiftyOne",
+        variant: "destructive"
+      });
+    } finally {
+      setLaunchingFiftyOne(false);
+    }
+  };
+
   if (loading) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -192,25 +241,45 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
             <div className="flex items-center gap-2">
               {getStatusBadge(task.status)}
               {task.status === 'completed' && results && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={downloadCocoResults}
-                  disabled={downloading}
-                  className="ml-2"
-                >
-                  {downloading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-2" />
-                      Downloading...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4 mr-2" />
-                      Download COCO
-                    </>
-                  )}
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={viewInFiftyOne}
+                    disabled={launchingFiftyOne}
+                    className="ml-2"
+                  >
+                    {launchingFiftyOne ? (
+                      <>
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-2" />
+                        Launching...
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-4 h-4 mr-2" />
+                        View in FiftyOne
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={downloadCocoResults}
+                    disabled={downloading}
+                  >
+                    {downloading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-2" />
+                        Downloading...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4 mr-2" />
+                        Download COCO
+                      </>
+                    )}
+                  </Button>
+                </>
               )}
             </div>
           </div>

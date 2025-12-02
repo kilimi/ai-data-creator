@@ -29,7 +29,8 @@ import {
   Upload,
   ChevronLeft,
   ChevronRight,
-  Brush
+  Brush,
+  Copy
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useImageLoad } from "@/utils/animations";
@@ -615,6 +616,80 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     });
   };
 
+  const handleDuplicateAnnotation = async (annotation: AnnotationFile) => {
+    if (!id || !api) {
+      toast({
+        title: "Error",
+        description: "Cannot duplicate annotation: API not available",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      // Generate new name for the copy
+      const baseName = annotation.fileName.replace(/\.[^/.]+$/, ""); // Remove extension
+      const extension = annotation.fileName.includes('.') ? annotation.fileName.substring(annotation.fileName.lastIndexOf('.')) : '.json';
+      let copyIndex = 2;
+      let newName = `${baseName}_copy${extension}`;
+      
+      // Ensure unique name
+      while (annotations.some(a => a.fileName === newName)) {
+        newName = `${baseName}_copy${copyIndex}${extension}`;
+        copyIndex++;
+      }
+
+      toast({
+        title: "Duplicating annotation...",
+        description: `Creating copy: ${newName}`,
+      });
+
+      // Get the annotation content from backend
+      const contentResponse = await api.getAnnotationContent(id, annotation.id);
+      
+      if (!contentResponse.success || !contentResponse.data.content) {
+        throw new Error("Failed to load annotation content");
+      }
+
+      // Parse and re-upload as new file
+      const cocoData = JSON.parse(contentResponse.data.content);
+      const jsonContent = JSON.stringify(cocoData, null, 2);
+      const file = new File([jsonContent], newName, { type: 'application/json' });
+      
+      const uploadResponse = await api.importAnnotations(id, file);
+      
+      if (!uploadResponse.success) {
+        throw new Error(uploadResponse.error || "Failed to upload duplicated annotation");
+      }
+
+      // Refresh annotations list
+      const annotationsResponse = await api.getAnnotations(id);
+      if (annotationsResponse.success && annotationsResponse.data) {
+        setAnnotations(annotationsResponse.data);
+        
+        // Update dataset annotation count
+        if (dataset && annotation.annotation_count) {
+          setDataset({
+            ...dataset,
+            annotation_count: (dataset.annotation_count || 0) + annotation.annotation_count,
+          });
+        }
+      }
+
+      toast({
+        title: "Annotation duplicated",
+        description: `Created copy: ${newName}`,
+      });
+    } catch (error) {
+      console.error("Error duplicating annotation:", error);
+      toast({
+        title: "Duplication failed",
+        description: error instanceof Error ? error.message : "Failed to duplicate annotation file",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleRenameAnnotation = async () => {
     if (!selectedAnnotation || !newFilename.trim()) return;
     
@@ -856,24 +931,69 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     });
   };
 
-  const handleDeleteClass = (className: string) => {
-    if (!selectedAnnotation) return;
+  const handleDeleteClass = async (className: string) => {
+    if (!selectedAnnotation || !id) return;
     
-    const updatedAnnotation = {
-      ...selectedAnnotation,
-      classStats: selectedAnnotation.classStats?.filter(stat => stat.className !== className),
-      samples: selectedAnnotation.samples?.filter(sample => sample.className !== className)
-    };
-    
-    setSelectedAnnotation(updatedAnnotation);
-    setAnnotations(prev => 
-      prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
-    );
-    
-    toast({
-      title: "Class deleted",
-      description: `All annotations for "${className}" have been removed`
-    });
+    try {
+      // Call backend API to delete the class
+      const { useApi } = await import('@/hooks/use-api');
+      const { api } = useApi();
+      
+      if (api) {
+        const response = await api.deleteClassAnnotations(
+          id,
+          selectedAnnotation.id,
+          className
+        );
+        
+        if (!response.success) {
+          throw new Error(response.error || "Failed to delete class");
+        }
+        
+        // Update local state with the server response
+        const updatedAnnotation = {
+          ...selectedAnnotation,
+          classStats: selectedAnnotation.classStats?.filter(stat => stat.className !== className),
+          samples: selectedAnnotation.samples?.filter(sample => sample.className !== className),
+          annotation_count: response.data?.remaining_annotations || 0,
+          category_count: response.data?.remaining_classes || 0
+        };
+        
+        setSelectedAnnotation(updatedAnnotation);
+        setAnnotations(prev => 
+          prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
+        );
+        
+        toast({
+          title: "Class deleted",
+          description: `Deleted ${response.data?.deleted_count || 0} annotations for "${className}"`
+        });
+      } else {
+        // Fallback to local state only if no API
+        const updatedAnnotation = {
+          ...selectedAnnotation,
+          classStats: selectedAnnotation.classStats?.filter(stat => stat.className !== className),
+          samples: selectedAnnotation.samples?.filter(sample => sample.className !== className)
+        };
+        
+        setSelectedAnnotation(updatedAnnotation);
+        setAnnotations(prev => 
+          prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
+        );
+        
+        toast({
+          title: "Class deleted",
+          description: `All annotations for "${className}" have been removed`
+        });
+      }
+    } catch (error) {
+      console.error("Error deleting class:", error);
+      toast({
+        variant: "destructive",
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "Failed to delete class"
+      });
+    }
   };
 
   const handleMergeClasses = (sourceClassName: string, targetClassName: string) => {
@@ -1323,6 +1443,18 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                   <Button 
                                     variant="ghost" 
                                     size="icon" 
+                                    className="h-8 w-8 text-blue-500 hover:bg-blue-900/20 hover:text-blue-300"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDuplicateAnnotation(annotation);
+                                    }}
+                                    title="Duplicate annotation file"
+                                  >
+                                    <Copy className="h-5 w-5" />
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
                                     className="h-8 w-8 text-red-500 hover:bg-gray-700"
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1489,6 +1621,19 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
               >
                 <Pencil className="mr-2 h-4 w-4" />
                 Rename
+              </Button>
+              <Button
+                variant="outline"
+                className="border-gray-700 bg-gray-800 hover:bg-gray-700 text-white"
+                onClick={() => {
+                  if (selectedAnnotation) {
+                    handleDuplicateAnnotation(selectedAnnotation);
+                    setSelectedAnnotation(null);
+                  }
+                }}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                Duplicate
               </Button>
               <Button
                 variant="outline"

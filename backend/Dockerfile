@@ -21,11 +21,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Celery for task queuing (backend doesn't need training libraries)
 RUN pip install --no-cache-dir celery[redis]>=5.3.0 redis>=5.0.0 flower>=2.0.0
 
+# Install FiftyOne for visualization
+RUN pip install --no-cache-dir fiftyone>=0.23.0
+
 # Copy the rest of the application
 COPY . .
 
 # Expose the port
 EXPOSE 8000
+EXPOSE 5151
 
 # Command to run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level",  "debug", "--reload"] 

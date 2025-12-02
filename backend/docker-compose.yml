@@ -10,13 +10,19 @@ services:
       - TRAINING_SERVICE_URL=http://training:8000
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=true
+      - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017
+      - FIFTYONE_DEFAULT_APP_PORT=5151
+      - FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0
     ports:
       - "9999:8000"
+      - "5151:5151"  # FiftyOne UI
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mongodb:
+        condition: service_started
     deploy:
       resources:
         limits:
@@ -87,6 +93,15 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # MongoDB for FiftyOne
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
   sam_service:
     build:
       context: ./sam_service
@@ -126,3 +141,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  mongodb_data:
