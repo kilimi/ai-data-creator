@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Activity, Target, Gauge, Download, Eye } from "lucide-react";
+import { Brain, TrendingUp, Activity, Target, Gauge, Download, Eye, ChevronDown, Database, AlertCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -18,6 +18,7 @@ interface TaskDetails {
   progress: number;
   created_at: string;
   completed_at?: string;
+  error_message?: string;
   task_metadata?: {
     training_task_name?: string;
     dataset_name?: string;
@@ -28,6 +29,10 @@ interface TaskDetails {
     use_grid?: boolean;
     grid_size?: number;
     grid_overlap?: number;
+    is_multi_dataset?: boolean;
+    dataset_count?: number;
+    dataset_names?: string[];
+    child_task_ids?: number[];
     results?: {
       precision: number;
       recall: number;
@@ -45,10 +50,13 @@ interface TaskDetails {
 
 export function EvaluationDetailsModal({ open, onOpenChange, taskId }: EvaluationDetailsModalProps) {
   const [task, setTask] = useState<TaskDetails | null>(null);
+  const [childTasks, setChildTasks] = useState<TaskDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [launchingFiftyOne, setLaunchingFiftyOne] = useState(false);
+  const [expandedChildId, setExpandedChildId] = useState<number | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -62,12 +70,12 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
     
     // Poll for updates if task is running
     const interval = setInterval(() => {
-      if (task?.status === 'running') {
+      if (task?.status === 'running' || childTasks.some(ct => ct.status === 'running')) {
         fetchTaskDetails();
       }
     }, 3000);
     return () => clearInterval(interval);
-  }, [open, taskId, task?.status]);
+  }, [open, taskId, task?.status, childTasks]);
 
   const fetchTaskDetails = async () => {
     try {
@@ -82,6 +90,17 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
       const data = await response.json();
       console.log('Evaluation task details:', data);
       setTask(data);
+      
+      // Fetch child tasks if this is a multi-dataset evaluation
+      if (data.task_metadata?.is_multi_dataset && data.task_metadata?.child_task_ids?.length > 0) {
+        const childPromises = data.task_metadata.child_task_ids.map((id: number) =>
+          fetch(`http://localhost:9999/tasks/${id}`).then(r => r.json())
+        );
+        const children = await Promise.all(childPromises);
+        setChildTasks(children);
+      } else {
+        setChildTasks([]);
+      }
     } catch (err) {
       console.error('Error fetching evaluation details:', err);
       setError(err instanceof Error ? err.message : 'Failed to load evaluation details');
@@ -121,12 +140,12 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
     );
   };
 
-  const downloadCocoResults = async () => {
-    if (!task || task.status !== 'completed') return;
+  const downloadCocoResults = async (taskIdToDownload?: number) => {
+    const downloadTaskId = taskIdToDownload || taskId;
     
     setDownloading(true);
     try {
-      const response = await fetch(`http://localhost:9999/predictions/export-coco/${taskId}`);
+      const response = await fetch(`http://localhost:9999/predictions/export-coco/${downloadTaskId}`);
       
       if (!response.ok) {
         throw new Error('Failed to download results');
@@ -136,7 +155,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `evaluation_${taskId}_coco.json`;
+      a.download = `evaluation_${downloadTaskId}_coco.json`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -155,6 +174,43 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
       });
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const downloadAllCocoResults = async () => {
+    if (!task?.task_metadata?.is_multi_dataset) return;
+    
+    setDownloadingAll(true);
+    try {
+      const response = await fetch(`http://localhost:9999/predictions/export-coco-all/${taskId}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to download results');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `evaluation_${taskId}_all_coco.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast({
+        title: "Download Complete",
+        description: "All COCO format results have been downloaded as a ZIP file"
+      });
+    } catch (err) {
+      console.error('Error downloading all COCO results:', err);
+      toast({
+        title: "Download Failed",
+        description: "Failed to download evaluation results",
+        variant: "destructive"
+      });
+    } finally {
+      setDownloadingAll(false);
     }
   };
 
@@ -264,7 +320,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={downloadCocoResults}
+                    onClick={() => downloadCocoResults()}
                     disabled={downloading}
                   >
                     {downloading ? (
@@ -281,11 +337,47 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
                   </Button>
                 </>
               )}
+              {/* Download All for multi-dataset evaluations */}
+              {metadata.is_multi_dataset && childTasks.some(ct => ct.status === 'completed') && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={downloadAllCocoResults}
+                  disabled={downloadingAll}
+                  className="ml-2"
+                >
+                  {downloadingAll ? (
+                    <>
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-2" />
+                      Downloading...
+                    </>
+                  ) : (
+                    <>
+                      <Database className="w-4 h-4 mr-2" />
+                      Download All COCO
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
           </div>
         </DialogHeader>
 
         <div className="space-y-6 mt-6">
+          {/* Multi-dataset indicator */}
+          {metadata.is_multi_dataset && (
+            <div className="bg-blue-950/50 border border-blue-800 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                <Database className="w-5 h-5 text-blue-400" />
+                Multi-Dataset Evaluation
+                <Badge variant="secondary">{childTasks.length} datasets</Badge>
+              </h3>
+              <p className="text-sm text-gray-400">
+                This evaluation runs across multiple datasets. Click on each dataset below to see individual results.
+              </p>
+            </div>
+          )}
+
           {/* Configuration Info */}
           <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
             <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -299,7 +391,11 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
               </div>
               <div>
                 <span className="text-gray-400">Test Dataset:</span>
-                <span className="ml-2 text-white font-medium">{metadata.dataset_name || '-'}</span>
+                <span className="ml-2 text-white font-medium">
+                  {metadata.is_multi_dataset 
+                    ? `${metadata.dataset_names?.join(', ') || 'Multiple'}` 
+                    : metadata.dataset_name || '-'}
+                </span>
               </div>
               <div>
                 <span className="text-gray-400">Checkpoint:</span>
@@ -343,6 +439,19 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
               )}
             </div>
           </div>
+
+          {/* Error Message for Failed Evaluations */}
+          {task.status === 'failed' && (
+            <div className="bg-red-950/50 border border-red-800 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-red-400">
+                <AlertCircle className="w-5 h-5" />
+                Evaluation Failed
+              </h3>
+              <p className="text-sm text-red-300 font-mono whitespace-pre-wrap break-words">
+                {task.error_message || 'An unknown error occurred during evaluation. Please check the backend logs for more details.'}
+              </p>
+            </div>
+          )}
 
           {/* Results */}
           {results && task.status === 'completed' && (
@@ -446,6 +555,140 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
                 </div>
               )}
             </>
+          )}
+
+          {/* Child Tasks for Multi-Dataset Evaluations */}
+          {metadata.is_multi_dataset && childTasks.length > 0 && (
+            <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Database className="w-5 h-5 text-blue-500" />
+                Per-Dataset Results
+              </h3>
+              <div className="space-y-3">
+                {childTasks.map((childTask) => {
+                  const childMetadata = childTask.task_metadata || {};
+                  const childResults = childMetadata.results;
+                  const isExpanded = expandedChildId === childTask.id;
+                  
+                  return (
+                    <div key={childTask.id} className="border border-gray-700 rounded-lg overflow-hidden">
+                      {/* Child Task Header */}
+                      <button
+                        onClick={() => setExpandedChildId(isExpanded ? null : childTask.id)}
+                        className="w-full flex items-center justify-between p-3 hover:bg-gray-800/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                          <span className="font-medium">{childMetadata.dataset_name || `Dataset ${childTask.id}`}</span>
+                          {getStatusBadge(childTask.status)}
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-gray-400">
+                          {childTask.status === 'completed' && childResults && (
+                            <>
+                              <span>F1: {(childResults.f1_score * 100).toFixed(1)}%</span>
+                              <span>{childResults.images_processed} images</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  downloadCocoResults(childTask.id);
+                                }}
+                                className="h-7 px-2"
+                              >
+                                <Download className="w-3 h-3 mr-1" />
+                                COCO
+                              </Button>
+                            </>
+                          )}
+                          {childTask.status === 'running' && (
+                            <span>{childTask.progress}%</span>
+                          )}
+                        </div>
+                      </button>
+                      
+                      {/* Child Task Expanded Content */}
+                      {isExpanded && childTask.status === 'completed' && childResults && (
+                        <div className="p-4 border-t border-gray-700 bg-gray-900/50">
+                          {/* Metrics Grid */}
+                          <div className="grid grid-cols-5 gap-3 mb-4">
+                            <div className="bg-gray-800/50 rounded p-3 text-center">
+                              <div className="text-xs text-gray-400 mb-1">Precision</div>
+                              <div className="text-lg font-bold text-white">
+                                {(childResults.precision * 100).toFixed(1)}%
+                              </div>
+                            </div>
+                            <div className="bg-gray-800/50 rounded p-3 text-center">
+                              <div className="text-xs text-gray-400 mb-1">Recall</div>
+                              <div className="text-lg font-bold text-white">
+                                {(childResults.recall * 100).toFixed(1)}%
+                              </div>
+                            </div>
+                            <div className="bg-gray-800/50 rounded p-3 text-center">
+                              <div className="text-xs text-gray-400 mb-1">F1 Score</div>
+                              <div className="text-lg font-bold text-white">
+                                {(childResults.f1_score * 100).toFixed(1)}%
+                              </div>
+                            </div>
+                            <div className="bg-gray-800/50 rounded p-3 text-center">
+                              <div className="text-xs text-gray-400 mb-1">Predictions</div>
+                              <div className="text-lg font-bold text-white">
+                                {childResults.predictions_count}
+                              </div>
+                            </div>
+                            <div className="bg-gray-800/50 rounded p-3 text-center">
+                              <div className="text-xs text-gray-400 mb-1">Images</div>
+                              <div className="text-lg font-bold text-white">
+                                {childResults.images_processed}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Inference Time */}
+                          <div className="text-sm text-gray-400">
+                            <span>Inference Time: {childResults.inference_time_ms?.toFixed(0) || 0}ms</span>
+                            <span className="ml-4">
+                              Avg: {childResults.images_processed > 0 
+                                ? (childResults.inference_time_ms / childResults.images_processed).toFixed(1) 
+                                : 0}ms/image
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Running Progress */}
+                      {isExpanded && childTask.status === 'running' && (
+                        <div className="p-4 border-t border-gray-700 bg-gray-900/50">
+                          <div className="flex items-center gap-4">
+                            <div className="flex-1">
+                              <div className="w-full bg-gray-800 rounded-full h-2">
+                                <div
+                                  className="bg-blue-500 h-2 rounded-full transition-all"
+                                  style={{ width: `${childTask.progress}%` }}
+                                />
+                              </div>
+                            </div>
+                            <span className="text-sm text-gray-400">{childTask.progress}%</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Failed Error Message */}
+                      {isExpanded && childTask.status === 'failed' && (
+                        <div className="p-4 border-t border-gray-700 bg-red-950/30">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                            <p className="text-sm text-red-300 font-mono whitespace-pre-wrap break-words">
+                              {childTask.error_message || 'An unknown error occurred during evaluation.'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {/* Progress for running tasks */}

@@ -14,11 +14,12 @@ import { AddGroupModal } from '@/components/AddGroupModal';
 import { EditGroupModal } from '@/components/EditGroupModal';
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
+import { MergeDatasetsModal } from '@/components/MergeDatasetsModal';
 import { TrainModelModal } from '@/components/TrainModelModal';
 import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain, RotateCw } from "lucide-react";
+import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain, RotateCw, GitMerge } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Dataset, Project, DatasetGroup } from '@/types';
@@ -61,6 +62,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name" | "images" | "annotations">("newest");
   const [showAugmentedModal, setShowAugmentedModal] = useState(false);
+  const [showMergeModal, setShowMergeModal] = useState(false);
   
   // Get initial tab from URL or default to "datasets"
   const [searchParams, setSearchParams] = useState(new URLSearchParams(window.location.search));
@@ -85,6 +87,9 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
+  
+  // Expanded evaluations state for multi-dataset evaluations
+  const [expandedEvaluations, setExpandedEvaluations] = useState<Set<number>>(new Set());
 
   // Predictions state
   const [showEvaluationModal, setShowEvaluationModal] = useState(false);
@@ -108,6 +113,30 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
       setProject(originalProject);
     }
   }, [originalProject]);
+
+  // Fetch datasets for the project
+  const fetchProjectDatasets = async () => {
+    if (!id) return;
+    
+    console.log('[DatasetDetail] Fetching project datasets for project:', id);
+    try {
+      // Fetch lightweight dataset list (no images/annotations data)
+      const response = await fetch(`http://localhost:9999/projects/${id}/datasets/list`);
+      console.log('[DatasetDetail] Datasets response status:', response.status);
+      if (response.ok) {
+        const result = await response.json();
+        console.log('[DatasetDetail] Datasets result:', result);
+        if (result.success && result.data) {
+          console.log('[DatasetDetail] Setting datasets:', result.data);
+          setDatasets(result.data);
+        }
+      } else {
+        console.error('[DatasetDetail] Failed to fetch datasets:', response.status);
+      }
+    } catch (error) {
+      console.error('Error fetching project datasets:', error);
+    }
+  };
 
   // Fetch dataset groups for the project
   const fetchDatasetGroups = async () => {
@@ -152,8 +181,11 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   };
 
   useEffect(() => {
+    console.log('[DatasetDetail] useEffect triggered - projectMode:', projectMode, 'id:', id);
     if (projectMode && id) {
+      console.log('[DatasetDetail] Calling fetchDatasetGroups and fetchProjectDatasets');
       fetchDatasetGroups();
+      fetchProjectDatasets();
     }
   }, [projectMode, id]);
 
@@ -303,7 +335,8 @@ curl http://localhost:9999/tasks/${task.id}`;
     
     // YOLO sizes (nano, small, medium, large, x-large)
     if (lower.includes('yolo')) {
-      const match = modelName.match(/yolo\d*([nsmxl])/i);
+      // Match patterns like: yolo11n, yolov8s, yolo11n-seg, yolov8m-cls, etc.
+      const match = modelName.match(/yolo(?:v?\d+)?([nsmxl])(?:-|\.)/i);
       if (match) {
         const size = match[1].toLowerCase();
         const sizeMap: Record<string, string> = {
@@ -319,14 +352,6 @@ curl http://localhost:9999/tasks/${task.id}`;
     
     // RT-DETR sizes
     if (lower.includes('rtdetr') || lower.includes('rt-detr')) {
-      // Check for RTDETRv2 models
-      if (lower.includes('rtdetrv2-s') || lower.includes('v2-s')) return 'V2-S';
-      if (lower.includes('rtdetrv2-m') || lower.includes('v2-m')) return 'V2-M';
-      // Check for ResNet backbone sizes (r18, r34, r50, r101)
-      if (lower.includes('r18')) return 'R18';
-      if (lower.includes('r34')) return 'R34';
-      if (lower.includes('r50')) return 'R50';
-      if (lower.includes('r101')) return 'R101';
       // Check for L/X sizes (with or without .pt extension)
       if (lower.match(/rtdetr-l(\.|$)/)) return 'L';
       if (lower.match(/rtdetr-x(\.|$)/)) return 'X';
@@ -818,6 +843,17 @@ curl http://localhost:9999/tasks/${task.id}`;
                   </SelectContent>
                 </Select>
                 
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="whitespace-nowrap ml-2"
+                  onClick={() => setShowMergeModal(true)}
+                  disabled={!project?.datasets || project.datasets.length < 2}
+                  title={!project?.datasets || project.datasets.length < 2 ? "Need at least 2 datasets to merge" : "Merge datasets"}
+                >
+                  <GitMerge className="w-4 h-4 mr-2" />
+                  Merge
+                </Button>
                 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1363,184 +1399,348 @@ curl http://localhost:9999/tasks/${task.id}`;
                 <table className="w-full">
                   <thead className="bg-gray-900 border-b border-gray-800">
                     <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8"></th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Started</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Dataset</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Checkpoint</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Images</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="bg-gray-950 divide-y divide-gray-800">
-                    {trainingTasks.filter(t => t.task_type === 'model_evaluation').map((task) => {
+                    {/* Filter to show only parent tasks and single dataset tasks (not child tasks) */}
+                    {trainingTasks
+                      .filter(t => t.task_type === 'model_evaluation' && !t.task_metadata?.parent_task_id)
+                      .map((task) => {
                       const metadata = task.task_metadata || {};
                       const isRunning = task.status === 'running';
                       const isFailed = task.status === 'failed';
                       const isCompleted = task.status === 'completed';
+                      const isMultiDataset = metadata.is_multi_dataset;
+                      const childTaskIds = metadata.child_task_ids || [];
+                      const isExpanded = expandedEvaluations.has(task.id);
+                      
+                      // Get child tasks for multi-dataset evaluations
+                      const childTasks = isMultiDataset 
+                        ? trainingTasks.filter(t => childTaskIds.includes(t.id))
+                        : [];
+                      
+                      // Calculate aggregate progress for multi-dataset
+                      const aggregateProgress = isMultiDataset && childTasks.length > 0
+                        ? Math.round(childTasks.reduce((sum, ct) => sum + (ct.progress || 0), 0) / childTasks.length)
+                        : task.progress;
+                      
+                      // Calculate aggregate status for multi-dataset
+                      const getAggregateStatus = () => {
+                        if (!isMultiDataset) return task.status;
+                        if (childTasks.every(ct => ct.status === 'completed')) return 'completed';
+                        if (childTasks.some(ct => ct.status === 'failed')) return 'partial_failed';
+                        if (childTasks.some(ct => ct.status === 'running')) return 'running';
+                        return task.status;
+                      };
+                      const aggregateStatus = getAggregateStatus();
                       
                       return (
-                        <tr 
-                          key={task.id} 
-                          className="hover:bg-gray-900 transition-colors cursor-pointer"
-                          onClick={() => {
-                            setSelectedTaskId(task.id);
-                          }}
-                        >
-                          <td className="px-4 py-3 text-sm text-gray-300">#{task.id}</td>
-                          <td className="px-4 py-3 text-sm text-gray-200">{task.name}</td>
-                          <td className="px-4 py-3 text-sm text-gray-400">
-                            {new Date(task.created_at).toLocaleString('en-GB', {
-                              day: '2-digit',
-                              month: '2-digit',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </td>
-                          <td className="px-4 py-3 text-sm">
-                            {isRunning && (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                                Running
-                              </span>
-                            )}
-                            {isFailed && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id });
-                                }}
-                                className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 cursor-pointer transition-colors"
-                              >
-                                Failed
-                              </button>
-                            )}
-                            {isCompleted && (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
-                                Completed
-                              </span>
-                            )}
-                            {task.status === 'pending' && (
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400 border border-gray-500/30">
-                                Pending
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-sm">
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1 max-w-[120px]">
-                                <div className="w-full bg-gray-800 rounded-full h-2">
-                                  <div
-                                    className={`h-2 rounded-full transition-all ${
-                                      isFailed ? 'bg-red-500' : 
-                                      isCompleted ? 'bg-green-500' : 
-                                      'bg-blue-500'
-                                    }`}
-                                    style={{ width: `${task.progress}%` }}
-                                  />
-                                </div>
+                        <React.Fragment key={task.id}>
+                          <tr 
+                            className={`hover:bg-gray-900 transition-colors cursor-pointer ${isMultiDataset ? 'bg-gray-900/50' : ''}`}
+                            onClick={() => {
+                              if (isMultiDataset) {
+                                // Toggle expansion for multi-dataset
+                                setExpandedEvaluations(prev => {
+                                  const newSet = new Set(prev);
+                                  if (newSet.has(task.id)) {
+                                    newSet.delete(task.id);
+                                  } else {
+                                    newSet.add(task.id);
+                                  }
+                                  return newSet;
+                                });
+                              } else {
+                                setSelectedTaskId(task.id);
+                              }
+                            }}
+                          >
+                            {/* Expand/Collapse button for multi-dataset */}
+                            <td className="px-2 py-3 text-sm text-gray-400">
+                              {isMultiDataset && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedEvaluations(prev => {
+                                      const newSet = new Set(prev);
+                                      if (newSet.has(task.id)) {
+                                        newSet.delete(task.id);
+                                      } else {
+                                        newSet.add(task.id);
+                                      }
+                                      return newSet;
+                                    });
+                                  }}
+                                  className="p-0.5 hover:bg-gray-800 rounded"
+                                >
+                                  {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronDown className="w-4 h-4 -rotate-90" />}
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-300">#{task.id}</td>
+                            <td className="px-4 py-3 text-sm text-gray-200">
+                              <div className="flex items-center gap-2">
+                                {task.name}
+                                {isMultiDataset && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {childTaskIds.length} datasets
+                                  </Badge>
+                                )}
                               </div>
-                              <span className="text-xs text-gray-400 min-w-[35px]">{task.progress}%</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-400">
-                            {(() => {
-                              const modelName = metadata.model_config?.model || metadata.model_type || '';
-                              const family = getModelFamily(modelName);
-                              if (family.includes('YOLO')) return 'YOLO';
-                              if (family.includes('DETR')) return 'RT-DETR';
-                              return family || 'Evaluation';
-                            })()}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-400">
-                            {metadata.checkpoint || 'best'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-400">
-                            {isCompleted && metadata.results?.images_processed ? `${metadata.results.images_processed}` : '-'}
-                          </td>
-                          <td className="px-4 py-3 text-sm">
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setRenamingTask({ id: task.id, name: task.name });
-                                  setNewTaskName(task.name);
-                                }}
-                                className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
-                                title="Rename task"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              {(isCompleted || isFailed || task.status === 'stopped') && (
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-400">
+                              {isMultiDataset 
+                                ? `${metadata.dataset_names?.join(', ') || 'Multiple'}` 
+                                : metadata.dataset_name || '-'}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              {aggregateStatus === 'running' && (
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                  Running
+                                </span>
+                              )}
+                              {aggregateStatus === 'failed' && (
+                                <span 
+                                  className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 cursor-pointer hover:bg-red-500/30"
+                                  title="Click to see error details"
+                                >
+                                  Failed
+                                </span>
+                              )}
+                              {aggregateStatus === 'partial_failed' && (
+                                <span 
+                                  className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-500/20 text-orange-400 border border-orange-500/30 cursor-pointer hover:bg-orange-500/30"
+                                  title="Click to see error details"
+                                >
+                                  Partial
+                                </span>
+                              )}
+                              {aggregateStatus === 'completed' && (
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                                  Completed
+                                </span>
+                              )}
+                              {aggregateStatus === 'pending' && (
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400 border border-gray-500/30">
+                                  Pending
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 max-w-[120px]">
+                                  <div className="w-full bg-gray-800 rounded-full h-2">
+                                    <div
+                                      className={`h-2 rounded-full transition-all ${
+                                        aggregateStatus === 'failed' || aggregateStatus === 'partial_failed' ? 'bg-red-500' : 
+                                        aggregateStatus === 'completed' ? 'bg-green-500' : 
+                                        'bg-blue-500'
+                                      }`}
+                                      style={{ width: `${aggregateProgress}%` }}
+                                    />
+                                  </div>
+                                </div>
+                                <span className="text-xs text-gray-400 min-w-[35px]">{aggregateProgress}%</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-400">
+                              {(() => {
+                                const modelName = metadata.model_config?.model || metadata.model_type || '';
+                                const family = getModelFamily(modelName);
+                                if (family.includes('YOLO')) return 'YOLO';
+                                if (family.includes('DETR')) return 'RT-DETR';
+                                return family || 'Evaluation';
+                              })()}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-400">
+                              {isMultiDataset 
+                                ? childTasks.filter(ct => ct.status === 'completed').reduce((sum, ct) => sum + (ct.task_metadata?.results?.images_processed || 0), 0)
+                                : (isCompleted && metadata.results?.images_processed ? `${metadata.results.images_processed}` : '-')}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              <div className="flex items-center gap-2">
+                                {isMultiDataset && aggregateStatus === 'completed' && (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        const response = await fetch(`http://localhost:9999/predictions/export-coco-all/${task.id}`);
+                                        if (!response.ok) throw new Error('Failed to download');
+                                        const blob = await response.blob();
+                                        const url = window.URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `evaluation_${task.id}_all_coco.zip`;
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        window.URL.revokeObjectURL(url);
+                                        document.body.removeChild(a);
+                                        toast({ title: "Download Complete", description: "All COCO files downloaded" });
+                                      } catch (error) {
+                                        toast({ title: "Download Failed", description: "Failed to download COCO files", variant: "destructive" });
+                                      }
+                                    }}
+                                    className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
+                                    title="Download All COCO predictions"
+                                  >
+                                    <Database className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRenamingTask({ id: task.id, name: task.name });
+                                    setNewTaskName(task.name);
+                                  }}
+                                  className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+                                  title="Rename task"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
                                 <button
                                   onClick={async (e) => {
                                     e.stopPropagation();
+                                    if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"${isMultiDataset ? ' and all its child evaluations' : ''}?`)) {
+                                      return;
+                                    }
                                     try {
-                                      const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, {
-                                        method: 'POST'
+                                      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
+                                        method: 'DELETE'
                                       });
                                       if (response.ok) {
-                                        const data = await response.json();
                                         toast({
-                                          title: "Task Rerun Started",
-                                          description: `Evaluation task "${data.task_name}" has been created.`
+                                          title: "Task Deleted",
+                                          description: `Evaluation task "${task.name}" has been deleted.`
                                         });
                                         fetchTrainingTasks();
                                       } else {
-                                        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
-                                        throw new Error(errorData.detail || 'Failed to rerun task');
+                                        throw new Error('Failed to delete task');
                                       }
                                     } catch (error) {
                                       toast({
                                         title: "Error",
-                                        description: error instanceof Error ? error.message : "Failed to rerun evaluation task",
+                                        description: "Failed to delete evaluation task",
                                         variant: "destructive"
                                       });
                                     }
                                   }}
-                                  className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-blue-800 text-blue-300 border border-blue-700 hover:bg-blue-700 hover:text-white transition-colors"
-                                  title="Rerun with same parameters"
+                                  className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
+                                  title="Delete task"
                                 >
-                                  <RotateCw className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-3.5 h-3.5" />
                                 </button>
-                              )}
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"?`)) {
-                                    return;
-                                  }
-                                  try {
-                                    const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
-                                      method: 'DELETE'
-                                    });
-                                    if (response.ok) {
-                                      toast({
-                                        title: "Task Deleted",
-                                        description: `Evaluation task "${task.name}" has been deleted.`
-                                      });
-                                      fetchTrainingTasks();
-                                    } else {
-                                      throw new Error('Failed to delete task');
-                                    }
-                                  } catch (error) {
-                                    toast({
-                                      title: "Error",
-                                      description: "Failed to delete evaluation task",
-                                      variant: "destructive"
-                                    });
-                                  }
-                                }}
-                                className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
-                                title="Delete task"
+                              </div>
+                            </td>
+                          </tr>
+                          
+                          {/* Child tasks for multi-dataset evaluations */}
+                          {isMultiDataset && isExpanded && childTasks.map((childTask) => {
+                            const childMetadata = childTask.task_metadata || {};
+                            const childIsRunning = childTask.status === 'running';
+                            const childIsFailed = childTask.status === 'failed';
+                            const childIsCompleted = childTask.status === 'completed';
+                            
+                            return (
+                              <tr 
+                                key={childTask.id}
+                                className="hover:bg-gray-900 transition-colors cursor-pointer bg-gray-900/30"
+                                onClick={() => setSelectedTaskId(childTask.id)}
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
+                                <td className="px-2 py-2"></td>
+                                <td className="px-4 py-2 text-sm text-gray-400 pl-8">└ #{childTask.id}</td>
+                                <td className="px-4 py-2 text-sm text-gray-300">{childMetadata.dataset_name || 'Unknown'}</td>
+                                <td className="px-4 py-2 text-sm text-gray-400">{childMetadata.dataset_name || '-'}</td>
+                                <td className="px-4 py-2 text-sm">
+                                  {childIsRunning && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                      Running
+                                    </span>
+                                  )}
+                                  {childIsFailed && (
+                                    <span 
+                                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 cursor-pointer hover:bg-red-500/30"
+                                      title="Click to see error details"
+                                    >
+                                      Failed
+                                    </span>
+                                  )}
+                                  {childIsCompleted && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
+                                      Completed
+                                    </span>
+                                  )}
+                                  {childTask.status === 'pending' && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400 border border-gray-500/30">
+                                      Pending
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2 text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex-1 max-w-[100px]">
+                                      <div className="w-full bg-gray-800 rounded-full h-1.5">
+                                        <div
+                                          className={`h-1.5 rounded-full transition-all ${
+                                            childIsFailed ? 'bg-red-500' : 
+                                            childIsCompleted ? 'bg-green-500' : 
+                                            'bg-blue-500'
+                                          }`}
+                                          style={{ width: `${childTask.progress}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                    <span className="text-xs text-gray-500">{childTask.progress}%</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-500">-</td>
+                                <td className="px-4 py-2 text-sm text-gray-400">
+                                  {childIsCompleted && childMetadata.results?.images_processed 
+                                    ? childMetadata.results.images_processed 
+                                    : '-'}
+                                </td>
+                                <td className="px-4 py-2 text-sm">
+                                  <div className="flex items-center gap-1">
+                                    {childIsCompleted && (
+                                      <button
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          try {
+                                            const response = await fetch(`http://localhost:9999/predictions/export-coco/${childTask.id}`);
+                                            if (!response.ok) throw new Error('Failed to download');
+                                            const blob = await response.blob();
+                                            const url = window.URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = `evaluation_${childTask.id}_coco.json`;
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            window.URL.revokeObjectURL(url);
+                                            document.body.removeChild(a);
+                                          } catch (error) {
+                                            toast({ title: "Error", description: "Failed to download COCO file", variant: "destructive" });
+                                          }
+                                        }}
+                                        className="inline-flex items-center p-1 rounded text-xs bg-green-800/50 text-green-400 hover:bg-green-700 transition-colors"
+                                        title="Download COCO predictions"
+                                      >
+                                        <Database className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -1585,6 +1785,17 @@ curl http://localhost:9999/tasks/${task.id}`;
             onOpenChange={setShowAugmentedModal}
             projectId={id || ''}
             datasets={project.datasets || []}
+          />
+          
+          <MergeDatasetsModal
+            open={showMergeModal}
+            onOpenChange={setShowMergeModal}
+            projectId={id || ''}
+            datasets={project.datasets || []}
+            onMergeComplete={() => {
+              // Refresh the project data to show the new merged dataset
+              window.location.reload();
+            }}
           />
           
           <AddGroupModal
@@ -1761,6 +1972,8 @@ curl http://localhost:9999/tasks/${task.id}`;
             onOpenChange={setShowEvaluationModal}
             trainingTasks={trainingTasks}
             projectId={id || ''}
+            datasets={datasets}
+            datasetGroups={datasetGroups}
             onEvaluate={async (params) => {
               try {
                 const response = await fetch('http://localhost:9999/predictions/evaluate', {
@@ -1776,7 +1989,8 @@ curl http://localhost:9999/tasks/${task.id}`;
                     evaluation_name: params.evaluationName || null,
                     use_grid: params.useGrid,
                     grid_size: params.gridSize,
-                    grid_overlap: params.gridOverlap
+                    grid_overlap: params.gridOverlap,
+                    ignored_classes: params.ignoredClasses || []
                   })
                 });
 
@@ -1796,14 +2010,71 @@ curl http://localhost:9999/tasks/${task.id}`;
                 
                 toast({
                   title: "Evaluation Started",
-                  description: `Task "${data.task_name}" has been created. Check the Models tab for progress.`
+                  description: `Task "${data.task_name}" has been created. Check the Predictions tab for progress.`
                 });
                 
-                // Refresh tasks and switch to models tab
+                // Refresh tasks and switch to predictions tab
                 await fetchTrainingTasks();
-                handleTabChange('models');
+                handleTabChange('predictions');
               } catch (error) {
                 console.error('Error evaluating model:', error);
+                toast({
+                  title: "Evaluation Failed",
+                  description: error instanceof Error ? error.message : "An error occurred",
+                  variant: "destructive"
+                });
+                throw error;
+              }
+            }}
+            onEvaluateMultiple={async (params) => {
+              try {
+                console.log('[DatasetDetail] onEvaluateMultiple called with params:', params);
+                console.log('[DatasetDetail] Datasets to evaluate:', params.datasets);
+                
+                const requestBody = {
+                  task_id: params.taskId,
+                  datasets: params.datasets,
+                  checkpoint: params.checkpoint,
+                  conf_threshold: params.confThreshold,
+                  iou_threshold: params.iouThreshold,
+                  evaluation_name: params.evaluationName || null,
+                  use_grid: params.useGrid,
+                  grid_size: params.gridSize,
+                  grid_overlap: params.gridOverlap,
+                  ignored_classes: params.ignoredClasses || []
+                };
+                console.log('[DatasetDetail] Request body:', JSON.stringify(requestBody, null, 2));
+                
+                const response = await fetch('http://localhost:9999/predictions/evaluate-multiple', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                  let errorMessage = 'Multi-dataset evaluation failed';
+                  try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorData.message || errorMessage;
+                  } catch (e) {
+                    const errorText = await response.text();
+                    if (errorText) errorMessage = errorText;
+                  }
+                  throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+                
+                toast({
+                  title: "Multi-Dataset Evaluation Started",
+                  description: `Task "${data.task_name}" has been created with ${data.child_task_ids?.length || 0} dataset evaluations.`
+                });
+                
+                // Refresh tasks and switch to predictions tab
+                await fetchTrainingTasks();
+                handleTabChange('predictions');
+              } catch (error) {
+                console.error('Error evaluating model on multiple datasets:', error);
                 toast({
                   title: "Evaluation Failed",
                   description: error instanceof Error ? error.message : "An error occurred",

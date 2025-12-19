@@ -1460,9 +1460,10 @@ export default function Classification() {
                     <Card key={image.id} className="overflow-hidden">
                       <div className="relative">
                         <img
-                          src={image.url}
+                          src={image.thumbnailUrl || image.url}
                           alt={image.fileName}
                           className="w-full aspect-square object-cover"
+                          loading="lazy"
                           style={{ height: `${settings.imageSize}px` }}
                         />
                         {imageClasses.length > 0 && (

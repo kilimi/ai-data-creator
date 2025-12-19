@@ -20,6 +20,7 @@ interface ImageViewportProps {
   onMouseUp: () => void;
   onDoubleClick: () => void;
   onImageClick: (e: React.MouseEvent) => void;
+  useFullSize?: boolean; // Option to use full-size image vs thumbnail
 }
 
 export const ImageViewport = ({
@@ -37,7 +38,8 @@ export const ImageViewport = ({
   onMouseMove,
   onMouseUp,
   onDoubleClick,
-  onImageClick
+  onImageClick,
+  useFullSize = true // Default to true for backward compatibility
 }: ImageViewportProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -73,7 +75,7 @@ export const ImageViewport = ({
           <img
             ref={imageRef}
             key={image?.id}
-            src={image.url}
+            src={useFullSize ? image.url : (image.thumbnailUrl || image.url)}
             alt={image.fileName}
             className="max-h-full max-w-full object-contain"
             onLoad={onImageLoad}

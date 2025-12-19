@@ -240,43 +240,89 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
               </h3>
               
               {!showAllSettings ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-400">Model:</span>
-                    <span className="ml-2 text-white font-medium">
-                      {metadata?.model_config?.model || metadata?.training_params?.model || '-'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Batch Size:</span>
-                    <span className="ml-2 text-white font-medium">
-                      {metadata?.training_params?.batch_size || metadata?.batch_size || metadata?.training_params?.batch || '-'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Image Size:</span>
-                    <span className="ml-2 text-white font-medium">
-                      {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || metadata?.image_size || '-'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Optimizer:</span>
-                    <span className="ml-2 text-white font-medium">
-                      {metadata?.training_params?.optimizer || 'auto'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Device:</span>
-                    <span className="ml-2 text-white font-medium">
-                      {metadata?.training_params?.device || '0'}
-                    </span>
-                  </div>
-                  {metadata?.class_names && (
-                    <div className="col-span-2 md:col-span-3">
-                      <span className="text-gray-400">Classes:</span>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-400">Model:</span>
                       <span className="ml-2 text-white font-medium">
-                        {metadata.class_names.join(', ')}
+                        {metadata?.model_config?.model || metadata?.training_params?.model || metadata?.model_type || '-'}
                       </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Epochs:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.epochs || metadata?.epochs || '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Batch Size:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.batch_size || metadata?.batch_size || metadata?.training_params?.batch || '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Image Size:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || metadata?.image_size || '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Optimizer:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.optimizer || 'auto'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Learning Rate:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.lr0 || 0.01}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Patience:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.patience || 50}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Device:</span>
+                      <span className="ml-2 text-white font-medium">
+                        {metadata?.training_params?.device || '0'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {/* Augmentations Summary */}
+                  {metadata?.model_config?.augmentations && Object.keys(metadata.model_config.augmentations).length > 0 && (
+                    <div className="border-t border-gray-800 pt-3">
+                      <div className="text-sm">
+                        <span className="text-gray-400">Augmentations:</span>
+                        <span className="ml-2 text-white font-medium">
+                          {(() => {
+                            const augs = metadata.model_config.augmentations;
+                            const enabledAugs: string[] = [];
+                            if (augs.enable_color) enabledAugs.push('Color');
+                            if (augs.enable_geometric) enabledAugs.push('Geometric');
+                            if (augs.enable_advanced) enabledAugs.push('Advanced');
+                            if (augs.mosaic) enabledAugs.push('Mosaic');
+                            if (augs.mixup) enabledAugs.push('MixUp');
+                            if (augs.fliplr) enabledAugs.push('Flip LR');
+                            if (augs.flipud) enabledAugs.push('Flip UD');
+                            return enabledAugs.length > 0 ? enabledAugs.join(', ') : 'Default';
+                          })()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {metadata?.class_names && (
+                    <div className="border-t border-gray-800 pt-3">
+                      <div className="text-sm">
+                        <span className="text-gray-400">Classes ({metadata.class_names.length}):</span>
+                        <span className="ml-2 text-white font-medium">
+                          {metadata.class_names.join(', ')}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>

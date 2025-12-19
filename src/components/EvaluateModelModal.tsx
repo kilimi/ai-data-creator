@@ -4,16 +4,42 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Brain, Database } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Brain, Database, ChevronDown, ChevronUp, X, ImageIcon, FileText, CheckCircle2, Circle, Plus, Trash2, Users } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useApi } from "@/hooks/use-api";
-import { Dataset } from "@/types";
+import { Dataset, DatasetGroup } from "@/types";
+
+interface AnnotationClass {
+  className: string;
+  count: number;
+  color: string;
+}
+
+interface DatasetEvalConfig {
+  datasetId: number;
+  datasetName: string;
+  annotationFileId: string | null;
+  annotationFileName: string | null;
+}
 
 interface EvaluateModelModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   trainingTasks: any[];
   projectId: string;
+  datasets?: Dataset[];
+  datasetGroups?: DatasetGroup[];
   onEvaluate: (params: {
     taskId: number;
     datasetId: number;
@@ -25,6 +51,19 @@ interface EvaluateModelModalProps {
     useGrid: boolean;
     gridSize: number;
     gridOverlap: number;
+    ignoredClasses: string[];
+  }) => Promise<void>;
+  onEvaluateMultiple?: (params: {
+    taskId: number;
+    datasets: DatasetEvalConfig[];
+    checkpoint: 'best' | 'last';
+    confThreshold: number;
+    iouThreshold: number;
+    evaluationName: string;
+    useGrid: boolean;
+    gridSize: number;
+    gridOverlap: number;
+    ignoredClasses: string[];
   }) => Promise<void>;
 }
 
@@ -33,7 +72,10 @@ export function EvaluateModelModal({
   onOpenChange,
   trainingTasks,
   projectId,
-  onEvaluate
+  datasets = [],
+  datasetGroups = [],
+  onEvaluate,
+  onEvaluateMultiple
 }: EvaluateModelModalProps) {
   const { api } = useApi();
   const [evaluationName, setEvaluationName] = useState('');
@@ -48,40 +90,103 @@ export function EvaluateModelModal({
   const [gridSize, setGridSize] = useState(640);
   const [gridOverlap, setGridOverlap] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loadingDatasets, setLoadingDatasets] = useState(false);
+  
+  // Multi-dataset selection state
+  const [selectedDatasets, setSelectedDatasets] = useState<DatasetEvalConfig[]>([]);
+  
+  // Track which datasets came from groups
+  const [datasetGroupInfo, setDatasetGroupInfo] = useState<Record<number, { groupName: string; groupId: number }>>({});
+  
+  // Ignored classes state
+  const [annotationClasses, setAnnotationClasses] = useState<AnnotationClass[]>([]);
+  const [modelClasses, setModelClasses] = useState<string[]>([]);
+  const [loadingClasses, setLoadingClasses] = useState(false);
+  const [loadingModelClasses, setLoadingModelClasses] = useState(false);
+  const [ignoredClasses, setIgnoredClasses] = useState<string[]>([]);
+  const [showIgnoredClasses, setShowIgnoredClasses] = useState(false);
 
-  // Fetch datasets when modal opens
-  useEffect(() => {
-    if (!open || !api || !projectId) return;
+  // Local enriched datasets with annotation files
+  const [enrichedDatasets, setEnrichedDatasets] = useState<Map<number, Dataset>>(new Map());
+
+  // Add dataset to evaluation
+  const addDatasetSelection = async (dataset: Dataset) => {
+    // Check if already added
+    if (selectedDatasets.some(d => d.datasetId === dataset.id)) {
+      return;
+    }
     
-    const fetchDatasets = async () => {
-      setLoadingDatasets(true);
-      try {
-        const response = await api.getProject(projectId);
-        if (response.success && response.data) {
-          console.log('[EvaluateModelModal] API Response:', response.data);
-          console.log('[EvaluateModelModal] Datasets from API:', response.data.datasets);
-          setDatasets(response.data.datasets || []);
-          
-          // Log each dataset's annotation_files
-          response.data.datasets?.forEach((dataset: any) => {
-            console.log(`[EvaluateModelModal] Dataset ${dataset.id} (${dataset.name}):`, {
-              annotation_file_count: dataset.annotation_file_count,
-              annotation_files: dataset.annotation_files,
-              has_annotation_files_property: 'annotation_files' in dataset
-            });
-          });
+    // Fetch annotation files for this dataset (lightweight - only ID and name)
+    let annotationFiles: any[] = [];
+    try {
+      const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/annotation-files/list`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          annotationFiles = result.data;
         }
-      } catch (error) {
-        console.error('[EvaluateModelModal] Error fetching datasets:', error);
-      } finally {
-        setLoadingDatasets(false);
       }
+    } catch (error) {
+      console.error('Error fetching annotation files:', error);
+    }
+    
+    // Store enriched dataset with annotation files
+    const datasetWithAnnotations = {
+      ...dataset,
+      annotation_files: annotationFiles
+    };
+    setEnrichedDatasets(prev => new Map(prev).set(dataset.id, datasetWithAnnotations));
+    
+    const config: DatasetEvalConfig = {
+      datasetId: dataset.id,
+      datasetName: dataset.name,
+      annotationFileId: annotationFiles?.[0]?.id ? String(annotationFiles[0].id) : null,
+      annotationFileName: annotationFiles?.[0]?.file_name || annotationFiles?.[0]?.name || null
     };
     
-    fetchDatasets();
-  }, [open, api, projectId]);
+    setSelectedDatasets(prev => [...prev, config]);
+  };
+
+  // Add all datasets from a group
+  const addDatasetGroupSelection = (group: DatasetGroup) => {
+    if (!group.datasets || group.datasets.length === 0) return;
+    
+    const newConfigs: DatasetEvalConfig[] = [];
+    const groupInfoMap: Record<number, { groupName: string; groupId: number }> = {};
+    
+    group.datasets.forEach(dataset => {
+      // Skip if already added
+      if (selectedDatasets.some(d => d.datasetId === dataset.id)) {
+        return;
+      }
+      
+      // Store dataset in enriched datasets with annotation files from group
+      setEnrichedDatasets(prev => new Map(prev).set(dataset.id, dataset));
+      
+      const config: DatasetEvalConfig = {
+        datasetId: dataset.id,
+        datasetName: dataset.name,
+        annotationFileId: dataset.annotation_files?.[0]?.id ? String(dataset.annotation_files[0].id) : null,
+        annotationFileName: dataset.annotation_files?.[0]?.file_name || dataset.annotation_files?.[0]?.name || null
+      };
+      
+      newConfigs.push(config);
+      groupInfoMap[dataset.id] = { groupName: group.name, groupId: group.id };
+    });
+    
+    setSelectedDatasets(prev => [...prev, ...newConfigs]);
+    setDatasetGroupInfo(prev => ({ ...prev, ...groupInfoMap }));
+  };
+
+  // Remove dataset from evaluation
+  const removeDatasetSelection = (datasetId: number) => {
+    setSelectedDatasets(prev => prev.filter(d => d.datasetId !== datasetId));
+    setDatasetGroupInfo(prev => {
+      const newInfo = { ...prev };
+      delete newInfo[datasetId];
+      return newInfo;
+    });
+  };
 
   const selectedDatasetData = datasets.find(d => d.id.toString() === selectedDataset);
   
@@ -95,35 +200,181 @@ export function EvaluateModelModal({
     }
   }, [selectedDataset, selectedDatasetData]);
 
+  // Fetch model classes when model is selected
+  useEffect(() => {
+    if (!selectedModel) {
+      setModelClasses([]);
+      setIgnoredClasses([]);
+      return;
+    }
+    
+    const fetchModelClasses = async () => {
+      setLoadingModelClasses(true);
+      try {
+        const task = trainingTasks.find(t => t.id.toString() === selectedModel);
+        if (task?.task_metadata?.class_names) {
+          setModelClasses(task.task_metadata.class_names);
+        }
+      } catch (error) {
+        console.error('[EvaluateModelModal] Error fetching model classes:', error);
+      } finally {
+        setLoadingModelClasses(false);
+      }
+    };
+    
+    fetchModelClasses();
+  }, [selectedModel, trainingTasks]);
+
+  // Fetch annotation classes from the first selected dataset with ground truth
+  useEffect(() => {
+    const datasetWithGT = selectedDatasets.find(d => d.annotationFileId);
+    if (!datasetWithGT) {
+      setAnnotationClasses([]);
+      return;
+    }
+    
+    const fetchClasses = async () => {
+      setLoadingClasses(true);
+      try {
+        const response = await fetch(`http://localhost:9999/datasets/${datasetWithGT.datasetId}/annotations/${datasetWithGT.annotationFileId}/classes`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data?.classes) {
+            setAnnotationClasses(data.data.classes);
+          }
+        }
+      } catch (error) {
+        console.error('[EvaluateModelModal] Error fetching annotation classes:', error);
+      } finally {
+        setLoadingClasses(false);
+      }
+    };
+    
+    fetchClasses();
+  }, [selectedDatasets]);
+
+  // Fetch annotation classes when annotation file is selected (for adding a new dataset)
+  useEffect(() => {
+    if (!selectedDataset || !selectedAnnotation || !useGroundTruth) {
+      return;
+    }
+    
+    const fetchClasses = async () => {
+      setLoadingClasses(true);
+      try {
+        const response = await fetch(`http://localhost:9999/datasets/${selectedDataset}/annotations/${selectedAnnotation}/classes`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data?.classes) {
+            setAnnotationClasses(data.data.classes);
+          }
+        }
+      } catch (error) {
+        console.error('[EvaluateModelModal] Error fetching annotation classes:', error);
+      } finally {
+        setLoadingClasses(false);
+      }
+    };
+    
+    fetchClasses();
+  }, [selectedDataset, selectedAnnotation, useGroundTruth]);
+
+  // Reset ignored classes when annotation file changes
+  useEffect(() => {
+    setIgnoredClasses([]);
+  }, [selectedAnnotation]);
+
+  const toggleIgnoredClass = (className: string) => {
+    setIgnoredClasses(prev => 
+      prev.includes(className) 
+        ? prev.filter(c => c !== className)
+        : [...prev, className]
+    );
+  };
+
+  // Add selected dataset to the list
+  const addDatasetToEvaluation = () => {
+    if (!selectedDataset) return;
+    
+    const datasetData = datasets.find(d => d.id.toString() === selectedDataset);
+    if (!datasetData) return;
+    
+    // Check if already added
+    if (selectedDatasets.some(d => d.datasetId === parseInt(selectedDataset))) {
+      return;
+    }
+    
+    const config: DatasetEvalConfig = {
+      datasetId: parseInt(selectedDataset),
+      datasetName: datasetData.name,
+      annotationFileId: useGroundTruth ? selectedAnnotation || null : null,
+      annotationFileName: useGroundTruth && selectedAnnotation 
+        ? datasetData.annotation_files?.find((f: any) => String(f.id) === selectedAnnotation)?.file_name || null
+        : null
+    };
+    
+    setSelectedDatasets(prev => [...prev, config]);
+    
+    // Reset selection for adding more
+    setSelectedDataset('');
+    setSelectedAnnotation('');
+  };
+
+  // Remove dataset from list
+  const removeDatasetFromEvaluation = (datasetId: number) => {
+    setSelectedDatasets(prev => prev.filter(d => d.datasetId !== datasetId));
+  };
+
   const handleSubmit = async () => {
-    if (!selectedModel || !selectedDataset) return;
+    if (!selectedModel || selectedDatasets.length === 0) return;
 
     setIsSubmitting(true);
     try {
-      await onEvaluate({
-        taskId: parseInt(selectedModel),
-        datasetId: parseInt(selectedDataset),
-        annotationFileId: useGroundTruth ? selectedAnnotation : null,
-        checkpoint: selectedCheckpoint,
-        confThreshold,
-        iouThreshold,
-        evaluationName: evaluationName.trim(),
-        useGrid,
-        gridSize,
-        gridOverlap
-      });
+      if (onEvaluateMultiple && selectedDatasets.length > 0) {
+        await onEvaluateMultiple({
+          taskId: parseInt(selectedModel),
+          datasets: selectedDatasets,
+          checkpoint: selectedCheckpoint,
+          confThreshold,
+          iouThreshold,
+          evaluationName: evaluationName.trim(),
+          useGrid,
+          gridSize,
+          gridOverlap,
+          ignoredClasses: ignoredClasses
+        });
+      } else if (selectedDatasets.length === 1) {
+        // Fallback to single dataset evaluation
+        await onEvaluate({
+          taskId: parseInt(selectedModel),
+          datasetId: selectedDatasets[0].datasetId,
+          annotationFileId: selectedDatasets[0].annotationFileId,
+          checkpoint: selectedCheckpoint,
+          confThreshold,
+          iouThreshold,
+          evaluationName: evaluationName.trim(),
+          useGrid,
+          gridSize,
+          gridOverlap,
+          ignoredClasses: ignoredClasses
+        });
+      }
       
       // Reset form
       setEvaluationName('');
       setSelectedModel('');
       setSelectedDataset('');
       setSelectedAnnotation('');
+      setSelectedDatasets([]);
       setUseGroundTruth(true);
       setConfThreshold(0.25);
       setIouThreshold(0.45);
       setUseGrid(false);
       setGridSize(640);
       setGridOverlap(0.2);
+      setIgnoredClasses([]);
+      setAnnotationClasses([]);
+      setShowIgnoredClasses(false);
       
       onOpenChange(false);
     } finally {
@@ -193,59 +444,251 @@ export function EvaluateModelModal({
             </CardContent>
           </Card>
 
-          {/* Dataset Selection */}
+          {/* Dataset Selection - Dropdown Menu with Cards */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Dataset Selection</CardTitle>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  Dataset Configuration
+                  {selectedDatasets.length > 0 && (
+                    <Badge variant="default" className="bg-primary">
+                      {selectedDatasets.length} selected
+                    </Badge>
+                  )}
+                </CardTitle>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button 
+                      size="sm"
+                      variant="outline"
+                      disabled={datasets.length === 0 && datasetGroups.length === 0}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add
+                      <ChevronDown className="h-4 w-4 ml-2" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger 
+                        disabled={datasets.length === 0}
+                        className="flex items-center cursor-pointer"
+                      >
+                        <Database className="w-4 h-4 mr-2" />
+                        Add Dataset
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {datasets.length === 0 ? (
+                          <DropdownMenuItem disabled>
+                            No datasets available
+                          </DropdownMenuItem>
+                        ) : (
+                          datasets
+                            .filter(d => !selectedDatasets.some(sd => sd.datasetId === d.id))
+                            .map(dataset => (
+                              <DropdownMenuItem 
+                                key={dataset.id}
+                                onClick={() => addDatasetSelection(dataset)}
+                                className="flex items-center cursor-pointer"
+                              >
+                                <Database className="w-4 h-4 mr-2" />
+                                {dataset.name} ({dataset.image_count} images)
+                              </DropdownMenuItem>
+                            ))
+                        )}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger 
+                        disabled={datasetGroups.length === 0}
+                        className="flex items-center cursor-pointer"
+                      >
+                        <Users className="w-4 h-4 mr-2" />
+                        Add Dataset Group
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {datasetGroups.length === 0 ? (
+                          <DropdownMenuItem disabled>
+                            No dataset groups available
+                          </DropdownMenuItem>
+                        ) : (
+                          datasetGroups.map(group => (
+                            <DropdownMenuItem 
+                              key={group.id}
+                              onClick={() => addDatasetGroupSelection(group)}
+                              className="flex items-center cursor-pointer"
+                            >
+                              <Users className="w-4 h-4 mr-2" />
+                              {group.name} ({group.datasets?.length || 0} datasets)
+                            </DropdownMenuItem>
+                          ))
+                        )}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <CardDescription>
+                Choose one or more datasets to evaluate the model on
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="dataset-select">Test Dataset</Label>
-                <Select value={selectedDataset} onValueChange={setSelectedDataset}>
-                  <SelectTrigger id="dataset-select">
-                    <SelectValue placeholder="Select a dataset" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {datasets.map(dataset => (
-                      <SelectItem key={dataset.id} value={dataset.id.toString()}>
-                        {dataset.name} ({dataset.image_count} images)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedDatasetData && (
-                  <p className="text-xs text-muted-foreground">
-                    Annotation files: {selectedDatasetData.annotation_files?.length || 0}
-                  </p>
-                )}
-              </div>
+              {selectedDatasets.length === 0 ? (
+                <div className="text-center py-8 border-2 border-dashed rounded-lg">
+                  <Database className="h-10 w-10 mx-auto mb-2 text-muted-foreground opacity-50" />
+                  <p className="text-muted-foreground font-medium">No datasets selected</p>
+                  <p className="text-sm text-muted-foreground">Add datasets using the button above</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedDatasets.map((config) => {
+                    // Try to get from enriched datasets first, then fall back to datasets prop
+                    const dataset = enrichedDatasets.get(config.datasetId) || datasets.find(d => d.id === config.datasetId);
+                    const groupInfo = datasetGroupInfo[config.datasetId];
+                    const hasAnnotations = dataset?.annotation_files && dataset.annotation_files.length > 0;
+                    
+                    return (
+                      <Card key={config.datasetId} className="border">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Database className="h-4 w-4" />
+                              <span className="font-medium text-sm">{config.datasetName}</span>
+                              {groupInfo && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Users className="h-3 w-3 mr-1" />
+                                  {groupInfo.groupName}
+                                </Badge>
+                              )}
+                            </div>
+                            <Button
+                              onClick={() => removeDatasetSelection(config.datasetId)}
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="pt-0 space-y-3">
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <ImageIcon className="w-3 h-3" />
+                              {dataset?.image_count || 0} images
+                            </span>
+                            {hasAnnotations && (
+                              <span className="flex items-center gap-1">
+                                <FileText className="w-3 h-3" />
+                                {dataset.annotation_files!.length} annotation {dataset.annotation_files!.length === 1 ? 'file' : 'files'}
+                              </span>
+                            )}
+                          </div>
+                          
+                          {hasAnnotations && (
+                            <div className="space-y-2">
+                              <Label className="text-xs text-muted-foreground">Ground Truth Annotation</Label>
+                              <Select
+                                value={config.annotationFileId || 'none'}
+                                onValueChange={(value) => {
+                                  setSelectedDatasets(prev => prev.map(sd => {
+                                    if (sd.datasetId === config.datasetId) {
+                                      const selectedFile = dataset!.annotation_files!.find((f: any) => String(f.id) === value);
+                                      return {
+                                        ...sd,
+                                        annotationFileId: value === 'none' ? null : value,
+                                        annotationFileName: selectedFile ? (selectedFile.file_name || selectedFile.name) : null
+                                      };
+                                    }
+                                    return sd;
+                                  }));
+                                }}
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue placeholder="Select annotation file" />
+                                </SelectTrigger>
+                                <SelectContent className="z-[100]">
+                                  <SelectItem value="none">No ground truth</SelectItem>
+                                  {dataset!.annotation_files!.map((file: any) => (
+                                    <SelectItem key={file.id} value={String(file.id)}>
+                                      {file.file_name || file.name} ({file.annotation_count || 0} annotations)
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
 
-              {selectedDatasetData?.annotation_files && selectedDatasetData.annotation_files.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="use-ground-truth"
-                      checked={useGroundTruth}
-                      onChange={(e) => setUseGroundTruth(e.target.checked)}
-                      className="rounded"
-                    />
-                    <Label htmlFor="use-ground-truth">Use Ground Truth</Label>
-                  </div>
+              {/* Ignored Classes Section - Show when model is selected */}
+              {selectedModel && modelClasses.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                  <button
+                    type="button"
+                    onClick={() => setShowIgnoredClasses(!showIgnoredClasses)}
+                    className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {showIgnoredClasses ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    <span>Ignore Classes (Predictions & Metrics)</span>
+                    {ignoredClasses.length > 0 && (
+                      <Badge variant="secondary" className="ml-1">
+                        {ignoredClasses.length} ignored
+                      </Badge>
+                    )}
+                  </button>
                   
-                  {useGroundTruth && (
-                    <Select value={selectedAnnotation} onValueChange={setSelectedAnnotation}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select annotation file" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {selectedDatasetData.annotation_files.map((file: any) => (
-                          <SelectItem key={file.id} value={String(file.id)}>
-                            {file.file_name || file.name} ({file.annotation_count || 0} annotations)
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  {showIgnoredClasses && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        Select classes to ignore. Predictions of these classes will not be saved, and they will be excluded from metrics calculations.
+                      </p>
+                      {loadingModelClasses ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
+                          Loading classes...
+                        </div>
+                      ) : modelClasses.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {modelClasses.map((className) => {
+                            const isIgnored = ignoredClasses.includes(className);
+                            return (
+                              <button
+                                key={className}
+                                type="button"
+                                onClick={() => toggleIgnoredClass(className)}
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                                  isIgnored
+                                    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border border-red-300 dark:border-red-700'
+                                    : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                }`}
+                              >
+                                {className}
+                                {isIgnored && <X className="w-3 h-3" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          No classes loaded. Select a dataset with ground truth first.
+                        </p>
+                      )}
+                      {ignoredClasses.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setIgnoredClasses([])}
+                          className="text-xs text-muted-foreground hover:text-foreground underline"
+                        >
+                          Clear all ignored classes
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -351,7 +794,7 @@ export function EvaluateModelModal({
             </Button>
             <Button 
               onClick={handleSubmit}
-              disabled={isSubmitting || !selectedModel || !selectedDataset}
+              disabled={isSubmitting || !selectedModel || selectedDatasets.length === 0}
             >
               {isSubmitting ? (
                 <>

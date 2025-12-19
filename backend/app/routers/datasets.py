@@ -63,7 +63,34 @@ async def create_dataset(
 
 @router.get("/datasets/", response_model=List[schemas.Dataset])
 def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    
     datasets = db.query(models.Dataset).offset(skip).limit(limit).all()
+    
+    if not datasets:
+        return []
+    
+    # Get all dataset IDs
+    dataset_ids = [d.id for d in datasets]
+    
+    # Efficient batch count queries
+    annotation_counts = dict(
+        db.query(
+            models.Annotation.dataset_id,
+            func.count(models.Annotation.id)
+        ).filter(
+            models.Annotation.dataset_id.in_(dataset_ids)
+        ).group_by(models.Annotation.dataset_id).all()
+    )
+    
+    annotation_file_counts = dict(
+        db.query(
+            models.AnnotationFile.dataset_id,
+            func.count(models.AnnotationFile.id)
+        ).filter(
+            models.AnnotationFile.dataset_id.in_(dataset_ids)
+        ).group_by(models.AnnotationFile.dataset_id).all()
+    )
     
     # Return datasets with corrected annotation counts
     result = []
@@ -76,8 +103,8 @@ def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
             "created_at": dataset.created_at,
             "updated_at": dataset.updated_at,
             "image_count": dataset.image_count,
-            "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
-            "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+            "annotation_count": annotation_counts.get(dataset.id, 0),
+            "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
             "project_id": dataset.project_id,
             "thumbnailUrl": dataset.thumbnailUrl,
             "logo_url": dataset.logo_url,
@@ -88,9 +115,20 @@ def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @router.get("/datasets/{dataset_id}", response_model=schemas.Dataset)
 def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Efficient count queries
+    annotation_count = db.query(func.count(models.Annotation.id)).filter(
+        models.Annotation.dataset_id == dataset_id
+    ).scalar() or 0
+    
+    annotation_file_count = db.query(func.count(models.AnnotationFile.id)).filter(
+        models.AnnotationFile.dataset_id == dataset_id
+    ).scalar() or 0
     
     # Return dataset with corrected annotation count
     return {
@@ -101,8 +139,8 @@ def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
         "created_at": dataset.created_at,
         "updated_at": dataset.updated_at,
         "image_count": dataset.image_count,
-        "annotation_count": dataset.actual_annotation_count,  # Use the corrected count
-        "annotation_file_count": dataset.actual_annotation_file_count,  # Add annotation file count
+        "annotation_count": annotation_count,
+        "annotation_file_count": annotation_file_count,
         "project_id": dataset.project_id,
         "thumbnailUrl": dataset.thumbnailUrl,
         "logo_url": dataset.logo_url,
@@ -496,7 +534,7 @@ async def upload_images(
         
         for img in uploaded_images:
             url = f"{base_url}{img.url}" if img.url.startswith('/') else img.url
-            thumbnail_url = f"{base_url}{img.thumbnail_url}" if img.thumbnail_url.startswith('/') else img.thumbnail_url
+            thumbnail_url = f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url.startswith('/') else img.thumbnail_url
             response_images.append({
                 "id": str(img.id),
                 "datasetId": str(dataset_id),
@@ -538,7 +576,8 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
             if url and url.startswith('/'):
                 url = f"{base_url}{url}"
             if thumbnail_url and thumbnail_url.startswith('/'):
-                thumbnail_url = f"{base_url}{thumbnail_url}"
+                # Append ?thumb=300 for on-demand thumbnail generation
+                thumbnail_url = f"{base_url}{thumbnail_url}?thumb=300"
             response_images.append({
                 "id": str(img.id),
                 "datasetId": str(dataset_id),
@@ -1903,27 +1942,67 @@ async def update_single_image_annotations(
         image_width = request.get('image_width', 0)
         image_height = request.get('image_height', 0)
         
+        # Get existing AnnotationClass entries and build a map for category_id lookup
+        existing_classes = db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_id
+        ).all()
+        class_name_to_category_id = {cls.class_name: cls.category_id for cls in existing_classes}
+        
+        # Find the max category_id to assign to new classes
+        max_category_id = max([cls.category_id or 0 for cls in existing_classes], default=0)
+        
         # Delete existing annotations for this image and annotation file
         deleted_count = db.query(models.Annotation).filter(
             models.Annotation.annotation_file_id == annotation_id,
             models.Annotation.image_id == image.id
         ).delete()
         
+        # Track new classes that need to be added
+        new_classes_to_add = {}
+        
         # Insert new annotations for this image
         annotation_count = 0
         for ann_data in image_annotations:
+            category_name = ann_data.get('category_name', '')
+            
+            # Determine the correct category_id
+            if category_name in class_name_to_category_id:
+                # Use existing category_id from database
+                category_id = class_name_to_category_id[category_name]
+            elif category_name in new_classes_to_add:
+                # Use the category_id we assigned for this new class
+                category_id = new_classes_to_add[category_name]
+            else:
+                # This is a new class - assign a new category_id
+                max_category_id += 1
+                category_id = max_category_id
+                new_classes_to_add[category_name] = category_id
+                class_name_to_category_id[category_name] = category_id
+            
             annotation = models.Annotation(
                 annotation_file_id=annotation_id,
                 image_id=image.id,
                 dataset_id=dataset_id,
-                category_id=ann_data.get('category_id', 0),
-                category=ann_data.get('category_name', ''),
+                category_id=category_id,
+                category=category_name,
                 segmentation=ann_data.get('segmentation', []),
                 bbox=ann_data.get('bbox', []),
                 area=ann_data.get('area', 0.0)
             )
             db.add(annotation)
             annotation_count += 1
+        
+        # Add new classes to AnnotationClass table
+        for class_name, category_id in new_classes_to_add.items():
+            new_class = models.AnnotationClass(
+                annotation_file_id=annotation_id,
+                class_name=class_name,
+                category_id=category_id,
+                count=0,  # Will be updated below
+                color='#ea384c',  # Default color
+                opacity=0.25
+            )
+            db.add(new_class)
         
         # Recompute statistics for this annotation file after update
         all_annotations = db.query(models.Annotation).filter(
@@ -1949,8 +2028,16 @@ async def update_single_image_annotations(
                 "avgArea": avg_area
             }
         
+        # Update AnnotationClass counts based on actual annotation counts
+        all_classes = db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_id
+        ).all()
+        for cls in all_classes:
+            cls.count = class_counts.get(cls.class_name, 0)
+        
         # Update annotation file with new statistics and timestamp
         annotation_file.statistics = statistics
+        annotation_file.category_count = len(class_counts)
         annotation_file.updated_at = datetime.utcnow()
         
         db.commit()

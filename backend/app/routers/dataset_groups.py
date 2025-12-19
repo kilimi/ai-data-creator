@@ -1,12 +1,41 @@
 from fastapi import APIRouter, Depends, HTTPException, Form
 from sqlalchemy.orm import Session, joinedload
-from typing import List, Optional
+from sqlalchemy import func
+from typing import List, Optional, Dict
 import json
 
 from .. import models, schemas
 from ..database import get_db
 
 router = APIRouter()
+
+
+def get_dataset_annotation_counts(db: Session, dataset_ids: List[int]) -> Dict[int, int]:
+    """Get annotation counts for multiple datasets efficiently"""
+    if not dataset_ids:
+        return {}
+    return dict(
+        db.query(
+            models.Annotation.dataset_id,
+            func.count(models.Annotation.id)
+        ).filter(
+            models.Annotation.dataset_id.in_(dataset_ids)
+        ).group_by(models.Annotation.dataset_id).all()
+    )
+
+
+def get_dataset_annotation_file_counts(db: Session, dataset_ids: List[int]) -> Dict[int, int]:
+    """Get annotation file counts for multiple datasets efficiently"""
+    if not dataset_ids:
+        return {}
+    return dict(
+        db.query(
+            models.AnnotationFile.dataset_id,
+            func.count(models.AnnotationFile.id)
+        ).filter(
+            models.AnnotationFile.dataset_id.in_(dataset_ids)
+        ).group_by(models.AnnotationFile.dataset_id).all()
+    )
 
 
 @router.post("/projects/{project_id}/dataset-groups/")
@@ -59,6 +88,10 @@ async def create_dataset_group(
     db.commit()
     db.refresh(group)
     
+    # Get annotation counts efficiently
+    dataset_ids = [d.id for d in datasets]
+    annotation_counts = get_dataset_annotation_counts(db, dataset_ids)
+    
     # Return the group with dataset details
     group_data = {
         "id": group.id,
@@ -74,7 +107,7 @@ async def create_dataset_group(
                 "name": d.name,
                 "thumbnailUrl": d.thumbnailUrl,
                 "image_count": d.image_count,
-                "annotation_count": d.actual_annotation_count,
+                "annotation_count": annotation_counts.get(d.id, 0),
                 "url": d.url
             }
             for d in datasets
@@ -102,14 +135,64 @@ async def get_dataset_groups(
         models.DatasetGroup.project_id == project_id
     ).all()
     
+    # Collect all dataset IDs across all groups for batch queries
+    all_dataset_ids = []
+    for group in groups:
+        if group.datasets_list:
+            all_dataset_ids.extend(group.datasets_list)
+    all_dataset_ids = list(set(all_dataset_ids))
+    
+    # Get all datasets at once
+    all_datasets = {}
+    if all_dataset_ids:
+        datasets_list = db.query(models.Dataset).filter(
+            models.Dataset.id.in_(all_dataset_ids)
+        ).all()
+        all_datasets = {d.id: d for d in datasets_list}
+    
+    # Get annotation counts efficiently
+    annotation_counts = get_dataset_annotation_counts(db, all_dataset_ids)
+    annotation_file_counts = get_dataset_annotation_file_counts(db, all_dataset_ids)
+    
+    # Get annotation files for all datasets at once
+    annotation_files_by_dataset = {}
+    if all_dataset_ids:
+        annotation_files_query = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.dataset_id.in_(all_dataset_ids)
+        ).all()
+        
+        # Get all annotation file IDs
+        ann_file_ids = [af.id for af in annotation_files_query]
+        
+        # Get annotation counts for all files in one query
+        ann_file_counts = {}
+        if ann_file_ids:
+            ann_file_counts = dict(
+                db.query(
+                    models.Annotation.annotation_file_id,
+                    func.count(models.Annotation.id)
+                ).filter(
+                    models.Annotation.annotation_file_id.in_(ann_file_ids)
+                ).group_by(models.Annotation.annotation_file_id).all()
+            )
+        
+        for ann_file in annotation_files_query:
+            if ann_file.dataset_id not in annotation_files_by_dataset:
+                annotation_files_by_dataset[ann_file.dataset_id] = []
+            
+            annotation_files_by_dataset[ann_file.dataset_id].append({
+                "id": ann_file.id,
+                "file_name": ann_file.name,
+                "name": ann_file.name,
+                "annotation_count": ann_file_counts.get(ann_file.id, 0)
+            })
+    
     result = []
     for group in groups:
         # Get datasets for this group
         datasets = []
         if group.datasets_list:
-            datasets = db.query(models.Dataset).filter(
-                models.Dataset.id.in_(group.datasets_list)
-            ).all()
+            datasets = [all_datasets[did] for did in group.datasets_list if did in all_datasets]
             
             # Clean up deleted datasets from the group
             existing_dataset_ids = [d.id for d in datasets]
@@ -132,8 +215,9 @@ async def get_dataset_groups(
                     "name": d.name,
                     "thumbnailUrl": d.thumbnailUrl,
                     "image_count": d.image_count,
-                    "annotation_count": d.actual_annotation_count,  # Use the corrected count
-                    "annotation_file_count": d.actual_annotation_file_count,  # Add annotation file count
+                    "annotation_count": annotation_counts.get(d.id, 0),
+                    "annotation_file_count": annotation_file_counts.get(d.id, 0),
+                    "annotation_files": annotation_files_by_dataset.get(d.id, []),
                     "tags": d.tags,
                     "url": d.url
                 }
@@ -163,18 +247,22 @@ async def get_dataset_group(
     
     # Get datasets for this group
     datasets = []
+    dataset_ids = []
     if group.datasets_list:
         datasets = db.query(models.Dataset).filter(
             models.Dataset.id.in_(group.datasets_list)
         ).all()
+        dataset_ids = [d.id for d in datasets]
         
         # Clean up deleted datasets from the group
-        existing_dataset_ids = [d.id for d in datasets]
-        if set(existing_dataset_ids) != set(group.datasets_list):
+        if set(dataset_ids) != set(group.datasets_list):
             # Some datasets were deleted, update the group
-            group.dataset_ids = existing_dataset_ids
+            group.dataset_ids = dataset_ids
             db.commit()
             db.refresh(group)
+    
+    # Get annotation counts efficiently
+    annotation_counts = get_dataset_annotation_counts(db, dataset_ids)
     
     group_data = {
         "id": group.id,
@@ -191,7 +279,7 @@ async def get_dataset_group(
                 "description": d.description,
                 "thumbnailUrl": d.thumbnailUrl,
                 "image_count": d.image_count,
-                    "annotation_count": d.actual_annotation_count,
+                "annotation_count": annotation_counts.get(d.id, 0),
                 "tags": d.tags,
                 "url": d.url,
                 "created_at": d.created_at.isoformat()
@@ -262,10 +350,15 @@ async def update_dataset_group(
     
     # Return updated group
     datasets = []
+    dataset_ids_list = []
     if group.datasets_list:
         datasets = db.query(models.Dataset).filter(
             models.Dataset.id.in_(group.datasets_list)
         ).all()
+        dataset_ids_list = [d.id for d in datasets]
+    
+    # Get annotation counts efficiently
+    annotation_counts = get_dataset_annotation_counts(db, dataset_ids_list)
     
     group_data = {
         "id": group.id,
@@ -281,7 +374,7 @@ async def update_dataset_group(
                 "name": d.name,
                 "thumbnailUrl": d.thumbnailUrl,
                 "image_count": d.image_count,
-                "annotation_count": d.actual_annotation_count,
+                "annotation_count": annotation_counts.get(d.id, 0),
                 "url": d.url
             }
             for d in datasets
@@ -359,6 +452,23 @@ async def search_datasets_and_groups(
             models.Dataset.id.in_(all_dataset_ids)
         ).all()
     
+    # Get all dataset IDs for efficient annotation count query
+    all_dataset_ids_for_counts = [d.id for d in datasets]
+    
+    # Also collect dataset IDs from groups
+    groups = db.query(models.DatasetGroup).filter(
+        models.DatasetGroup.project_id == project_id
+    ).all()
+    
+    for group in groups:
+        if group.datasets_list:
+            all_dataset_ids_for_counts.extend(group.datasets_list)
+    
+    all_dataset_ids_for_counts = list(set(all_dataset_ids_for_counts))
+    
+    # Get annotation counts efficiently for all datasets
+    annotation_counts = get_dataset_annotation_counts(db, all_dataset_ids_for_counts)
+    
     results["datasets"] = [
         {
             "id": d.id,
@@ -366,7 +476,7 @@ async def search_datasets_and_groups(
             "description": d.description,
             "thumbnailUrl": d.thumbnailUrl,
             "image_count": d.image_count,
-            "annotation_count": d.actual_annotation_count,
+            "annotation_count": annotation_counts.get(d.id, 0),
             "tags": d.tags,
             "url": d.url,
             "created_at": d.created_at.isoformat()
@@ -375,10 +485,6 @@ async def search_datasets_and_groups(
     ]
     
     # Search groups
-    groups = db.query(models.DatasetGroup).filter(
-        models.DatasetGroup.project_id == project_id
-    ).all()
-    
     for group in groups:
         group_matches = False
         expanded = False
@@ -430,7 +536,7 @@ async def search_datasets_and_groups(
                         "name": d.name,
                         "thumbnailUrl": d.thumbnailUrl,
                         "image_count": d.image_count,
-                        "annotation_count": d.actual_annotation_count,
+                        "annotation_count": annotation_counts.get(d.id, 0),
                         "tags": d.tags,
                         "url": d.url
                     }

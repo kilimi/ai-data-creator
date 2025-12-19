@@ -133,9 +133,10 @@ export const AnnotationImagesDialog = ({
                   
                   <div className="relative aspect-video bg-gray-950 rounded-md overflow-hidden flex items-center justify-center">
                     <img
-                      src={image.url}
+                      src={image.thumbnailUrl || image.url}
                       alt={image.fileName}
                       className="max-w-full max-h-full object-contain"
+                      loading="lazy"
                       onLoad={(e) => handleImageLoad(e, image.id)}
                     />
                     

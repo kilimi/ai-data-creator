@@ -1,16 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
 import json
 import base64
 from pathlib import Path
 import shutil
 import sys
+import re
 
 from .. import models, schemas
 from ..database import get_db
 
 router = APIRouter()
+
+
+class MergeDatasetsRequest(BaseModel):
+    name: str
+    dataset_ids: List[int]
 
 
 @router.post("/projects/")
@@ -55,79 +62,95 @@ async def create_project(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _is_base64_image(url: str | None) -> bool:
+    """Check if a URL is a base64 encoded image data URL."""
+    if not url:
+        return False
+    return url.startswith("data:image/")
+
+
+def _truncate_base64_url(url: str | None, include_base64: bool = False) -> str | None:
+    """
+    Truncate base64 image URLs to reduce response size.
+    If include_base64 is False, returns None for base64 URLs.
+    """
+    if not url:
+        return None
+    if _is_base64_image(url) and not include_base64:
+        return None  # Exclude base64 data from list view
+    return url
+
+
 @router.get("/projects/", response_model=list[schemas.Project])
-def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_projects(skip: int = 0, limit: int = 100, include_images: bool = False, db: Session = Depends(get_db)):
+    """
+    Get all projects with minimal dataset info for fast loading.
+    Only returns basic project info and dataset counts.
+    
+    By default, base64 encoded logo/thumbnail images are excluded to reduce response size.
+    Set include_images=true to include them.
+    """
     try:
         from sqlalchemy import func
-        from sqlalchemy.orm import selectinload
+        from sqlalchemy.orm import selectinload, load_only
         
-        # Use eager loading to prevent N+1 queries
+        # Use eager loading with load_only to fetch minimal dataset fields
+        # Only include logo_url/thumbnailUrl if explicitly requested
+        dataset_fields = [
+            models.Dataset.id,
+            models.Dataset.name,
+            models.Dataset.description,
+            models.Dataset.image_count,
+            models.Dataset.project_id,
+            models.Dataset.created_at,
+            models.Dataset.updated_at
+        ]
+        
+        if include_images:
+            dataset_fields.extend([
+                models.Dataset.logo_url,
+                models.Dataset.thumbnailUrl
+            ])
+        
         projects = db.query(models.Project).options(
-            selectinload(models.Project.datasets)
+            selectinload(models.Project.datasets).load_only(*dataset_fields)
         ).offset(skip).limit(limit).all()
         
         result = []
         for p in projects:
-            # Serialize datasets with efficient count queries
+            # Serialize datasets with minimal info (no annotation counts/files)
             datasets = []
             if p.datasets:
-                # Get all dataset IDs for this project
-                dataset_ids = [d.id for d in p.datasets]
-                
-                # Efficient count queries for annotations
-                annotation_counts = dict(
-                    db.query(
-                        models.Annotation.dataset_id,
-                        func.count(models.Annotation.id)
-                    ).filter(
-                        models.Annotation.dataset_id.in_(dataset_ids)
-                    ).group_by(models.Annotation.dataset_id).all()
-                )
-                
-                # Efficient count queries for annotation files
-                annotation_file_counts = dict(
-                    db.query(
-                        models.AnnotationFile.dataset_id,
-                        func.count(models.AnnotationFile.id)
-                    ).filter(
-                        models.AnnotationFile.dataset_id.in_(dataset_ids)
-                    ).group_by(models.AnnotationFile.dataset_id).all()
-                )
-                
-                # Get annotation files for each dataset
-                annotation_files_by_dataset = {}
-                annotation_files = db.query(models.AnnotationFile).filter(
-                    models.AnnotationFile.dataset_id.in_(dataset_ids)
-                ).all()
-                
-                for ann_file in annotation_files:
-                    if ann_file.dataset_id not in annotation_files_by_dataset:
-                        annotation_files_by_dataset[ann_file.dataset_id] = []
-                    annotation_files_by_dataset[ann_file.dataset_id].append({
-                        "id": ann_file.id,
-                        "file_name": ann_file.name,
-                        "name": ann_file.name,
-                        "annotation_count": ann_file.annotation_count,
-                        "created_at": ann_file.created_at
-                    })
-                
                 for dataset in p.datasets:
+                    # Only include base64 images if explicitly requested
+                    thumbnail_url = _truncate_base64_url(
+                        getattr(dataset, 'thumbnailUrl', None), 
+                        include_images
+                    ) if include_images else None
+                    logo_url = _truncate_base64_url(
+                        getattr(dataset, 'logo_url', None), 
+                        include_images
+                    ) if include_images else None
+                    
                     datasets.append({
                         "id": dataset.id,
                         "name": dataset.name,
                         "description": dataset.description,
-                        "tags": dataset.tags,
+                        "tags": [],  # Skip tags for list view
                         "created_at": dataset.created_at,
                         "updated_at": dataset.updated_at,
                         "image_count": dataset.image_count,
-                        "annotation_count": annotation_counts.get(dataset.id, 0),
-                        "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
-                        "annotation_files": annotation_files_by_dataset.get(dataset.id, []),
+                        "annotation_count": 0,  # Not needed for list view
+                        "annotation_file_count": 0,  # Not needed for list view
+                        "annotation_files": [],  # Not needed for list view
                         "project_id": dataset.project_id,
-                        "thumbnailUrl": dataset.thumbnailUrl,
-                        "logo_url": dataset.logo_url,
-                        "url": dataset.url
+                        "thumbnailUrl": thumbnail_url,
+                        "logo_url": logo_url,
+                        "url": None
                     })
+            
+            # Only include base64 project logo if explicitly requested
+            project_logo_url = _truncate_base64_url(p.logo_url, include_images)
             
             result.append({
                 "id": p.id,
@@ -137,8 +160,8 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
                 "updated_at": p.updated_at,
                 "is_project": p.is_project,
                 "datasets": datasets,
-                "logo_url": p.logo_url,
-                "thumbnailUrl": p.logo_url,
+                "logo_url": project_logo_url,
+                "thumbnailUrl": project_logo_url,
                 "tags": p.tags
             })
         return result
@@ -146,8 +169,80 @@ def read_projects(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.get("/projects/{project_id}/datasets/list")
+def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
+    """
+    Get a lightweight list of datasets for a project.
+    Only includes basic dataset info - no images, annotations, or annotation file details.
+    This is optimized for fast loading in the evaluation modal.
+    """
+    from sqlalchemy import func
+    
+    # Verify project exists
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Get all datasets for this project with minimal data
+    datasets = db.query(models.Dataset).filter(
+        models.Dataset.project_id == project_id
+    ).all()
+    
+    if not datasets:
+        return {"success": True, "data": []}
+    
+    # Build minimal response - just enough for the evaluation modal
+    result = []
+    for dataset in datasets:
+        result.append({
+            "id": dataset.id,
+            "name": dataset.name,
+            "description": dataset.description,
+            "project_id": dataset.project_id,
+            "image_count": dataset.image_count,
+            "tags": dataset.tags,
+            "thumbnailUrl": dataset.thumbnailUrl,
+            "url": dataset.url
+        })
+    
+    return {"success": True, "data": result}
+
+
+@router.get("/datasets/{dataset_id}/annotation-files/list")
+def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)):
+    """
+    Get a lightweight list of annotation files for a dataset.
+    Only returns ID and name - no full annotation data.
+    """
+    # Verify dataset exists
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Get annotation files with minimal data
+    annotation_files = db.query(models.AnnotationFile).filter(
+        models.AnnotationFile.dataset_id == dataset_id
+    ).all()
+    
+    result = []
+    for ann_file in annotation_files:
+        result.append({
+            "id": ann_file.id,
+            "name": ann_file.name,
+            "file_name": ann_file.name
+        })
+    
+    return {"success": True, "data": result}
+
+
 @router.get("/projects/{project_id}", response_model=schemas.Project)
-def read_project(project_id: int, db: Session = Depends(get_db)):
+def read_project(project_id: int, include_images: bool = False, db: Session = Depends(get_db)):
+    """
+    Get a single project by ID with all its datasets.
+    
+    By default, base64 encoded logo/thumbnail images are excluded to reduce response size.
+    Set include_images=true to include them.
+    """
     from sqlalchemy import func
     from sqlalchemy.orm import selectinload
     
@@ -202,8 +297,6 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
             })
         
         for dataset in project.datasets:
-            # Debug print statement
-            print(f"[DEBUG] Dataset {dataset.id} annotation_files: {annotation_files_by_dataset.get(dataset.id, [])}", file=sys.stderr)
             datasets.append({
                 "id": dataset.id,
                 "name": dataset.name,
@@ -216,13 +309,11 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
                 "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
                 "annotation_files": annotation_files_by_dataset.get(dataset.id, []),
                 "project_id": dataset.project_id,
-                "thumbnailUrl": dataset.thumbnailUrl,
-                "logo_url": dataset.logo_url,
+                "thumbnailUrl": _truncate_base64_url(dataset.thumbnailUrl, include_images),
+                "logo_url": _truncate_base64_url(dataset.logo_url, include_images),
                 "url": dataset.url
             })
     
-    # Debug print statement for final datasets
-    print(f"[DEBUG] Final datasets: {datasets}", file=sys.stderr)
     return {
         "id": project.id,
         "name": project.name,
@@ -231,8 +322,8 @@ def read_project(project_id: int, db: Session = Depends(get_db)):
         "updated_at": project.updated_at,
         "is_project": project.is_project,
         "datasets": datasets,
-        "logo_url": project.logo_url,
-        "thumbnailUrl": project.logo_url,
+        "logo_url": _truncate_base64_url(project.logo_url, include_images),
+        "thumbnailUrl": _truncate_base64_url(project.logo_url, include_images),
         "tags": project.tags
     }
 
@@ -394,3 +485,235 @@ async def test_project_tags(db: Session = Depends(get_db)):
             "tags": project.tags
         }
     }
+
+
+def sanitize_filename(name: str) -> str:
+    """Sanitize a string to be used as part of a filename"""
+    # Replace spaces and special characters with underscores
+    sanitized = re.sub(r'[^\w\-.]', '_', name)
+    # Remove consecutive underscores
+    sanitized = re.sub(r'_+', '_', sanitized)
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
+    return sanitized
+
+
+@router.post("/projects/{project_id}/datasets/merge")
+async def merge_datasets(
+    project_id: int,
+    request: MergeDatasetsRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Merge multiple datasets into a new dataset.
+    Images and annotations are copied with renamed filenames using the source dataset name as prefix.
+    """
+    try:
+        # Validate project exists
+        project = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Validate at least 2 datasets to merge
+        if len(request.dataset_ids) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 datasets are required for merge")
+        
+        # Get all source datasets
+        source_datasets = db.query(models.Dataset).filter(
+            models.Dataset.id.in_(request.dataset_ids),
+            models.Dataset.project_id == project_id
+        ).all()
+        
+        if len(source_datasets) != len(request.dataset_ids):
+            raise HTTPException(status_code=404, detail="One or more datasets not found in this project")
+        
+        # Create the new merged dataset
+        new_dataset = models.Dataset(
+            name=request.name,
+            description=f"Merged from: {', '.join([d.name for d in source_datasets])}",
+            project_id=project_id,
+            image_count=0
+        )
+        db.add(new_dataset)
+        db.flush()  # Get the new dataset ID
+        
+        # Create directories for new dataset
+        new_dataset_dir = Path("projects") / str(project_id) / str(new_dataset.id)
+        new_images_dir = new_dataset_dir / "images"
+        new_images_dir.mkdir(parents=True, exist_ok=True)
+        
+        total_images = 0
+        total_annotations = 0
+        skipped_images = 0
+        image_id_mapping = {}  # Maps old image_id to new image_id for annotation updates
+        
+        # Process each source dataset
+        for source_dataset in source_datasets:
+            dataset_prefix = sanitize_filename(source_dataset.name)
+            
+            # Get all images from source dataset
+            source_images = db.query(models.Image).filter(
+                models.Image.dataset_id == source_dataset.id
+            ).all()
+            
+            for source_image in source_images:
+                # Generate new filename with dataset prefix
+                new_filename = f"{dataset_prefix}_{source_image.file_name}"
+                
+                # Copy the image file
+                source_image_path = Path("projects") / str(project_id) / str(source_dataset.id) / "images" / source_image.file_name
+                
+                # Also check old data structure for backward compatibility
+                if not source_image_path.exists():
+                    source_image_path = Path("data/images") / str(source_dataset.id) / source_image.file_name
+                
+                # Create new image record regardless of whether file exists
+                # This ensures annotations can be properly mapped
+                new_image = models.Image(
+                    dataset_id=new_dataset.id,
+                    file_name=new_filename,
+                    file_size=source_image.file_size,
+                    width=source_image.width,
+                    height=source_image.height,
+                    url=f"/static/projects/{project_id}/{new_dataset.id}/images/{new_filename}",
+                    thumbnail_url=f"/static/projects/{project_id}/{new_dataset.id}/images/{new_filename}"
+                )
+                db.add(new_image)
+                db.flush()  # Get the new image ID
+                
+                image_id_mapping[source_image.id] = new_image.id
+                
+                # Copy the physical file if it exists
+                if source_image_path.exists():
+                    new_image_path = new_images_dir / new_filename
+                    shutil.copy2(source_image_path, new_image_path)
+                    total_images += 1
+                else:
+                    skipped_images += 1
+                    print(f"Warning: Image file not found, creating DB record only: {source_image.file_name}")
+            
+            # Copy annotation files and annotations
+            source_annotation_files = db.query(models.AnnotationFile).filter(
+                models.AnnotationFile.dataset_id == source_dataset.id
+            ).all()
+            
+            for source_ann_file in source_annotation_files:
+                # Create new annotation file with dataset prefix
+                new_ann_file_name = f"{dataset_prefix}_{source_ann_file.name}"
+                new_ann_file_id = f"{dataset_prefix}_{source_ann_file.id}"
+                
+                new_ann_file = models.AnnotationFile(
+                    id=new_ann_file_id,
+                    dataset_id=new_dataset.id,
+                    name=new_ann_file_name,
+                    format=source_ann_file.format,
+                    type=source_ann_file.type,
+                    annotation_count=source_ann_file.annotation_count,
+                    image_count=source_ann_file.image_count,
+                    category_count=source_ann_file.category_count,
+                    statistics=source_ann_file.statistics,
+                    is_processed=source_ann_file.is_processed,
+                    processing_status=source_ann_file.processing_status
+                )
+                db.add(new_ann_file)
+                db.flush()
+                
+                # Copy annotation classes (categories)
+                source_ann_classes = db.query(models.AnnotationClass).filter(
+                    models.AnnotationClass.annotation_file_id == source_ann_file.id
+                ).all()
+                
+                for source_class in source_ann_classes:
+                    new_class = models.AnnotationClass(
+                        annotation_file_id=new_ann_file_id,
+                        class_name=source_class.class_name,
+                        category_id=source_class.category_id,
+                        count=source_class.count,
+                        color=source_class.color,
+                        opacity=source_class.opacity
+                    )
+                    db.add(new_class)
+                
+                # Copy annotation file images mapping
+                source_ann_images = db.query(models.AnnotationFileImage).filter(
+                    models.AnnotationFileImage.annotation_file_id == source_ann_file.id
+                ).all()
+                
+                for source_ann_img in source_ann_images:
+                    # Map to the new image ID if available
+                    new_dataset_image_id = image_id_mapping.get(source_ann_img.dataset_image_id) if source_ann_img.dataset_image_id else None
+                    # Generate new filename with prefix
+                    new_file_name = f"{dataset_prefix}_{source_ann_img.file_name}" if source_ann_img.file_name else None
+                    
+                    new_ann_img = models.AnnotationFileImage(
+                        annotation_file_id=new_ann_file_id,
+                        coco_image_id=source_ann_img.coco_image_id,
+                        file_name=new_file_name,
+                        dataset_image_id=new_dataset_image_id,
+                        width=source_ann_img.width,
+                        height=source_ann_img.height
+                    )
+                    db.add(new_ann_img)
+                
+                # Copy all annotations for this annotation file
+                source_annotations = db.query(models.Annotation).filter(
+                    models.Annotation.annotation_file_id == source_ann_file.id
+                ).all()
+                
+                for source_ann in source_annotations:
+                    # Map the old image_id to the new image_id
+                    new_image_id = image_id_mapping.get(source_ann.image_id)
+                    
+                    if new_image_id:
+                        new_annotation = models.Annotation(
+                            annotation_file_id=new_ann_file_id,
+                            image_id=new_image_id,
+                            dataset_id=new_dataset.id,
+                            coco_image_id=source_ann.coco_image_id,
+                            coco_annotation_id=source_ann.coco_annotation_id,
+                            category_id=source_ann.category_id,
+                            category=source_ann.category,
+                            bbox_x=source_ann.bbox_x,
+                            bbox_y=source_ann.bbox_y,
+                            bbox_width=source_ann.bbox_width,
+                            bbox_height=source_ann.bbox_height,
+                            bbox=source_ann.bbox,
+                            segmentation=source_ann.segmentation,
+                            area=source_ann.area,
+                            confidence=source_ann.confidence
+                        )
+                        db.add(new_annotation)
+                        total_annotations += 1
+        
+        # Update image count on new dataset (count all images with DB records)
+        new_dataset.image_count = len(image_id_mapping)
+        
+        db.commit()
+        db.refresh(new_dataset)
+        
+        print(f"Dataset merge completed: {len(image_id_mapping)} images ({total_images} with files, {skipped_images} DB only), {total_annotations} annotations")
+        
+        return {
+            "success": True,
+            "data": {
+                "id": new_dataset.id,
+                "name": new_dataset.name,
+                "description": new_dataset.description,
+                "total_images": len(image_id_mapping),
+                "total_images_with_files": total_images,
+                "skipped_images": skipped_images,
+                "total_annotations": total_annotations,
+                "source_datasets": [d.name for d in source_datasets]
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        # Clean up any created files on error
+        if 'new_dataset' in locals() and new_dataset.id:
+            cleanup_dir = Path("projects") / str(project_id) / str(new_dataset.id)
+            if cleanup_dir.exists():
+                shutil.rmtree(cleanup_dir)
+        raise HTTPException(status_code=500, detail=str(e))

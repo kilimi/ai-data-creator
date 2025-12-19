@@ -13,15 +13,15 @@ export interface ImageCollectionData {
   image_count: number;
   images: Array<{
     id: number;
-    dataset_id: number;
-    file_name: string;
-    file_size: number;
+    datasetId: number;
+    fileName: string;
+    fileSize: number;
     width: number;
     height: number;
     url: string;
-    thumbnail_url: string;
-    uploaded_at: string;
-    annotations_count: number;
+    thumbnailUrl: string;
+    uploadedAt: string;
+    annotationsCount: number;
   }>;
 }
 
@@ -175,15 +175,15 @@ export function convertToFrontendImageCollection(
 ): ImageCollection {
   const images = backendCollection.images.map(img => ({
     id: String(img.id),
-    datasetId: String(img.dataset_id),
-    fileName: img.file_name,
-    fileSize: img.file_size,
+    datasetId: String(img.datasetId),
+    fileName: img.fileName,
+    fileSize: img.fileSize,
     width: img.width,
     height: img.height,
     url: img.url,
-    thumbnailUrl: img.thumbnail_url,
-    uploadedAt: img.uploaded_at,
-    annotationsCount: img.annotations_count,
+    thumbnailUrl: img.thumbnailUrl,
+    uploadedAt: img.uploadedAt,
+    annotationsCount: img.annotationsCount,
   }));
 
   const totalPages = Math.ceil(images.length / imagesPerPage);

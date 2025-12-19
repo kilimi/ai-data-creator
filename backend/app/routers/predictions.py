@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional, Dict, Any, List
+from typing import Optional, List, Dict, Any, List
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime
@@ -10,12 +10,22 @@ import json
 import subprocess
 import tempfile
 import os
+import zipfile
+import io
 
 from ..database import get_db
 from ..models import Task, Dataset, Image
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class DatasetEvalConfig(BaseModel):
+    """Configuration for a single dataset in multi-dataset evaluation"""
+    datasetId: int
+    datasetName: str
+    annotationFileId: Optional[str] = None
+    annotationFileName: Optional[str] = None
 
 
 class EvaluationRequest(BaseModel):
@@ -31,6 +41,24 @@ class EvaluationRequest(BaseModel):
     use_grid: bool = False  # Enable grid-based inference
     grid_size: int = 640  # Size of each grid tile
     grid_overlap: float = 0.2  # Overlap ratio (0.0 to 0.5)
+    # Ignored classes for metric calculation
+    ignored_classes: Optional[List[str]] = None  # List of class names to ignore in metrics
+
+
+class MultiDatasetEvaluationRequest(BaseModel):
+    """Request model for multi-dataset evaluation"""
+    task_id: int  # Training task ID
+    datasets: List[DatasetEvalConfig]  # List of datasets to evaluate
+    checkpoint: str = "best"  # "best" or "last"
+    conf_threshold: float = 0.25
+    iou_threshold: float = 0.45
+    evaluation_name: Optional[str] = None  # Custom name for evaluation
+    # Grid inference settings
+    use_grid: bool = False  # Enable grid-based inference
+    grid_size: int = 640  # Size of each grid tile
+    grid_overlap: float = 0.2  # Overlap ratio (0.0 to 0.5)
+    # Ignored classes for metric calculation
+    ignored_classes: Optional[List[str]] = None  # List of class names to ignore in metrics
 
 
 @router.post("/predictions/evaluate")
@@ -88,7 +116,8 @@ async def evaluate_model(
                 "has_ground_truth": request.annotation_file_id is not None,
                 "use_grid": request.use_grid,
                 "grid_size": request.grid_size,
-                "grid_overlap": request.grid_overlap
+                "grid_overlap": request.grid_overlap,
+                "ignored_classes": request.ignored_classes or []
             }
         )
         db.add(eval_task)
@@ -108,7 +137,8 @@ async def evaluate_model(
             request.iou_threshold,
             request.use_grid,
             request.grid_size,
-            request.grid_overlap
+            request.grid_overlap,
+            request.ignored_classes or []
         )
         
         # Update task with Celery ID
@@ -131,6 +161,165 @@ async def evaluate_model(
         raise
     except Exception as e:
         logger.error(f"Error starting evaluation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to start evaluation: {str(e)}")
+
+
+@router.post("/predictions/evaluate-multiple")
+async def evaluate_model_multiple_datasets(
+    request: MultiDatasetEvaluationRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Start model evaluation on multiple datasets as a parent task with child tasks
+    """
+    try:
+        # Validate training task exists
+        training_task = db.query(Task).filter(Task.id == request.task_id).first()
+        if not training_task or training_task.status != 'completed':
+            raise HTTPException(status_code=404, detail="Training task not found or not completed")
+        
+        if not request.datasets or len(request.datasets) == 0:
+            raise HTTPException(status_code=400, detail="At least one dataset is required")
+        
+        # Get model info from training task
+        task_metadata = training_task.task_metadata or {}
+        model_type = task_metadata.get('model_type', 'Unknown')
+        
+        # Get project_id from first dataset
+        first_dataset = db.query(Dataset).filter(Dataset.id == request.datasets[0].datasetId).first()
+        if not first_dataset:
+            raise HTTPException(status_code=404, detail="First dataset not found")
+        
+        project_id = first_dataset.project_id
+        
+        # Use custom name if provided, otherwise generate default name
+        dataset_names = [d.datasetName for d in request.datasets]
+        eval_name = request.evaluation_name.strip() if request.evaluation_name else f"Multi-Dataset Eval - {training_task.name}"
+        
+        # Create parent evaluation task
+        parent_task = Task(
+            name=eval_name,
+            task_type="model_evaluation",
+            status="pending",
+            project_id=project_id,
+            progress=0,
+            task_metadata={
+                "training_task_id": request.task_id,
+                "training_task_name": training_task.name,
+                "is_multi_dataset": True,
+                "dataset_count": len(request.datasets),
+                "dataset_names": dataset_names,
+                "checkpoint": request.checkpoint,
+                "conf_threshold": request.conf_threshold,
+                "iou_threshold": request.iou_threshold,
+                "model_type": model_type,
+                "use_grid": request.use_grid,
+                "grid_size": request.grid_size,
+                "grid_overlap": request.grid_overlap,
+                "ignored_classes": request.ignored_classes or [],
+                "child_task_ids": []  # Will be populated with child task IDs
+            }
+        )
+        db.add(parent_task)
+        db.commit()
+        db.refresh(parent_task)
+        
+        # Create child tasks for each dataset
+        child_task_ids = []
+        from app.tasks.evaluation_tasks import evaluate_model as evaluate_model_task
+        
+        logger.info(f"Processing {len(request.datasets)} datasets for multi-dataset evaluation")
+        for idx, dataset_config in enumerate(request.datasets):
+            logger.info(f"Processing dataset {idx+1}/{len(request.datasets)}: ID={dataset_config.datasetId}, Name={dataset_config.datasetName}")
+            
+            # Validate dataset exists
+            dataset = db.query(Dataset).filter(Dataset.id == dataset_config.datasetId).first()
+            if not dataset:
+                logger.warning(f"Dataset {dataset_config.datasetId} not found, skipping")
+                continue
+            
+            # Get annotation file name if provided
+            annotation_file_name = dataset_config.annotationFileName
+            
+            # Create child evaluation task
+            child_name = f"{eval_name} - {dataset_config.datasetName}"
+            child_task = Task(
+                name=child_name,
+                task_type="model_evaluation",
+                status="pending",
+                project_id=project_id,
+                progress=0,
+                task_metadata={
+                    "training_task_id": request.task_id,
+                    "training_task_name": training_task.name,
+                    "dataset_id": dataset_config.datasetId,
+                    "dataset_name": dataset_config.datasetName,
+                    "annotation_file_id": dataset_config.annotationFileId,
+                    "annotation_file_name": annotation_file_name,
+                    "checkpoint": request.checkpoint,
+                    "conf_threshold": request.conf_threshold,
+                    "iou_threshold": request.iou_threshold,
+                    "model_type": model_type,
+                    "has_ground_truth": dataset_config.annotationFileId is not None,
+                    "use_grid": request.use_grid,
+                    "grid_size": request.grid_size,
+                    "grid_overlap": request.grid_overlap,
+                    "ignored_classes": request.ignored_classes or [],
+                    "parent_task_id": parent_task.id,
+                    "dataset_index": idx
+                }
+            )
+            db.add(child_task)
+            db.commit()
+            db.refresh(child_task)
+            
+            # Start Celery task for this dataset
+            celery_task = evaluate_model_task.delay(
+                child_task.id,
+                request.task_id,
+                dataset_config.datasetId,
+                dataset_config.annotationFileId,
+                request.checkpoint,
+                request.conf_threshold,
+                request.iou_threshold,
+                request.use_grid,
+                request.grid_size,
+                request.grid_overlap,
+                request.ignored_classes or []
+            )
+            
+            # Update child task with Celery ID
+            child_task.task_metadata = {
+                **child_task.task_metadata,
+                'celery_task_id': celery_task.id
+            }
+            db.commit()
+            
+            child_task_ids.append(child_task.id)
+            logger.info(f"Started child evaluation task {child_task.id} for dataset {dataset_config.datasetName}")
+        
+        # Update parent task with child task IDs
+        parent_task.status = "running"
+        parent_task.task_metadata = {
+            **parent_task.task_metadata,
+            "child_task_ids": child_task_ids
+        }
+        db.commit()
+        
+        logger.info(f"Started multi-dataset evaluation with parent task {parent_task.id} and {len(child_task_ids)} child tasks")
+        
+        return {
+            "success": True,
+            "message": f"Multi-dataset evaluation started with {len(child_task_ids)} datasets",
+            "task_id": parent_task.id,
+            "task_name": parent_task.name,
+            "child_task_ids": child_task_ids
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting multi-dataset evaluation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start evaluation: {str(e)}")
 
 
@@ -245,6 +434,140 @@ async def export_coco_results(
         raise
     except Exception as e:
         logger.error(f"Error exporting COCO results: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to export results: {str(e)}")
+
+
+@router.get("/predictions/export-coco-all/{task_id}")
+async def export_all_coco_results(
+    task_id: int,
+    db: Session = Depends(get_db)
+):
+    """Export all COCO results for a multi-dataset evaluation as a ZIP file"""
+    try:
+        # Get evaluation task
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        if task.task_type != 'model_evaluation':
+            raise HTTPException(status_code=400, detail="Task is not an evaluation task")
+        
+        metadata = task.task_metadata or {}
+        
+        # Check if this is a multi-dataset evaluation
+        if not metadata.get('is_multi_dataset'):
+            # For single dataset, redirect to single export
+            raise HTTPException(status_code=400, detail="This is not a multi-dataset evaluation. Use the single export endpoint.")
+        
+        child_task_ids = metadata.get('child_task_ids', [])
+        if not child_task_ids:
+            raise HTTPException(status_code=404, detail="No child tasks found")
+        
+        # Create a ZIP file in memory
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for child_id in child_task_ids:
+                child_task = db.query(Task).filter(Task.id == child_id).first()
+                if not child_task or child_task.status != 'completed':
+                    continue
+                
+                child_metadata = child_task.task_metadata or {}
+                results = child_metadata.get('results', {})
+                if not results:
+                    continue
+                
+                # Get evaluation parameters
+                dataset_id = results.get('dataset_id')
+                dataset_name = child_metadata.get('dataset_name', f'dataset_{dataset_id}')
+                class_names = results.get('class_names', [])
+                predictions = results.get('predictions', [])
+                conf_threshold = results.get('conf_threshold', 0.25)
+                iou_threshold = results.get('iou_threshold', 0.45)
+                checkpoint = results.get('checkpoint', 'best')
+                
+                if not predictions:
+                    continue
+                
+                # Get dataset and images
+                dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+                if not dataset:
+                    continue
+                
+                images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+                if not images:
+                    continue
+                
+                # Initialize COCO structure
+                coco_output = {
+                    "info": {
+                        "description": f"Evaluation results for {dataset_name}",
+                        "date_created": datetime.utcnow().isoformat(),
+                        "task_name": child_task.name,
+                        "parent_task_id": task_id,
+                        "dataset_id": dataset_id,
+                        "dataset_name": dataset_name,
+                        "model_checkpoint": checkpoint,
+                        "conf_threshold": conf_threshold,
+                        "iou_threshold": iou_threshold
+                    },
+                    "images": [],
+                    "annotations": [],
+                    "categories": []
+                }
+                
+                # Add categories
+                for idx, class_name in enumerate(class_names):
+                    coco_output["categories"].append({
+                        "id": idx,
+                        "name": class_name,
+                        "supercategory": "object"
+                    })
+                
+                # Add images
+                for img in images:
+                    coco_output["images"].append({
+                        "id": img.id,
+                        "file_name": img.file_name,
+                        "width": img.width or 0,
+                        "height": img.height or 0,
+                        "date_captured": img.uploaded_at.isoformat() if img.uploaded_at else None
+                    })
+                
+                # Add predictions
+                for idx, pred in enumerate(predictions, start=1):
+                    segmentation = pred.get('segmentation', [])
+                    if segmentation and len(segmentation) > 0:
+                        segmentation = [segmentation]
+                    
+                    coco_output["annotations"].append({
+                        "id": idx,
+                        "image_id": pred['image_id'],
+                        "category_id": pred['class_id'],
+                        "bbox": pred['bbox'],
+                        "score": pred['conf'],
+                        "segmentation": segmentation
+                    })
+                
+                # Add to ZIP
+                safe_dataset_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in dataset_name)
+                filename = f"{safe_dataset_name}_coco.json"
+                zip_file.writestr(filename, json.dumps(coco_output, indent=2))
+        
+        zip_buffer.seek(0)
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename=evaluation_{task_id}_all_coco.zip"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting all COCO results: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to export results: {str(e)}")
 
 

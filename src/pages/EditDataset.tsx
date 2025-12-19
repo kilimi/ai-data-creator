@@ -163,6 +163,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newFilename, setNewFilename] = useState("");
   const [showAnnotationsOnImage, setShowAnnotationsOnImage] = useState<AnnotationSample[]>([]);
+  const [showFullSizeImage, setShowFullSizeImage] = useState(false);
   
   const [showAnnotationsDialog, setShowAnnotationsDialog] = useState(false);
   const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
@@ -1164,7 +1165,10 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                           {paginatedImages.map((image) => (
                             <div 
                               key={image.id}
-                              onClick={() => setSelectedImage(image)}
+                              onClick={() => {
+                                setSelectedImage(image);
+                                setShowFullSizeImage(false); // Reset to thumbnail when opening dialog
+                              }}
                               className="cursor-pointer relative group rounded-md overflow-hidden border border-gray-700 bg-gray-800 hover:border-blue-500/50 transition-colors"
                             >
                               <div className="aspect-square relative">
@@ -1509,10 +1513,12 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             {selectedImage && (
               <>
                 <img 
-                  src={selectedImage.url} 
+                  src={showFullSizeImage ? selectedImage.url : selectedImage.thumbnailUrl} 
                   alt={selectedImage.fileName} 
-                  className="max-w-full max-h-full object-contain"
+                  className="max-w-full max-h-full object-contain cursor-pointer"
                   onLoad={handleImageLoad}
+                  onClick={() => setShowFullSizeImage(!showFullSizeImage)}
+                  title={showFullSizeImage ? "Click to view thumbnail" : "Click to view full size"}
                 />
                 
                 {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length > 0 && (
@@ -1528,11 +1534,16 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           </div>
           
           <DialogFooter className="flex flex-col sm:flex-row justify-between gap-2">
-            <div className="text-sm text-gray-400">
-              {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length > 0 
-                ? `Showing ${showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length} annotations` 
-                : "No annotations shown"
-              }
+            <div className="flex items-center gap-4 text-sm text-gray-400">
+              <span>
+                {selectedImage && showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length > 0 
+                  ? `Showing ${showAnnotationsOnImage.filter(anno => anno.imageId === selectedImage.id).length} annotations` 
+                  : "No annotations shown"
+                }
+              </span>
+              <Badge variant={showFullSizeImage ? "default" : "secondary"} className="text-xs">
+                {showFullSizeImage ? "Full Size" : "Thumbnail"}
+              </Badge>
             </div>
             <Button
               variant="destructive"

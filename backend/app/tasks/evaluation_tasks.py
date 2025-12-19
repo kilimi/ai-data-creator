@@ -138,11 +138,13 @@ def evaluate_model(
     iou_threshold: float,
     use_grid: bool = False,
     grid_size: int = 640,
-    grid_overlap: float = 0.2
+    grid_overlap: float = 0.2,
+    ignored_classes: Optional[List[str]] = None
 ):
     """
     Run model evaluation as a background task
     Supports grid-based inference for high-resolution images
+    ignored_classes: List of class names to ignore when calculating metrics
     """
     db = SessionLocal()
     
@@ -274,6 +276,14 @@ def evaluate_model(
         project_id = dataset.project_id
         if not project_id:
             raise ValueError("Dataset does not belong to a project")
+        
+        # Determine which class IDs to ignore based on ignored_classes list
+        ignored_class_ids = set()
+        if ignored_classes:
+            for class_name in ignored_classes:
+                if class_name in class_names:
+                    ignored_class_ids.add(class_names.index(class_name))
+            logger.info(f"Ignoring classes for metrics: {ignored_classes} (IDs: {ignored_class_ids})")
         
         # Initialize metrics
         confusion_matrix = np.zeros((num_classes, num_classes), dtype=int)
@@ -476,6 +486,11 @@ def evaluate_model(
                 if result.boxes:
                     for box_idx, box in enumerate(result.boxes):
                         pred_class_id = int(box.cls.item())
+                        
+                        # Skip predictions for ignored classes
+                        if pred_class_id in ignored_class_ids:
+                            continue
+                            
                         if pred_class_id < num_classes:
                             # Get bbox in xyxy format
                             xyxy = box.xyxy[0].cpu().numpy()
@@ -507,7 +522,7 @@ def evaluate_model(
                             image_predictions.append(pred_data)
                             predictions_count += 1
             
-            # Store predictions for this image
+            # Store predictions for this image (filtered predictions only)
             if image_predictions:
                 all_predictions.extend(image_predictions)
             
@@ -523,18 +538,22 @@ def evaluate_model(
                         'conf': pred['conf']
                     })
                 
-                logger.info(f"Image {img.id}: Matching {len(pred_boxes)} predictions with {len(gt_boxes)} ground truth boxes")
+                # Filter out ignored classes from predictions and ground truth for metrics
+                filtered_pred_boxes = [p for p in pred_boxes if p['class_id'] not in ignored_class_ids]
+                filtered_gt_boxes = [g for g in gt_boxes if g['class_id'] not in ignored_class_ids and g['class_id'] >= 0]
                 
-                # Match predictions with ground truth
+                logger.info(f"Image {img.id}: Matching {len(filtered_pred_boxes)} predictions (filtered from {len(pred_boxes)}) with {len(filtered_gt_boxes)} ground truth boxes (filtered from {len(gt_boxes)})")
+                
+                # Match predictions with ground truth (using filtered lists for metrics)
                 matched_gt = set()
                 matched_pred = set()
                 
-                for i, pred in enumerate(pred_boxes):
+                for i, pred in enumerate(filtered_pred_boxes):
                     best_iou = 0
                     best_gt_idx = -1
                     
-                    for j, gt in enumerate(gt_boxes):
-                        if j in matched_gt or gt['class_id'] < 0:
+                    for j, gt in enumerate(filtered_gt_boxes):
+                        if j in matched_gt:
                             continue
                         
                         iou = calculate_iou(pred['bbox'], gt['bbox'])
@@ -546,7 +565,7 @@ def evaluate_model(
                         matched_pred.add(i)
                         matched_gt.add(best_gt_idx)
                         
-                        gt_class = gt_boxes[best_gt_idx]['class_id']
+                        gt_class = filtered_gt_boxes[best_gt_idx]['class_id']
                         pred_class = pred['class_id']
                         
                         logger.debug(f"Match found: pred_class={pred_class}, gt_class={gt_class}, IoU={best_iou:.3f}")
@@ -563,8 +582,8 @@ def evaluate_model(
                         if best_iou > 0:
                             logger.debug(f"No match: best IoU={best_iou:.3f} < threshold={iou_threshold}")
                 
-                false_negatives += len(gt_boxes) - len(matched_gt)
-                logger.info(f"Image {img.id} results: TP={len(matched_pred)}, FP={len(pred_boxes)-len(matched_pred)}, FN={len(gt_boxes)-len(matched_gt)}")
+                false_negatives += len(filtered_gt_boxes) - len(matched_gt)
+                logger.info(f"Image {img.id} results: TP={len(matched_pred)}, FP={len(filtered_pred_boxes)-len(matched_pred)}, FN={len(filtered_gt_boxes)-len(matched_gt)}")
             
             # Update progress
             if (idx + 1) % max(1, total_images // 10) == 0:
@@ -619,6 +638,11 @@ def evaluate_model(
         }
         db.commit()
         
+        # Update parent task if this is a child task
+        parent_task_id = task.task_metadata.get('parent_task_id')
+        if parent_task_id:
+            update_parent_task_status(db, parent_task_id)
+        
         logger.info(f"Evaluation completed: {predictions_count} predictions on {total_images} images")
         return results
         
@@ -628,6 +652,113 @@ def evaluate_model(
         task.completed_at = datetime.utcnow()
         task.error_message = f"Evaluation error: {str(e)}"
         db.commit()
+        
+        # Update parent task if this is a child task
+        parent_task_id = task.task_metadata.get('parent_task_id') if task.task_metadata else None
+        if parent_task_id:
+            update_parent_task_status(db, parent_task_id)
+        
         raise
     finally:
         db.close()
+
+
+def update_parent_task_status(db, parent_task_id: int):
+    """Update the parent task status based on child task statuses"""
+    try:
+        parent_task = db.query(TaskModel).filter(TaskModel.id == parent_task_id).first()
+        if not parent_task:
+            return
+        
+        parent_metadata = parent_task.task_metadata or {}
+        child_task_ids = parent_metadata.get('child_task_ids', [])
+        
+        if not child_task_ids:
+            return
+        
+        # Get all child tasks
+        child_tasks = db.query(TaskModel).filter(TaskModel.id.in_(child_task_ids)).all()
+        
+        if not child_tasks:
+            return
+        
+        # Calculate aggregate status
+        completed_count = sum(1 for ct in child_tasks if ct.status == 'completed')
+        failed_count = sum(1 for ct in child_tasks if ct.status == 'failed')
+        running_count = sum(1 for ct in child_tasks if ct.status == 'running')
+        total_count = len(child_tasks)
+        
+        # Calculate aggregate progress
+        aggregate_progress = sum(ct.progress or 0 for ct in child_tasks) // total_count
+        
+        # Determine parent status
+        if completed_count == total_count:
+            parent_status = 'completed'
+            parent_task.completed_at = datetime.utcnow()
+        elif failed_count == total_count:
+            parent_status = 'failed'
+            parent_task.completed_at = datetime.utcnow()
+        elif running_count > 0 or (completed_count + failed_count < total_count):
+            parent_status = 'running'
+        else:
+            # Some completed, some failed
+            parent_status = 'completed'  # Partial completion
+            parent_task.completed_at = datetime.utcnow()
+        
+        # Aggregate results from completed children
+        aggregate_results = None
+        if completed_count > 0:
+            completed_children = [ct for ct in child_tasks if ct.status == 'completed']
+            total_images = sum(
+                ct.task_metadata.get('results', {}).get('images_processed', 0) 
+                for ct in completed_children if ct.task_metadata
+            )
+            total_predictions = sum(
+                ct.task_metadata.get('results', {}).get('predictions_count', 0) 
+                for ct in completed_children if ct.task_metadata
+            )
+            total_inference_time = sum(
+                ct.task_metadata.get('results', {}).get('inference_time_ms', 0) 
+                for ct in completed_children if ct.task_metadata
+            )
+            
+            # Calculate average metrics
+            avg_precision = sum(
+                ct.task_metadata.get('results', {}).get('precision', 0) 
+                for ct in completed_children if ct.task_metadata
+            ) / completed_count
+            avg_recall = sum(
+                ct.task_metadata.get('results', {}).get('recall', 0) 
+                for ct in completed_children if ct.task_metadata
+            ) / completed_count
+            avg_f1 = sum(
+                ct.task_metadata.get('results', {}).get('f1_score', 0) 
+                for ct in completed_children if ct.task_metadata
+            ) / completed_count
+            
+            aggregate_results = {
+                'precision': avg_precision,
+                'recall': avg_recall,
+                'f1_score': avg_f1,
+                'images_processed': total_images,
+                'predictions_count': total_predictions,
+                'inference_time_ms': total_inference_time,
+                'completed_datasets': completed_count,
+                'failed_datasets': failed_count,
+                'total_datasets': total_count
+            }
+        
+        parent_task.status = parent_status
+        parent_task.progress = aggregate_progress
+        parent_task.task_metadata = {
+            **parent_metadata,
+            'aggregate_results': aggregate_results,
+            'completed_count': completed_count,
+            'failed_count': failed_count
+        }
+        db.commit()
+        
+        logger.info(f"Updated parent task {parent_task_id}: status={parent_status}, progress={aggregate_progress}%")
+        
+    except Exception as e:
+        logger.error(f"Error updating parent task {parent_task_id}: {str(e)}")

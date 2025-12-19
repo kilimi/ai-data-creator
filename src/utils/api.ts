@@ -222,6 +222,41 @@ export class ApiClient {
     }
   }
 
+  async mergeDatasets(projectId: string | number, name: string, datasetIds: number[]): Promise<ApiResponse<{
+    id: number;
+    name: string;
+    description: string;
+    total_images: number;
+    total_annotations: number;
+    source_datasets: string[];
+  }>> {
+    try {
+      const response = await fetch(`${this.config.baseUrl}/projects/${projectId}/datasets/merge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name,
+          dataset_ids: datasetIds
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return { success: true, data: result.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to merge datasets',
+      };
+    }
+  }
+
   async uploadImages(datasetId: string | number, formData: FormData): Promise<ApiResponse<any>> {
     return this.request(`/datasets/${datasetId}/images`, {
       method: 'POST',

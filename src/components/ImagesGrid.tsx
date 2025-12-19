@@ -220,7 +220,7 @@ export function ImagesGrid({
                   </div>
                 )}
                 <img
-                  src={image.url}
+                  src={image.thumbnailUrl || image.url}
                   alt={image.fileName}
                   className={`w-full h-full object-contain ${imageIsLoaded ? 'opacity-100' : 'opacity-0'}`}
                   loading="lazy"

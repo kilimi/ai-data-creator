@@ -142,7 +142,7 @@ def train_yolo_model(self, task_id: int, training_config: Dict[str, Any]):
                         "current_epoch": self.current_epoch,
                         "stage": "training",
                         "latest_metrics": metrics,
-                        "metrics_history": self.metrics_history[-10:]  # Keep last 10 epochs
+                        "metrics_history": self.metrics_history  # Keep all epochs for full progress graphs
                     }
                     self.db.commit()
                     
@@ -426,11 +426,11 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         db.commit()
         
         # Load model
-        model_type = training_config.get('model_type', 'rtdetrv2-s.pt')
+        model_type = training_config.get('model_type', 'rtdetr-l.pt')
         logger.info(f"Loading RT-DETR model: {model_type}")
         
         # Ultralytics will automatically download the model if it doesn't exist
-        # Valid RT-DETR models: rtdetrv2-s.pt, rtdetrv2-m.pt, rtdetr-l.pt, rtdetr-x.pt
+        # Valid RT-DETR models: rtdetr-l.pt, rtdetr-x.pt
         try:
             model = RTDETR(model_type)
         except Exception as e:

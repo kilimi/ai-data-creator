@@ -58,7 +58,7 @@ class RTDETRTrainingRequest(BaseModel):
     """Request model for RT-DETR training"""
     project_id: int
     dataset_configs: List[Dict[str, Any]]
-    model_type: str = "rtdetr-r50.pt"  # RT-DETR model variant
+    model_type: str = "rtdetr-l.pt"  # RT-DETR model variant (rtdetr-l.pt or rtdetr-x.pt)
     epochs: int = 100
     batch_size: int = 16
     image_size: int = 640
@@ -714,11 +714,13 @@ async def start_yolo_training(
                     "lr0": request.learning_rate,
                     "momentum": request.momentum,
                     "weight_decay": request.weight_decay,
-                    "save_period": request.save_period
+                    "save_period": request.save_period,
+                    "patience": request.patience
                 },
                 "model_config": {
                     "model": request.model_type,
-                    "task": "detect"
+                    "task": "detect",
+                    "augmentations": request.augmentations or {}
                 }
             }
         )

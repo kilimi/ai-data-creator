@@ -2,13 +2,14 @@
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, Maximize2, Minimize2 } from "lucide-react";
 import { AnnotationSample } from "@/utils/annotations";
 import { useState, useEffect } from "react";
 import { ImageZoomControls } from "@/components/ImageZoomControls";
 import { ImageNavigation } from "@/components/ImageNavigation";
 import { ImageViewport } from "@/components/ImageViewport";
 import { ImageAnnotationDisplay } from "@/components/ImageAnnotationDisplay";
+import { Badge } from "@/components/ui/badge";
 
 interface ImageDetailModalProps {
   image: Image | null;
@@ -48,6 +49,7 @@ export function ImageDetailModal({
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [imageLoaded, setImageLoaded] = useState(false);
   const [annotationKey, setAnnotationKey] = useState(0); // Force re-render key
+  const [useFullSizeImage, setUseFullSizeImage] = useState(false); // Start with thumbnail for performance
   
   // Zoom and pan state
   const [zoom, setZoom] = useState(1);
@@ -63,6 +65,7 @@ export function ImageDetailModal({
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsDragging(false);
+    setUseFullSizeImage(false); // Reset to thumbnail when changing images
     setAnnotationKey(prev => prev + 1); // Force annotations to re-render when image changes
   }, [image?.id]);
 
@@ -254,6 +257,18 @@ export function ImageDetailModal({
               onZoomOut={zoomOut}
               onResetZoom={resetZoom}
             />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setUseFullSizeImage(!useFullSizeImage)}
+              className="flex items-center gap-2"
+            >
+              {useFullSizeImage ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              {useFullSizeImage ? "Use Thumbnail" : "Load Full Size"}
+            </Button>
+            <Badge variant={useFullSizeImage ? "default" : "secondary"}>
+              {useFullSizeImage ? "Full Quality" : "Thumbnail"}
+            </Badge>
           </div>
           <div className="flex items-center gap-4">
             {imageIndex !== null && imageCount !== undefined && (
@@ -286,6 +301,7 @@ export function ImageDetailModal({
               onMouseUp={handleMouseUp}
               onDoubleClick={handleDoubleClick}
               onImageClick={handleImageClick}
+              useFullSize={useFullSizeImage}
             />
             
             <ImageNavigation

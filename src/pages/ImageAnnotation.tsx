@@ -2629,6 +2629,28 @@ const ImageAnnotation = () => {
               // Find the image ID for this image name
               const imageEntry = cocoData.images.find((img: any) => img.file_name === currentImageName);
               if (imageEntry) {
+                // Update categories to include all current classes
+                const existingCategoryNames = new Set(cocoData.categories?.map((c: any) => c.name) || []);
+                classes.forEach((cls, idx) => {
+                  if (!existingCategoryNames.has(cls.name)) {
+                    // Add new category with next available ID
+                    const maxCategoryId = Math.max(0, ...(cocoData.categories?.map((c: any) => c.id) || [0]));
+                    cocoData.categories = cocoData.categories || [];
+                    cocoData.categories.push({
+                      id: maxCategoryId + 1,
+                      name: cls.name,
+                      supercategory: ""
+                    });
+                    console.log(`Added new category to sessionStorage: ${cls.name} with id ${maxCategoryId + 1}`);
+                  }
+                });
+                
+                // Build a category name to ID map for annotation category_id lookup
+                const categoryNameToId: { [name: string]: number } = {};
+                cocoData.categories?.forEach((cat: any) => {
+                  categoryNameToId[cat.name] = cat.id;
+                });
+                
                 // Remove old annotations for this image
                 cocoData.annotations = cocoData.annotations.filter((ann: any) => ann.image_id !== imageEntry.id);
                 
@@ -2643,7 +2665,8 @@ const ImageAnnotation = () => {
                     const minY = Math.min(...ys);
                     const maxX = Math.max(...xs);
                     const maxY = Math.max(...ys);
-                    const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+                    // Use category ID from the COCO categories, not from frontend index
+                    const categoryId = categoryNameToId[ann.label] || 1;
                     const polygonArea = calculatePolygonArea(ann.points);
                     
                     cocoData.annotations.push({

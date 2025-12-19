@@ -86,7 +86,7 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
                     "width": img.width,
                     "height": img.height,
                     "url": f"{base_url}{img.url}" if img.url and img.url.startswith('/') else img.url,
-                    "thumbnailUrl": f"{base_url}{img.thumbnail_url}" if img.thumbnail_url and img.thumbnail_url.startswith('/') else img.thumbnail_url,
+                    "thumbnailUrl": f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url and img.thumbnail_url.startswith('/') else img.thumbnail_url,
                     "uploadedAt": img.uploaded_at,
                     "annotationsCount": img.annotations_count
                 }
@@ -443,7 +443,7 @@ async def upload_images_to_collection(
                 "width": img.width,
                 "height": img.height,
                 "url": f"{base_url}{img.url}" if img.url.startswith('/') else img.url,
-                "thumbnailUrl": f"{base_url}{img.thumbnail_url}" if img.thumbnail_url.startswith('/') else img.thumbnail_url,
+                "thumbnailUrl": f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url.startswith('/') else img.thumbnail_url,
                 "uploadedAt": img.uploaded_at.isoformat(),
                 "annotationsCount": img.annotations_count
             }
