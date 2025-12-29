@@ -122,7 +122,7 @@ export class ApiClient {
   // Projects endpoints
   
   async getProjects(): Promise<ApiResponse<Project[]>> {
-    return this.request<Project[]>('/projects/');
+    return this.request<Project[]>('/projects/?include_images=true');
   }
 
   async getProject(id: string): Promise<ApiResponse<Project>> {

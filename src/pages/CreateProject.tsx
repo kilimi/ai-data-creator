@@ -232,6 +232,7 @@ const CreateProject = () => {
                           size="icon"
                           className="h-4 w-4 p-0 ml-1 text-muted-foreground"
                           onClick={() => removeTag(tag)}
+                          aria-label={`Remove ${tag}`}
                         >
                           <X className="h-3 w-3" />
                         </Button>
@@ -274,6 +275,7 @@ const CreateProject = () => {
                         onClick={handleRemoveLogo}
                         className="absolute top-2 right-2 h-8 w-8"
                         type="button"
+                        aria-label="Remove logo"
                       >
                         <X className="h-4 w-4" />
                       </Button>
