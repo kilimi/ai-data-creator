@@ -122,13 +122,13 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
     <>
       <Card 
         className={cn(
-          "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card",
+          "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card flex flex-col h-full",
           className
         )}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <CardHeader className="p-0">
+        <CardHeader className="p-0 flex-shrink-0">
           <div className="relative h-44 w-full overflow-hidden">
             {project.logo_url ? (
               <>
@@ -138,6 +138,10 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                 <img
                   src={project.logo_url}
                   alt={project.name}
+                  loading="lazy"
+                  decoding="async"
+                  width="400"
+                  height="176"
                   className={cn(
                     "h-full w-full object-cover transition-all duration-500",
                     !imageLoaded && "opacity-0",
@@ -187,36 +191,34 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
           </div>
         </CardHeader>
         
-        <CardContent className="p-4">
-          <div className="space-y-2">
+        <CardContent className="p-4 flex-1 flex flex-col">
+          <div className="space-y-2 flex-1">
             <Link to={`/projects/${project.id}`}>
               <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
                 {project.name}
               </h3>
             </Link>
-            <p className="text-sm text-muted-foreground line-clamp-2">
+            <p className="text-sm text-muted-foreground line-clamp-2 min-h-[2.5rem]">
               {project.description || "No description provided"}
             </p>
             
             {/* Display project tags */}
-            {project.tags && project.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1 pt-1">
-                {project.tags.map(tag => (
-                  <Badge 
-                    key={tag} 
-                    variant="secondary" 
-                    className="flex items-center gap-1 text-xs"
-                  >
-                    <Tag className="h-3 w-3" />
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
-            )}
+            <div className="flex flex-wrap gap-1 pt-1 min-h-[1.5rem]">
+              {project.tags && project.tags.length > 0 && project.tags.map(tag => (
+                <Badge 
+                  key={tag} 
+                  variant="secondary" 
+                  className="flex items-center gap-1 text-xs"
+                >
+                  <Tag className="h-3 w-3" />
+                  {tag}
+                </Badge>
+              ))}
+            </div>
           </div>
         </CardContent>
         
-        <CardFooter className="p-4 pt-0">
+        <CardFooter className="p-4 pt-0 flex-shrink-0">
           <div className="flex justify-between items-center w-full">
             <div className="flex items-center gap-2">
               <Database className="h-4 w-4 text-muted-foreground" />

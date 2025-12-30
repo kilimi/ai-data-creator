@@ -24,11 +24,31 @@ export const ApiSettings = () => {
   const [showDatasetsDialog, setShowDatasetsDialog] = useState(false);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [isLoadingDatasets, setIsLoadingDatasets] = useState(false);
+  const [databaseInfo, setDatabaseInfo] = useState<{
+    database_name: string;
+    database_type: string;
+    database_host: string;
+  } | null>(null);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
 
   useEffect(() => {
     // Check connection on component mount
     checkConnection();
+    loadDatabaseInfo();
   }, []);
+
+  const loadDatabaseInfo = async () => {
+    try {
+      const apiClient = new ApiClient({ baseUrl: apiUrl });
+      const response = await apiClient.getDatabaseConnectionInfo();
+      
+      if (response.success && response.data) {
+        setDatabaseInfo(response.data);
+      }
+    } catch (error) {
+      console.error('Failed to load database info:', error);
+    }
+  };
 
   const checkConnection = async () => {
     try {
@@ -85,7 +105,14 @@ export const ApiSettings = () => {
     }
   };
 
-  const handleGetAllDatasets = async () => {
+  useEffect(() => {
+    // Load datasets when connected
+    if (isConnected) {
+      loadDatasets();
+    }
+  }, [isConnected]);
+
+  const loadDatasets = async () => {
     setIsLoadingDatasets(true);
     try {
       const apiClient = new ApiClient({ ...API_CONFIG, baseUrl: apiUrl });
@@ -93,20 +120,19 @@ export const ApiSettings = () => {
       
       if (response.success && response.data) {
         setDatasets(response.data);
-        setShowDatasetsDialog(true);
       } else {
         throw new Error(response.error || "Failed to fetch datasets");
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast({
-        title: "Error fetching datasets",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      console.error('Failed to load datasets:', error);
     } finally {
       setIsLoadingDatasets(false);
     }
+  };
+
+  const handleGetAllDatasets = async () => {
+    await loadDatasets();
+    setShowDatasetsDialog(true);
   };
 
   const saveSettings = () => {
@@ -196,6 +222,69 @@ export const ApiSettings = () => {
               >
                 Save Settings
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Database</CardTitle>
+            <CardDescription>
+              Current database connection and available datasets
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {databaseInfo && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium text-muted-foreground">Database Name</Label>
+                    <p className="text-sm font-mono bg-muted px-3 py-2 rounded-md">{databaseInfo.database_name}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-sm font-medium text-muted-foreground">Database Type</Label>
+                    <p className="text-sm bg-muted px-3 py-2 rounded-md">{databaseInfo.database_type}</p>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium text-muted-foreground">Host</Label>
+                  <p className="text-sm font-mono bg-muted px-3 py-2 rounded-md">{databaseInfo.database_host}</p>
+                </div>
+              </div>
+            )}
+            
+            <div className="border-t pt-4">
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-medium">Datasets in Current Database</Label>
+                <Badge variant="secondary">{datasets.length} total</Badge>
+              </div>
+              
+              {isLoadingDatasets ? (
+                <div className="text-sm text-muted-foreground">Loading datasets...</div>
+              ) : datasets.length > 0 ? (
+                <div className="space-y-2">
+                  <select
+                    id="dataset-select"
+                    className="w-full px-3 py-2 border rounded-md bg-background"
+                    value={selectedDatasetId || ''}
+                    onChange={(e) => setSelectedDatasetId(e.target.value)}
+                  >
+                    <option value="">-- Select a dataset --</option>
+                    {datasets.map((dataset) => (
+                      <option key={dataset.id} value={dataset.id}>
+                        {dataset.name} ({dataset.image_count} images, {dataset.annotation_count} annotations)
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Select a dataset to view or manage it
+                  </p>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground bg-muted/50 px-3 py-2 rounded-md">
+                  No datasets found in this database. Create a project and dataset to get started.
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

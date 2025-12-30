@@ -24,10 +24,11 @@ export function useAnnotationFilesCount(datasetId: number | string) {
     setAnnotationFilesCount(getAnnotationFilesCount());
     
     // Set up a periodic check to ensure the count stays updated
+    // Reduced frequency to minimize performance impact
     const interval = setInterval(() => {
       const currentCount = getAnnotationFilesCount();
       setAnnotationFilesCount(prev => prev !== currentCount ? currentCount : prev);
-    }, 2000); // Check every 2 seconds
+    }, 30000); // Check every 30 seconds (reduced from 2s)
     
     return () => clearInterval(interval);
   }, [getAnnotationFilesCount]);

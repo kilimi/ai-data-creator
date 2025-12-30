@@ -381,6 +381,49 @@ async def import_database(file: UploadFile = File(...), db: Session = Depends(ge
         logger.error(f"Database import failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
+@router.get("/database/connection")
+async def get_database_connection_info():
+    """Get database connection information"""
+    try:
+        from ..database import SQLALCHEMY_DATABASE_URL
+        
+        # Parse database URL to extract connection details
+        # Format: postgresql://user:password@host:port/database
+        db_url = SQLALCHEMY_DATABASE_URL
+        
+        # Extract database name from URL
+        db_name = "Unknown"
+        db_host = "Unknown"
+        db_type = "Unknown"
+        
+        if db_url:
+            try:
+                # Simple parsing of database URL
+                if db_url.startswith('postgresql://'):
+                    db_type = "PostgreSQL"
+                    # Extract database name (after last /)
+                    db_name = db_url.split('/')[-1]
+                    # Extract host (between @ and /)
+                    host_part = db_url.split('@')[1].split('/')[0]
+                    db_host = host_part.split(':')[0] if ':' in host_part else host_part
+                elif db_url.startswith('sqlite:///'):
+                    db_type = "SQLite"
+                    db_name = db_url.split(':///')[-1]
+                    db_host = "local"
+            except Exception as parse_error:
+                logger.warning(f"Error parsing database URL: {str(parse_error)}")
+        
+        return {
+            "database_name": db_name,
+            "database_type": db_type,
+            "database_host": db_host,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get database connection info: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get database connection info: {str(e)}")
+
 @router.get("/database/info")
 async def get_database_info(db: Session = Depends(get_db)):
     """Get database statistics"""

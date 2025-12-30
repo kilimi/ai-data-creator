@@ -135,7 +135,7 @@ const CreateProject = () => {
         description: `${name} has been created successfully.`,
       });
       
-      navigate('/');
+      navigate('/', { state: { refetch: true } });
     } catch (err) {
       console.error('Error creating project:', err);
       toast({

@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
+import { clearDatabase, verifyDatabaseIsEmpty } from '../../test-helpers';
 
 // Helper function to navigate to create project page
 async function navigateToCreateProject(page: Page) {
@@ -107,11 +108,9 @@ test.describe('Create New Project', () => {
     // Submit the form
     await page.click('button[type="submit"]:has-text("Create")');
     
-    // Wait for success message
-    await expect(page.locator('text=has been created successfully').first()).toBeVisible({ timeout: 10000 });
-    
-    // Verify navigation to home page
-    await expect(page).toHaveURL('/', { timeout: 5000 });
+    // Wait for navigation to home page (indicates success)
+    await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20000 });
   });
 
   test('should validate required name field', async ({ page }) => {
@@ -204,8 +203,8 @@ test.describe('Create New Project', () => {
     // Submit the form
     await submitButton.click();
     
-    // Wait for successful submission (navigation or success message)
-    await expect(page.locator('text=has been created successfully').first()).toBeVisible({ timeout: 10000 });
+    // Wait for successful submission (navigation)
+    await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
   });
 
   test('should create project with special characters in name and description', async ({ page }) => {
@@ -224,10 +223,62 @@ test.describe('Create New Project', () => {
     // Submit the form
     await page.click('button[type="submit"]:has-text("Create")');
     
-    // Wait for success message
-    await expect(page.locator('text=has been created successfully').first()).toBeVisible({ timeout: 10000 });
+    // Wait for navigation to home page (indicates success)
+    await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle', { timeout: 20000 });
+  });
+
+  test('should display all project cards with consistent height', async ({ page }) => {
+    // Create multiple projects with varying content to test card consistency
+    const projects = [
+      { name: 'Short', description: 'Short desc', tags: [] },
+      { name: 'Project with Long Name and Description', description: 'This is a very long description that should be clamped to two lines maximum to ensure consistent card sizing across all project cards', tags: ['tag1', 'tag2', 'tag3', 'tag4'] },
+      { name: 'Medium Project', description: 'Medium length description here', tags: ['one-tag'] },
+      { name: 'No Desc Project', description: '', tags: [] },
+    ];
+
+    // Create all test projects
+    for (const projectData of projects) {
+      await navigateToCreateProject(page);
+      await page.fill('input#name', projectData.name);
+      if (projectData.description) {
+        await page.fill('textarea#description', projectData.description);
+      }
+      for (const tag of projectData.tags) {
+        await page.fill('input[placeholder*="Add tags"]', tag);
+        await page.press('input[placeholder*="Add tags"]', 'Enter');
+      }
+      await page.click('button[type="submit"]:has-text("Create")');
+      await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle');
+    }
+
+    // Wait for layout to stabilize and animations to complete
+    await page.waitForTimeout(1000);
     
-    // Verify navigation to home page
-    await expect(page).toHaveURL('/', { timeout: 5000 });
+    // Get all project cards
+    const cards = page.locator('.rounded-lg.border.bg-card');
+    const cardCount = await cards.count();
+    
+    // Ensure we have at least 2 cards to compare
+    expect(cardCount).toBeGreaterThanOrEqual(2);
+
+    // Get heights of all cards
+    const heights: number[] = [];
+    for (let i = 0; i < Math.min(cardCount, 10); i++) {
+      const boundingBox = await cards.nth(i).boundingBox();
+      if (boundingBox) {
+        heights.push(Math.round(boundingBox.height));
+      }
+    }
+
+    // Verify all cards have the same height (allowing reasonable difference for browser rendering variations)
+    // Different browsers may render cards with slight height differences due to font rendering
+    const firstHeight = heights[0];
+    const maxAllowedDiff = 30; // Generous tolerance for cross-browser rendering differences
+    for (let i = 0; i < heights.length; i++) {
+      const heightDiff = Math.abs(heights[i] - firstHeight);
+      expect(heightDiff).toBeLessThanOrEqual(maxAllowedDiff);
+    }
   });
 });

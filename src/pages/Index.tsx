@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { Plus, Search, Settings, Database, Brain, Activity, Tag, Filter, Sparkles } from "lucide-react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { Plus, Search, Settings, Database, Brain, Activity, Tag, Filter, Sparkles, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import { useStableLoading } from "@/hooks/useStableLoading";
 
 export default function Index() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { api, isConfigured, isConnected } = useApi();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -30,9 +31,18 @@ export default function Index() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
   
   // Use stable loading to prevent flickering
   const stableLoading = useStableLoading(loading, 250);
+
+  const handleRefresh = () => {
+    setRefetchTrigger(prev => prev + 1);
+    toast({
+      title: "Refreshing projects...",
+      description: "Loading latest data",
+    });
+  };
 
   useEffect(() => {
     const fetchProjects = async () => {
@@ -83,7 +93,16 @@ export default function Index() {
     };
 
     fetchProjects();
-  }, [api, isConfigured, isConnected, toast]);
+  }, [api, isConfigured, isConnected, toast, refetchTrigger]);
+
+  // Trigger refetch when coming back from project creation
+  useEffect(() => {
+    if (location.state?.refetch) {
+      setRefetchTrigger(prev => prev + 1);
+      // Clear the state to prevent refetching on every render
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const filteredAndSortedProjects = () => {
     let result = [...projects];
@@ -176,6 +195,18 @@ export default function Index() {
                   <SelectItem value="name">Name (A-Z)</SelectItem>
                 </SelectContent>
               </Select>
+              
+              {/* Refresh Button */}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleRefresh}
+                disabled={loading}
+                className="h-12 w-12 bg-background/50 border-border/50"
+                title="Refresh projects"
+              >
+                <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />
+              </Button>
             </div>
             
             {/* Tag Filter */}

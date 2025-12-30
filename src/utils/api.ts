@@ -122,7 +122,9 @@ export class ApiClient {
   // Projects endpoints
   
   async getProjects(): Promise<ApiResponse<Project[]>> {
-    return this.request<Project[]>('/projects/?include_images=true');
+    // Don't include images in list view for better performance
+    // Thumbnails will be loaded on-demand via logo_url if available
+    return this.request<Project[]>('/projects/');
   }
 
   async getProject(id: string): Promise<ApiResponse<Project>> {
@@ -632,30 +634,34 @@ export class ApiClient {
     project_id: number;
     metadata?: any;
   }>>> {
-    const searchParams = new URLSearchParams();
-    if (projectId) searchParams.append('project_id', projectId.toString());
-    
-    // Get tasks that are pending or running
-    const pendingTasks = await this.getTasks({
-      project_id: projectId,
-      status: 'pending'
-    });
-    
-    const runningTasks = await this.getTasks({
-      project_id: projectId,
-      status: 'running'
-    });
-    
-    // Combine and return active tasks
-    const activeTasks = [
-      ...(pendingTasks.success ? pendingTasks.data : []),
-      ...(runningTasks.success ? runningTasks.data : [])
-    ];
-    
-    return {
-      success: true,
-      data: activeTasks
-    };
+    try {
+      const searchParams = new URLSearchParams();
+      if (projectId) searchParams.append('project_id', projectId.toString());
+      
+      // Use the /tasks/active endpoint to get both pending and running in one request
+      const response = await fetch(`${this.baseUrl}/tasks/active?${searchParams.toString()}`, {
+        headers: this.getHeaders()
+      });
+      
+      if (!response.ok) {
+        return {
+          success: false,
+          error: `HTTP error! status: ${response.status}`
+        };
+      }
+      
+      const data = await response.json();
+      
+      return {
+        success: true,
+        data: data
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      };
+    }
   }
 
   /**
@@ -768,6 +774,15 @@ export class ApiClient {
   }
 
   // Database backup and restore methods
+  async getDatabaseConnectionInfo(): Promise<ApiResponse<{
+    database_name: string;
+    database_type: string;
+    database_host: string;
+    timestamp: string;
+  }>> {
+    return this.request('/database/connection');
+  }
+
   async getDatabaseInfo(): Promise<ApiResponse<{
     database_info: {
       projects: number;

@@ -106,7 +106,7 @@ export function useTasks(projectId?: number) {
     }
   };
 
-  // Auto-refresh active tasks every 5 seconds
+  // Auto-refresh active tasks - optimized polling
   useEffect(() => {
     if (!isConfigured) return;
 
@@ -114,7 +114,7 @@ export function useTasks(projectId?: number) {
     
     const interval = setInterval(() => {
       fetchActiveTasks();
-    }, 5000); // Refresh every 5 seconds
+    }, 15000); // Refresh every 15 seconds (reduced from 5s)
 
     return () => clearInterval(interval);
   }, [api, isConfigured, projectId]);

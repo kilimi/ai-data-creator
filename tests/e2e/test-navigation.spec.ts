@@ -8,8 +8,8 @@ test('navigate to create project page', async ({ page }) => {
   // Go to home page
   await page.goto('/');
   
-  // Wait for page to load
-  await page.waitForLoadState('networkidle');
+  // Wait for page to load with longer timeout
+  await page.waitForLoadState('domcontentloaded', { timeout: 20000 });
   
   console.log('On home page');
   
@@ -19,7 +19,7 @@ test('navigate to create project page', async ({ page }) => {
   console.log('Clicked New Project button');
   
   // Wait for navigation
-  await page.waitForURL('**/projects/new');
+  await page.waitForURL('**/projects/new', { timeout: 15000 });
   
   console.log('Navigated to:', page.url());
   

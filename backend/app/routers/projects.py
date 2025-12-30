@@ -8,6 +8,8 @@ from pathlib import Path
 import shutil
 import sys
 import re
+from PIL import Image
+import io
 
 from .. import models, schemas
 from ..database import get_db
@@ -40,8 +42,9 @@ async def create_project(
             logo_data = await logo.read()
             db_project.logo = logo_data
             mime_type = logo.content_type or "image/png"
-            logo_base64 = base64.b64encode(logo_data).decode()
-            db_project.logo_url = f"data:{mime_type};base64,{logo_base64}"
+            # Generate thumbnail for faster loading in list view
+            thumbnail_url = _create_thumbnail(logo_data, mime_type)
+            db_project.logo_url = thumbnail_url
         db.add(db_project)
         db.commit()
         db.refresh(db_project)
@@ -60,6 +63,38 @@ async def create_project(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _create_thumbnail(image_data: bytes, mime_type: str, max_size: tuple = (200, 200)) -> str:
+    """Create a thumbnail from image data and return base64 encoded string."""
+    try:
+        # Open image from bytes
+        img = Image.open(io.BytesIO(image_data))
+        
+        # Convert RGBA to RGB if necessary
+        if img.mode == 'RGBA':
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3])  # 3 is the alpha channel
+            img = background
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Create thumbnail maintaining aspect ratio
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        # Save to bytes
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=85, optimize=True)
+        thumbnail_data = buffer.getvalue()
+        
+        # Encode to base64
+        thumbnail_base64 = base64.b64encode(thumbnail_data).decode()
+        return f"data:image/jpeg;base64,{thumbnail_base64}"
+    except Exception as e:
+        print(f"Error creating thumbnail: {e}")
+        # Return original if thumbnail creation fails
+        original_base64 = base64.b64encode(image_data).decode()
+        return f"data:{mime_type};base64,{original_base64}"
 
 
 def _is_base64_image(url: str | None) -> bool:
@@ -82,20 +117,20 @@ def _truncate_base64_url(url: str | None, include_base64: bool = False) -> str |
 
 
 @router.get("/projects/", response_model=list[schemas.Project])
-def read_projects(skip: int = 0, limit: int = 100, include_images: bool = False, db: Session = Depends(get_db)):
+def read_projects(skip: int = 0, limit: int = 100, include_images: bool = True, db: Session = Depends(get_db)):
     """
     Get all projects with minimal dataset info for fast loading.
     Only returns basic project info and dataset counts.
     
-    By default, base64 encoded logo/thumbnail images are excluded to reduce response size.
-    Set include_images=true to include them.
+    Thumbnails are now included by default since they're optimized (200x200, JPEG, 85% quality).
+    Set include_images=false to exclude them if needed.
     """
     try:
         from sqlalchemy import func
         from sqlalchemy.orm import selectinload, load_only
         
         # Use eager loading with load_only to fetch minimal dataset fields
-        # Only include logo_url/thumbnailUrl if explicitly requested
+        # Exclude large base64 thumbnail/logo fields to dramatically reduce payload size
         dataset_fields = [
             models.Dataset.id,
             models.Dataset.name,
@@ -105,12 +140,8 @@ def read_projects(skip: int = 0, limit: int = 100, include_images: bool = False,
             models.Dataset.created_at,
             models.Dataset.updated_at
         ]
-        
-        if include_images:
-            dataset_fields.extend([
-                models.Dataset.logo_url,
-                models.Dataset.thumbnailUrl
-            ])
+        # NOTE: Intentionally NOT loading logo_url/thumbnailUrl for datasets
+        # These can be 5-10MB each and are not displayed in the projects list view
         
         projects = db.query(models.Project).options(
             selectinload(models.Project.datasets).load_only(*dataset_fields)
@@ -119,19 +150,11 @@ def read_projects(skip: int = 0, limit: int = 100, include_images: bool = False,
         result = []
         for p in projects:
             # Serialize datasets with minimal info (no annotation counts/files)
+            # EXCLUDE thumbnailUrl and logo_url from datasets in list view - they can be very large
+            # and are not displayed in the projects list view anyway
             datasets = []
             if p.datasets:
                 for dataset in p.datasets:
-                    # Only include base64 images if explicitly requested
-                    thumbnail_url = _truncate_base64_url(
-                        getattr(dataset, 'thumbnailUrl', None), 
-                        include_images
-                    ) if include_images else None
-                    logo_url = _truncate_base64_url(
-                        getattr(dataset, 'logo_url', None), 
-                        include_images
-                    ) if include_images else None
-                    
                     datasets.append({
                         "id": dataset.id,
                         "name": dataset.name,
@@ -144,8 +167,8 @@ def read_projects(skip: int = 0, limit: int = 100, include_images: bool = False,
                         "annotation_file_count": 0,  # Not needed for list view
                         "annotation_files": [],  # Not needed for list view
                         "project_id": dataset.project_id,
-                        "thumbnailUrl": thumbnail_url,
-                        "logo_url": logo_url,
+                        "thumbnailUrl": None,  # Exclude to reduce payload size
+                        "logo_url": None,  # Exclude to reduce payload size
                         "url": None
                     })
             
@@ -349,8 +372,9 @@ async def update_project(
             logo_data = await logo.read()
             project.logo = logo_data
             mime_type = logo.content_type or "image/png"
-            logo_base64 = base64.b64encode(logo_data).decode()
-            project.logo_url = f"data:{mime_type};base64,{logo_base64}"
+            # Generate thumbnail for faster loading in list view
+            thumbnail_url = _create_thumbnail(logo_data, mime_type)
+            project.logo_url = thumbnail_url
         db.commit()
         db.refresh(project)
         return project
