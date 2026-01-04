@@ -40,7 +40,7 @@ export function DatasetBreadcrumb({
           <>
             <BreadcrumbItem>
               <BreadcrumbLink asChild>
-                <Link to={`/projects/${projectId}`}>{projectName}</Link>
+                <Link to={`/projects/${projectId}/datasets`}>{projectName}</Link>
               </BreadcrumbLink>
             </BreadcrumbItem>
             

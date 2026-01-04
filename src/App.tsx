@@ -15,6 +15,10 @@ import Dataset from "@/pages/Dataset";
 import ImageAnnotation from "./pages/ImageAnnotation";
 import AnnotationChoice from "./pages/AnnotationChoice";
 import Classification from "./pages/Classification";
+import { ProjectLayout } from "./components/ProjectLayout";
+import ProjectDatasets from "./pages/ProjectDatasets";
+import ProjectModels from "./pages/ProjectModels";
+import ProjectEvaluations from "./pages/ProjectEvaluations";
 
 const queryClient = new QueryClient();
 
@@ -28,7 +32,15 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/projects/new" element={<CreateProject />} />
           <Route path="/projects/new/dataset" element={<CreateDataset />} />
-          <Route path="/projects/:id" element={<DatasetDetail projectMode={true} />} />
+          
+          {/* Project routes with sidebar layout */}
+          <Route path="/projects/:id" element={<ProjectLayout />}>
+            <Route index element={<ProjectDatasets />} />
+            <Route path="datasets" element={<ProjectDatasets />} />
+            <Route path="models" element={<ProjectModels />} />
+            <Route path="evaluations" element={<ProjectEvaluations />} />
+          </Route>
+          
           <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
           <Route path="/projects/:projectId/datasets/:id" element={<Dataset />} />
           <Route path="/projects/:projectId/datasets/:id/edit" element={<EditDataset />} />

@@ -15,7 +15,11 @@ import {
   AlertCircle, 
   X,
   Loader2,
-  Activity
+  Activity,
+  Layers,
+  Brain,
+  Copy,
+  Sparkles
 } from 'lucide-react';
 
 interface TasksPopoverProps {
@@ -26,6 +30,36 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   const { activeTasks, loading, cancelTask, activeTaskCount } = useTasks(projectId);
   const { toast } = useToast();
   const [cancellingTasks, setCancellingTasks] = useState<Set<number>>(new Set());
+
+  const getTaskTypeIcon = (taskType: string) => {
+    switch (taskType) {
+      case 'augmentation':
+        return <Sparkles className="w-4 h-4 text-purple-500" />;
+      case 'training':
+        return <Brain className="w-4 h-4 text-indigo-500" />;
+      case 'duplication':
+        return <Copy className="w-4 h-4 text-cyan-500" />;
+      case 'evaluation':
+        return <Layers className="w-4 h-4 text-orange-500" />;
+      default:
+        return <Activity className="w-4 h-4 text-gray-500" />;
+    }
+  };
+
+  const getTaskTypeLabel = (taskType: string) => {
+    switch (taskType) {
+      case 'augmentation':
+        return 'Augmentation';
+      case 'training':
+        return 'Training';
+      case 'duplication':
+        return 'Duplication';
+      case 'evaluation':
+        return 'Evaluation';
+      default:
+        return taskType;
+    }
+  };
 
   const getStatusIcon = (status: Task['status']) => {
     switch (status) {
@@ -56,6 +90,21 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return 'bg-red-100 text-red-800 border-red-200';
       case 'cancelled':
         return 'bg-gray-100 text-gray-800 border-gray-200';
+      default:
+        return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getTaskTypeColor = (taskType: string) => {
+    switch (taskType) {
+      case 'augmentation':
+        return 'bg-purple-100 text-purple-800 border-purple-200';
+      case 'training':
+        return 'bg-indigo-100 text-indigo-800 border-indigo-200';
+      case 'duplication':
+        return 'bg-cyan-100 text-cyan-800 border-cyan-200';
+      case 'evaluation':
+        return 'bg-orange-100 text-orange-800 border-orange-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }
@@ -155,8 +204,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                 <Card key={task.id} className="border border-gray-200">
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(task.status)}
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        {getTaskTypeIcon(task.task_type)}
                         <CardTitle className="text-sm font-medium truncate">
                           {task.name}
                         </CardTitle>
@@ -166,7 +215,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-6 w-6 p-0 text-gray-500 hover:text-red-500"
+                          className="h-6 w-6 p-0 text-gray-500 hover:text-red-500 flex-shrink-0"
                           onClick={() => handleCancelTask(task.id, task.name)}
                           disabled={cancellingTasks.has(task.id)}
                         >
@@ -182,14 +231,23 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                   
                   <CardContent className="pt-0">
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <Badge 
-                          variant="outline" 
-                          className={getStatusColor(task.status)}
-                        >
-                          {task.status.charAt(0).toUpperCase() + task.status.slice(1)}
-                        </Badge>
-                        <span className="text-muted-foreground">
+                      <div className="flex items-center justify-between text-xs gap-2">
+                        <div className="flex items-center gap-2">
+                          <Badge 
+                            variant="outline" 
+                            className={getTaskTypeColor(task.task_type)}
+                          >
+                            {getTaskTypeLabel(task.task_type)}
+                          </Badge>
+                          <Badge 
+                            variant="outline" 
+                            className={getStatusColor(task.status)}
+                          >
+                            {getStatusIcon(task.status)}
+                            <span className="ml-1">{task.status.charAt(0).toUpperCase() + task.status.slice(1)}</span>
+                          </Badge>
+                        </div>
+                        <span className="text-muted-foreground font-medium">
                           {Math.round(task.progress)}%
                         </span>
                       </div>
@@ -199,6 +257,32 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                         className="h-2"
                       />
                       
+                      {/* Show stage info for augmentation tasks */}
+                      {task.task_type === 'augmentation' && (task.metadata?.stage || task.task_metadata?.stage) && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">Stage:</span>
+                          <span className="font-medium capitalize">{task.metadata?.stage || task.task_metadata?.stage}</span>
+                          {(task.metadata?.processed_images !== undefined || task.task_metadata?.processed_images !== undefined) && (
+                            <span className="text-muted-foreground">
+                              ({task.metadata?.processed_images ?? task.task_metadata?.processed_images} images processed)
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Show stage info for training tasks */}
+                      {task.task_type === 'training' && (task.metadata?.current_epoch || task.task_metadata?.current_epoch) && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">Epoch:</span>
+                          <span className="font-medium">{task.metadata?.current_epoch || task.task_metadata?.current_epoch}</span>
+                          {(task.metadata?.total_epochs || task.task_metadata?.total_epochs) && (
+                            <span className="text-muted-foreground">
+                              / {task.metadata?.total_epochs || task.task_metadata?.total_epochs}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      
                       {task.description && (
                         <p className="text-xs text-muted-foreground line-clamp-2">
                           {task.description}
@@ -206,9 +290,9 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                       )}
                       
                       <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Started: {formatTimestamp(task.created_at)}</span>
+                        <span>Created: {formatTimestamp(task.created_at)}</span>
                         {task.started_at && (
-                          <span>Running: {formatTimestamp(task.started_at)}</span>
+                          <span>Started: {formatTimestamp(task.started_at)}</span>
                         )}
                       </div>
                     </div>
@@ -222,7 +306,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         {activeTasks.length > 0 && (
           <div className="p-3 border-t bg-gray-50/50 text-center">
             <p className="text-xs text-muted-foreground">
-              Tasks auto-refresh every 5 seconds
+              Tasks auto-refresh every 15 seconds
             </p>
           </div>
         )}

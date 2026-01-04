@@ -193,7 +193,7 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
         
         <CardContent className="p-4 flex-1 flex flex-col">
           <div className="space-y-2 flex-1">
-            <Link to={`/projects/${project.id}`}>
+            <Link to={`/projects/${project.id}/datasets`}>
               <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
                 {project.name}
               </h3>

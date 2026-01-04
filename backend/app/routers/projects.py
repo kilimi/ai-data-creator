@@ -214,6 +214,18 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
     if not datasets:
         return {"success": True, "data": []}
     
+    # Get annotation counts for all datasets in one query
+    dataset_ids = [d.id for d in datasets]
+    annotation_counts = dict(
+        db.query(
+            models.Annotation.dataset_id,
+            func.count(models.Annotation.id)
+        )
+        .filter(models.Annotation.dataset_id.in_(dataset_ids))
+        .group_by(models.Annotation.dataset_id)
+        .all()
+    )
+    
     # Build minimal response - just enough for the evaluation modal
     result = []
     for dataset in datasets:
@@ -223,9 +235,12 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
             "description": dataset.description,
             "project_id": dataset.project_id,
             "image_count": dataset.image_count,
+            "annotation_count": annotation_counts.get(dataset.id, 0),
             "tags": dataset.tags,
             "thumbnailUrl": dataset.thumbnailUrl,
-            "url": dataset.url
+            "url": dataset.url,
+            "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+            "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None
         })
     
     return {"success": True, "data": result}
@@ -235,7 +250,7 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
 def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)):
     """
     Get a lightweight list of annotation files for a dataset.
-    Only returns ID and name - no full annotation data.
+    Only returns ID, name, and annotation count - no full annotation data.
     """
     # Verify dataset exists
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
@@ -252,7 +267,8 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
         result.append({
             "id": ann_file.id,
             "name": ann_file.name,
-            "file_name": ann_file.name
+            "file_name": ann_file.name,
+            "annotation_count": ann_file.annotation_count or 0
         })
     
     return {"success": True, "data": result}

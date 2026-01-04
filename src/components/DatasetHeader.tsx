@@ -1,6 +1,6 @@
 
 import { Link } from "react-router-dom";
-import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { Dataset } from "@/types";
@@ -13,11 +13,12 @@ interface DatasetHeaderProps {
   dataset?: Dataset;
   onEditDataset?: () => void;
   onDeleteDataset?: () => void;
+  onDuplicateDataset?: () => void;
   // optional project context - when provided the back link goes to the project page
   projectId?: string | null;
 }
 
-export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, projectId }: DatasetHeaderProps) {
+export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, onDuplicateDataset, projectId }: DatasetHeaderProps) {
   return (
     <div className="flex items-center justify-between mb-6">
       <div className="flex items-center gap-2">
@@ -27,7 +28,7 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
           asChild
           className="h-9 w-9"
         >
-          <Link to={projectId ? `/projects/${projectId}` : "/datasets"}>
+          <Link to={projectId ? `/projects/${projectId}/datasets` : "/datasets"}>
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
@@ -46,6 +47,22 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
           >
             <Pencil className="h-4 w-4 mr-2" />
             Edit Dataset
+          </Button>
+        )}
+        
+        {dataset && onDuplicateDataset && (
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => {
+              console.log('🔴🔴🔴 DUPLICATE BUTTON CLICKED IN HEADER! 🔴🔴🔴');
+              console.log('onDuplicateDataset function exists?', !!onDuplicateDataset);
+              onDuplicateDataset();
+            }}
+            className="h-9"
+          >
+            <Copy className="h-4 w-4 mr-2" />
+            Duplicate Dataset
           </Button>
         )}
         

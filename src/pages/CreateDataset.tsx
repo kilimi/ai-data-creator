@@ -71,7 +71,7 @@ const CreateDataset = ({ projectMode = false }: CreateDatasetProps) => {
       });
 
       // Navigate based on the mode
-      navigate(`/projects/${projectId}`);
+      navigate(`/projects/${projectId}/datasets`);
     } catch (err) {
       console.error('Error creating:', err);
       toast({

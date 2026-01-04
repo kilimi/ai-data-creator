@@ -1,25 +1,60 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Eye, EyeOff, Target, AlertTriangle } from 'lucide-react';
-import { Dataset } from '@/types';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users } from 'lucide-react';
+import { Dataset, DatasetGroup } from '@/types';
 
 interface CreateAugmentedDatasetModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string | number;
   datasets: Dataset[];
+  datasetGroups?: DatasetGroup[];
+}
+
+interface DatasetSelection {
+  id: string; // unique selection id
+  dataset: Dataset;
+  annotationFileId: string | null; // selected annotation file ID (or null for no annotations)
+  annotationFiles: Array<{ id: number; name: string; annotation_count?: number }>;
+  loadingAnnotations: boolean;
+  fromGroup?: boolean;
+  groupName?: string;
+}
+
+interface CreateAugmentedDatasetModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  projectId: string | number;
+  datasets: Dataset[];
+  datasetGroups?: DatasetGroup[];
+}
+
+interface DatasetSelection {
+  id: string; // unique selection id
+  dataset: Dataset;
+  annotationFileId: string | null; // selected annotation file ID (or null for no annotations)
+  annotationFiles: Array<{ id: number; name: string; annotation_count?: number }>;
+  loadingAnnotations: boolean;
+  fromGroup?: boolean;
+  groupName?: string;
 }
 
 interface AugmentationMethod {
@@ -175,13 +210,13 @@ const getParameterDescription = (methodId: string, paramName: string): string =>
   return descriptions[methodId]?.[paramName] || 'Adjust this parameter as needed';
 };
 
-export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, datasets }: CreateAugmentedDatasetModalProps) => {
+export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, datasets, datasetGroups = [] }: CreateAugmentedDatasetModalProps) => {
   const { toast } = useToast();
   const { api, isConfigured } = useApi();
   
   const [loading, setLoading] = useState(false);
   const [datasetName, setDatasetName] = useState('');
-  const [selectedDatasets, setSelectedDatasets] = useState<string[]>([]);
+  const [datasetSelections, setDatasetSelections] = useState<DatasetSelection[]>([]);
   const [selectedAugmentations, setSelectedAugmentations] = useState<string[]>([]);
   const [augmentationFactor, setAugmentationFactor] = useState('2');
   const [methodParameters, setMethodParameters] = useState<Record<string, any>>({});
@@ -192,62 +227,125 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     noise: false,
     advanced: false
   });
-  const [showAnnotations, setShowAnnotations] = useState(false);
-  const [annotationData, setAnnotationData] = useState<any[]>([]);
-  const [loadingAnnotations, setLoadingAnnotations] = useState(false);
-  const [transformAnnotations, setTransformAnnotations] = useState(true);
-  const [annotationSettings, setAnnotationSettings] = useState({
-    preserveInvalidBounds: false,
-    minVisibilityThreshold: 0.3,
-    handleOutOfBounds: 'remove' as 'remove' | 'clip' | 'keep'
-  });
 
-  // Fetch annotations for selected datasets
-  const fetchAnnotationsForDatasets = useCallback(async (datasetIds: string[]) => {
-    if (!api || !isConfigured || datasetIds.length === 0) return;
+  // Fetch annotation files for a specific selection
+  const fetchAnnotationFilesForSelection = async (selectionId: string, datasetId: number) => {
+    setDatasetSelections(prev => prev.map(sel => 
+      sel.id === selectionId ? { ...sel, loadingAnnotations: true } : sel
+    ));
     
-    setLoadingAnnotations(true);
     try {
-      const allAnnotations: any[] = [];
-      
-      for (const datasetId of datasetIds) {
-        const response = await api.getAnnotations(parseInt(datasetId));
-        if (response.success && response.data) {
-          allAnnotations.push(...response.data.map((annotation: any) => ({
-            ...annotation,
-            dataset_id: datasetId,
-            dataset_name: datasets?.find(d => d.id.toString() === datasetId)?.name || `Dataset ${datasetId}`
-          })));
+      const response = await fetch(`http://localhost:9999/datasets/${datasetId}/annotation-files/list`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          setDatasetSelections(prev => prev.map(sel => {
+            if (sel.id === selectionId) {
+              const annotationFiles = result.data;
+              // Auto-select first annotation file if available
+              const autoSelect = annotationFiles.length === 1 ? annotationFiles[0].id.toString() : null;
+              return { 
+                ...sel, 
+                annotationFiles,
+                annotationFileId: autoSelect,
+                loadingAnnotations: false 
+              };
+            }
+            return sel;
+          }));
         }
       }
-      
-      setAnnotationData(allAnnotations);
     } catch (error) {
-      console.error('Error fetching annotations:', error);
-      toast({
-        title: "Warning",
-        description: "Could not load annotations for preview",
-        variant: "destructive"
-      });
-    } finally {
-      setLoadingAnnotations(false);
+      console.error('Error fetching annotation files:', error);
+      setDatasetSelections(prev => prev.map(sel => 
+        sel.id === selectionId ? { ...sel, loadingAnnotations: false } : sel
+      ));
     }
-  }, [api, isConfigured, datasets, toast]);
+  };
 
-  // Update annotations when selected datasets change
-  useEffect(() => {
-    if (selectedDatasets.length > 0 && showAnnotations) {
-      fetchAnnotationsForDatasets(selectedDatasets);
-    } else {
-      setAnnotationData([]);
+  // Add a single dataset selection
+  const addDatasetSelection = (dataset?: Dataset) => {
+    const targetDataset = dataset || (datasets.length > 0 ? datasets[0] : null);
+    if (!targetDataset) return;
+    
+    const newSelection: DatasetSelection = {
+      id: `${Date.now()}-${Math.random()}`,
+      dataset: targetDataset,
+      annotationFileId: null,
+      annotationFiles: [],
+      loadingAnnotations: false,
+    };
+    
+    setDatasetSelections(prev => [...prev, newSelection]);
+    
+    // Fetch annotation files for the dataset
+    if ((targetDataset.annotation_count || 0) > 0) {
+      fetchAnnotationFilesForSelection(newSelection.id, targetDataset.id);
     }
-  }, [selectedDatasets, showAnnotations, fetchAnnotationsForDatasets]);
+  };
+
+  // Add all datasets from a group
+  const addDatasetGroupSelection = (group: DatasetGroup) => {
+    if (!group.datasets || group.datasets.length === 0) return;
+    
+    const newSelections: DatasetSelection[] = group.datasets.map(dataset => ({
+      id: `${Date.now()}-${Math.random()}-${dataset.id}`,
+      dataset: dataset,
+      annotationFileId: null,
+      annotationFiles: [],
+      loadingAnnotations: false,
+      fromGroup: true,
+      groupName: group.name,
+    }));
+    
+    setDatasetSelections(prev => [...prev, ...newSelections]);
+    
+    // Fetch annotation files for all datasets in the group
+    newSelections.forEach(selection => {
+      if ((selection.dataset.annotation_count || 0) > 0) {
+        fetchAnnotationFilesForSelection(selection.id, selection.dataset.id);
+      }
+    });
+  };
+
+  // Remove a dataset selection
+  const removeDatasetSelection = (selectionId: string) => {
+    setDatasetSelections(prev => prev.filter(sel => sel.id !== selectionId));
+  };
+
+  // Update a dataset selection
+  const updateDatasetSelection = (selectionId: string, field: 'dataset' | 'annotationFileId', value: any) => {
+    setDatasetSelections(prev => prev.map(sel => {
+      if (sel.id === selectionId) {
+        if (field === 'dataset') {
+          // When changing dataset, reset annotation and fetch new files
+          const newDataset = value as Dataset;
+          const updated = { 
+            ...sel, 
+            dataset: newDataset, 
+            annotationFileId: null,
+            annotationFiles: [],
+            loadingAnnotations: false,
+            fromGroup: false, // No longer from group if manually changed
+            groupName: undefined,
+          };
+          if ((newDataset.annotation_count || 0) > 0) {
+            fetchAnnotationFilesForSelection(sel.id, newDataset.id);
+          }
+          return updated;
+        } else {
+          return { ...sel, [field]: value };
+        }
+      }
+      return sel;
+    }));
+  };
 
   // Reset form when modal opens
   React.useEffect(() => {
     if (open) {
       setDatasetName('');
-      setSelectedDatasets([]);
+      setDatasetSelections([]);
       setSelectedAugmentations([]);
       setAugmentationFactor('2');
       setMethodParameters({});
@@ -258,18 +356,8 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
         noise: false,
         advanced: false
       });
-      setShowAnnotations(false);
-      setAnnotationData([]);
     }
   }, [open]);
-
-  const handleDatasetToggle = (datasetId: string) => {
-    setSelectedDatasets(prev => 
-      prev.includes(datasetId) 
-        ? prev.filter(id => id !== datasetId)
-        : [...prev, datasetId]
-    );
-  };
 
   const handleParameterToggle = (augmentationId: string) => {
     setExpandedParameters(prev => ({
@@ -286,43 +374,47 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
   };
 
   const handleAugmentationToggle = useCallback((augmentationId: string) => {
-    const isCurrentlySelected = selectedAugmentations.includes(augmentationId);
     const method = augmentationMethods.find(m => m.id === augmentationId);
     
-    if (isCurrentlySelected) {
-      // Remove from selection
-      setSelectedAugmentations(prev => prev.filter(id => id !== augmentationId));
-      // Clear parameters
-      setMethodParameters(prev => {
+    setSelectedAugmentations(prev => {
+      const isCurrentlySelected = prev.includes(augmentationId);
+      return isCurrentlySelected 
+        ? prev.filter(id => id !== augmentationId)
+        : [...prev, augmentationId];
+    });
+    
+    // Handle parameters separately - read current state to decide action
+    setMethodParameters(prev => {
+      const isCurrentlySelected = Object.hasOwn(prev, augmentationId);
+      
+      if (isCurrentlySelected) {
+        // Remove parameters
         const newParams = { ...prev };
         delete newParams[augmentationId];
         return newParams;
-      });
-      // Collapse parameters
-      setExpandedParameters(prev => ({ ...prev, [augmentationId]: false }));
-    } else {
-      // Add to selection
-      setSelectedAugmentations(prev => [...prev, augmentationId]);
-      // Initialize parameters if method has them
-      if (method?.parameters) {
-        setMethodParameters(prev => ({
-          ...prev,
-          [augmentationId]: { ...method.parameters }
-        }));
-        setExpandedParameters(prev => ({ ...prev, [augmentationId]: true }));
+      } else {
+        // Add parameters if method has them
+        if (method?.parameters) {
+          return {
+            ...prev,
+            [augmentationId]: { ...method.parameters }
+          };
+        }
+        return prev;
       }
-    }
-  }, [selectedAugmentations, augmentationMethods]);
-
-  const handleCheckboxChange = useCallback((augmentationId: string, checked: boolean) => {
-    // This function now just calls handleAugmentationToggle to avoid duplicate logic
-    // We check if the current state matches what the checkbox wants to do
-    const isCurrentlySelected = selectedAugmentations.includes(augmentationId);
+    });
     
-    if (checked !== isCurrentlySelected) {
-      handleAugmentationToggle(augmentationId);
-    }
-  }, [selectedAugmentations, handleAugmentationToggle]);
+    setExpandedParameters(prev => {
+      const isCurrentlyExpanded = prev[augmentationId];
+      
+      if (isCurrentlyExpanded) {
+        return { ...prev, [augmentationId]: false };
+      } else if (method?.parameters) {
+        return { ...prev, [augmentationId]: true };
+      }
+      return prev;
+    });
+  }, []);
 
   const updateMethodParameter = (methodId: string, paramName: string, value: any) => {
     setMethodParameters(prev => ({
@@ -346,10 +438,10 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       return;
     }
 
-    if (selectedDatasets.length === 0) {
+    if (datasetSelections.length === 0) {
       toast({
         title: "Error",
-        description: "Please select at least one dataset to augment",
+        description: "Please add at least one dataset to augment",
         variant: "destructive",
       });
       return;
@@ -376,19 +468,21 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     try {
       setLoading(true);
 
+      // Prepare dataset configs - each selection becomes a config entry
+      const datasetConfigs = datasetSelections.map(sel => ({
+        dataset_id: sel.dataset.id,
+        annotation_file_id: sel.annotationFileId ? parseInt(sel.annotationFileId) : null,
+      }));
+
       // Create the augmented dataset
       const formData = new FormData();
       formData.append('name', datasetName.trim());
-      formData.append('description', `Augmented dataset created from ${selectedDatasets.length} source dataset(s)`);
+      formData.append('description', `Augmented dataset created from ${datasetSelections.length} source dataset(s)`);
       formData.append('project_id', String(projectId));
-      formData.append('source_datasets', JSON.stringify(selectedDatasets));
+      formData.append('dataset_configs', JSON.stringify(datasetConfigs));
       formData.append('augmentation_methods', JSON.stringify(selectedAugmentations));
       formData.append('method_parameters', JSON.stringify(methodParameters));
       formData.append('augmentation_factor', augmentationFactor);
-      
-      // Add annotation handling settings
-      formData.append('transform_annotations', String(transformAnnotations));
-      formData.append('annotation_settings', JSON.stringify(annotationSettings));
 
       const response = await api.createAugmentedDataset(formData);
 
@@ -397,13 +491,14 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       }
 
       toast({
-        title: "Success",
-        description: `Augmented dataset "${datasetName}" creation has been started. You can monitor the progress in the tasks panel.`,
+        title: "Augmentation Started",
+        description: `Creating "${datasetName}" with ${selectedAugmentations.length} augmentation(s). Monitor progress in the tasks panel (Activity icon in navbar).`,
+        duration: 8000,
       });
 
       // Reset form and close modal
       setDatasetName('');
-      setSelectedDatasets([]);
+      setDatasetSelections([]);
       setSelectedAugmentations([]);
       setAugmentationFactor('2');
       setMethodParameters({});
@@ -416,8 +511,8 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       });
       onOpenChange(false);
       
-      // Refresh the page to show the new dataset (it will be created immediately but empty)
-      window.location.reload();
+      // Don't reload - let the user see the task in the navbar popover
+      // The dataset will appear after the task completes
     } catch (err) {
       console.error('Error creating augmented dataset:', err);
       toast({
@@ -428,29 +523,6 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleShowAnnotationsToggle = () => {
-    setShowAnnotations(prev => !prev);
-  };
-
-  const handleAnnotationChange = (index: number, field: string, value: any) => {
-    setAnnotationData(prev => {
-      const newAnnotations = [...prev];
-      newAnnotations[index] = {
-        ...newAnnotations[index],
-        [field]: value
-      };
-      return newAnnotations;
-    });
-  };
-
-  const handleAddAnnotation = () => {
-    setAnnotationData(prev => [...prev, { classId: '', bbox: { x: 0, y: 0, width: 100, height: 100 }, polygon: [] }]);
-  };
-
-  const handleRemoveAnnotation = (index: number) => {
-    setAnnotationData(prev => prev.filter((_, i) => i !== index));
   };
 
   const groupedAugmentations = augmentationMethods.reduce((acc, method) => {
@@ -503,236 +575,213 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
 
           {/* Source Datasets Selection */}
           <div className="space-y-3">
-            <Label>Select Source Datasets</Label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-48 overflow-y-auto border rounded-md p-3">
-              {datasets?.map((dataset: Dataset) => (
-                <Card 
-                  key={dataset.id} 
-                  className={`cursor-pointer transition-colors ${
-                    selectedDatasets.includes(dataset.id.toString()) 
-                      ? 'border-accent-foreground/20 bg-accent text-accent-foreground' 
-                      : 'hover:border-gray-400'
-                  }`}
-                  onClick={() => handleDatasetToggle(dataset.id.toString())}
-                >
-                  <CardContent className="p-3">
-                    <div className="flex items-start gap-3">
-                      <Checkbox 
-                        checked={selectedDatasets.includes(dataset.id.toString())}
-                        onCheckedChange={() => handleDatasetToggle(dataset.id.toString())}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-medium truncate">{dataset.name}</h4>
-                        <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="secondary" className="text-xs">
-                            <ImageIcon className="w-3 h-3 mr-1" />
-                            {dataset.image_count || 0} images
-                          </Badge>
-                        </div>
-                        {dataset.description && (
-                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                            {dataset.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-            {selectedDatasets.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                {selectedDatasets.length} dataset(s) selected
-              </p>
-            )}
-          </div>
-
-          {/* Annotations Preview & Settings */}
-          {selectedDatasets.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-2">
-                  <Box className="w-4 h-4" />
-                  Annotation Handling
-                </Label>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowAnnotations(!showAnnotations)}
-                    className="text-xs"
-                  >
-                    {showAnnotations ? (
-                      <>
-                        <EyeOff className="w-3 h-3 mr-1" />
-                        Hide Preview
-                      </>
-                    ) : (
-                      <>
-                        <Eye className="w-3 h-3 mr-1" />
-                        Show Preview
-                      </>
-                    )}
+            <div className="flex items-center justify-between">
+              <Label>Source Datasets</Label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="sm" disabled={datasets.length === 0}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Dataset
+                    <ChevronDown className="w-4 h-4 ml-2" />
                   </Button>
-                  <Switch
-                    checked={transformAnnotations}
-                    onCheckedChange={setTransformAnnotations}
-                    aria-label="Transform annotations"
-                  />
-                  <span className="text-sm text-muted-foreground">
-                    Transform annotations
-                  </span>
-                </div>
-              </div>
-
-              {transformAnnotations && (
-                <Card className="border-orange-200 bg-orange-50/50">
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      <Target className="w-5 h-5 text-orange-600 mt-0.5" />
-                      <div className="space-y-3">
-                        <div>
-                          <h4 className="font-medium text-orange-900">Annotation Transformation Settings</h4>
-                          <p className="text-sm text-orange-700">
-                            Configure how annotations should be handled during augmentation
-                          </p>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="space-y-2">
-                            <Label className="text-xs font-medium text-orange-900">Min Visibility</Label>
-                            <Input
-                              type="number"
-                              min="0"
-                              max="1"
-                              step="0.1"
-                              value={annotationSettings.minVisibilityThreshold}
-                              onChange={(e) => setAnnotationSettings(prev => ({
-                                ...prev,
-                                minVisibilityThreshold: parseFloat(e.target.value) || 0.3
-                              }))}
-                              className="text-xs"
-                            />
-                            <p className="text-xs text-orange-600">Minimum visibility to keep annotation</p>
-                          </div>
-                          
-                          <div className="space-y-2">
-                            <Label className="text-xs font-medium text-orange-900">Out of Bounds</Label>
-                            <Select
-                              value={annotationSettings.handleOutOfBounds}
-                              onValueChange={(value: 'remove' | 'clip' | 'keep') => 
-                                setAnnotationSettings(prev => ({
-                                  ...prev,
-                                  handleOutOfBounds: value
-                                }))
-                              }
-                            >
-                              <SelectTrigger className="text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="remove">Remove</SelectItem>
-                                <SelectItem value="clip">Clip to bounds</SelectItem>
-                                <SelectItem value="keep">Keep as-is</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <p className="text-xs text-orange-600">How to handle annotations outside image bounds</p>
-                          </div>
-                          
-                          <div className="flex items-center space-x-2">
-                            <Switch
-                              checked={annotationSettings.preserveInvalidBounds}
-                              onCheckedChange={(checked) => setAnnotationSettings(prev => ({
-                                ...prev,
-                                preserveInvalidBounds: checked
-                              }))}
-                            />
-                            <div>
-                              <Label className="text-xs font-medium text-orange-900">Preserve Invalid</Label>
-                              <p className="text-xs text-orange-600">Keep annotations with invalid bounds</p>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger className="flex items-center cursor-pointer">
+                      <Database className="w-4 h-4 mr-2" />
+                      Add Dataset
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
+                      {datasets.length === 0 ? (
+                        <DropdownMenuItem disabled>
+                          No datasets available
+                        </DropdownMenuItem>
+                      ) : (
+                        datasets.map(dataset => (
+                          <DropdownMenuItem 
+                            key={dataset.id}
+                            onClick={() => addDatasetSelection(dataset)}
+                            className="flex items-center cursor-pointer"
+                          >
+                            <Database className="w-4 h-4 mr-2" />
+                            <span className="flex-1">{dataset.name}</span>
+                            <Badge variant="outline" className="text-xs ml-2">
+                              {dataset.image_count || 0} imgs
+                            </Badge>
+                          </DropdownMenuItem>
+                        ))
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger 
+                      disabled={datasetGroups.length === 0}
+                      className="flex items-center cursor-pointer"
+                    >
+                      <Users className="w-4 h-4 mr-2" />
+                      Add Dataset Group
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      {datasetGroups.length === 0 ? (
+                        <DropdownMenuItem disabled>
+                          No dataset groups available
+                        </DropdownMenuItem>
+                      ) : (
+                        datasetGroups.map(group => (
+                          <DropdownMenuItem 
+                            key={group.id}
+                            onClick={() => addDatasetGroupSelection(group)}
+                            className="flex items-center cursor-pointer"
+                          >
+                            <Users className="w-4 h-4 mr-2" />
+                            {group.name} ({group.datasets?.length || 0} datasets)
+                          </DropdownMenuItem>
+                        ))
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            
+            {datasetSelections.length === 0 ? (
+              <Card className="p-6 text-center border-dashed">
+                <Database className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                <p className="text-muted-foreground">No datasets added</p>
+                <p className="text-sm text-muted-foreground">Add datasets to begin augmentation</p>
+              </Card>
+            ) : (
+              <div className="space-y-3 max-h-80 overflow-y-auto border rounded-md p-3">
+                {datasetSelections.map((selection, index) => (
+                  <Card key={selection.id}>
+                    <CardHeader className="py-2 px-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Database className="h-4 w-4" />
+                          {selection.fromGroup ? (
+                            <div className="flex items-center gap-2">
+                              <span>{selection.dataset.name}</span>
+                              <Badge variant="secondary" className="text-xs">
+                                <Users className="h-3 w-3 mr-1" />
+                                {selection.groupName}
+                              </Badge>
                             </div>
-                          </div>
-                        </div>
+                          ) : (
+                            <span>Dataset {index + 1}</span>
+                          )}
+                        </CardTitle>
+                        <Button
+                          type="button"
+                          onClick={() => removeDatasetSelection(selection.id)}
+                          size="icon"
+                          variant="ghost"
+                          className="h-6 w-6"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {showAnnotations && (
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Box className="w-4 h-4" />
-                        Annotations Preview
-                      </div>
-                      <Badge variant="secondary" className="text-xs">
-                        {loadingAnnotations ? (
-                          <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                        ) : null}
-                        {annotationData.length} annotations
-                      </Badge>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-0">
-                    {loadingAnnotations ? (
-                      <div className="flex items-center justify-center py-8">
-                        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-                        <span className="ml-2 text-muted-foreground">Loading annotations...</span>
-                      </div>
-                    ) : annotationData.length === 0 ? (
-                      <div className="text-center py-8 text-muted-foreground">
-                        <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                        <p>No annotations found in selected datasets</p>
-                        <p className="text-xs">Augmentation will only process images</p>
-                      </div>
-                    ) : (
-                      <ScrollArea className="max-h-64">
-                        <div className="space-y-2">
-                          {Object.entries(
-                            annotationData.reduce((acc: Record<string, any[]>, annotation) => {
-                              const key = annotation.dataset_name || `Dataset ${annotation.dataset_id}`;
-                              if (!acc[key]) acc[key] = [];
-                              acc[key].push(annotation);
-                              return acc;
-                            }, {} as Record<string, any[]>)
-                          ).map(([datasetName, annotations]: [string, any[]]) => (
-                            <div key={datasetName} className="space-y-1">
-                              <div className="flex items-center justify-between py-2 border-b">
-                                <span className="font-medium text-sm">{datasetName}</span>
-                                <Badge variant="outline" className="text-xs">
-                                  {annotations.length} annotations
-                                </Badge>
-                              </div>
-                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                                {Object.entries(
-                                  annotations.reduce((acc: Record<string, number>, ann: any) => {
-                                    const category = ann.category || 'Unknown';
-                                    acc[category] = (acc[category] || 0) + 1;
-                                    return acc;
-                                  }, {} as Record<string, number>)
-                                ).map(([category, count]: [string, number]) => (
-                                  <div key={category} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                                    <span className="truncate">{category}</span>
-                                    <Badge variant="secondary" className="text-xs ml-1">
-                                      {count}
+                    </CardHeader>
+                    <CardContent className="py-2 px-3 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* Dataset Selector */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Dataset</Label>
+                          <Select 
+                            value={selection.dataset.id.toString()} 
+                            onValueChange={(value) => {
+                              const dataset = datasets.find(d => d.id.toString() === value);
+                              if (dataset) {
+                                updateDatasetSelection(selection.id, 'dataset', dataset);
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-8 text-sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {datasets.map(dataset => (
+                                <SelectItem key={dataset.id} value={dataset.id.toString()}>
+                                  <div className="flex items-center gap-2">
+                                    <span>{dataset.name}</span>
+                                    <Badge variant="outline" className="text-xs">
+                                      {dataset.image_count || 0} imgs
                                     </Badge>
                                   </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                      </ScrollArea>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          )}
+                        
+                        {/* Annotation File Selector */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Annotation File</Label>
+                          {selection.loadingAnnotations ? (
+                            <div className="flex items-center gap-2 h-8 text-xs text-muted-foreground">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Loading...
+                            </div>
+                          ) : selection.annotationFiles.length > 0 ? (
+                            <Select 
+                              value={selection.annotationFileId || "none"} 
+                              onValueChange={(value) => {
+                                updateDatasetSelection(selection.id, 'annotationFileId', value === "none" ? null : value);
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-sm">
+                                <SelectValue placeholder="No annotations" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">
+                                  No annotations
+                                </SelectItem>
+                                {selection.annotationFiles.map(file => (
+                                  <SelectItem key={file.id} value={file.id.toString()}>
+                                    <div className="flex items-center gap-2">
+                                      <span>{file.name}</span>
+                                      {file.annotation_count !== undefined && (
+                                        <Badge variant="outline" className="text-xs">
+                                          {file.annotation_count} ann
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="flex items-center h-8 text-xs text-muted-foreground italic">
+                              No annotation files available
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Info row */}
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>{selection.dataset.image_count || 0} images</span>
+                        {selection.annotationFileId && (
+                          <Badge variant="default" className="text-xs">
+                            <Box className="w-3 h-3 mr-1" />
+                            Annotations included
+                          </Badge>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+            
+            {datasetSelections.length > 0 && (
+              <div className="flex items-center justify-between text-sm text-muted-foreground">
+                <span>{datasetSelections.length} dataset selection(s)</span>
+                <span className="text-primary">
+                  {datasetSelections.filter(s => s.annotationFileId).length} with annotations
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Augmentation Methods */}
           <div className="space-y-3">
@@ -780,20 +829,12 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                                 }`}
                                 role="button"
                                 tabIndex={0}
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
                                 onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  e.nativeEvent.stopImmediatePropagation();
-                                  // Only toggle if we're not already processing this change
-                                  const currentlySelected = selectedAugmentations.includes(method.id);
-                                  if (currentlySelected !== isSelected) {
-                                    // State is already changing, don't trigger again
+                                  // Only toggle if not clicking on the checkbox itself
+                                  if ((e.target as HTMLElement).tagName === 'INPUT') {
                                     return;
                                   }
+                                  e.preventDefault();
                                   handleAugmentationToggle(method.id);
                                 }}
                                 onKeyDown={(e) => {
@@ -804,17 +845,11 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                                   }
                                 }}
                               >
-                                <Checkbox 
+                                <input 
+                                  type="checkbox"
                                   checked={isSelected}
-                                  onCheckedChange={(checked) => {
-                                    // Only call if the state is actually different
-                                    const isCurrentlySelected = selectedAugmentations.includes(method.id);
-                                    if (checked !== isCurrentlySelected) {
-                                      handleCheckboxChange(method.id, checked as boolean);
-                                    }
-                                  }}
-                                  className="mt-0.5"
-                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={() => handleAugmentationToggle(method.id)}
+                                  className="mt-0.5 h-4 w-4 rounded border-gray-300"
                                 />
                                 <div className="flex items-center gap-2 flex-1">
                                   <div className={`p-1 rounded`}>
@@ -960,93 +995,6 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
             <p className="text-sm text-muted-foreground">
               How many times to multiply the original dataset size through augmentation
             </p>
-          </div>
-
-          {/* Annotations Section */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label className="text-lg font-semibold">Annotations</Label>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleShowAnnotationsToggle}
-                className="gap-2"
-              >
-                {showAnnotations ? (
-                  <>
-                    <EyeOff className="w-4 h-4" />
-                    Hide Annotations
-                  </>
-                ) : (
-                  <>
-                    <Eye className="w-4 h-4" />
-                    Show Annotations
-                  </>
-                )}
-              </Button>
-            </div>
-            
-            {showAnnotations && (
-              <Card className="p-4">
-                <CardContent>
-                  <div className="space-y-4">
-                    {annotationData.length === 0 && (
-                      <p className="text-sm text-muted-foreground">
-                        No annotations yet. Add annotations to define object locations and categories in the images.
-                      </p>
-                    )}
-                    {annotationData.map((annotation, index) => (
-                      <div key={index} className="p-3 rounded-md border">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs">
-                              {annotation.classId || 'N/A'}
-                            </Badge>
-                            <Badge variant="outline" className="text-xs">
-                              {`(${annotation.bbox.width} x ${annotation.bbox.height})`}
-                            </Badge>
-                          </div>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRemoveAnnotation(index);
-                            }}
-                          >
-                            <AlertTriangle className="w-4 h-4 text-red-600" />
-                          </Button>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button 
-                            variant={annotation.polygon.length > 0 ? "default" : "outline"} 
-                            size="sm" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAnnotationChange(index, 'polygon', annotation.polygon.length > 0 ? [] : [{ x: 0, y: 0 }, { x: 100, y: 100 }]);
-                            }}
-                            className="flex-1"
-                          >
-                            {annotation.polygon.length > 0 ? 'Edit Polygon' : 'Add Polygon'}
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleAnnotationChange(index, 'classId', annotation.classId === 'person' ? '' : 'person');
-                            }}
-                            className="flex-1"
-                          >
-                            Toggle Class
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           {/* Action Buttons */}

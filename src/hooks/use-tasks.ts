@@ -13,7 +13,8 @@ export interface Task {
   completed_at?: string;
   error_message?: string;
   project_id: number;
-  metadata?: any;
+  metadata?: any;  // Frontend field
+  task_metadata?: any;  // Backend field
 }
 
 export function useTasks(projectId?: number) {

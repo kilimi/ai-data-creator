@@ -475,21 +475,105 @@ curl http://localhost:9999/tasks/${task.id}`;
     }
   };
 
-  const handleDuplicate = async () => {
+  const handleDuplicate = async (datasetId: number) => {
+    console.log('🚀🚀🚀 DUPLICATE BUTTON CLICKED IN DETAIL PAGE! 🚀🚀🚀');
+    console.log('datasetId:', datasetId, 'api exists:', !!api);
+    
+    if (!datasetId || !api) {
+      console.error('❌ No dataset ID or API available for duplication');
+      console.error('datasetId:', datasetId, 'api:', !!api);
+      return;
+    }
+    
     try {
+      console.log('✅ Setting loading and calling duplicate API');
       setIsLoading(true);
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/datasets/${id}/duplicate`, {
-        method: 'POST',
-      });
+      const response = await api.duplicateDataset(datasetId);
       
-      if (!response.ok) {
-        throw new Error('Failed to duplicate dataset');
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to duplicate dataset');
       }
 
-      const duplicatedDataset = await response.json();
-      navigate(`/datasets/${duplicatedDataset.id}`);
+      const responseData = response.data;
+      
+      console.log('🔍 Duplicate response data:', responseData);
+      console.log('🔍 Has task_id?', !!responseData.task_id);
+      
+      // Check if it's a background task response
+      if (responseData.task_id) {
+        // Background task started - show prominent notification
+        console.log('🎉 SHOWING TOAST NOTIFICATION NOW!');
+        toast({
+          title: "✨ Duplication Started",
+          description: `Dataset duplication is running in background. Check the tasks panel for progress.`,
+          duration: 5000,
+        });
+        
+        console.log('Background task started with ID:', responseData.task_id);
+        
+        // Poll task status to navigate when complete
+        const pollInterval = setInterval(async () => {
+          try {
+            const taskResponse = await api.getTask(responseData.task_id);
+            if (taskResponse.success && taskResponse.data) {
+              const taskData = taskResponse.data as any;
+              
+              if (taskData.status === 'completed') {
+                clearInterval(pollInterval);
+                const newDatasetId = taskData.task_metadata?.new_dataset_id;
+                
+                toast({
+                  title: "✅ Dataset Duplicated",
+                  description: `Successfully created a copy of the dataset!`,
+                  duration: 4000,
+                });
+                
+                // Navigate to the project datasets page
+                setTimeout(() => {
+                  if (id) {
+                    navigate(`/projects/${id}/datasets`);
+                  } else {
+                    navigate(`/`);
+                  }
+                }, 500);
+              } else if (taskData.status === 'failed') {
+                clearInterval(pollInterval);
+                toast({
+                  title: "❌ Duplication Failed",
+                  description: taskData.error_message || "Dataset duplication failed",
+                  variant: "destructive",
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Error polling task status:', error);
+          }
+        }, 2000); // Poll every 2 seconds
+        
+        // Stop polling after 5 minutes
+        setTimeout(() => clearInterval(pollInterval), 300000);
+      } else {
+        // Synchronous response (fallback mode)
+        const duplicatedDataset = responseData;
+        
+        toast({
+          title: "✅ Dataset Duplicated",
+          description: `Dataset has been duplicated successfully.`,
+        });
+        
+        if (id) {
+          navigate(`/projects/${id}/datasets`);
+        } else {
+          navigate(`/`);
+        }
+      }
     } catch (error) {
       console.error('Error duplicating dataset:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to duplicate dataset. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -729,7 +813,7 @@ curl http://localhost:9999/tasks/${task.id}`;
                       Annotate Images
                     </Link>
                   </Button>
-                  <Button variant="outline" onClick={handleDuplicate} disabled={isLoading}>
+                  <Button variant="outline" onClick={() => handleDuplicate(datasets[0].id)} disabled={isLoading}>
                     <Copy className="w-4 h-4 mr-2" />
                     Duplicate Dataset
                   </Button>
@@ -1785,6 +1869,7 @@ curl http://localhost:9999/tasks/${task.id}`;
             onOpenChange={setShowAugmentedModal}
             projectId={id || ''}
             datasets={project.datasets || []}
+            datasetGroups={datasetGroups}
           />
           
           <MergeDatasetsModal

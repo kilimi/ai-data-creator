@@ -13,7 +13,7 @@ celery_app = Celery(
     'ai_data_creator',
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks']
+    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks']
 )
 
 # Celery configuration
@@ -45,6 +45,8 @@ celery_app.conf.update(
     task_routes={
         'app.tasks.training_tasks.*': {'queue': 'training'},
         'app.tasks.evaluation_tasks.*': {'queue': 'training'},
+        'app.tasks.augmentation_tasks.*': {'queue': 'training'},
+        'app.tasks.dataset_tasks.*': {'queue': 'training'},
     },
     
     # Retry settings

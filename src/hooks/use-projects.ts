@@ -55,7 +55,7 @@ export const useProject = (projectId: string) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchProject = async () => {
     if (!isConfigured || !api || !projectId || isConnected === null) {
       return;
     }
@@ -67,26 +67,31 @@ export const useProject = (projectId: string) => {
       return;
     }
 
-    const fetchProject = async () => {
-      try {
-        setError(null); // Clear any previous errors
-        const response = await api.getProject(projectId);
-        
-        if (response.success && response.data) {
-          setProject(response.data);
-        } else {
-          setError(response.error || 'Failed to fetch project');
-        }
-      } catch (err) {
-        setError('An error occurred while fetching the project');
-        console.error(err);
-      } finally {
-        setLoading(false);
+    try {
+      setError(null); // Clear any previous errors
+      const response = await api.getProject(projectId);
+      
+      if (response.success && response.data) {
+        setProject(response.data);
+      } else {
+        setError(response.error || 'Failed to fetch project');
       }
-    };
+    } catch (err) {
+      setError('An error occurred while fetching the project');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchProject();
   }, [api, isConfigured, isConnected, projectId]);
 
-  return { project, loading, error };
+  const refetch = () => {
+    setLoading(true);
+    fetchProject();
+  };
+
+  return { project, loading, error, refetch };
 };

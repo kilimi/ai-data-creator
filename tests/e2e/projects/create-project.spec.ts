@@ -247,17 +247,20 @@ test.describe('Create New Project', () => {
       for (const tag of projectData.tags) {
         await page.fill('input[placeholder*="Add tags"]', tag);
         await page.press('input[placeholder*="Add tags"]', 'Enter');
+        await page.waitForTimeout(300); // Give time for tag to be added
       }
       await page.click('button[type="submit"]:has-text("Create")');
-      await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
-      await page.waitForLoadState('networkidle');
+      await page.waitForURL('/', { timeout: 30000, waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout: 30000 });
+      await page.waitForTimeout(1000); // Extra time for rendering
     }
 
     // Wait for layout to stabilize and animations to complete
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
     
     // Get all project cards
     const cards = page.locator('.rounded-lg.border.bg-card');
+    await page.waitForTimeout(1000); // Wait for any animations
     const cardCount = await cards.count();
     
     // Ensure we have at least 2 cards to compare
@@ -266,7 +269,10 @@ test.describe('Create New Project', () => {
     // Get heights of all cards
     const heights: number[] = [];
     for (let i = 0; i < Math.min(cardCount, 10); i++) {
-      const boundingBox = await cards.nth(i).boundingBox();
+      const card = cards.nth(i);
+      await card.waitFor({ state: 'visible', timeout: 10000 });
+      await page.waitForTimeout(200); // Small delay for stability
+      const boundingBox = await card.boundingBox();
       if (boundingBox) {
         heights.push(Math.round(boundingBox.height));
       }

@@ -180,89 +180,220 @@ async def update_dataset(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/datasets/{dataset_id}/augmented-datasets")
+async def get_augmented_datasets(dataset_id: int, db: Session = Depends(get_db)):
+    """
+    Get datasets that were created by augmenting this dataset.
+    """
+    try:
+        # Find augmentations where this dataset was a source
+        augmentations = db.query(models.Augmentation).all()
+        augmented_dataset_ids = []
+        
+        for aug in augmentations:
+            if aug.source_dataset_ids and dataset_id in aug.source_dataset_ids:
+                if aug.target_dataset_id:
+                    augmented_dataset_ids.append(aug.target_dataset_id)
+        
+        # Get the actual datasets
+        augmented_datasets = []
+        for ds_id in augmented_dataset_ids:
+            ds = db.query(models.Dataset).filter(models.Dataset.id == ds_id).first()
+            if ds:
+                augmented_datasets.append({
+                    "id": ds.id,
+                    "name": ds.name,
+                    "description": ds.description
+                })
+        
+        return {
+            "augmented_datasets": augmented_datasets,
+            "count": len(augmented_datasets)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/datasets/{dataset_id}")
-async def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
+async def delete_dataset(
+    dataset_id: int, 
+    delete_augmented: bool = False,
+    db: Session = Depends(get_db)
+):
     """
     Delete a dataset and all its associated data.
     This removes both the database records and all physical files.
+    
+    Args:
+        dataset_id: ID of the dataset to delete
+        delete_augmented: If True, also delete datasets that were created by augmenting this one
     """
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        # Delete physical files before deleting database records
-        try:
-            project_id = dataset.project_id
-            
-            # Delete from new projects structure: projects/{project_id}/{dataset_id}/
-            dataset_dir = Path("projects") / str(project_id) / str(dataset_id)
-            if dataset_dir.exists():
-                shutil.rmtree(dataset_dir)
-                print(f"Deleted dataset directory: {dataset_dir}")
-            else:
-                print(f"Dataset directory not found: {dataset_dir}")
-            
-            # Also check and delete from old data structure for backward compatibility
-            # Old structure: data/images/{dataset_id}/ and data/annotations/{dataset_id}/
-            old_images_dir = Path("data/images") / str(dataset_id)
-            old_annotations_dir = Path("data/annotations") / str(dataset_id)
-            
-            if old_images_dir.exists():
-                shutil.rmtree(old_images_dir)
-                print(f"Deleted old images directory: {old_images_dir}")
-            
-            if old_annotations_dir.exists():
-                shutil.rmtree(old_annotations_dir)
-                print(f"Deleted old annotations directory: {old_annotations_dir}")
+        project_id = dataset.project_id
+        datasets_to_delete = [dataset_id]
+        
+        # If delete_augmented is True, find and include augmented datasets
+        if delete_augmented:
+            augmentations = db.query(models.Augmentation).all()
+            for aug in augmentations:
+                if aug.source_dataset_ids and dataset_id in aug.source_dataset_ids:
+                    if aug.target_dataset_id and aug.target_dataset_id not in datasets_to_delete:
+                        datasets_to_delete.append(aug.target_dataset_id)
+        
+        # Delete each dataset
+        for ds_id in datasets_to_delete:
+            ds = db.query(models.Dataset).filter(models.Dataset.id == ds_id).first()
+            if not ds:
+                continue
                 
-        except Exception as file_error:
-            print(f"Warning: Could not delete some physical files: {file_error}")
-            # Continue with database deletion even if file deletion fails
+            # Delete physical files
+            try:
+                ds_project_id = ds.project_id
+                
+                # Delete from new projects structure
+                dataset_dir = Path("projects") / str(ds_project_id) / str(ds_id)
+                if dataset_dir.exists():
+                    shutil.rmtree(dataset_dir)
+                    print(f"Deleted dataset directory: {dataset_dir}")
+                
+                # Also check old data structure for backward compatibility
+                old_images_dir = Path("data/images") / str(ds_id)
+                old_annotations_dir = Path("data/annotations") / str(ds_id)
+                
+                if old_images_dir.exists():
+                    shutil.rmtree(old_images_dir)
+                
+                if old_annotations_dir.exists():
+                    shutil.rmtree(old_annotations_dir)
+                    
+            except Exception as file_error:
+                print(f"Warning: Could not delete some physical files for dataset {ds_id}: {file_error}")
+            
+            # Remove from dataset groups
+            groups = db.query(models.DatasetGroup).all()
+            for group in groups:
+                if group.datasets_list and ds_id in group.datasets_list:
+                    updated_ids = [id for id in group.datasets_list if id != ds_id]
+                    group.datasets_list = updated_ids
+            
+            # Delete augmentations where this is the target dataset
+            target_augmentations = db.query(models.Augmentation).filter(
+                models.Augmentation.target_dataset_id == ds_id
+            ).all()
+            for aug in target_augmentations:
+                db.delete(aug)
+            
+            # Update augmentations that have this dataset in source_dataset_ids
+            all_augmentations = db.query(models.Augmentation).all()
+            for aug in all_augmentations:
+                if aug.source_dataset_ids and ds_id in aug.source_dataset_ids:
+                    updated_source_ids = [id for id in aug.source_dataset_ids if id != ds_id]
+                    aug.source_dataset_ids = updated_source_ids
+            
+            # Delete the dataset record
+            db.delete(ds)
         
-        # Remove this dataset from any dataset groups it belongs to
-        groups = db.query(models.DatasetGroup).all()
-        for group in groups:
-            if group.datasets_list and dataset_id in group.datasets_list:
-                # Remove the dataset from the group's list
-                updated_ids = [id for id in group.datasets_list if id != dataset_id]
-                group.dataset_ids = updated_ids
-        
-        # Delete the dataset record (this will cascade delete images and annotations)
-        db.delete(dataset)
         db.commit()
         
+        deleted_count = len(datasets_to_delete)
         return {
             "success": True,
-            "message": "Dataset and all associated data deleted successfully"
+            "message": f"Successfully deleted {deleted_count} dataset(s)",
+            "deleted_count": deleted_count,
+            "deleted_ids": datasets_to_delete
         }
         
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
+        import traceback
+        print(f"Error deleting dataset: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/datasets/{dataset_id}/duplicate")
-async def duplicate_dataset(dataset_id: int, db: Session = Depends(get_db)):
+async def duplicate_dataset(dataset_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """
+    Start a background task to duplicate a dataset with all its associated data:
+    - Dataset metadata
+    - Image collections
+    - Images (database records and physical files)
+    - Annotation files (database records and physical files)
+    - Annotations
+    - Annotation classes
+    
+    Returns immediately with a task ID that can be used to track progress.
+    """
     try:
+        # Check if Celery is available
+        USE_CELERY = os.environ.get('USE_CELERY', 'true').lower() == 'true'
+        
+        # Verify dataset exists
         original_dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if original_dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        new_dataset = models.Dataset(
-            name=f"{original_dataset.name} (Copy)",
-            description=original_dataset.description,
-            _tags=original_dataset._tags,
+        
+        # Create a task record for tracking
+        task = models.Task(
+            name=f"Duplicate Dataset: {original_dataset.name}",
+            description=f"Duplicating dataset '{original_dataset.name}' with all images, annotations, and metadata",
+            task_type="dataset_duplication",
+            status="pending",
             project_id=original_dataset.project_id,
-            logo=original_dataset.logo,
-            logo_url=original_dataset.logo_url,
-            thumbnailUrl=original_dataset.thumbnailUrl
+            progress=0.0,
+            task_metadata={
+                "dataset_id": dataset_id,
+                "dataset_name": original_dataset.name
+            }
         )
-        db.add(new_dataset)
+        db.add(task)
         db.commit()
-        db.refresh(new_dataset)
-        return new_dataset
+        db.refresh(task)
+        
+        # Start the background task
+        if USE_CELERY:
+            # Import here to avoid circular imports
+            from app.tasks.dataset_tasks import duplicate_dataset_task
+            
+            # Use Celery for proper task queuing
+            celery_task = duplicate_dataset_task.delay(task.id, dataset_id)
+            
+            # Store Celery task ID in metadata
+            task.task_metadata = {
+                **task.task_metadata,
+                "celery_task_id": celery_task.id
+            }
+            db.commit()
+            
+            return {
+                "success": True,
+                "task_id": task.id,
+                "message": "Dataset duplication started in background",
+                "task": {
+                    "id": task.id,
+                    "name": task.name,
+                    "status": task.status,
+                    "progress": task.progress
+                }
+            }
+        else:
+            # Fallback: execute synchronously (not recommended for production)
+            from app.tasks.dataset_tasks import duplicate_dataset_task
+            
+            result = duplicate_dataset_task(task.id, dataset_id)
+            
+            # Get the new dataset
+            new_dataset_id = result.get("new_dataset_id")
+            new_dataset = db.query(models.Dataset).filter(models.Dataset.id == new_dataset_id).first()
+            
+            return new_dataset
+            
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

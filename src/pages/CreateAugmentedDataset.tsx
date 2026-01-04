@@ -74,7 +74,7 @@ const CreateAugmentedDataset = ({ projectMode = false }: CreateAugmentedDatasetP
     // Small delay to allow dialog close animation
     setTimeout(() => {
       if (projectId) {
-        navigate(`/projects/${projectId}`);
+        navigate(`/projects/${projectId}/datasets`);
       } else {
         navigate('/datasets');
       }
@@ -164,7 +164,7 @@ const CreateAugmentedDataset = ({ projectMode = false }: CreateAugmentedDatasetP
       setIsOpen(false);
       setTimeout(() => {
         if (projectId) {
-          navigate(`/projects/${projectId}`);
+          navigate(`/projects/${projectId}/datasets`);
         } else {
           navigate('/datasets');
         }

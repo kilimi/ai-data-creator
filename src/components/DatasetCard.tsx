@@ -1,16 +1,18 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink, Copy } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
+import { useApi } from "@/hooks/use-api";
+import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,10 +32,99 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
   const [selectedModel, setSelectedModel] = React.useState<string>("SAM");
+  const { api } = useApi();
+  const { toast } = useToast();
+  const navigate = useNavigate();
 
   const handleDatasetUpdated = (updatedDataset: Dataset) => {
     if (onDatasetUpdated) {
       onDatasetUpdated(updatedDataset);
+    }
+  };
+
+  const handleDuplicate = async () => {
+    if (!api) {
+      toast({
+        title: "Error",
+        description: "API not available",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const response = await api.duplicateDataset(dataset.id);
+      
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to duplicate dataset');
+      }
+
+      const responseData = response.data;
+      
+      if (responseData.task_id) {
+        toast({
+          title: "✨ Duplication Started",
+          description: `Dataset duplication is running in background. Check the tasks panel for progress.`,
+          duration: 5000,
+        });
+        
+        // Poll task status to navigate when complete
+        const pollInterval = setInterval(async () => {
+          try {
+            const taskResponse = await api.getTask(responseData.task_id);
+            if (taskResponse.success && taskResponse.data) {
+              const taskData = taskResponse.data as any;
+              
+              if (taskData.status === 'completed') {
+                clearInterval(pollInterval);
+                const newDatasetId = taskData.task_metadata?.new_dataset_id;
+                
+                toast({
+                  title: "✅ Dataset Duplicated",
+                  description: `Successfully created a copy of the dataset!`,
+                  duration: 4000,
+                });
+                
+                // Navigate to the project datasets page
+                if (dataset.project_id) {
+                  setTimeout(() => {
+                    navigate(`/projects/${dataset.project_id}/datasets`);
+                  }, 500);
+                }
+              } else if (taskData.status === 'failed') {
+                clearInterval(pollInterval);
+                toast({
+                  title: "❌ Duplication Failed",
+                  description: taskData.error_message || "Dataset duplication failed",
+                  variant: "destructive",
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Error polling task status:', error);
+          }
+        }, 2000);
+        
+        setTimeout(() => clearInterval(pollInterval), 300000);
+      } else {
+        const duplicatedDataset = responseData;
+        toast({
+          title: "✅ Dataset Duplicated",
+          description: `Dataset has been duplicated successfully.`,
+        });
+        
+        // Navigate to the project datasets page
+        if (dataset.project_id) {
+          navigate(`/projects/${dataset.project_id}/datasets`);
+        }
+      }
+    } catch (error) {
+      console.error('Error duplicating dataset:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to duplicate dataset",
+        variant: "destructive",
+      });
     }
   };
   
@@ -91,7 +182,10 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                   <Edit className="h-4 w-4 mr-2" />
                   Edit Dataset
                 </DropdownMenuItem>
-                <DropdownMenuItem>Duplicate</DropdownMenuItem>
+                <DropdownMenuItem onClick={handleDuplicate}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Duplicate
+                </DropdownMenuItem>
                 <DropdownMenuItem 
                   className="text-destructive"
                   onClick={() => onDelete && onDelete(dataset)}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 import json
@@ -610,11 +610,11 @@ def transform_annotation(annotation, augmentation_methods, method_parameters, tr
 
 @router.post("/augmentations/", response_model=dict)
 async def create_augmented_dataset(
-    background_tasks: BackgroundTasks,
     name: str = Form(...),
     description: Optional[str] = Form(None),
     project_id: int = Form(...),
-    source_datasets: str = Form(...),  # JSON string of dataset IDs
+    source_datasets: Optional[str] = Form(None),  # JSON string of dataset IDs (legacy format)
+    dataset_configs: Optional[str] = Form(None),  # JSON array of {dataset_id, annotation_file_id} (new format)
     augmentation_methods: str = Form(...),  # JSON string of method names
     method_parameters: str = Form("{}"),  # JSON string of parameters
     augmentation_factor: str = Form("2"),
@@ -622,12 +622,29 @@ async def create_augmented_dataset(
     annotation_settings: str = Form("{}"),  # JSON string of annotation settings
     db: Session = Depends(get_db)
 ):
-    """Create an augmented dataset asynchronously"""
-    logger.info(f"Creating augmented dataset: {name} from {source_datasets}")
+    """Create an augmented dataset asynchronously using Celery background task"""
+    from app.tasks.augmentation_tasks import create_augmented_dataset_task
+    
+    logger.info(f"Creating augmented dataset: {name}")
     
     try:
-        # Parse JSON inputs
-        source_dataset_ids = json.loads(source_datasets)
+        # Parse JSON inputs - support both new and legacy formats
+        if dataset_configs:
+            # New format: array of {dataset_id, annotation_file_id}
+            configs = json.loads(dataset_configs)
+            source_dataset_ids = [c['dataset_id'] for c in configs]
+            # Build a map of dataset_id -> annotation_file_id for each config entry
+            # Note: same dataset can appear multiple times with different annotation files
+            annotation_file_configs = configs
+            logger.info(f"Using new dataset_configs format: {configs}")
+        elif source_datasets:
+            # Legacy format: array of dataset IDs
+            source_dataset_ids = json.loads(source_datasets)
+            annotation_file_configs = [{'dataset_id': ds_id, 'annotation_file_id': None} for ds_id in source_dataset_ids]
+            logger.info(f"Using legacy source_datasets format: {source_dataset_ids}")
+        else:
+            raise HTTPException(status_code=422, detail="Either source_datasets or dataset_configs must be provided")
+        
         methods = json.loads(augmentation_methods)
         parameters = json.loads(method_parameters)
         transform_annotations_bool = transform_annotations.lower() == 'true'
@@ -636,16 +653,17 @@ async def create_augmented_dataset(
         logger.info(f"Parsed inputs - source datasets: {source_dataset_ids}, methods: {methods}, parameters: {parameters}")
         logger.info(f"Annotation settings - transform: {transform_annotations_bool}, config: {annotation_config}")
         
-        # Validate source datasets exist
+        # Validate source datasets exist (use unique IDs)
+        unique_dataset_ids = list(set(source_dataset_ids))
         existing_datasets = db.query(models.Dataset).filter(
-            models.Dataset.id.in_(source_dataset_ids)
+            models.Dataset.id.in_(unique_dataset_ids)
         ).all()
         
-        if len(existing_datasets) != len(source_dataset_ids):
-            logger.error(f"Dataset validation failed - found {len(existing_datasets)} of {len(source_dataset_ids)} datasets")
+        if len(existing_datasets) != len(unique_dataset_ids):
+            logger.error(f"Dataset validation failed - found {len(existing_datasets)} of {len(unique_dataset_ids)} unique datasets")
             raise HTTPException(status_code=404, detail="One or more source datasets not found")
         
-        logger.info(f"Validated {len(existing_datasets)} source datasets")
+        logger.info(f"Validated {len(existing_datasets)} unique source datasets")
         
         # Validate project exists
         project = db.query(models.Project).filter(models.Project.id == project_id).first()
@@ -659,12 +677,10 @@ async def create_augmented_dataset(
         target_dataset = models.Dataset(
             name=name,
             description=description or f"Augmented dataset created from {len(source_dataset_ids)} source dataset(s)",
-            type="augmented",
             project_id=project_id,
-            tags=json.dumps(["augmented"]),
-            image_count=0,
-            annotation_count=0
+            image_count=0
         )
+        target_dataset.tags = ["augmented"]
         db.add(target_dataset)
         db.commit()
         db.refresh(target_dataset)
@@ -672,19 +688,22 @@ async def create_augmented_dataset(
         # Create the task
         task = models.Task(
             name=f"Create Augmented Dataset: {name}",
-            description=f"Creating augmented dataset '{name}' from {len(source_dataset_ids)} source datasets",
+            description=f"Creating augmented dataset '{name}' from {len(unique_dataset_ids)} source dataset(s) using Albumentations",
             task_type="augmentation",
             status="pending",
             project_id=project_id,
             progress=0.0,
             task_metadata={
                 "target_dataset_id": target_dataset.id,
-                "source_dataset_ids": source_dataset_ids,
+                "target_dataset_name": name,
+                "source_dataset_ids": unique_dataset_ids,
+                "annotation_file_configs": annotation_file_configs,
                 "augmentation_methods": methods,
                 "method_parameters": parameters,
                 "augmentation_factor": augmentation_factor,
                 "transform_annotations": transform_annotations_bool,
-                "annotation_settings": annotation_config
+                "annotation_settings": annotation_config,
+                "stage": "queued"
             }
         )
         db.add(task)
@@ -694,7 +713,7 @@ async def create_augmented_dataset(
         # Create the augmentation record
         augmentation = models.Augmentation(
             task_id=task.id,
-            source_dataset_ids=source_dataset_ids,
+            source_dataset_ids=unique_dataset_ids,
             target_dataset_id=target_dataset.id,
             augmentation_methods=methods,
             method_parameters=parameters,
@@ -705,24 +724,31 @@ async def create_augmented_dataset(
         db.add(augmentation)
         db.commit()
         
-        # Start the background task
-        background_tasks.add_task(
-            process_augmented_dataset_task,
-            task.id,
-            str(db.bind.url.database) if db.bind.url.database else ""
-        )
+        # Start the Celery background task
+        celery_result = create_augmented_dataset_task.delay(task.id)
+        
+        # Update task with Celery task ID
+        task.task_metadata = {
+            **(task.task_metadata or {}),
+            "celery_task_id": celery_result.id
+        }
+        db.commit()
+        
+        logger.info(f"Started Celery augmentation task {task.id} with Celery ID {celery_result.id}")
         
         return {
             "success": True,
             "message": f"Augmented dataset creation started successfully",
             "task_id": task.id,
             "dataset_id": target_dataset.id,
+            "celery_task_id": celery_result.id,
             "status": "pending"
         }
         
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"Invalid JSON in request: {str(e)}")
     except Exception as e:
+        logger.error(f"Failed to create augmented dataset: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create augmented dataset: {str(e)}")
 

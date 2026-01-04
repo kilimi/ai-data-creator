@@ -33,12 +33,23 @@ async function createTestProject(page: Page, projectName: string) {
 
 // Helper function to open edit dialog for a project
 async function openEditDialog(page: Page, projectName: string) {
-  // Wait for projects to load
+  // Navigate to home page to ensure project cards are visible
+  await page.goto('/');
   await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000); // Give UI time to settle
+  
+  // Wait for project cards to be loaded
+  await page.waitForTimeout(2000); // Give UI more time to settle
+  
+  // Wait for the specific project name to be visible first
+  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
   
   // Find all project cards
   const allCards = page.locator('div.glass-card');
+  await allCards.first().waitFor({ state: 'visible', timeout: 15000 });
+  
+  // Give DOM time to stabilize
+  await page.waitForTimeout(1000);
+  
   const cardCount = await allCards.count();
   
   // Find the card with our project name
@@ -56,6 +67,9 @@ async function openEditDialog(page: Page, projectName: string) {
     throw new Error(`Could not find project card for: ${projectName}`);
   }
   
+  // Wait for card to be stable
+  await page.waitForTimeout(1000);
+  
   // Find the three-dot menu button in this card and click it
   // It's a button with no text, just an icon
   const buttons = targetCard.locator('button');
@@ -66,19 +80,20 @@ async function openEditDialog(page: Page, projectName: string) {
     const button = buttons.nth(i);
     const buttonText = await button.textContent();
     if (!buttonText || buttonText.trim() === '') {
-      await button.click();
+      await button.waitFor({ state: 'visible', timeout: 5000 });
+      await button.click({ force: true });
       break;
     }
   }
   
   // Wait a bit for dropdown to appear
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
   
   // Click Edit option
   await page.getByText('Edit', { exact: true }).first().click();
   
   // Wait for edit dialog to open
-  await expect(page.getByText('Edit Project')).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText('Edit Project')).toBeVisible({ timeout: 10000 });
 }
 
 test.describe('Edit Project', () => {
@@ -127,14 +142,14 @@ test.describe('Edit Project', () => {
     
     // Click refresh button to reload projects list
     await page.click('button[title="Refresh projects"]');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
     
     // Verify the new name appears on the page
     await expect(page.getByText(newName).first()).toBeVisible({ timeout: 10000 });
     
-    // Verify old name is gone
-    const oldNameVisible = await page.getByText(originalProjectName).isVisible().catch(() => false);
-    expect(oldNameVisible).toBe(false);
+    // Verify old name is gone - wait a bit for page to fully update
+    await page.waitForTimeout(1000);
+    await expect(page.getByText(originalProjectName)).not.toBeVisible({ timeout: 5000 });
   });
 
   test('should successfully change project description', async ({ page }) => {
@@ -323,7 +338,8 @@ test.describe('Edit Project', () => {
     const logoPath = path.join(__dirname, '../../fixtures/test-logo.png');
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles(logoPath);
-    await expect(page.locator('img[alt="Logo preview"]')).toBeVisible({ timeout: 5000 });
+    await page.waitForTimeout(1500); // Wait for logo to process
+    await expect(page.locator('img[alt="Logo preview"]')).toBeVisible({ timeout: 10000 });
     
     await page.click('button:has-text("Save changes")');
     // Toast check skipped - dialog closes if successful

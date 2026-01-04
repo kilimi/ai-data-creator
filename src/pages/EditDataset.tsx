@@ -33,6 +33,7 @@ import {
   Copy
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useImageLoad } from "@/utils/animations";
 import {
   Table,
@@ -180,6 +181,9 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [imageDimensions, setImageDimensions] = useState({ width: 800, height: 600 });
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [augmentedDatasets, setAugmentedDatasets] = useState<{ id: number; name: string }[]>([]);
+  const [deleteAugmented, setDeleteAugmented] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const imagesPerPage = 20;
 
@@ -792,23 +796,58 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     }
   };
 
+  const openDeleteConfirm = async () => {
+    if (!dataset) return;
+    
+    // Check for augmented datasets
+    try {
+      const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/augmented-datasets`);
+      if (response.ok) {
+        const result = await response.json();
+        setAugmentedDatasets(result.augmented_datasets || []);
+      } else {
+        setAugmentedDatasets([]);
+      }
+    } catch (error) {
+      setAugmentedDatasets([]);
+    }
+    
+    setDeleteAugmented(false);
+    setShowDeleteConfirm(true);
+  };
+
   const handleDeleteDataset = async () => {
     if (!dataset) return;
     
+    setIsDeleting(true);
     try {
-      // Simulating API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      toast({
-        title: 'Dataset deleted',
-        description: 'Dataset and all associated data have been removed.',
+      const url = new URL(`http://localhost:9999/datasets/${dataset.id}`);
+      if (deleteAugmented) {
+        url.searchParams.set('delete_augmented', 'true');
+      }
+      
+      const response = await fetch(url.toString(), {
+        method: 'DELETE'
       });
+      
+      if (response.ok) {
+        const result = await response.json();
+        toast({
+          title: 'Dataset Deleted',
+          description: result.deleted_count > 1 
+            ? `Successfully deleted ${result.deleted_count} datasets.`
+            : 'Dataset and all associated data have been removed.',
+        });
 
-      // Navigate back to the appropriate page
-      if (projectId) {
-        navigate(`/projects/${projectId}`);
+        // Navigate back to the appropriate page
+        if (projectId) {
+          navigate(`/projects/${projectId}/datasets`);
+        } else {
+          navigate('/');
+        }
       } else {
-        navigate('/');
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to delete dataset');
       }
     } catch (error) {
       console.error('Error deleting dataset:', error);
@@ -817,8 +856,11 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         title: 'Delete failed',
         description: error instanceof Error ? error.message : 'There was an error deleting the dataset.',
       });
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+      setAugmentedDatasets([]);
     }
-    setShowDeleteConfirm(false);
   };
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -1080,7 +1122,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             <div className="flex items-center gap-2">
               <Button
                 variant="destructive"
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={openDeleteConfirm}
                 disabled={saving}
               >
                 <Trash2 className="h-4 w-4 mr-2" />
@@ -1816,19 +1858,52 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
               This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
+          
+          {augmentedDatasets.length > 0 && (
+            <div className="my-4 p-4 bg-gray-800 rounded-lg">
+              <p className="text-sm font-medium mb-2 text-gray-200">
+                This dataset has {augmentedDatasets.length} augmented dataset{augmentedDatasets.length > 1 ? 's' : ''}:
+              </p>
+              <ul className="text-sm text-gray-400 mb-3 list-disc list-inside">
+                {augmentedDatasets.slice(0, 5).map(ds => (
+                  <li key={ds.id}>{ds.name}</li>
+                ))}
+                {augmentedDatasets.length > 5 && (
+                  <li>...and {augmentedDatasets.length - 5} more</li>
+                )}
+              </ul>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="deleteAugmentedEdit"
+                  checked={deleteAugmented}
+                  onCheckedChange={(checked) => setDeleteAugmented(checked === true)}
+                  className="border-gray-500"
+                />
+                <label
+                  htmlFor="deleteAugmentedEdit"
+                  className="text-sm font-medium leading-none text-gray-200 peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Also delete augmented datasets
+                </label>
+              </div>
+            </div>
+          )}
+          
           <DialogFooter>
             <Button
               variant="ghost"
               onClick={() => setShowDeleteConfirm(false)}
               className="bg-gray-800 hover:bg-gray-700"
+              disabled={isDeleting}
             >
               Cancel
             </Button>
             <Button
               variant="destructive"
               onClick={handleDeleteDataset}
+              disabled={isDeleting}
             >
-              Delete Dataset
+              {isDeleting ? 'Deleting...' : 'Delete Dataset'}
             </Button>
           </DialogFooter>
         </DialogContent>

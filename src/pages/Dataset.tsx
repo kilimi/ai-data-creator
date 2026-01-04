@@ -682,6 +682,114 @@ export default function Dataset() {
     }
   };
 
+  // Handle dataset duplication
+  const handleDuplicateDataset = async () => {
+    console.log('🚀🚀🚀 DUPLICATE BUTTON CLICKED! 🚀🚀🚀');
+    console.log('handleDuplicateDataset called, id:', id);
+    console.log('api exists?', !!api);
+    
+    if (!id || !api) {
+      console.error('❌ No dataset ID or API available for duplication');
+      console.error('id:', id, 'api:', !!api);
+      return;
+    }
+
+    try {
+      console.log('✅ Calling duplicate API for dataset:', id);
+      
+      const response = await api.duplicateDataset(parseInt(id, 10));
+      
+      console.log('Duplicate response:', response);
+      
+      if (!response.success || !response.data) {
+        throw new Error(response.error || 'Failed to duplicate dataset');
+      }
+
+      const responseData = response.data;
+      
+      // Check if it's a background task response
+      console.log('🔍 Response data:', responseData);
+      console.log('🔍 Has task_id?', !!responseData.task_id);
+      
+      if (responseData.task_id) {
+        // Background task started - show prominent notification
+        console.log('🎉 SHOWING TOAST NOTIFICATION NOW!');
+        toast({
+          title: "✨ Duplication Started",
+          description: `Dataset duplication is running in background. Check the tasks panel for progress.`,
+          duration: 5000,
+        });
+        
+        console.log('Background task started with ID:', responseData.task_id);
+        
+        // Poll task status to navigate when complete
+        const pollInterval = setInterval(async () => {
+          try {
+            const taskResponse = await api.getTask(responseData.task_id);
+            if (taskResponse.success && taskResponse.data) {
+              const taskData = taskResponse.data as any;
+              
+              if (taskData.status === 'completed') {
+                clearInterval(pollInterval);
+                const newDatasetId = taskData.task_metadata?.new_dataset_id;
+                
+                toast({
+                  title: "✅ Dataset Duplicated",
+                  description: `Successfully created a copy of the dataset!`,
+                  duration: 4000,
+                });
+                
+                // Navigate to the project datasets page
+                setTimeout(() => {
+                  if (effectiveProjectId) {
+                    navigate(`/projects/${effectiveProjectId}/datasets`);
+                  } else {
+                    navigate(`/`);
+                  }
+                }, 500);
+              } else if (taskData.status === 'failed') {
+                clearInterval(pollInterval);
+                toast({
+                  title: "❌ Duplication Failed",
+                  description: taskData.error_message || "Dataset duplication failed",
+                  variant: "destructive",
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Error polling task status:', error);
+          }
+        }, 2000); // Poll every 2 seconds
+        
+        // Stop polling after 5 minutes
+        setTimeout(() => clearInterval(pollInterval), 300000);
+      } else {
+        // Synchronous response (fallback mode)
+        const duplicatedDataset = responseData;
+        console.log('Duplicated dataset:', duplicatedDataset);
+        
+        toast({
+          title: "✅ Dataset Duplicated",
+          description: `Dataset has been duplicated successfully.`,
+        });
+
+        // Navigate to the project datasets page
+        if (effectiveProjectId) {
+          navigate(`/projects/${effectiveProjectId}/datasets`);
+        } else {
+          navigate(`/`);
+        }
+      }
+    } catch (error) {
+      console.error('Error duplicating dataset:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to duplicate dataset. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Updated function to handle annotation imports with better error handling
   const handleImportAnnotations = async (files: File[]) => {
     if (!id) return;
@@ -828,6 +936,7 @@ export default function Dataset() {
                   dataset={dataset}
                   onEditDataset={handleEditDataset}
                   onDeleteDataset={handleDeleteDataset}
+                  onDuplicateDataset={handleDuplicateDataset}
                   projectId={effectiveProjectId}
                 />
               </div>
