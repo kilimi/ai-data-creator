@@ -226,6 +226,17 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
         .all()
     )
     
+    # Get annotation file counts for all datasets in one query
+    annotation_file_counts = dict(
+        db.query(
+            models.AnnotationFile.dataset_id,
+            func.count(models.AnnotationFile.id)
+        )
+        .filter(models.AnnotationFile.dataset_id.in_(dataset_ids))
+        .group_by(models.AnnotationFile.dataset_id)
+        .all()
+    )
+    
     # Build minimal response - just enough for the evaluation modal
     result = []
     for dataset in datasets:
@@ -236,6 +247,7 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
             "project_id": dataset.project_id,
             "image_count": dataset.image_count,
             "annotation_count": annotation_counts.get(dataset.id, 0),
+            "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
             "tags": dataset.tags,
             "thumbnailUrl": dataset.thumbnailUrl,
             "url": dataset.url,

@@ -38,6 +38,9 @@ const augmentationMethods: AugmentationMethod[] = [
   { id: 'contrast', name: 'Contrast', description: 'Adjust image contrast', icon: <Contrast className="w-4 h-4" />, category: 'color' },
   { id: 'saturation', name: 'Saturation', description: 'Adjust color saturation', icon: <Palette className="w-4 h-4" />, category: 'color' },
   { id: 'hue_shift', name: 'Hue Shift', description: 'Shift color hues', icon: <Palette className="w-4 h-4" />, category: 'color' },
+  { id: 'to_gray', name: 'Grayscale', description: 'Convert images to grayscale', icon: <Palette className="w-4 h-4" />, category: 'color' },
+  { id: 'color_space', name: 'Color Space Transform', description: 'Transform to different color space (HSV, Lab, etc)', icon: <Palette className="w-4 h-4" />, category: 'color' },
+  { id: 'channel_select', name: 'Single Channel', description: 'Keep only one color channel', icon: <Palette className="w-4 h-4" />, category: 'color' },
   
   // Noise and blur
   { id: 'gaussian_noise', name: 'Gaussian Noise', description: 'Add random noise to images', icon: <ImageIcon className="w-4 h-4" />, category: 'noise' },

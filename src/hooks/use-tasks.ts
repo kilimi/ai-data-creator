@@ -31,14 +31,19 @@ export function useTasks(projectId?: number) {
       setLoading(true);
       setError(null);
       
+      console.log('Fetching active tasks for projectId:', projectId);
       const response = await api.getActiveTasks(projectId);
+      console.log('Active tasks response:', response);
       
       if (response.success) {
+        console.log('Setting active tasks:', response.data);
         setActiveTasks(response.data as Task[]);
       } else {
+        console.error('Failed to fetch active tasks:', response.error);
         setError(response.error || 'Failed to fetch active tasks');
       }
     } catch (err) {
+      console.error('Error fetching active tasks:', err);
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
     } finally {
       setLoading(false);
@@ -111,10 +116,13 @@ export function useTasks(projectId?: number) {
   useEffect(() => {
     if (!isConfigured) return;
 
+    // Fetch both active tasks and all tasks on mount and interval
     fetchActiveTasks();
+    fetchAllTasks();
     
     const interval = setInterval(() => {
       fetchActiveTasks();
+      fetchAllTasks();
     }, 15000); // Refresh every 15 seconds (reduced from 5s)
 
     return () => clearInterval(interval);

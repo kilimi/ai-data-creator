@@ -1225,6 +1225,27 @@ const ImageAnnotation = () => {
   // Helper function to load annotations from COCO format
   const loadAnnotationsFromCOCO = useCallback(async (cocoData: any, fileId?: string) => {
     try {
+      console.log('Loading COCO data:', {
+        hasCategories: !!cocoData.categories,
+        categoryCount: cocoData.categories?.length || 0,
+        hasImages: !!cocoData.images,
+        imageCount: cocoData.images?.length || 0,
+        hasAnnotations: !!cocoData.annotations,
+        annotationCount: cocoData.annotations?.length || 0,
+        cocoDataKeys: Object.keys(cocoData)
+      });
+      
+      // Validate COCO data structure
+      if (!cocoData.categories || !Array.isArray(cocoData.categories)) {
+        throw new Error('Missing or invalid categories in COCO data');
+      }
+      if (!cocoData.images || !Array.isArray(cocoData.images)) {
+        throw new Error('Missing or invalid images in COCO data');
+      }
+      if (!cocoData.annotations || !Array.isArray(cocoData.annotations)) {
+        throw new Error('Missing or invalid annotations in COCO data');
+      }
+      
       // Reset the last loaded image ref so annotations can be loaded fresh
       lastLoadedImageRef.current = null;
       
@@ -1235,11 +1256,19 @@ const ImageAnnotation = () => {
       
       // Extract classes from categories
       if (cocoData.categories) {
+        console.log('Processing categories:', cocoData.categories);
         cocoData.categories.forEach((category: any, index: number) => {
-          classSet.add(category.name);
-          // Assign colors from default palette
-          classColorMap[category.name] = DEFAULT_COLORS[index % DEFAULT_COLORS.length];
+          if (category && category.name) {
+            classSet.add(category.name);
+            // Assign colors from default palette
+            classColorMap[category.name] = DEFAULT_COLORS[index % DEFAULT_COLORS.length];
+          } else {
+            console.warn('Invalid category:', category);
+          }
         });
+        console.log('Extracted classes:', Array.from(classSet));
+      } else {
+        console.warn('No categories found in COCO data');
       }
       
       // Store the full COCO data in sessionStorage for lazy loading
@@ -1286,6 +1315,7 @@ const ImageAnnotation = () => {
         count: 0 // Will be updated by computeGlobalStats
       }));
       
+      console.log('Setting classes:', newClasses);
       setClasses(newClasses);
       saveGlobalClasses(newClasses);
       
@@ -1301,12 +1331,18 @@ const ImageAnnotation = () => {
         const categoryIdToName: { [id: string]: string } = {};
         
         cocoData.categories.forEach((cat: any) => {
-          categoryIdToName[cat.id.toString()] = cat.name;
+          if (cat.id != null) {
+            categoryIdToName[cat.id.toString()] = cat.name;
+          }
         });
         
         cocoData.annotations.forEach((annotation: any) => {
           if (annotation.image_id === imageEntry.id) {
-            const className = categoryIdToName[annotation.category_id.toString()];
+            // Handle null category_id
+            const categoryId = annotation.category_id;
+            const className = categoryId != null 
+              ? categoryIdToName[categoryId.toString()] 
+              : null;
             
             if (className && annotation.segmentation && annotation.segmentation.length > 0) {
               const segmentation = annotation.segmentation[0];

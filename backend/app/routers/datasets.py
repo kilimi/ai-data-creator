@@ -174,7 +174,28 @@ async def update_dataset(
             dataset.thumbnailUrl = dataset.logo_url
         db.commit()
         db.refresh(dataset)
-        return dataset
+        
+        # Get annotation counts before detaching from session
+        annotation_count = dataset.actual_annotation_count
+        annotation_file_count = dataset.actual_annotation_file_count
+        
+        # Return a properly formatted response
+        return schemas.Dataset(
+            id=dataset.id,
+            name=dataset.name,
+            description=dataset.description,
+            tags=dataset.tags,
+            created_at=dataset.created_at,
+            updated_at=dataset.updated_at,
+            image_count=dataset.image_count,
+            annotation_count=annotation_count,
+            annotation_file_count=annotation_file_count,
+            annotation_files=[],  # Empty list to avoid serialization issues
+            project_id=dataset.project_id,
+            thumbnailUrl=dataset.thumbnailUrl,
+            logo_url=dataset.logo_url,
+            url=dataset.url
+        )
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

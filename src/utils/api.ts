@@ -201,7 +201,7 @@ export class ApiClient {
     });
   }
 
-  async duplicateDataset(datasetId: number): Promise<ApiResponse<Dataset>> {
+  async duplicateDataset(datasetId: number): Promise<ApiResponse<any>> {
     try {
       const response = await fetch(`${this.config.baseUrl}/datasets/${datasetId}/duplicate`, {
         method: 'POST',
@@ -633,14 +633,18 @@ export class ApiClient {
     error_message?: string;
     project_id: number;
     metadata?: any;
+    task_metadata?: any;
   }>>> {
     try {
       const searchParams = new URLSearchParams();
       if (projectId) searchParams.append('project_id', projectId.toString());
       
       // Use the /tasks/active endpoint to get both pending and running in one request
-      const response = await fetch(`${this.baseUrl}/tasks/active?${searchParams.toString()}`, {
-        headers: this.getHeaders()
+      const response = await fetch(`${this.config.baseUrl}/tasks/active?${searchParams.toString()}`, {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
       });
       
       if (!response.ok) {

@@ -1,10 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { 
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useTasks, Task } from '@/hooks/use-tasks';
 import { 
@@ -27,9 +34,12 @@ interface TasksPopoverProps {
 }
 
 export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
-  const { activeTasks, loading, cancelTask, activeTaskCount } = useTasks(projectId);
+  const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks } = useTasks(projectId);
   const { toast } = useToast();
   const [cancellingTasks, setCancellingTasks] = useState<Set<number>>(new Set());
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<number>>(new Set());
 
   const getTaskTypeIcon = (taskType: string) => {
     switch (taskType) {
@@ -152,165 +162,435 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
     return status === 'pending' || status === 'running';
   };
 
-  if (activeTaskCount === 0) {
-    return null; // Don't show the icon if there are no active tasks
-  }
+  const handleTaskClick = (task: Task) => {
+    setSelectedTask(task);
+    setIsDetailOpen(true);
+  };
+
+  const handleClearView = () => {
+    const completedOrFailedTaskIds = tasks
+      .filter(task => task.status === 'completed' || task.status === 'failed')
+      .map(task => task.id);
+    setHiddenTaskIds(new Set(completedOrFailedTaskIds));
+  };
+
+  const visibleTasks = tasks.filter(task => !hiddenTaskIds.has(task.id));
+  const visibleActiveTaskCount = visibleTasks.filter(task => 
+    task.status === 'pending' || task.status === 'running'
+  ).length;
+  
+  // Count running and pending tasks
+  const runningTaskCount = activeTasks.filter(task => task.status === 'running').length;
+  const pendingTaskCount = activeTasks.filter(task => task.status === 'pending').length;
+  
+  // Debug: Log task counts
+  useEffect(() => {
+    console.log('TasksPopover - Active tasks:', activeTasks.length, 'Running:', runningTaskCount, 'Pending:', pendingTaskCount);
+    if (activeTasks.length > 0) {
+      console.log('Active task details:', activeTasks.map(t => ({ id: t.id, name: t.name, status: t.status })));
+    }
+  }, [activeTasks.length, runningTaskCount, pendingTaskCount]);
+
+  const formatDuration = (startedAt?: string, completedAt?: string) => {
+    if (!startedAt) return 'Not started';
+    if (!completedAt) return 'Running...';
+    
+    const start = new Date(startedAt);
+    const end = new Date(completedAt);
+    const duration = end.getTime() - start.getTime();
+    
+    const seconds = Math.floor(duration / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) return `${hours}h ${minutes % 60}m`;
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+  };
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="icon"
-          className="h-9 w-9 relative"
-          disabled={loading}
-        >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <>
-              <Activity className="h-4 w-4" />
-              {activeTaskCount > 0 && (
-                <Badge 
-                  variant="destructive" 
-                  className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs"
+    <>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 relative"
+            style={{
+              borderColor: runningTaskCount > 0 ? '#3b82f6' : pendingTaskCount > 0 ? '#eab308' : undefined,
+              backgroundColor: runningTaskCount > 0 ? '#eff6ff' : pendingTaskCount > 0 ? '#fef9c3' : undefined
+            }}
+            disabled={loading}
+            title={
+              activeTaskCount > 0 
+                ? `${runningTaskCount > 0 ? `${runningTaskCount} running` : ''}${runningTaskCount > 0 && pendingTaskCount > 0 ? ', ' : ''}${pendingTaskCount > 0 ? `${pendingTaskCount} waiting` : ''}` 
+                : 'View all tasks'
+            }
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                <Activity 
+                  className="h-4 w-4"
+                  style={{
+                    color: runningTaskCount > 0 ? '#2563eb' : pendingTaskCount > 0 ? '#ca8a04' : undefined,
+                    animation: runningTaskCount > 0 ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : undefined
+                  }}
+                />
+                {activeTaskCount > 0 && (
+                  <Badge 
+                    className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs font-medium text-white"
+                    style={{
+                      backgroundColor: runningTaskCount > 0 ? '#2563eb' : '#ca8a04'
+                    }}
+                  >
+                    {activeTaskCount > 9 ? '9+' : activeTaskCount}
+                  </Badge>
+                )}
+              </>
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[650px] p-0 max-h-[80vh] flex flex-col" align="end">
+          <div className="p-4 border-b flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-lg">Tasks</h3>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearView}
+                  disabled={visibleTasks.filter(t => t.status === 'completed' || t.status === 'failed').length === 0}
+                  className="h-7 text-xs"
                 >
-                  {activeTaskCount > 9 ? '9+' : activeTaskCount}
+                  Clear
+                </Button>
+                <Badge variant="secondary" className="text-xs">
+                  {visibleActiveTaskCount} active
                 </Badge>
-              )}
-            </>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-96 p-0" align="end">
-        <div className="p-4 border-b">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">Active Tasks</h3>
-            <Badge variant="secondary" className="text-xs">
-              {activeTaskCount} active
-            </Badge>
+                <Badge variant="outline" className="text-xs">
+                  {visibleTasks.length} visible
+                </Badge>
+              </div>
+            </div>
           </div>
-        </div>
-        
-        <ScrollArea className="max-h-96">
-          <div className="p-2 space-y-2">
-            {activeTasks.length === 0 ? (
+          
+          <ScrollArea className="flex-1 min-h-0">
+            {visibleTasks.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No active tasks</p>
+                <p>{tasks.length > 0 ? 'All tasks cleared from view' : 'No tasks found'}</p>
               </div>
             ) : (
-              activeTasks.map((task) => (
-                <Card key={task.id} className="border border-gray-200">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        {getTaskTypeIcon(task.task_type)}
-                        <CardTitle className="text-sm font-medium truncate">
-                          {task.name}
-                        </CardTitle>
-                      </div>
-                      
-                      {canCancelTask(task.status) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0 text-gray-500 hover:text-red-500 flex-shrink-0"
-                          onClick={() => handleCancelTask(task.id, task.name)}
-                          disabled={cancellingTasks.has(task.id)}
-                        >
-                          {cancellingTasks.has(task.id) ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <X className="w-3 h-3" />
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  </CardHeader>
-                  
-                  <CardContent className="pt-0">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between text-xs gap-2">
-                        <div className="flex items-center gap-2">
+              <div className="p-2 pb-4">
+                <table className="w-full text-sm">
+                  <thead className="border-b sticky top-0 bg-background z-10">
+                    <tr className="text-left">
+                      <th className="px-3 py-3 font-medium text-muted-foreground">Type</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground">Task Name</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleTasks.map((task) => (
+                      <tr 
+                        key={task.id} 
+                        className="border-b hover:bg-muted/50 cursor-pointer transition-colors"
+                        onClick={() => handleTaskClick(task)}
+                      >
+                        <td className="px-3 py-4">
                           <Badge 
                             variant="outline" 
-                            className={getTaskTypeColor(task.task_type)}
+                            className={`${getTaskTypeColor(task.task_type)} text-xs`}
                           >
                             {getTaskTypeLabel(task.task_type)}
                           </Badge>
+                        </td>
+                        <td className="px-3 py-4">
+                          <div className="flex items-center gap-2">
+                            {getTaskTypeIcon(task.task_type)}
+                            <span className="font-medium truncate max-w-[200px]" title={task.name}>
+                              {task.name}
+                            </span>
+                            {/* Show error indicator if task has errors */}
+                            {((task.error_message) || 
+                              (task.task_metadata?.errors && task.task_metadata.errors.length > 0) ||
+                              (task.task_metadata?.errors_count && task.task_metadata.errors_count > 0)) && (
+                              <Badge variant="destructive" className="text-xs flex-shrink-0">
+                                <AlertCircle className="w-3 h-3 mr-1" />
+                                {task.task_metadata?.errors_count || 'Error'}
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-4">
                           <Badge 
                             variant="outline" 
-                            className={getStatusColor(task.status)}
+                            className={`${getStatusColor(task.status)} whitespace-nowrap`}
                           >
                             {getStatusIcon(task.status)}
-                            <span className="ml-1">{task.status.charAt(0).toUpperCase() + task.status.slice(1)}</span>
+                            <span className="ml-1 capitalize">{task.status}</span>
                           </Badge>
-                        </div>
-                        <span className="text-muted-foreground font-medium">
-                          {Math.round(task.progress)}%
-                        </span>
-                      </div>
-                      
-                      <Progress 
-                        value={task.progress} 
-                        className="h-2"
-                      />
-                      
-                      {/* Show stage info for augmentation tasks */}
-                      {task.task_type === 'augmentation' && (task.metadata?.stage || task.task_metadata?.stage) && (
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-muted-foreground">Stage:</span>
-                          <span className="font-medium capitalize">{task.metadata?.stage || task.task_metadata?.stage}</span>
-                          {(task.metadata?.processed_images !== undefined || task.task_metadata?.processed_images !== undefined) && (
-                            <span className="text-muted-foreground">
-                              ({task.metadata?.processed_images ?? task.task_metadata?.processed_images} images processed)
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      
-                      {/* Show stage info for training tasks */}
-                      {task.task_type === 'training' && (task.metadata?.current_epoch || task.task_metadata?.current_epoch) && (
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="text-muted-foreground">Epoch:</span>
-                          <span className="font-medium">{task.metadata?.current_epoch || task.task_metadata?.current_epoch}</span>
-                          {(task.metadata?.total_epochs || task.task_metadata?.total_epochs) && (
-                            <span className="text-muted-foreground">
-                              / {task.metadata?.total_epochs || task.task_metadata?.total_epochs}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      
-                      {task.description && (
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {task.description}
-                        </p>
-                      )}
-                      
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Created: {formatTimestamp(task.created_at)}</span>
-                        {task.started_at && (
-                          <span>Started: {formatTimestamp(task.started_at)}</span>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
-          </div>
-        </ScrollArea>
-        
-        {activeTasks.length > 0 && (
-          <div className="p-3 border-t bg-gray-50/50 text-center">
-            <p className="text-xs text-muted-foreground">
-              Tasks auto-refresh every 15 seconds
-            </p>
-          </div>
-        )}
-      </PopoverContent>
-    </Popover>
+          </ScrollArea>
+        </PopoverContent>
+      </Popover>
+
+      {/* Task Detail Modal */}
+      <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedTask && getTaskTypeIcon(selectedTask.task_type)}
+              {selectedTask?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Task details and execution information
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedTask && (
+            <div className="space-y-4">
+              {/* Status and Progress */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Status</label>
+                  <div className="mt-1">
+                    <Badge 
+                      variant="outline" 
+                      className={getStatusColor(selectedTask.status)}
+                    >
+                      {getStatusIcon(selectedTask.status)}
+                      <span className="ml-1 capitalize">{selectedTask.status}</span>
+                    </Badge>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Progress</label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <Progress value={selectedTask.progress} className="h-2 flex-1" />
+                    <span className="text-sm font-medium">{Math.round(selectedTask.progress)}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Type and Duration */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Task Type</label>
+                  <div className="mt-1">
+                    <Badge 
+                      variant="outline" 
+                      className={getTaskTypeColor(selectedTask.task_type)}
+                    >
+                      {getTaskTypeLabel(selectedTask.task_type)}
+                    </Badge>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Duration</label>
+                  <div className="mt-1 text-sm">{formatDuration(selectedTask.started_at, selectedTask.completed_at)}</div>
+                </div>
+              </div>
+
+              {/* Timestamps */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Created</label>
+                    <div className="text-sm">{formatTimestamp(selectedTask.created_at)}</div>
+                  </div>
+                  {selectedTask.started_at && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Started</label>
+                      <div className="text-sm">{formatTimestamp(selectedTask.started_at)}</div>
+                    </div>
+                  )}
+                  {selectedTask.completed_at && (
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground">Completed</label>
+                      <div className="text-sm">{formatTimestamp(selectedTask.completed_at)}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Description */}
+              {selectedTask.description && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Description</label>
+                  <div className="mt-1 text-sm bg-muted p-3 rounded-md">{selectedTask.description}</div>
+                </div>
+              )}
+
+              {/* Metadata */}
+              {(selectedTask.metadata || selectedTask.task_metadata) && (
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Task Details</label>
+                  <div className="mt-1 bg-muted p-3 rounded-md space-y-2">
+                    {Object.entries(selectedTask.metadata || selectedTask.task_metadata || {})
+                      .filter(([key]) => {
+                        // Filter out internal/technical fields from display
+                        const excludedKeys = [
+                          'errors', 
+                          'errors_count', 
+                          'annotation_file_configs',
+                          'celery_task_id',
+                          'annotation_settings',
+                          'stage',
+                          'current_operation',
+                          'total_operations'
+                        ];
+                        return !excludedKeys.includes(key);
+                      })
+                      .map(([key, value]) => {
+                      // Skip complex objects and arrays for cleaner display
+                      if (value === null || value === undefined) return null;
+                      
+                      // Format the key to be more readable
+                      const formattedKey = key
+                        .replace(/_/g, ' ')
+                        .replace(/\b\w/g, (l) => l.toUpperCase());
+                      
+                      // Special handling for method_parameters
+                      if (key === 'method_parameters' && typeof value === 'object') {
+                        return (
+                          <div key={key} className="col-span-2 space-y-2">
+                            <span className="text-sm font-medium text-muted-foreground">Augmentation Settings:</span>
+                            <div className="bg-background p-3 rounded border border-border space-y-2">
+                              {Object.entries(value as Record<string, any>).map(([methodName, params]) => (
+                                <div key={methodName} className="space-y-1">
+                                  <div className="font-medium text-sm capitalize">{methodName.replace(/_/g, ' ')}</div>
+                                  {typeof params === 'object' && params !== null ? (
+                                    <div className="pl-3 text-xs space-y-0.5">
+                                      {Object.entries(params).map(([paramKey, paramValue]) => (
+                                        <div key={paramKey} className="text-muted-foreground">
+                                          {paramKey.replace(/_/g, ' ')}: <span className="font-mono">{String(paramValue)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="pl-3 text-xs text-muted-foreground">Default settings</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                      
+                      // Format the value based on its type
+                      let displayValue: string;
+                      if (typeof value === 'boolean') {
+                        displayValue = value ? 'Yes' : 'No';
+                      } else if (typeof value === 'number') {
+                        displayValue = value.toLocaleString();
+                      } else if (Array.isArray(value)) {
+                        if (value.length === 0) return null;
+                        if (value.length <= 5) {
+                          displayValue = value.join(', ');
+                        } else {
+                          displayValue = `${value.slice(0, 5).join(', ')} ... (${value.length} total)`;
+                        }
+                      } else if (typeof value === 'object') {
+                        // For nested objects, show a summary
+                        const entries = Object.keys(value).length;
+                        displayValue = `${entries} item${entries !== 1 ? 's' : ''}`;
+                      } else {
+                        displayValue = String(value);
+                      }
+                      
+                      return (
+                        <div key={key} className="flex justify-between items-start text-sm border-b border-border/50 pb-2 last:border-0 last:pb-0">
+                          <span className="font-medium text-muted-foreground">{formattedKey}:</span>
+                          <span className="text-right ml-4 max-w-[60%] break-words">{displayValue}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {selectedTask.error_message && (
+                <div>
+                  <label className="text-sm font-medium text-red-600 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    Error
+                  </label>
+                  <div className="mt-1 text-sm bg-red-50 border border-red-200 text-red-800 p-3 rounded-md">
+                    {selectedTask.error_message}
+                  </div>
+                </div>
+              )}
+
+              {/* Additional Errors from Metadata */}
+              {(selectedTask.task_metadata?.errors && selectedTask.task_metadata.errors.length > 0) && (
+                <div>
+                  <label className="text-sm font-medium text-orange-600 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    Task Errors ({selectedTask.task_metadata.errors.length})
+                  </label>
+                  <div className="mt-1 bg-orange-50 border border-orange-200 rounded-md max-h-48 overflow-y-auto">
+                    <div className="divide-y divide-orange-200">
+                      {selectedTask.task_metadata.errors.map((error: string, idx: number) => (
+                        <div key={idx} className="p-3 text-sm text-orange-900">
+                          <div className="flex items-start gap-2">
+                            <span className="text-xs font-semibold text-orange-600 mt-0.5">#{idx + 1}</span>
+                            <span className="flex-1">{error}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {selectedTask.task_metadata.errors_count > selectedTask.task_metadata.errors.length && (
+                    <p className="text-xs text-orange-600 mt-1">
+                      Showing first {selectedTask.task_metadata.errors.length} of {selectedTask.task_metadata.errors_count} errors
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                {canCancelTask(selectedTask.status) && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      handleCancelTask(selectedTask.id, selectedTask.name);
+                      setIsDetailOpen(false);
+                    }}
+                    disabled={cancellingTasks.has(selectedTask.id)}
+                  >
+                    {cancellingTasks.has(selectedTask.id) ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Cancelling...
+                      </>
+                    ) : (
+                      <>
+                        <X className="w-4 h-4 mr-2" />
+                        Cancel Task
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };

@@ -686,9 +686,12 @@ async def create_augmented_dataset(
         db.refresh(target_dataset)
         
         # Create the task
+        # Create a readable description of augmentation methods
+        methods_list = ', '.join(methods) if len(methods) <= 5 else f"{', '.join(methods[:5])} and {len(methods) - 5} more"
+        
         task = models.Task(
             name=f"Create Augmented Dataset: {name}",
-            description=f"Creating augmented dataset '{name}' from {len(unique_dataset_ids)} source dataset(s) using Albumentations",
+            description=f"Creating augmented dataset '{name}' from {len(unique_dataset_ids)} source dataset(s) with {augmentation_factor}x augmentation using: {methods_list}",
             task_type="augmentation",
             status="pending",
             project_id=project_id,

@@ -132,6 +132,29 @@ const augmentationMethods: AugmentationMethod[] = [
     category: 'color',
     parameters: { max_shift: 0.1 }
   },
+  { 
+    id: 'to_gray', 
+    name: 'Grayscale', 
+    description: 'Convert images to grayscale', 
+    icon: <Palette className="w-4 h-4" />, 
+    category: 'color'
+  },
+  { 
+    id: 'color_space', 
+    name: 'Color Space Transform', 
+    description: 'Transform to different color space (HSV, Lab, etc)', 
+    icon: <Palette className="w-4 h-4" />, 
+    category: 'color',
+    parameters: { color_space: 'HSV', channel: 'all' }
+  },
+  { 
+    id: 'channel_select', 
+    name: 'Single Channel', 
+    description: 'Keep only one color channel', 
+    icon: <Palette className="w-4 h-4" />, 
+    category: 'color',
+    parameters: { channel: 0 }
+  },
   
   // Noise and blur
   { 
@@ -191,6 +214,13 @@ const getParameterDescription = (methodId: string, paramName: string): string =>
     },
     hue_shift: {
       max_shift: 'Maximum hue shift as a fraction of the hue wheel (0.0-1.0)'
+    },
+    color_space: {
+      color_space: 'Target color space (HSV, Lab, YCrCb, HLS, etc.)',
+      channel: 'Which channel to keep: "all" for all channels, or 0-2 for specific channel (H=0, S=1, V=2 in HSV)'
+    },
+    channel_select: {
+      channel: 'RGB channel to keep (0=Red, 1=Green, 2=Blue)'
     },
     gaussian_noise: {
       std: 'Standard deviation of the Gaussian noise (lower = less noise)'
@@ -887,7 +917,101 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                                   </CardHeader>
                                   <CardContent className="pt-0">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                      {Object.entries(method.parameters).map(([paramName, defaultValue]) => (
+                                      {Object.entries(method.parameters).map(([paramName, defaultValue]) => {
+                                        // Special handling for color_space parameter
+                                        if (method.id === 'color_space' && paramName === 'color_space') {
+                                          return (
+                                            <div key={paramName} className="space-y-2">
+                                              <Label htmlFor={`${method.id}-${paramName}`} className="text-sm capitalize">
+                                                {paramName.replace(/_/g, ' ')}
+                                              </Label>
+                                              <Select
+                                                value={currentParams[paramName]}
+                                                onValueChange={(value) => updateMethodParameter(method.id, paramName, value)}
+                                              >
+                                                <SelectTrigger className="text-sm">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="HSV">HSV</SelectItem>
+                                                  <SelectItem value="Lab">Lab</SelectItem>
+                                                  <SelectItem value="YCrCb">YCrCb</SelectItem>
+                                                  <SelectItem value="HLS">HLS</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                              <p className="text-xs text-muted-foreground">
+                                                {getParameterDescription(method.id, paramName)}
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+                                        
+                                        // Special handling for channel parameter in color_space
+                                        if (method.id === 'color_space' && paramName === 'channel') {
+                                          const colorSpace = currentParams['color_space'] || 'HSV';
+                                          const channelNames: Record<string, string[]> = {
+                                            'HSV': ['Hue (0)', 'Saturation (1)', 'Value (2)', 'All'],
+                                            'Lab': ['L (0)', 'a (1)', 'b (2)', 'All'],
+                                            'YCrCb': ['Y (0)', 'Cr (1)', 'Cb (2)', 'All'],
+                                            'HLS': ['H (0)', 'L (1)', 'S (2)', 'All']
+                                          };
+                                          
+                                          return (
+                                            <div key={paramName} className="space-y-2">
+                                              <Label htmlFor={`${method.id}-${paramName}`} className="text-sm capitalize">
+                                                Channel
+                                              </Label>
+                                              <Select
+                                                value={currentParams[paramName]?.toString() || 'all'}
+                                                onValueChange={(value) => updateMethodParameter(method.id, paramName, value === 'all' ? 'all' : parseInt(value))}
+                                              >
+                                                <SelectTrigger className="text-sm">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {channelNames[colorSpace]?.map((name, idx) => (
+                                                    <SelectItem key={idx} value={name.includes('All') ? 'all' : idx.toString()}>
+                                                      {name}
+                                                    </SelectItem>
+                                                  )) || <SelectItem value="all">All</SelectItem>}
+                                                </SelectContent>
+                                              </Select>
+                                              <p className="text-xs text-muted-foreground">
+                                                {getParameterDescription(method.id, paramName)}
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+                                        
+                                        // Special handling for channel_select
+                                        if (method.id === 'channel_select' && paramName === 'channel') {
+                                          return (
+                                            <div key={paramName} className="space-y-2">
+                                              <Label htmlFor={`${method.id}-${paramName}`} className="text-sm capitalize">
+                                                RGB Channel
+                                              </Label>
+                                              <Select
+                                                value={currentParams[paramName]?.toString() || '0'}
+                                                onValueChange={(value) => updateMethodParameter(method.id, paramName, parseInt(value))}
+                                              >
+                                                <SelectTrigger className="text-sm">
+                                                  <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  <SelectItem value="0">Red (0)</SelectItem>
+                                                  <SelectItem value="1">Green (1)</SelectItem>
+                                                  <SelectItem value="2">Blue (2)</SelectItem>
+                                                </SelectContent>
+                                              </Select>
+                                              <p className="text-xs text-muted-foreground">
+                                                {getParameterDescription(method.id, paramName)}
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+                                        
+                                        // Default number input for other parameters
+                                        return (
                                         <div key={paramName} className="space-y-2">
                                           <Label htmlFor={`${method.id}-${paramName}`} className="text-sm capitalize">
                                             {paramName.replace(/_/g, ' ')}
@@ -910,7 +1034,8 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                                             {getParameterDescription(method.id, paramName)}
                                           </p>
                                         </div>
-                                      ))}
+                                        );
+                                      })}
                                     </div>
                                   </CardContent>
                                 </Card>

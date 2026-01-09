@@ -103,6 +103,65 @@ def create_albumentations_transform(augmentation_methods: List[str], method_para
             max_shift = params.get('max_shift', 0.1)
             transforms.append(A.HueSaturationValue(hue_shift_limit=int(max_shift * 180), p=1.0))
             
+        elif method == 'to_gray':
+            # Convert image to grayscale (single channel replicated 3 times)
+            transforms.append(A.ToGray(p=1.0))
+            
+        elif method == 'color_space':
+            # Transform to different color space and optionally keep single channel
+            params = method_parameters.get('color_space', {})
+            color_space = params.get('color_space', 'HSV')
+            channel = params.get('channel', 'all')
+            
+            # Create closure with proper parameter capture
+            def make_color_space_transform(cs, ch):
+                def color_space_transform(image, **kwargs):
+                    # Convert from RGB to target color space
+                    if cs == 'HSV':
+                        converted = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+                    elif cs == 'Lab':
+                        converted = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+                    elif cs == 'YCrCb':
+                        converted = cv2.cvtColor(image, cv2.COLOR_RGB2YCrCb)
+                    elif cs == 'HLS':
+                        converted = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
+                    else:
+                        converted = image
+                    
+                    # Handle channel selection
+                    if ch == 'all':
+                        # Return the full converted color space
+                        # The values will be saved as-is (HSV values as RGB pixels)
+                        return converted
+                    elif isinstance(ch, (int, str)) and str(ch).isdigit():
+                        ch_idx = int(ch)
+                        if 0 <= ch_idx < 3:
+                            # Extract single channel and replicate to 3 channels
+                            single_channel = converted[:, :, ch_idx]
+                            return cv2.merge([single_channel, single_channel, single_channel])
+                    
+                    return converted
+                return color_space_transform
+            
+            transforms.append(A.Lambda(image=make_color_space_transform(color_space, channel), p=1.0))
+            
+        elif method == 'channel_select':
+            # Keep only one RGB channel
+            params = method_parameters.get('channel_select', {})
+            channel = params.get('channel', 0)
+            
+            # Create closure with proper parameter capture
+            def make_channel_select_transform(ch):
+                def channel_select_transform(image, **kwargs):
+                    if 0 <= ch < 3:
+                        single_channel = image[:, :, ch]
+                        # Replicate to 3 channels for compatibility
+                        return cv2.merge([single_channel, single_channel, single_channel])
+                    return image
+                return channel_select_transform
+            
+            transforms.append(A.Lambda(image=make_channel_select_transform(channel), p=1.0))
+            
         elif method == 'gaussian_noise':
             params = method_parameters.get('gaussian_noise', {})
             std = params.get('std', 0.01)
@@ -172,11 +231,23 @@ def load_image_from_path(image_path: str) -> np.ndarray:
 
 
 def save_image_to_path(image: np.ndarray, output_path: str) -> bool:
-    """Save numpy array image to file path."""
+    """Save numpy array image to file path and create thumbnail."""
     try:
         # Convert RGB to PIL Image and save
         pil_image = PILImage.fromarray(image.astype(np.uint8))
         pil_image.save(output_path, quality=95, optimize=True)
+        
+        # Create thumbnail
+        path_obj = Path(output_path)
+        thumb_dir = path_obj.parent / "thumbnails"
+        thumb_dir.mkdir(exist_ok=True)
+        thumb_path = thumb_dir / path_obj.name
+        
+        # Create and save thumbnail (400x400 max)
+        thumb_img = pil_image.copy()
+        thumb_img.thumbnail((400, 400), PILImage.Resampling.LANCZOS)
+        thumb_img.save(str(thumb_path), format='JPEG', quality=85, optimize=True)
+        
         return True
     except Exception as e:
         logger.error(f"Error saving image to {output_path}: {e}")
@@ -518,6 +589,7 @@ def create_augmented_dataset_task(self, task_id: int):
                         
                         # Create augmented image record
                         relative_url = f"/static/projects/{target_dataset.project_id}/{target_dataset.id}/images/{file_name}"
+                        thumbnail_relative_url = f"/static/projects/{target_dataset.project_id}/{target_dataset.id}/images/thumbnails/{file_name}"
                         
                         augmented_image_record = Image(
                             dataset_id=target_dataset.id,
@@ -526,7 +598,7 @@ def create_augmented_dataset_task(self, task_id: int):
                             width=aug_width,
                             height=aug_height,
                             url=relative_url,
-                            thumbnail_url=relative_url,
+                            thumbnail_url=thumbnail_relative_url,
                             uploaded_at=datetime.utcnow()
                         )
                         db.add(augmented_image_record)
@@ -718,6 +790,35 @@ def create_augmented_dataset_task(self, task_id: int):
             db.add(ann_class)
         
         db.commit()
+        
+        # Select a random image to be the dataset logo
+        try:
+            import random
+            # Refresh the dataset to get the latest state
+            db.refresh(target_dataset)
+            
+            all_dataset_images = db.query(Image).filter(
+                Image.dataset_id == target_dataset.id
+            ).all()
+            
+            logger.info(f"Task {task_id}: Found {len(all_dataset_images)} images for logo selection")
+            
+            if all_dataset_images:
+                random_image = random.choice(all_dataset_images)
+                logger.info(f"Task {task_id}: Selected image {random_image.file_name}, URL: {random_image.url}")
+                
+                target_dataset.logo_url = random_image.url
+                target_dataset.thumbnailUrl = random_image.thumbnail_url or random_image.url
+                db.commit()
+                
+                # Verify it was set
+                db.refresh(target_dataset)
+                logger.info(f"Task {task_id}: Set dataset logo_url={target_dataset.logo_url}, thumbnailUrl={target_dataset.thumbnailUrl}")
+            else:
+                logger.warning(f"Task {task_id}: No images found to set as logo")
+        except Exception as e:
+            logger.error(f"Task {task_id}: Failed to set dataset logo: {e}", exc_info=True)
+            # Don't fail the task if logo setting fails
         
         # Complete the task
         task.status = 'completed'

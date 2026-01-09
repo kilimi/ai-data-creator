@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { useTasks } from '@/hooks/use-tasks';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,6 +50,7 @@ export default function ProjectDatasets() {
   const { project } = useOutletContext<OutletContext>();
   const { api } = useApi();
   const { toast } = useToast();
+  const { tasks } = useTasks(id ? parseInt(id) : undefined);
   
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -111,6 +113,18 @@ export default function ProjectDatasets() {
     fetchProjectDatasets();
     fetchDatasetGroups();
   }, [id]);
+
+  // Refresh datasets when augmentation tasks complete
+  useEffect(() => {
+    const completedAugmentations = tasks.filter(
+      task => task.task_type === 'augmentation' && task.status === 'completed'
+    );
+    
+    if (completedAugmentations.length > 0) {
+      // Refresh datasets to show updated logos/thumbnails
+      fetchProjectDatasets();
+    }
+  }, [tasks.map(t => `${t.id}-${t.status}`).join(',')]);
 
   // Get all unique tags from datasets
   const allTags = React.useMemo(() => {
