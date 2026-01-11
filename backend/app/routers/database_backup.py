@@ -34,8 +34,8 @@ def serialize_model(obj: Any) -> Dict[str, Any]:
             result[column.name] = value
     return result
 
-def get_all_table_data(db: Session) -> Dict[str, List[Dict[str, Any]]]:
-    """Export all data from all tables"""
+def get_all_table_data(db: Session, project_ids: List[int] = None, dataset_ids: List[int] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """Export all data from all tables with optional filtering"""
     data = {}
     
     # Define the order of tables to maintain referential integrity during import
@@ -78,7 +78,22 @@ def get_all_table_data(db: Session) -> Dict[str, List[Dict[str, Any]]]:
                 model_class = models.DatasetGroup
             
             if model_class:
-                records = db.query(model_class).all()
+                query = db.query(model_class)
+                
+                # Apply filters
+                if project_ids:
+                    if table_name == 'projects':
+                        query = query.filter(model_class.id.in_(project_ids))
+                    elif table_name in ['datasets', 'tasks', 'dataset_groups']:
+                        query = query.filter(model_class.project_id.in_(project_ids))
+                
+                if dataset_ids:
+                    if table_name == 'datasets':
+                        query = query.filter(model_class.id.in_(dataset_ids))
+                    elif table_name in ['images', 'image_collections', 'annotation_files', 'annotation_classes', 'annotations']:
+                        query = query.filter(model_class.dataset_id.in_(dataset_ids))
+                
+                records = query.all()
                 data[table_name] = [serialize_model(record) for record in records]
                 logger.info(f"Exported {len(records)} records from {table_name}")
             
@@ -89,13 +104,23 @@ def get_all_table_data(db: Session) -> Dict[str, List[Dict[str, Any]]]:
     return data
 
 @router.get("/database/export")
-async def export_database(db: Session = Depends(get_db)):
-    """Export the entire database to a JSON file"""
+async def export_database(
+    project_ids: str = None,
+    dataset_ids: str = None,
+    db: Session = Depends(get_db)
+):
+    """Export the entire database or filtered subset to a JSON file"""
     try:
         logger.info("Starting database export")
         
-        # Get all table data
-        data = get_all_table_data(db)
+        # Parse comma-separated IDs
+        project_id_list = [int(x) for x in project_ids.split(',')] if project_ids else None
+        dataset_id_list = [int(x) for x in dataset_ids.split(',')] if dataset_ids else None
+        
+        logger.info(f"Exporting with filters - projects: {project_id_list}, datasets: {dataset_id_list}")
+        
+        # Get all table data with filters
+        data = get_all_table_data(db, project_id_list, dataset_id_list)
         
         # Add metadata
         export_data = {
@@ -109,15 +134,17 @@ async def export_database(db: Session = Depends(get_db)):
         
         # Create JSON string
         json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+        json_bytes = json_str.encode('utf-8')
         
         # Create response
         filename = f"ai_data_creator_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
         
         return Response(
-            content=json_str,
+            content=json_bytes,
             media_type="application/json",
             headers={
-                "Content-Disposition": f"attachment; filename={filename}"
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(len(json_bytes))
             }
         )
         
@@ -126,17 +153,27 @@ async def export_database(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 @router.get("/database/export-with-files")
-async def export_database_with_files(db: Session = Depends(get_db)):
-    """Export the entire database along with all project files as a ZIP"""
+async def export_database_with_files(
+    project_ids: str = None,
+    dataset_ids: str = None,
+    db: Session = Depends(get_db)
+):
+    """Export the entire database or filtered subset along with all project files as a ZIP"""
     try:
         logger.info("Starting database export with files")
+        
+        # Parse comma-separated IDs
+        project_id_list = [int(x) for x in project_ids.split(',')] if project_ids else None
+        dataset_id_list = [int(x) for x in dataset_ids.split(',')] if dataset_ids else None
+        
+        logger.info(f"Exporting with filters - projects: {project_id_list}, datasets: {dataset_id_list}")
         
         # Create temporary directory
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             
-            # Export database data
-            data = get_all_table_data(db)
+            # Export database data with filters
+            data = get_all_table_data(db, project_id_list, dataset_id_list)
             export_data = {
                 "metadata": {
                     "export_date": datetime.utcnow().isoformat(),
@@ -152,17 +189,26 @@ async def export_database_with_files(db: Session = Depends(get_db)):
                 json.dump(export_data, f, indent=2, ensure_ascii=False)
             
             # Create ZIP file in memory
+            # Using compression level 1 for faster exports (vs default level 9)
             zip_buffer = io.BytesIO()
             
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as zip_file:
                 # Add database file
                 zip_file.write(db_file, "database.json")
                 
-                # Add project files if they exist
+                # Add project files if they exist (filtered if needed)
                 projects_dir = Path("projects")
                 if projects_dir.exists():
                     for project_file in projects_dir.rglob("*"):
                         if project_file.is_file():
+                            # If filtering by projects, only include those project directories
+                            if project_id_list:
+                                project_folder = project_file.parts[1] if len(project_file.parts) > 1 else None
+                                if project_folder and not project_folder.isdigit():
+                                    continue
+                                if project_folder and int(project_folder) not in project_id_list:
+                                    continue
+                            
                             # Use relative path in ZIP
                             arcname = str(project_file.relative_to("."))
                             zip_file.write(project_file, arcname)
@@ -178,16 +224,26 @@ async def export_database_with_files(db: Session = Depends(get_db)):
                             zip_file.write(data_file, arcname)
                             logger.info(f"Added file to ZIP: {arcname}")
             
+            # IMPORTANT: Get the size AFTER closing the ZipFile
+            # to ensure all data is written to the buffer
             zip_buffer.seek(0)
+            zip_content = zip_buffer.read()
+            zip_size = len(zip_content)
+            
+            logger.info(f"Created ZIP file with size: {zip_size} bytes")
             
             # Create filename
             filename = f"ai_data_creator_full_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
             
+            # Reset buffer for streaming
+            zip_buffer = io.BytesIO(zip_content)
+            
             return StreamingResponse(
-                io.BytesIO(zip_buffer.read()),
+                zip_buffer,
                 media_type="application/zip",
                 headers={
-                    "Content-Disposition": f"attachment; filename={filename}"
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Length": str(zip_size)
                 }
             )
             

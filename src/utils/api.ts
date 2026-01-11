@@ -806,9 +806,20 @@ export class ApiClient {
     return this.request('/database/info');
   }
 
-  async exportDatabase(onProgress?: (progress: number) => void): Promise<void> {
+  async exportDatabase(onProgress?: (progress: number) => void, projectIds?: number[], datasetIds?: number[]): Promise<void> {
     try {
-      const url = `${this.config.baseUrl}/database/export`;
+      // Build URL with query parameters
+      const params = new URLSearchParams();
+      if (projectIds && projectIds.length > 0) {
+        params.append('project_ids', projectIds.join(','));
+      }
+      if (datasetIds && datasetIds.length > 0) {
+        params.append('dataset_ids', datasetIds.join(','));
+      }
+      
+      const queryString = params.toString();
+      const url = `${this.config.baseUrl}/database/export${queryString ? `?${queryString}` : ''}`;
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -832,6 +843,15 @@ export class ApiClient {
       const totalLength = contentLength ? parseInt(contentLength, 10) : 0;
       const chunks: Uint8Array[] = [];
 
+      // For smooth progress updates
+      let lastProgressUpdate = 0;
+
+      // Show initial progress immediately
+      if (onProgress) {
+        onProgress(1);
+        lastProgressUpdate = 1;
+      }
+
       while (true) {
         const { done, value } = await reader.read();
         
@@ -840,46 +860,47 @@ export class ApiClient {
         chunks.push(value);
         receivedLength += value.length;
         
-        if (onProgress) {
-          if (totalLength > 0) {
-            const progress = Math.round((receivedLength / totalLength) * 100);
+        if (onProgress && totalLength > 0) {
+          const progress = Math.min(95, Math.round((receivedLength / totalLength) * 100));
+          // Update whenever progress increases
+          if (progress > lastProgressUpdate) {
             onProgress(progress);
-          } else {
-            // Indeterminate progress - just show that something is happening
-            const cycleProgress = (receivedLength / 1024) % 100; // Cycle through 0-99 based on KB received
-            onProgress(Math.round(cycleProgress));
+            lastProgressUpdate = progress;
           }
+        } else if (onProgress && totalLength === 0) {
+          // If no content length, show indeterminate progress
+          // Show a pulsing progress between 10-90% to indicate activity
+          const estimatedProgress = Math.min(90, 10 + Math.floor((receivedLength / 10000) % 80));
+          onProgress(estimatedProgress);
         }
       }
 
-      // Combine chunks into a single array
-      const allChunks = new Uint8Array(receivedLength);
-      let position = 0;
-      for (const chunk of chunks) {
-        allChunks.set(chunk, position);
-        position += chunk.length;
-      }
+      // Processing stage - show progress
+      if (onProgress) onProgress(96);
 
-      // Create blob and download
-      const blob = new Blob([allChunks], { type: 'application/json' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
+      // Create blob directly from chunks (more efficient than combining into one array)
+      const blob = new Blob(chunks, { type: 'application/json' });
       
+      if (onProgress) onProgress(97);
+
       // Get filename from response headers or use default
       const contentDisposition = response.headers.get('Content-Disposition');
       const filename = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1] || 
                      `ai_data_creator_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.json`;
       
+      if (onProgress) onProgress(98);
+
+      // Create download link
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(downloadUrl);
       
-      if (onProgress) {
-        onProgress(100);
-      }
+      if (onProgress) onProgress(100);
     } catch (error) {
       throw new Error(`Database export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -996,9 +1017,20 @@ export class ApiClient {
     return this.request(`/training/task/${taskId}/status`);
   }
 
-  async exportDatabaseWithFiles(onProgress?: (progress: number) => void): Promise<void> {
+  async exportDatabaseWithFiles(onProgress?: (progress: number) => void, projectIds?: number[], datasetIds?: number[]): Promise<void> {
     try {
-      const url = `${this.config.baseUrl}/database/export-with-files`;
+      // Build URL with query parameters
+      const params = new URLSearchParams();
+      if (projectIds && projectIds.length > 0) {
+        params.append('project_ids', projectIds.join(','));
+      }
+      if (datasetIds && datasetIds.length > 0) {
+        params.append('dataset_ids', datasetIds.join(','));
+      }
+      
+      const queryString = params.toString();
+      const url = `${this.config.baseUrl}/database/export-with-files${queryString ? `?${queryString}` : ''}`;
+      
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -1022,6 +1054,15 @@ export class ApiClient {
       const totalLength = contentLength ? parseInt(contentLength, 10) : 0;
       const chunks: Uint8Array[] = [];
 
+      // For smooth progress updates
+      let lastProgressUpdate = 0;
+
+      // Show initial progress immediately
+      if (onProgress) {
+        onProgress(1);
+        lastProgressUpdate = 1;
+      }
+
       while (true) {
         const { done, value } = await reader.read();
         
@@ -1030,46 +1071,47 @@ export class ApiClient {
         chunks.push(value);
         receivedLength += value.length;
         
-        if (onProgress) {
-          if (totalLength > 0) {
-            const progress = Math.round((receivedLength / totalLength) * 100);
+        if (onProgress && totalLength > 0) {
+          const progress = Math.min(95, Math.round((receivedLength / totalLength) * 100));
+          // Update whenever progress increases
+          if (progress > lastProgressUpdate) {
             onProgress(progress);
-          } else {
-            // Indeterminate progress - just show that something is happening
-            const cycleProgress = (receivedLength / 1024) % 100; // Cycle through 0-99 based on KB received
-            onProgress(Math.round(cycleProgress));
+            lastProgressUpdate = progress;
           }
+        } else if (onProgress && totalLength === 0) {
+          // If no content length, show indeterminate progress
+          // Show a pulsing progress between 10-90% to indicate activity
+          const estimatedProgress = Math.min(90, 10 + Math.floor((receivedLength / 10000) % 80));
+          onProgress(estimatedProgress);
         }
       }
 
-      // Combine chunks into a single array
-      const allChunks = new Uint8Array(receivedLength);
-      let position = 0;
-      for (const chunk of chunks) {
-        allChunks.set(chunk, position);
-        position += chunk.length;
-      }
+      // Processing stage - show progress
+      if (onProgress) onProgress(96);
 
-      // Create blob and download
-      const blob = new Blob([allChunks], { type: 'application/zip' });
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = downloadUrl;
+      // Create blob directly from chunks (more efficient than combining into one array)
+      const blob = new Blob(chunks, { type: 'application/zip' });
       
+      if (onProgress) onProgress(97);
+
       // Get filename from response headers or use default
       const contentDisposition = response.headers.get('Content-Disposition');
       const filename = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1] || 
                      `ai_data_creator_full_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.zip`;
       
+      if (onProgress) onProgress(98);
+
+      // Create download link
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
       link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(downloadUrl);
       
-      if (onProgress) {
-        onProgress(100);
-      }
+      if (onProgress) onProgress(100);
     } catch (error) {
       throw new Error(`Database export with files failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
