@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import List, Optional
+from datetime import datetime
 import json
 import os
 import base64
@@ -294,8 +296,27 @@ async def serve_data_files(file_path: str, request: Request):
 # app.mount("/static/projects", StaticFiles(directory="projects"), name="projects")
 
 @app.get("/health-check")
-async def health_check():
-    return {"status": "ok"}
+async def health_check(db: Session = Depends(get_db)):
+    """Health check endpoint that verifies both API and database connectivity"""
+    try:
+        # Test database connection by executing a simple query
+        db.execute(text("SELECT 1"))
+        db.commit()
+        
+        return {
+            "status": "ok",
+            "database": "connected",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        # Still return 200 but indicate database issue
+        return {
+            "status": "degraded",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
 
 # Import routers

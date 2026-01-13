@@ -14,109 +14,307 @@ export class ApiClient {
   /**
    * Helper method to make API requests
    */
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
-    try {
-      const url = `${this.config.baseUrl}${endpoint}`;
-      console.log(`Making request to: ${url}`);
-      
-      // Set default headers if not provided
-      if (!options.headers) {
-        options.headers = {
-          'Accept': 'application/json',
-        };
-      }
-      
-      // Don't set Content-Type header for FormData
-      if (!(options.body instanceof FormData)) {
-        (options.headers as Record<string, string>)['Content-Type'] = 'application/json';
-      }
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
-      
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-        credentials: 'include', // Add this to handle cookies if needed
-      });
-      
-      clearTimeout(timeoutId);
-
-      let data;
+  private async request<T>(endpoint: string, options: RequestInit = {}, retries: number = 2): Promise<ApiResponse<T>> {
+    const url = `${this.config.baseUrl}${endpoint}`;
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        data = await response.json();
-      } catch (e) {
-        throw new Error(`Failed to parse response: ${e instanceof Error ? e.message : 'Unknown error'}`);
-      }
+        console.log(`Making request to: ${url} (attempt ${attempt}/${retries})`);
+        
+        // Set default headers if not provided
+        if (!options.headers) {
+          options.headers = {
+            'Accept': 'application/json',
+          };
+        }
+        
+        // Don't set Content-Type header for FormData
+        if (!(options.body instanceof FormData)) {
+          (options.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        }
 
-      if (!response.ok) {
-        const errorMessage = data.detail || `${response.status} ${response.statusText}`;
-        console.error("API error:", data);
-        return {
-          success: false,
-          error: errorMessage
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
+        
+        let response: Response;
+        try {
+          response = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+            credentials: 'include', // Add this to handle cookies if needed
+            cache: 'no-cache', // Prevent caching issues
+          });
+        } catch (fetchError) {
+          // Catch network errors at fetch level (including CONTENT_LENGTH_MISMATCH)
+          const fetchErrorMessage = fetchError instanceof Error ? fetchError.message : String(fetchError);
+          
+          // Check if it's a content length error (browser throws TypeError for these)
+          if (fetchError instanceof TypeError && 
+              (fetchErrorMessage.includes('CONTENT_LENGTH') || 
+               fetchErrorMessage.includes('CHUNKED_ENCODING') ||
+               fetchErrorMessage.includes('ERR_CONTENT_LENGTH') ||
+               fetchErrorMessage.includes('ERR_INCOMPLETE'))) {
+            throw new Error(`Network error: Server response was incomplete (${fetchErrorMessage}). The backend may have crashed or timed out.`);
+          }
+          
+          // Re-throw other fetch errors
+          throw fetchError;
+        }
+        
+        clearTimeout(timeoutId);
+        
+        // Log response details for debugging
+        if (!response.ok || attempt === retries) {
+          console.debug(`Response status: ${response.status} ${response.statusText}`);
+          console.debug(`Content-Type: ${response.headers.get('content-type')}`);
+          console.debug(`Content-Length: ${response.headers.get('content-length')}`);
+        }
+
+        // Check if response has content
+        const contentType = response.headers.get('content-type') || '';
+        const contentLength = response.headers.get('content-length');
+        const hasJsonContent = contentType.includes('application/json');
+        
+        // Handle empty responses
+        if (contentLength === '0' || (!hasJsonContent && response.status === 204)) {
+          // No content response (204 No Content)
+          if (response.ok) {
+            return { 
+              success: true, 
+              data: null as T 
+            };
+          }
+        }
+
+        let data;
+        try {
+          // Check if there's actually content to read
+          const text = await response.text();
+          
+          if (!text || text.trim() === '') {
+            // Empty response
+            if (response.ok) {
+              return { 
+                success: true, 
+                data: null as T 
+              };
+            } else {
+              throw new Error(`Empty response from server (${response.status} ${response.statusText})`);
+            }
+          }
+          
+          // Try to parse as JSON
+          try {
+            data = JSON.parse(text);
+          } catch (parseError) {
+            // If it's not JSON, check if it's an HTML error page
+            if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+              throw new Error(`Server returned HTML instead of JSON. This usually means the endpoint doesn't exist or there's a server error. Status: ${response.status}`);
+            }
+            throw new Error(`Failed to parse JSON response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}. Response preview: ${text.substring(0, 100)}`);
+          }
+        } catch (e) {
+          // Re-throw with more context
+          if (e instanceof Error) {
+            throw e;
+          }
+          throw new Error(`Failed to parse response: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        }
+
+        if (!response.ok) {
+          const errorMessage = data.detail || `${response.status} ${response.statusText}`;
+          console.error("API error:", data);
+          return {
+            success: false,
+            error: errorMessage
+          };
+        }
+
+        // If the response has a success field, use it directly
+        if (typeof data.success === 'boolean') {
+          return data as ApiResponse<T>;
+        }
+
+        // Otherwise wrap the data in a success response
+        return { 
+          success: true, 
+          data: data 
         };
+      } catch (error) {
+        // Check if it's an AbortError (timeout)
+        const isAbortError = error instanceof Error && error.name === 'AbortError';
+        
+        // Only log non-abort errors or if it's the final attempt
+        if (!isAbortError || attempt === retries) {
+          console.error(`API Request Error (attempt ${attempt}/${retries}):`, error);
+        } else {
+          // Silently handle abort errors during retries (expected during long operations)
+          console.debug(`Request aborted (attempt ${attempt}/${retries}), retrying...`);
+        }
+        
+        // Check if it's a network error that might benefit from retry
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isNetworkError = error instanceof TypeError || 
+                              (error instanceof Error && (
+                                errorMessage.includes('Failed to fetch') ||
+                                errorMessage.includes('NetworkError') ||
+                                errorMessage.includes('network') ||
+                                errorMessage.includes('CONTENT_LENGTH_MISMATCH') ||
+                                errorMessage.includes('INCOMPLETE_CHUNKED_ENCODING') ||
+                                errorMessage.includes('ERR_CONTENT_LENGTH_MISMATCH') ||
+                                errorMessage.includes('ERR_INCOMPLETE_CHUNKED_ENCODING')
+                              ));
+        
+        // Check for specific browser network errors (these appear in the error message)
+        const isContentLengthError = errorMessage.includes('CONTENT_LENGTH') || 
+                                    errorMessage.includes('CHUNKED_ENCODING') ||
+                                    errorMessage.includes('ERR_CONTENT_LENGTH') ||
+                                    errorMessage.includes('ERR_INCOMPLETE');
+        
+        if (isContentLengthError) {
+          console.warn(`Content-Length mismatch detected (attempt ${attempt}/${retries}). This usually means the server response was cut off.`);
+        }
+        
+        // If this is the last attempt or not a network/abort error, return error
+        if (attempt === retries || (!isNetworkError && !isAbortError)) {
+          if (isAbortError) {
+            return {
+              success: false,
+              error: 'Request timed out. The server may be busy. Please try again.'
+            };
+          }
+          
+          // Provide helpful error message for content length errors
+          if (isContentLengthError) {
+            return {
+              success: false,
+              error: 'Server response was incomplete. The backend may have crashed or timed out. Please check backend logs and try again.'
+            };
+          }
+          
+          return { 
+            success: false, 
+            error: error instanceof Error ? error.message : 'Unknown API error'
+          };
+        }
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
       }
-
-      // If the response has a success field, use it directly
-      if (typeof data.success === 'boolean') {
-        return data as ApiResponse<T>;
-      }
-
-      // Otherwise wrap the data in a success response
-      return { 
-        success: true, 
-        data: data 
-      };
-    } catch (error) {
-      console.error('API Request Error:', error);
-      if (error instanceof Error && error.name === 'AbortError') {
-        return {
-          success: false,
-          error: 'Request timed out. Please check your connection and try again.'
-        };
-      }
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown API error'
-      };
     }
+    
+    // Should never reach here, but TypeScript needs it
+    return {
+      success: false,
+      error: 'Request failed after multiple attempts'
+    };
   }
 
-  // Test connection to the API
-  async testConnection(): Promise<ApiResponse<{ status: string }>> {
-    try {
-      const url = `${this.config.baseUrl}/health-check`;
-      console.log(`Testing connection to: ${url}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (response.ok) {
-        return { success: true, data: { status: 'connected' } };
-      } else {
-        throw new Error(`API Error: ${response.status} ${response.statusText}`);
-      }
-    } catch (error) {
-      console.error('API Connection Test Error:', error);
-      if (error instanceof Error && error.name === 'AbortError') {
-        return {
-          success: false,
-          error: 'Connection test timed out. Please check your server and try again.'
-        };
-      }
-      return { 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown API error' 
+  // Test connection to the API with retry logic
+  async testConnection(retries: number = 3): Promise<ApiResponse<{ status: string; database?: string }>> {
+    const url = `${this.config.baseUrl}/health-check`;
+    console.log(`Testing connection to: ${url}`);
+    console.log(`API Base URL configured as: ${this.config.baseUrl}`);
+    
+    // Warn if trying to connect to frontend port
+    if (this.config.baseUrl.includes(':8080')) {
+      console.error('⚠️ WARNING: API URL points to port 8080 (frontend). Backend should be on port 9999!');
+      return {
+        success: false,
+        error: `Invalid API URL: ${this.config.baseUrl}. Port 8080 is the frontend. Backend API should be on port 9999. Please check Settings.`
       };
     }
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      let controller: AbortController | null = null;
+      let timeoutId: NodeJS.Timeout | null = null;
+      
+      try {
+        controller = new AbortController();
+        timeoutId = setTimeout(() => {
+          if (controller) {
+            controller.abort();
+          }
+        }, 15000); // 15 second timeout (increased from 10)
+        
+        const response = await fetch(url, {
+          method: 'GET',
+          signal: controller.signal,
+          cache: 'no-cache', // Prevent caching of health checks
+        });
+        
+        // Clear timeout if we got a response
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
+        if (response.ok) {
+          const data = await response.json();
+          const isHealthy = data.status === 'ok' && data.database === 'connected';
+          
+          if (!isHealthy) {
+            console.warn('Health check returned degraded status:', data);
+          }
+          
+          return { 
+            success: isHealthy, 
+            data: { 
+              status: data.status || 'connected',
+              database: data.database || 'unknown'
+            },
+            error: isHealthy ? undefined : `Database connection issue: ${data.database || 'unknown'}`
+          };
+        } else {
+          throw new Error(`API Error: ${response.status} ${response.statusText}`);
+        }
+      } catch (error) {
+        // Clean up timeout
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        
+        // Check if it's an AbortError (timeout or manual abort)
+        const isAbortError = error instanceof Error && 
+                            (error.name === 'AbortError' || error.message.includes('aborted'));
+        
+        if (isAbortError) {
+          console.warn(`Connection test timed out or was aborted (attempt ${attempt}/${retries})`);
+          console.warn(`Trying to connect to: ${url}`);
+          console.warn(`Make sure the backend is running: docker-compose up (in backend/ directory)`);
+          
+          // If this is the last attempt, return error with helpful message
+          if (attempt === retries) {
+            return {
+              success: false,
+              error: `Connection test timed out after ${retries} attempts. Trying to connect to: ${url}. Make sure the backend is running on port 9999 (check with: docker-compose ps in backend/ directory).`
+            };
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+          continue; // Retry the connection
+        }
+        
+        console.error(`API Connection Test Error (attempt ${attempt}/${retries}):`, error);
+        
+        // If this is the last attempt, return error
+        if (attempt === retries) {
+          return { 
+            success: false, 
+            error: error instanceof Error ? error.message : 'Unknown API error' 
+          };
+        }
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      }
+    }
+    
+    return {
+      success: false,
+      error: 'Connection test failed after multiple attempts'
+    };
   }
 
   // Projects endpoints
@@ -806,7 +1004,12 @@ export class ApiClient {
     return this.request('/database/info');
   }
 
-  async exportDatabase(onProgress?: (progress: number) => void, projectIds?: number[], datasetIds?: number[]): Promise<void> {
+  async exportDatabase(
+    onProgress?: (progress: number) => void, 
+    projectIds?: number[], 
+    datasetIds?: number[],
+    abortSignal?: AbortSignal
+  ): Promise<void> {
     try {
       // Build URL with query parameters
       const params = new URLSearchParams();
@@ -825,6 +1028,7 @@ export class ApiClient {
         headers: {
           'Accept': 'application/json',
         },
+        signal: abortSignal,
       });
 
       if (!response.ok) {
@@ -853,6 +1057,12 @@ export class ApiClient {
       }
 
       while (true) {
+        // Check if cancelled
+        if (abortSignal?.aborted) {
+          reader.cancel();
+          throw new Error('Export cancelled by user');
+        }
+        
         const { done, value } = await reader.read();
         
         if (done) break;
@@ -873,6 +1083,11 @@ export class ApiClient {
           const estimatedProgress = Math.min(90, 10 + Math.floor((receivedLength / 10000) % 80));
           onProgress(estimatedProgress);
         }
+      }
+
+      // Check if cancelled before processing
+      if (abortSignal?.aborted) {
+        throw new Error('Export cancelled by user');
       }
 
       // Processing stage - show progress
@@ -902,6 +1117,20 @@ export class ApiClient {
       
       if (onProgress) onProgress(100);
     } catch (error) {
+      // Don't throw error if it was cancelled
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Export cancelled by user');
+      }
+      
+      // Check for content length errors
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('CONTENT_LENGTH') || 
+          errorMessage.includes('CHUNKED_ENCODING') ||
+          errorMessage.includes('ERR_CONTENT_LENGTH') ||
+          errorMessage.includes('ERR_INCOMPLETE')) {
+        throw new Error('Export failed: Server response was incomplete. The backend may have crashed or run out of memory. Please check backend logs and try exporting a smaller subset of data.');
+      }
+      
       throw new Error(`Database export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -1017,7 +1246,12 @@ export class ApiClient {
     return this.request(`/training/task/${taskId}/status`);
   }
 
-  async exportDatabaseWithFiles(onProgress?: (progress: number) => void, projectIds?: number[], datasetIds?: number[]): Promise<void> {
+  async exportDatabaseWithFiles(
+    onProgress?: (progress: number) => void, 
+    projectIds?: number[], 
+    datasetIds?: number[],
+    abortSignal?: AbortSignal
+  ): Promise<void> {
     try {
       // Build URL with query parameters
       const params = new URLSearchParams();
@@ -1036,6 +1270,7 @@ export class ApiClient {
         headers: {
           'Accept': 'application/zip',
         },
+        signal: abortSignal,
       });
 
       if (!response.ok) {
@@ -1064,6 +1299,12 @@ export class ApiClient {
       }
 
       while (true) {
+        // Check if cancelled
+        if (abortSignal?.aborted) {
+          reader.cancel();
+          throw new Error('Export cancelled by user');
+        }
+        
         const { done, value } = await reader.read();
         
         if (done) break;
@@ -1084,6 +1325,11 @@ export class ApiClient {
           const estimatedProgress = Math.min(90, 10 + Math.floor((receivedLength / 10000) % 80));
           onProgress(estimatedProgress);
         }
+      }
+
+      // Check if cancelled before processing
+      if (abortSignal?.aborted) {
+        throw new Error('Export cancelled by user');
       }
 
       // Processing stage - show progress
@@ -1113,6 +1359,10 @@ export class ApiClient {
       
       if (onProgress) onProgress(100);
     } catch (error) {
+      // Don't throw error if it was cancelled
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Export cancelled by user');
+      }
       throw new Error(`Database export with files failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }

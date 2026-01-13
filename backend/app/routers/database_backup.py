@@ -132,19 +132,39 @@ async def export_database(
             "data": data
         }
         
-        # Create JSON string
-        json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
-        json_bytes = json_str.encode('utf-8')
+        # Use streaming JSON encoding for better memory efficiency
+        # Create a generator that yields JSON chunks
+        def generate_json():
+            """Generator function to stream JSON data in chunks"""
+            try:
+                # Use json.dumps but yield in chunks to avoid loading everything in memory at once
+                # For very large datasets, we'll still need to serialize, but we can yield chunks
+                json_str = json.dumps(export_data, indent=2, ensure_ascii=False, default=str)
+                json_bytes = json_str.encode('utf-8')
+                
+                # Yield in 64KB chunks for efficient streaming
+                chunk_size = 64 * 1024
+                for i in range(0, len(json_bytes), chunk_size):
+                    yield json_bytes[i:i + chunk_size]
+            except Exception as e:
+                logger.error(f"Error generating JSON stream: {str(e)}")
+                # Yield error as JSON
+                error_json = json.dumps({"error": f"Failed to generate export: {str(e)}"}).encode('utf-8')
+                yield error_json
+                raise
         
-        # Create response
+        # Create filename
         filename = f"ai_data_creator_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
         
-        return Response(
-            content=json_bytes,
+        # Use StreamingResponse with chunked encoding (don't set Content-Length)
+        # This allows the browser to handle incomplete responses better
+        return StreamingResponse(
+            generate_json(),
             media_type="application/json",
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
-                "Content-Length": str(len(json_bytes))
+                # Don't set Content-Length for streaming - let it be chunked
+                # This prevents ERR_CONTENT_LENGTH_MISMATCH errors
             }
         )
         

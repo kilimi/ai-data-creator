@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Download, Upload, Database, AlertTriangle, Info, FileArchive, Trash2, Skull, ChevronRight, ChevronDown, Copy, Check } from "lucide-react";
+import { useExport } from "@/contexts/ExportContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
@@ -64,6 +65,7 @@ export function DatabaseManager({
 }: DatabaseManagerProps = {}) {
   const { api } = useApi();
   const { toast } = useToast();
+  const { setIsExporting: setGlobalExporting } = useExport();
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
@@ -84,6 +86,28 @@ export function DatabaseManager({
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("select");
+  const [linuxExpanded, setLinuxExpanded] = useState(false);
+  const [windowsExpanded, setWindowsExpanded] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Cleanup on unmount or dialog close
+  useEffect(() => {
+    return () => {
+      // Cancel any ongoing export when component unmounts
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  // Handle dialog close - cancel export if in progress
+  const handleDialogClose = (open: boolean) => {
+    if (!open && isExporting) {
+      // Cancel export if dialog is being closed during export
+      handleCancelExport();
+    }
+    setShowExportDialog(open);
+  };
 
   const fetchDatabaseInfo = async () => {
     if (!api) return;
@@ -127,12 +151,20 @@ export function DatabaseManager({
       return;
     }
 
+    // Create new AbortController for this export
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     setIsExporting(true);
+    setGlobalExporting(true); // Pause background polling
     setExportProgress(0);
     
     try {
       const onProgress = (progress: number) => {
-        setExportProgress(progress);
+        // Don't update progress if cancelled
+        if (!abortController.signal.aborted) {
+          setExportProgress(progress);
+        }
       };
 
       // Prepare filter parameters
@@ -140,27 +172,49 @@ export function DatabaseManager({
       const datasetIds = Array.from(selectedDatasets);
 
       if (includeFiles) {
-        await api.exportDatabaseWithFiles(onProgress, projectIds, datasetIds);
+        await api.exportDatabaseWithFiles(onProgress, projectIds, datasetIds, abortController.signal);
       } else {
-        await api.exportDatabase(onProgress, projectIds, datasetIds);
+        await api.exportDatabase(onProgress, projectIds, datasetIds, abortController.signal);
       }
       
-      toast({
-        title: "Export Complete",
-        description: `Database export ${includeFiles ? 'with files' : 'data only'} completed successfully.`,
-      });
-      setShowExportDialog(false);
+      // Only show success if not cancelled
+      if (!abortController.signal.aborted) {
+        toast({
+          title: "Export Complete",
+          description: `Database export ${includeFiles ? 'with files' : 'data only'} completed successfully.`,
+        });
+        setShowExportDialog(false);
+      }
     } catch (error) {
-      console.error('Export failed:', error);
-      toast({
-        title: "Export Failed",
-        description: error instanceof Error ? error.message : "Failed to export database",
-        variant: "destructive",
-      });
+      // Only show error if it wasn't a cancellation
+      if (error instanceof Error && error.message.includes('cancelled')) {
+        toast({
+          title: "Export Cancelled",
+          description: "The export was cancelled.",
+        });
+      } else {
+        console.error('Export failed:', error);
+        toast({
+          title: "Export Failed",
+          description: error instanceof Error ? error.message : "Failed to export database",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsExporting(false);
+      setGlobalExporting(false); // Resume background polling
       setExportProgress(0);
+      abortControllerRef.current = null;
     }
+  };
+
+  const handleCancelExport = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setIsExporting(false);
+    setGlobalExporting(false); // Resume background polling
+    setExportProgress(0);
   };
 
   const handleImportDatabase = async (file: File) => {
@@ -272,10 +326,60 @@ export function DatabaseManager({
   };
 
   return (
-    <div className="flex items-center gap-3">
-      {/* Export Dialog */}
-      {showExport && (
-        <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
+    <>
+      {/* Blocking overlay during export */}
+      {isExporting && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center">
+          <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border-2 border-primary">
+            <div className="text-center space-y-4">
+              <div className="flex items-center justify-center gap-3">
+                <Database className="w-8 h-8 text-primary animate-pulse" />
+                <div className="text-lg font-semibold">Exporting Database</div>
+              </div>
+              <div className="space-y-2">
+                <div className="w-full bg-secondary rounded-full h-2.5">
+                  <div 
+                    className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-out" 
+                    style={{ width: `${exportProgress}%` }}
+                  />
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {exportProgress === 100 ? "100%" : `${exportProgress}%`}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {exportProgress < 95 
+                  ? "Downloading database export..." 
+                  : exportProgress < 100
+                  ? "Processing file for download..."
+                  : "Export complete! Your download should start shortly."}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCancelExport}
+                className="w-full"
+              >
+                Cancel Export
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <div className="flex items-center gap-3">
+        {/* Export Dialog */}
+        {showExport && (
+          <Dialog 
+            open={showExportDialog} 
+            onOpenChange={(open) => {
+              // Prevent closing during export
+              if (!open && isExporting) {
+                return;
+              }
+              handleDialogClose(open);
+            }}
+          >
         <DialogTrigger asChild>
           <Button 
             variant="outline" 
@@ -290,7 +394,21 @@ export function DatabaseManager({
             Export Database
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogContent 
+          className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col"
+          onInteractOutside={(e) => {
+            // Prevent closing during export
+            if (isExporting) {
+              e.preventDefault();
+            }
+          }}
+          onEscapeKeyDown={(e) => {
+            // Prevent closing during export
+            if (isExporting) {
+              e.preventDefault();
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Database className="w-5 h-5" />
@@ -559,61 +677,99 @@ export function DatabaseManager({
                       <div className="flex-1">
                         <p className="text-sm font-medium mb-2">Copy Image Directories</p>
                         
-                        <Collapsible>
+                        <Collapsible open={linuxExpanded} onOpenChange={setLinuxExpanded}>
                           <CollapsibleTrigger asChild>
                             <Button variant="outline" size="sm" className="mb-2">
-                              <ChevronRight className="w-4 h-4 mr-1" />
+                              {linuxExpanded ? (
+                                <ChevronDown className="w-4 h-4 mr-1" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 mr-1" />
+                              )}
                               Linux / Mac Commands
                             </Button>
                           </CollapsibleTrigger>
                           <CollapsibleContent>
                             <div className="space-y-2">
-                              <div className="relative">
-                                <pre className="bg-muted p-3 rounded text-xs font-mono overflow-x-auto">
+                              <div className="relative border rounded-lg bg-muted overflow-hidden">
+                                <div className="flex items-start justify-between p-2 border-b bg-background">
+                                  <span className="text-xs text-muted-foreground font-medium">Commands</span>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="h-7"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText("rsync -av /home/lulu/projects/ai-data-creator/backend/projects/ /destination/projects/\nrsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/");
+                                      setCopiedCommand("linux");
+                                      setTimeout(() => setCopiedCommand(null), 2000);
+                                    }}
+                                    title={copiedCommand === "linux" ? "Copied!" : "Copy commands"}
+                                  >
+                                    {copiedCommand === "linux" ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5 mr-1.5 text-green-600" />
+                                        <span className="text-xs text-green-600">Copied</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="w-3.5 h-3.5 mr-1.5" />
+                                        <span className="text-xs">Copy</span>
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                                <pre className="p-3 text-xs font-mono overflow-x-auto max-h-32 overflow-y-auto">
 rsync -av /home/lulu/projects/ai-data-creator/backend/projects/ /destination/projects/
 rsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/</pre>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="absolute top-2 right-2"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText("rsync -av /home/lulu/projects/ai-data-creator/backend/projects/ /destination/projects/\nrsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/");
-                                    setCopiedCommand("linux");
-                                    setTimeout(() => setCopiedCommand(null), 2000);
-                                  }}
-                                >
-                                  {copiedCommand === "linux" ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                </Button>
                               </div>
                             </div>
                           </CollapsibleContent>
                         </Collapsible>
                         
-                        <Collapsible>
+                        <Collapsible open={windowsExpanded} onOpenChange={setWindowsExpanded}>
                           <CollapsibleTrigger asChild>
                             <Button variant="outline" size="sm">
-                              <ChevronRight className="w-4 h-4 mr-1" />
+                              {windowsExpanded ? (
+                                <ChevronDown className="w-4 h-4 mr-1" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 mr-1" />
+                              )}
                               Windows PowerShell Commands
                             </Button>
                           </CollapsibleTrigger>
                           <CollapsibleContent>
                             <div className="space-y-2 mt-2">
-                              <div className="relative">
-                                <pre className="bg-muted p-3 rounded text-xs font-mono overflow-x-auto">
+                              <div className="relative border rounded-lg bg-muted overflow-hidden">
+                                <div className="flex items-start justify-between p-2 border-b bg-background">
+                                  <span className="text-xs text-muted-foreground font-medium">Commands</span>
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    className="h-7"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText("Copy-Item -Recurse C:\\home\\lulu\\projects\\ai-data-creator\\backend\\projects\\ C:\\destination\\projects\\\nCopy-Item -Recurse C:\\home\\lulu\\projects\\ai-data-creator\\backend\\data\\ C:\\destination\\data\\");
+                                      setCopiedCommand("windows");
+                                      setTimeout(() => setCopiedCommand(null), 2000);
+                                    }}
+                                    title={copiedCommand === "windows" ? "Copied!" : "Copy commands"}
+                                  >
+                                    {copiedCommand === "windows" ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5 mr-1.5 text-green-600" />
+                                        <span className="text-xs text-green-600">Copied</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="w-3.5 h-3.5 mr-1.5" />
+                                        <span className="text-xs">Copy</span>
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                                <pre className="p-3 text-xs font-mono overflow-x-auto max-h-32 overflow-y-auto">
 Copy-Item -Recurse C:\home\lulu\projects\ai-data-creator\backend\projects\ C:\destination\projects\
 Copy-Item -Recurse C:\home\lulu\projects\ai-data-creator\backend\data\ C:\destination\data\</pre>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="absolute top-2 right-2"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText("Copy-Item -Recurse C:\\home\\lulu\\projects\\ai-data-creator\\backend\\projects\\ C:\\destination\\projects\\\nCopy-Item -Recurse C:\\home\\lulu\\projects\\ai-data-creator\\backend\\data\\ C:\\destination\\data\\");
-                                    setCopiedCommand("windows");
-                                    setTimeout(() => setCopiedCommand(null), 2000);
-                                  }}
-                                >
-                                  {copiedCommand === "windows" ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                </Button>
                               </div>
                             </div>
                           </CollapsibleContent>
@@ -654,6 +810,16 @@ Copy-Item -Recurse C:\home\lulu\projects\ai-data-creator\backend\data\ C:\destin
                       ? "Processing file for download..."
                       : "Export complete! Your download should start shortly."}
                   </p>
+                  <div className="flex justify-center pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelExport}
+                      className="w-full"
+                    >
+                      Cancel Export
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -858,6 +1024,7 @@ Copy-Item -Recurse C:\home\lulu\projects\ai-data-creator\backend\data\ C:\destin
           <span className="sr-only">Database Info</span>
         </Button>
       )}
-    </div>
+      </div>
+    </>
   );
 }

@@ -99,13 +99,19 @@ export const ApiSettings = () => {
       const apiClient = new ApiClient({ ...API_CONFIG, baseUrl: apiUrl });
       const response = await apiClient.getDatasets();
       
-      if (response.success && response.data) {
-        setDatasets(response.data);
+      if (response.success) {
+        // Handle both array and null responses
+        setDatasets(response.data || []);
       } else {
-        throw new Error(response.error || "Failed to fetch datasets");
+        const errorMsg = response.error || "Failed to fetch datasets";
+        console.error('Failed to load datasets:', errorMsg);
+        // Don't throw - just log, so the UI doesn't break
+        setDatasets([]);
       }
     } catch (error) {
       console.error('Failed to load datasets:', error);
+      // Set empty array on error so UI doesn't break
+      setDatasets([]);
     } finally {
       setIsLoadingDatasets(false);
     }

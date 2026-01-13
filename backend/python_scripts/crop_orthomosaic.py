@@ -96,10 +96,15 @@ def process_annotations_for_crop(annotation_gdf, shape_id, output_dir, transform
         if manual_class_name not in categories_dict:
             categories_dict[manual_class_name] = len(categories_dict) + 1
     elif class_column and class_column in intersecting.columns:
-        unique_classes = intersecting[class_column].unique()
+        # Get unique class values, filtering out None/NaN/empty values
+        unique_classes = intersecting[class_column].dropna().unique()
         for cls in unique_classes:
-            if str(cls) not in categories_dict:
-                categories_dict[str(cls)] = len(categories_dict) + 1
+            cls_str = str(cls).strip()
+            if cls_str and cls_str not in categories_dict:
+                categories_dict[cls_str] = len(categories_dict) + 1
+        # Add default "object" category if no valid classes found
+        if len(categories_dict) == 0:
+            categories_dict["object"] = 1
     else:
         if "object" not in categories_dict:
             categories_dict["object"] = 1
@@ -147,10 +152,36 @@ def process_annotations_for_crop(annotation_gdf, shape_id, output_dir, transform
             # Get category ID
             if manual_class_name:
                 cat_id = categories_dict[manual_class_name]
-            elif class_column and class_column in row:
-                cat_id = categories_dict.get(str(row[class_column]), categories_dict.get("object", 1))
+            elif class_column:
+                # Try to get class name from the specified column
+                try:
+                    if class_column in row.index:
+                        class_value = row[class_column]
+                        # Handle None, NaN, or empty values
+                        if pd.notna(class_value) and str(class_value).strip():
+                            class_str = str(class_value).strip()
+                            # Add the class to categories_dict if it doesn't exist
+                            if class_str not in categories_dict:
+                                categories_dict[class_str] = len(categories_dict) + 1
+                            cat_id = categories_dict[class_str]
+                        else:
+                            # Use default category for empty/invalid values
+                            if "object" not in categories_dict:
+                                categories_dict["object"] = len(categories_dict) + 1
+                            cat_id = categories_dict["object"]
+                    else:
+                        if "object" not in categories_dict:
+                            categories_dict["object"] = len(categories_dict) + 1
+                        cat_id = categories_dict["object"]
+                except Exception as e:
+                    print(f"Warning: Error reading class from column '{class_column}': {e}")
+                    if "object" not in categories_dict:
+                        categories_dict["object"] = len(categories_dict) + 1
+                    cat_id = categories_dict["object"]
             else:
-                cat_id = categories_dict.get("object", 1)
+                if "object" not in categories_dict:
+                    categories_dict["object"] = len(categories_dict) + 1
+                cat_id = categories_dict["object"]
             
             # Add annotation
             annotations_list.append({
@@ -169,6 +200,54 @@ def process_annotations_for_crop(annotation_gdf, shape_id, output_dir, transform
     else:
         return None, annotation_id, categories_dict
 
+def detect_class_column(gdf):
+    """Automatically detect the column name that likely contains class names"""
+    # Common attribute names for class information
+    common_names = ['class', 'classname', 'class_name', 'className', 'CLASS', 'CLASSNAME', 
+                    'label', 'Label', 'LABEL', 'category', 'Category', 'CATEGORY',
+                    'type', 'Type', 'TYPE', 'name', 'Name', 'NAME']
+    
+    # First try exact matches
+    for col_name in common_names:
+        if col_name in gdf.columns:
+            return col_name
+    
+    # Then try case-insensitive partial matches
+    for col in gdf.columns:
+        col_lower = col.lower()
+        if any(name.lower() in col_lower for name in ['class', 'label', 'category', 'type']):
+            return col
+    
+    return None
+
+def inspect_shapefile_attributes(shapefile_path):
+    """Inspect and print shapefile attributes to help identify class columns"""
+    gdf = gpd.read_file(shapefile_path)
+    print(f"\n📋 Shapefile attributes for: {shapefile_path}")
+    print(f"   Total features: {len(gdf)}")
+    print(f"   Geometry type: {gdf.geometry.geom_type.unique()}")
+    print(f"\n   Available columns:")
+    
+    for col in gdf.columns:
+        if col != 'geometry':
+            # Show column name, type, and sample values
+            dtype = gdf[col].dtype
+            unique_count = gdf[col].nunique()
+            sample_values = gdf[col].unique()[:5]
+            print(f"      - {col} ({dtype}): {unique_count} unique values")
+            print(f"        Sample values: {list(sample_values)}")
+    
+    # Try to auto-detect class column
+    detected_col = detect_class_column(gdf)
+    if detected_col:
+        print(f"\n   ✓ Auto-detected class column: '{detected_col}'")
+        unique_classes = gdf[detected_col].unique()
+        print(f"   Classes found: {list(unique_classes)}")
+    else:
+        print(f"\n   ⚠ No class column auto-detected. You may need to specify --annotation-class-column")
+    
+    return gdf, detected_col
+
 def crop_and_save(orthomosaic_path, shapefile_path, output_dir, target_crs, save_bands,
                   annotation_shapefile=None, annotation_class_column=None, annotation_class_name=None, bgr_to_rgb=False, only_annotated=False):
     shapes = gpd.read_file(shapefile_path)
@@ -184,7 +263,22 @@ def crop_and_save(orthomosaic_path, shapefile_path, output_dir, target_crs, save
     image_id_counter = 1
     
     if annotation_shapefile:
-        annotation_gdf = gpd.read_file(annotation_shapefile)
+        # Inspect shapefile and auto-detect class column if not specified
+        annotation_gdf, detected_class_col = inspect_shapefile_attributes(annotation_shapefile)
+        
+        # Use detected column if no column was manually specified
+        if annotation_class_column is None and detected_class_col is not None:
+            annotation_class_column = detected_class_col
+            print(f"\n✓ Using auto-detected class column: '{annotation_class_column}'")
+        elif annotation_class_column:
+            print(f"\n✓ Using manually specified class column: '{annotation_class_column}'")
+            # Verify the column exists
+            if annotation_class_column not in annotation_gdf.columns:
+                print(f"\n⚠ Warning: Column '{annotation_class_column}' not found in shapefile!")
+                print(f"   Available columns: {list(annotation_gdf.columns)}")
+                annotation_class_column = None
+        else:
+            print(f"\n⚠ No class column specified or detected. Using default class name.")
 
     with rasterio.open(orthomosaic_path) as src:
         shapes = shapes.to_crs(src.crs)
@@ -360,6 +454,15 @@ def crop_and_save(orthomosaic_path, shapefile_path, output_dir, target_crs, save
     
     # Save single COCO JSON file with all annotations
     if annotation_gdf is not None and len(all_annotations) > 0:
+        # Print summary of processed annotations
+        print(f"\n✓ Annotation Processing Summary:")
+        print(f"   Total images with annotations: {len(all_images)}")
+        print(f"   Total annotations: {len(all_annotations)}")
+        print(f"   Classes found: {len(categories_dict)}")
+        for cat_name, cat_id in sorted(categories_dict.items(), key=lambda x: x[1]):
+            cat_count = sum(1 for ann in all_annotations if ann['category_id'] == cat_id)
+            print(f"      - {cat_name} (ID: {cat_id}): {cat_count} annotations")
+        
         coco_output = {
             "info": {
                 "description": "Cropped orthomosaic annotations",
@@ -375,6 +478,47 @@ def crop_and_save(orthomosaic_path, shapefile_path, output_dir, target_crs, save
         coco_path = os.path.join(output_dir, "annotations.json")
         with open(coco_path, "w") as f:
             json.dump(coco_output, f, indent=2)
+        print(f"\n✓ Annotations saved to: {coco_path}")
+        
+        # Print detailed statistics per class
+        print(f"\n" + "="*60)
+        print(f"📊 DETAILED STATISTICS PER CLASS")
+        print(f"="*60)
+        
+        for cat_name, cat_id in sorted(categories_dict.items(), key=lambda x: x[1]):
+            cat_annotations = [ann for ann in all_annotations if ann['category_id'] == cat_id]
+            cat_count = len(cat_annotations)
+            
+            if cat_count > 0:
+                # Calculate statistics
+                areas = [ann['area'] for ann in cat_annotations]
+                bbox_widths = [ann['bbox'][2] for ann in cat_annotations]
+                bbox_heights = [ann['bbox'][3] for ann in cat_annotations]
+                
+                print(f"\n🏷️  Class: {cat_name} (ID: {cat_id})")
+                print(f"   Total annotations: {cat_count}")
+                print(f"   Area statistics:")
+                print(f"      - Min area: {min(areas):.2f} px²")
+                print(f"      - Max area: {max(areas):.2f} px²")
+                print(f"      - Avg area: {sum(areas)/len(areas):.2f} px²")
+                print(f"   Bounding box statistics:")
+                print(f"      - Width range: {min(bbox_widths):.2f} - {max(bbox_widths):.2f} px")
+                print(f"      - Height range: {min(bbox_heights):.2f} - {max(bbox_heights):.2f} px")
+                print(f"      - Avg dimensions: {sum(bbox_widths)/len(bbox_widths):.2f} x {sum(bbox_heights)/len(bbox_heights):.2f} px")
+                
+                # Count images containing this class
+                images_with_class = len(set(ann['image_id'] for ann in cat_annotations))
+                print(f"   Images containing this class: {images_with_class} / {len(all_images)}")
+                print(f"   Avg annotations per image: {cat_count/images_with_class:.2f}")
+        
+        print(f"\n" + "="*60)
+        print(f"📈 OVERALL SUMMARY")
+        print(f"="*60)
+        print(f"   Total classes: {len(categories_dict)}")
+        print(f"   Total images: {len(all_images)}")
+        print(f"   Total annotations: {len(all_annotations)}")
+        print(f"   Avg annotations per image: {len(all_annotations)/len(all_images):.2f}")
+        print(f"="*60 + "\n")
         
         # Create one random test visualization if we have crops with annotations
         if len(crops_with_annotations) > 0:

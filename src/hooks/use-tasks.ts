@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApi } from './use-api';
+import { useExport } from '@/contexts/ExportContext';
 
 export interface Task {
   id: number;
@@ -19,6 +20,7 @@ export interface Task {
 
 export function useTasks(projectId?: number) {
   const { api, isConfigured } = useApi();
+  const { isExporting } = useExport();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
@@ -39,12 +41,23 @@ export function useTasks(projectId?: number) {
         console.log('Setting active tasks:', response.data);
         setActiveTasks(response.data as Task[]);
       } else {
-        console.error('Failed to fetch active tasks:', response.error);
-        setError(response.error || 'Failed to fetch active tasks');
+        // Don't set error for timeout/abort errors during polling - they're expected
+        const isTimeoutError = response.error?.includes('timed out') || 
+                               response.error?.includes('aborted') ||
+                               response.error?.includes('busy');
+        if (!isTimeoutError) {
+          console.error('Failed to fetch active tasks:', response.error);
+          setError(response.error || 'Failed to fetch active tasks');
+        }
       }
     } catch (err) {
-      console.error('Error fetching active tasks:', err);
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      // Silently handle timeout errors during polling
+      const isTimeoutError = err instanceof Error && 
+                           (err.name === 'AbortError' || err.message.includes('timeout'));
+      if (!isTimeoutError) {
+        console.error('Error fetching active tasks:', err);
+        setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      }
     } finally {
       setLoading(false);
     }
@@ -65,10 +78,20 @@ export function useTasks(projectId?: number) {
       if (response.success) {
         setTasks(response.data as Task[]);
       } else {
-        setError(response.error || 'Failed to fetch tasks');
+        // Don't set error for timeout/abort errors during polling - they're expected
+        const isTimeoutError = response.error?.includes('timed out') || 
+                               response.error?.includes('aborted');
+        if (!isTimeoutError) {
+          setError(response.error || 'Failed to fetch tasks');
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      // Silently handle timeout errors during polling
+      const isTimeoutError = err instanceof Error && 
+                           (err.name === 'AbortError' || err.message.includes('timeout'));
+      if (!isTimeoutError) {
+        setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      }
     } finally {
       setLoading(false);
     }
@@ -113,20 +136,24 @@ export function useTasks(projectId?: number) {
   };
 
   // Auto-refresh active tasks - optimized polling
+  // Pause polling during database export to avoid conflicts
   useEffect(() => {
-    if (!isConfigured) return;
+    if (!isConfigured || isExporting) return;
 
     // Fetch both active tasks and all tasks on mount and interval
     fetchActiveTasks();
     fetchAllTasks();
     
     const interval = setInterval(() => {
-      fetchActiveTasks();
-      fetchAllTasks();
+      // Don't poll if export is in progress
+      if (!isExporting) {
+        fetchActiveTasks();
+        fetchAllTasks();
+      }
     }, 15000); // Refresh every 15 seconds (reduced from 5s)
 
     return () => clearInterval(interval);
-  }, [api, isConfigured, projectId]);
+  }, [api, isConfigured, projectId, isExporting]);
 
   return {
     tasks,
