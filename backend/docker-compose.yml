@@ -3,6 +3,9 @@ services:
     build: .
     volumes:
       - .:/app
+      # Backup storage: Use BACKUP_PATH env var or default to ./backups
+      # To use absolute path outside project: export BACKUP_PATH=/path/to/backups
+      - ${BACKUP_PATH:-./backups}:/app/backups
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080
@@ -49,6 +52,7 @@ services:
       - .:/app
       - ./projects:/app/projects
       - ./data:/app/data
+      - ./backups:/app/backups
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - REDIS_URL=redis://redis:6379/0
@@ -149,3 +153,4 @@ volumes:
   postgres_data:
   redis_data:
   mongodb_data:
+  # Note: backups are stored in ./backups/ directory on host (mounted to /app/backups in container)

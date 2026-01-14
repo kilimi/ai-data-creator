@@ -60,7 +60,7 @@ const App = () => (
           <Route path="/datasets/:id/annotate" element={<AnnotationChoice />} />
           <Route path="/datasets/:id/annotate/classification" element={<Classification />} />
           <Route path="/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
-          <Route path="/api-settings" element={<ApiSettings />} />
+          <Route path="/settings" element={<ApiSettings />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

@@ -148,7 +148,7 @@ const Datasets = () => {
           
           <div className="flex gap-2">
             <Button asChild variant="outline" size="icon" className="h-10 w-10">
-              <Link to="/api-settings" title="API Settings">
+              <Link to="/settings" title="Settings">
                 <Settings className="h-4 w-4" />
               </Link>
             </Button>

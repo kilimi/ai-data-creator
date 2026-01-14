@@ -269,7 +269,7 @@ export default function Index() {
                 Try Again
               </Button>
               <Button variant="outline" asChild>
-                <Link to="/api-settings">Check Settings</Link>
+                <Link to="/settings">Check Settings</Link>
               </Button>
             </div>
           </Card>

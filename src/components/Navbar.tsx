@@ -57,7 +57,7 @@ export function Navbar() {
             className="h-9 w-9"
             asChild
           >
-            <Link to="/api-settings">
+            <Link to="/settings">
               <Settings className="h-4 w-4" />
             </Link>
           </Button>

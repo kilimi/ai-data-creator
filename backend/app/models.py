@@ -339,3 +339,37 @@ class DatasetGroup(Base):
             except json.JSONDecodeError:
                 value = []
         self.dataset_ids = value
+
+
+class BackupSettings(Base):
+    __tablename__ = "backup_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    enabled = Column(Boolean, default=False)
+    backup_path = Column(String, nullable=True)  # Path where backups are stored
+    frequency_hours = Column(Integer, default=24)  # How often to backup (in hours)
+    retention_days = Column(Integer, default=30)  # How many days to keep backups
+    last_backup_at = Column(DateTime, nullable=True)
+    next_backup_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BackupRecord(Base):
+    __tablename__ = "backup_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    backup_path = Column(String, index=True)  # Full path to backup directory
+    backup_type = Column(String, default='full')  # 'full' or 'incremental'
+    parent_backup_id = Column(Integer, ForeignKey("backup_records.id"), nullable=True)  # For incremental backups
+    file_count = Column(Integer, default=0)
+    total_size_bytes = Column(Integer, default=0)
+    database_backed_up = Column(Boolean, default=True)
+    files_backed_up = Column(Boolean, default=True)
+    status = Column(String, default='completed')  # 'completed', 'failed', 'in_progress'
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    backup_metadata = Column('metadata', JSON, nullable=True)  # Additional backup metadata (column name is 'metadata' but attribute is 'backup_metadata')
+
+    parent_backup = relationship("BackupRecord", remote_side=[id])

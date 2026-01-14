@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     curl \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 

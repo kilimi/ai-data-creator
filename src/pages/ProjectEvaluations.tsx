@@ -158,7 +158,7 @@ export default function ProjectEvaluations() {
               Retry
             </Button>
             <Button variant="outline" asChild>
-              <Link to="/api-settings">Check Settings</Link>
+              <Link to="/settings">Check Settings</Link>
             </Button>
           </div>
         </div>

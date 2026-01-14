@@ -59,10 +59,20 @@ celery_app.conf.update(
 )
 
 # Optional: Add periodic tasks if needed
-# from celery.schedules import crontab
-# celery_app.conf.beat_schedule = {
-#     'cleanup-old-tasks': {
-#         'task': 'app.tasks.training_tasks.cleanup_old_tasks',
-#         'schedule': crontab(hour=2, minute=0),  # Run daily at 2 AM
-#     },
-# }
+from celery.schedules import crontab
+from datetime import timedelta
+
+# Include backup tasks
+celery_app.conf.update(
+    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 
+             'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks',
+             'app.tasks.backup_tasks']
+)
+
+# Periodic backup check - runs every hour to check if backup is due
+celery_app.conf.beat_schedule = {
+    'check-backup-schedule': {
+        'task': 'app.tasks.backup_tasks.run_automatic_backup',
+        'schedule': timedelta(hours=1),  # Check every hour
+    },
+}

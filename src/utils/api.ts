@@ -1393,6 +1393,63 @@ export class ApiClient {
       method: 'DELETE'
     });
   }
+
+  // Backup methods
+  async getBackupSettings(): Promise<ApiResponse<{
+    enabled: boolean;
+    backup_path: string | null;
+    frequency_hours: number;
+    retention_days: number;
+    last_backup_at: string | null;
+    next_backup_at: string | null;
+  }>> {
+    return this.request('/backup/settings', {
+      method: 'GET'
+    });
+  }
+
+  async updateBackupSettings(settings: {
+    enabled: boolean;
+    backup_path?: string | null;
+    frequency_hours: number;
+    retention_days: number;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+    settings: any;
+  }>> {
+    return this.request('/backup/settings', {
+      method: 'POST',
+      body: JSON.stringify(settings)
+    });
+  }
+
+  async runBackup(): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+  }>> {
+    return this.request('/backup/run', {
+      method: 'POST'
+    });
+  }
+
+  async listBackups(): Promise<ApiResponse<{
+    backups: any[];
+    total: number;
+  }>> {
+    return this.request('/backup/list', {
+      method: 'GET'
+    });
+  }
+
+  async deleteBackup(backupId: number): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+  }>> {
+    return this.request(`/backup/${backupId}`, {
+      method: 'DELETE'
+    });
+  }
 }
 
 /**
