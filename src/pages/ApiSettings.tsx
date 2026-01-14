@@ -1,6 +1,22 @@
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, AlertTriangle, Database, Download, Upload, Trash2, Settings as SettingsIcon, CheckCircle2, XCircle } from "lucide-react";
+import { 
+  ArrowLeft, 
+  AlertTriangle, 
+  Database, 
+  Download, 
+  Upload, 
+  Trash2, 
+  Settings as SettingsIcon, 
+  CheckCircle2, 
+  XCircle,
+  Server,
+  RefreshCw,
+  HardDrive,
+  Shield,
+  Zap,
+  ExternalLink
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Input } from "@/components/ui/input";
@@ -14,7 +30,7 @@ import { Dataset } from "@/types";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { DatabaseManager } from "@/components/DatabaseManager";
-import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const ApiSettings = () => {
   const { toast } = useToast();
@@ -27,7 +43,6 @@ export const ApiSettings = () => {
   const [showDatasetsDialog, setShowDatasetsDialog] = useState(false);
 
   useEffect(() => {
-    // Check connection on component mount
     checkConnection();
   }, []);
 
@@ -38,15 +53,15 @@ export const ApiSettings = () => {
       
       if (result.success) {
         setIsConnected(true);
-        setTestResult("Connection successful. Your FastAPI server is accessible.");
+        setTestResult("Backend server is running and accessible.");
       } else {
         setIsConnected(false);
-        setTestResult(`Connection failed: ${result.error}`);
+        setTestResult(`${result.error}`);
       }
     } catch (error) {
       setIsConnected(false);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      setTestResult(`Connection error: ${errorMessage}`);
+      setTestResult(`${errorMessage}`);
     }
   };
 
@@ -58,14 +73,14 @@ export const ApiSettings = () => {
       
       if (result.success) {
         setIsConnected(true);
-        setTestResult("Connection successful. Your FastAPI server is accessible.");
+        setTestResult("Backend server is running and accessible.");
         toast({
           title: "Connection successful",
-          description: "Your FastAPI connection is working correctly",
+          description: "Your backend connection is working correctly",
         });
       } else {
         setIsConnected(false);
-        setTestResult(`Connection failed: ${result.error}`);
+        setTestResult(`${result.error}`);
         toast({
           title: "Connection failed",
           description: result.error || "Could not connect to the API",
@@ -75,7 +90,7 @@ export const ApiSettings = () => {
     } catch (error) {
       setIsConnected(false);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      setTestResult(`Connection error: ${errorMessage}`);
+      setTestResult(`${errorMessage}`);
       toast({
         title: "Connection error",
         description: errorMessage,
@@ -87,7 +102,6 @@ export const ApiSettings = () => {
   };
 
   useEffect(() => {
-    // Load datasets when connected
     if (isConnected) {
       loadDatasets();
     }
@@ -100,17 +114,13 @@ export const ApiSettings = () => {
       const response = await apiClient.getDatasets();
       
       if (response.success) {
-        // Handle both array and null responses
         setDatasets(response.data || []);
       } else {
-        const errorMsg = response.error || "Failed to fetch datasets";
-        console.error('Failed to load datasets:', errorMsg);
-        // Don't throw - just log, so the UI doesn't break
+        console.error('Failed to load datasets:', response.error);
         setDatasets([]);
       }
     } catch (error) {
       console.error('Failed to load datasets:', error);
-      // Set empty array on error so UI doesn't break
       setDatasets([]);
     } finally {
       setIsLoadingDatasets(false);
@@ -123,7 +133,6 @@ export const ApiSettings = () => {
   };
 
   const saveSettings = () => {
-    // Save the API URL to localStorage
     localStorage.setItem("apiBaseUrl", apiUrl);
     
     toast({
@@ -131,230 +140,356 @@ export const ApiSettings = () => {
       description: "API URL has been updated. Reloading app to apply changes.",
     });
     
-    // Force a page reload to apply the new API URL
     setTimeout(() => {
       window.location.href = "/";
     }, 1000);
   };
 
   return (
-    <div className="min-h-screen pb-16 bg-gradient-to-br from-background via-background to-muted/20">
+    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/30">
       <Navbar />
       
-      <main className="container max-w-5xl pt-24 px-6 animate-fade-in">
+      <main className="container max-w-6xl pt-24 pb-16 px-4 md:px-6 animate-fade-in">
         {/* Header */}
-        <div className="mb-8">
-          <Button variant="ghost" asChild className="mb-4 -ml-3">
-            <Link to="/" className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
+        <div className="mb-10">
+          <Button variant="ghost" asChild className="mb-6 -ml-2 text-muted-foreground hover:text-foreground transition-colors">
+            <Link to="/" className="flex items-center gap-2">
               <ArrowLeft className="h-4 w-4" />
               Back to Projects
             </Link>
           </Button>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-3 rounded-xl bg-primary/10">
-              <SettingsIcon className="h-6 w-6 text-primary" />
+          
+          <div className="flex items-start gap-4">
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20 shadow-lg shadow-primary/5">
+              <SettingsIcon className="h-8 w-8 text-primary" />
             </div>
             <div>
-              <h1 className="text-4xl font-bold tracking-tight">Settings</h1>
-              <p className="text-muted-foreground mt-1">
-                Manage your application configuration and data
+              <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
+                Settings
+              </h1>
+              <p className="text-muted-foreground mt-2 text-lg">
+                Configure your backend connection and manage your data
               </p>
             </div>
           </div>
         </div>
 
-        {/* API Connection Card */}
-        <Card className="mb-6 border-2 shadow-lg">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Database className="h-5 w-5 text-primary" />
-              <CardTitle>API Connection</CardTitle>
+        {/* Connection Status Banner */}
+        {isConnected !== null && (
+          <div className={`mb-8 p-4 rounded-xl border-2 flex items-center gap-4 transition-all ${
+            isConnected 
+              ? "bg-emerald-500/5 border-emerald-500/20" 
+              : "bg-red-500/5 border-red-500/20"
+          }`}>
+            <div className={`p-3 rounded-xl ${
+              isConnected 
+                ? "bg-emerald-500/10" 
+                : "bg-red-500/10"
+            }`}>
+              {isConnected ? (
+                <CheckCircle2 className="h-6 w-6 text-emerald-500" />
+              ) : (
+                <XCircle className="h-6 w-6 text-red-500" />
+              )}
             </div>
-            <CardDescription>
-              Configure your FastAPI backend endpoint
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="space-y-3">
-              <Label htmlFor="api-url" className="text-base font-medium">Backend URL</Label>
-              <div className="flex gap-2">
-                <Input 
-                  id="api-url"
-                  value={apiUrl}
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  placeholder="http://localhost:9999"
-                  className="font-mono text-sm"
-                />
-                <Button 
-                  onClick={handleTestConnection}
-                  disabled={isLoading}
-                  variant="outline"
-                  className="whitespace-nowrap"
-                >
-                  {isLoading ? "Testing..." : "Test"}
-                </Button>
-              </div>
+            <div className="flex-1">
+              <p className={`font-semibold ${isConnected ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                {isConnected ? "Connected to Backend" : "Not Connected"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {testResult}
+              </p>
             </div>
-            
-            {isConnected !== null && (
-              <div className={`flex items-start gap-3 p-4 rounded-lg border-2 ${
-                isConnected 
-                  ? "bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-900" 
-                  : "bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-900"
-              }`}>
-                {isConnected ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
-                ) : (
-                  <XCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-semibold ${isConnected ? "text-green-700 dark:text-green-300" : "text-red-700 dark:text-red-300"}`}>
-                    {isConnected ? "Connection Active" : "Connection Failed"}
-                  </p>
-                  <p className={`text-xs mt-1 ${isConnected ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}>
-                    {testResult}
-                  </p>
-                </div>
-              </div>
-            )}
-            
-            <div className="flex justify-between items-center pt-2">
-              <Button 
-                variant="secondary"
-                onClick={handleGetAllDatasets}
-                disabled={isLoadingDatasets || !isConnected}
-                size="sm"
-              >
-                {isLoadingDatasets ? "Loading..." : "View All Datasets"}
-              </Button>
-              <Button 
-                onClick={saveSettings}
-                disabled={isLoading}
-              >
-                Save Changes
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleTestConnection}
+              disabled={isLoading}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              {isLoading ? "Testing..." : "Refresh"}
+            </Button>
+          </div>
+        )}
 
-        {/* Data Management Card */}
-        <Card className="mb-6 border-2 shadow-lg">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Download className="h-5 w-5 text-primary" />
-              <CardTitle>Data Management</CardTitle>
-            </div>
-            <CardDescription>
-              Backup and restore your workspace data
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-lg border-2 bg-gradient-to-br from-blue-50/50 to-transparent dark:from-blue-950/20 hover:border-primary transition-colors">
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                    <Download className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-base mb-1">Export Data</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Download your projects, datasets, and annotations
-                    </p>
-                  </div>
-                </div>
-                <DatabaseManager showImport={false} showClear={false} showInfo={false} />
-              </div>
-              
-              <div className="p-4 rounded-lg border-2 bg-gradient-to-br from-purple-50/50 to-transparent dark:from-purple-950/20 hover:border-primary transition-colors">
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                    <Upload className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-base mb-1">Import Data</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Restore from a previous backup file
-                    </p>
-                  </div>
-                </div>
-                <DatabaseManager showExport={false} showClear={false} showInfo={false} />
-              </div>
-            </div>
-            
-            <Separator className="my-4" />
-            
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Database className="h-4 w-4" />
-                <span>{datasets.length} datasets available</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <Tabs defaultValue="connection" className="space-y-8">
+          <TabsList className="grid w-full grid-cols-3 h-14 p-1.5 bg-muted/50 rounded-xl">
+            <TabsTrigger value="connection" className="flex items-center gap-2 rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm h-10">
+              <Server className="h-4 w-4" />
+              <span className="hidden sm:inline">Connection</span>
+            </TabsTrigger>
+            <TabsTrigger value="data" className="flex items-center gap-2 rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm h-10">
+              <HardDrive className="h-4 w-4" />
+              <span className="hidden sm:inline">Data Management</span>
+            </TabsTrigger>
+            <TabsTrigger value="advanced" className="flex items-center gap-2 rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm h-10">
+              <Shield className="h-4 w-4" />
+              <span className="hidden sm:inline">Advanced</span>
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Danger Zone */}
-        <Card className="border-2 border-red-200 bg-gradient-to-br from-red-50/50 to-transparent dark:from-red-950/20 dark:border-red-900 shadow-lg">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
-                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
-              </div>
-              <div>
-                <CardTitle className="text-red-600 dark:text-red-400">Danger Zone</CardTitle>
-                <CardDescription className="text-red-600/80 dark:text-red-400/80">
-                  Irreversible actions - proceed with caution
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="p-4 rounded-lg border-2 border-red-200 dark:border-red-900 bg-background/50">
-              <div className="flex items-center justify-between">
-                <div className="flex items-start gap-3">
-                  <Trash2 className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5" />
+          {/* Connection Tab */}
+          <TabsContent value="connection" className="space-y-6">
+            <Card className="border-2 shadow-lg overflow-hidden">
+              <CardHeader className="bg-gradient-to-r from-muted/50 to-transparent border-b">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-primary/10">
+                    <Database className="h-5 w-5 text-primary" />
+                  </div>
                   <div>
-                    <p className="text-sm font-semibold text-red-700 dark:text-red-300">Clear All Data</p>
-                    <p className="text-xs text-red-600/90 dark:text-red-400/90 mt-1">
-                      Permanently delete all projects, datasets, annotations, and files
+                    <CardTitle className="text-xl">Backend API</CardTitle>
+                    <CardDescription className="text-base">
+                      Configure your FastAPI backend server connection
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6 space-y-6">
+                <div className="space-y-3">
+                  <Label htmlFor="api-url" className="text-sm font-medium flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-primary" />
+                    Backend URL
+                  </Label>
+                  <div className="flex gap-3">
+                    <Input 
+                      id="api-url"
+                      value={apiUrl}
+                      onChange={(e) => setApiUrl(e.target.value)}
+                      placeholder="http://localhost:9999"
+                      className="font-mono text-sm h-12 bg-muted/30 border-2 focus:border-primary/50"
+                    />
+                    <Button 
+                      onClick={handleTestConnection}
+                      disabled={isLoading}
+                      variant="secondary"
+                      className="h-12 px-6 font-medium"
+                    >
+                      {isLoading ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                          Testing...
+                        </>
+                      ) : "Test Connection"}
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Enter the URL where your FastAPI backend is running
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                  <div className="p-4 rounded-xl border-2 bg-muted/20 hover:bg-muted/30 transition-colors">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Database className="h-5 w-5 text-primary" />
+                      <span className="font-medium">Datasets</span>
+                    </div>
+                    <p className="text-2xl font-bold text-primary">{datasets.length}</p>
+                    <p className="text-sm text-muted-foreground">Available in database</p>
+                  </div>
+                  <div className="p-4 rounded-xl border-2 bg-muted/20 hover:bg-muted/30 transition-colors">
+                    <div className="flex items-center gap-3 mb-2">
+                      <Server className="h-5 w-5 text-primary" />
+                      <span className="font-medium">Status</span>
+                    </div>
+                    <p className={`text-2xl font-bold ${isConnected ? 'text-emerald-500' : 'text-red-500'}`}>
+                      {isConnected ? 'Online' : 'Offline'}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Backend server status</p>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center pt-4 border-t">
+                  <Button 
+                    variant="outline"
+                    onClick={handleGetAllDatasets}
+                    disabled={isLoadingDatasets || !isConnected}
+                    className="flex items-center gap-2"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    {isLoadingDatasets ? "Loading..." : "View All Datasets"}
+                  </Button>
+                  <Button 
+                    onClick={saveSettings}
+                    disabled={isLoading}
+                    className="px-8"
+                  >
+                    Save Changes
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Data Management Tab */}
+          <TabsContent value="data" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Export Card */}
+              <Card className="border-2 shadow-lg overflow-hidden group hover:border-primary/30 transition-colors">
+                <CardHeader className="bg-gradient-to-r from-blue-500/5 to-transparent border-b">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors">
+                      <Download className="h-5 w-5 text-blue-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Export Data</CardTitle>
+                      <CardDescription>
+                        Download a backup of all your data
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <p className="text-sm text-muted-foreground mb-6">
+                    Create a complete backup of your projects, datasets, annotations, and images. 
+                    The backup file can be used to restore your data later.
+                  </p>
+                  <DatabaseManager showImport={false} showClear={false} showInfo={false} />
+                </CardContent>
+              </Card>
+
+              {/* Import Card */}
+              <Card className="border-2 shadow-lg overflow-hidden group hover:border-primary/30 transition-colors">
+                <CardHeader className="bg-gradient-to-r from-violet-500/5 to-transparent border-b">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-violet-500/10 group-hover:bg-violet-500/20 transition-colors">
+                      <Upload className="h-5 w-5 text-violet-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Import Data</CardTitle>
+                      <CardDescription>
+                        Restore from a previous backup
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <p className="text-sm text-muted-foreground mb-6">
+                    Restore your projects and datasets from a backup file. 
+                    This will merge the imported data with your existing data.
+                  </p>
+                  <DatabaseManager showExport={false} showClear={false} showInfo={false} />
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Stats Summary */}
+            <Card className="border-2">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 rounded-xl bg-muted">
+                      <Database className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Database Summary</p>
+                      <p className="text-sm text-muted-foreground">
+                        {datasets.length} datasets with {datasets.reduce((sum, d) => sum + d.image_count, 0)} total images
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant="secondary" className="text-sm px-4 py-1">
+                    {isConnected ? 'Synced' : 'Offline'}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Advanced Tab */}
+          <TabsContent value="advanced" className="space-y-6">
+            <Card className="border-2 border-red-500/20 shadow-lg overflow-hidden">
+              <CardHeader className="bg-gradient-to-r from-red-500/5 to-transparent border-b border-red-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-red-500/10">
+                    <AlertTriangle className="h-5 w-5 text-red-500" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg text-red-600 dark:text-red-400">Danger Zone</CardTitle>
+                    <CardDescription className="text-red-600/70 dark:text-red-400/70">
+                      These actions are irreversible. Proceed with extreme caution.
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-6">
+                <div className="p-5 rounded-xl border-2 border-red-500/20 bg-red-500/5">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 rounded-xl bg-red-500/10">
+                      <Trash2 className="h-5 w-5 text-red-500" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-red-600 dark:text-red-400 mb-1">
+                        Clear All Data
+                      </h3>
+                      <p className="text-sm text-red-600/80 dark:text-red-400/80 mb-4">
+                        Permanently delete all projects, datasets, annotations, and uploaded files. 
+                        This action cannot be undone and all data will be lost forever.
+                      </p>
+                      <DatabaseManager showExport={false} showImport={false} showClear={true} showInfo={false} />
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Info Card */}
+            <Card className="border-2">
+              <CardContent className="p-6">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 rounded-xl bg-muted">
+                    <Shield className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-1">Data Security</h3>
+                    <p className="text-sm text-muted-foreground">
+                      All your data is stored locally on your backend server. No data is sent to external services. 
+                      We recommend creating regular backups using the Export feature to prevent data loss.
                     </p>
                   </div>
                 </div>
-                <DatabaseManager showExport={false} showImport={false} showClear={true} showInfo={false} />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* Datasets Dialog */}
       <Dialog open={showDatasetsDialog} onOpenChange={setShowDatasetsDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>All Datasets</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5 text-primary" />
+              All Datasets
+            </DialogTitle>
             <DialogDescription>
               {datasets.length} datasets found in the database
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="flex-1 mt-4">
-            <div className="space-y-4 pr-4">
+            <div className="space-y-3 pr-4">
               {datasets.map((dataset) => (
-                <div key={dataset.id} className="p-4 rounded-lg border bg-card">
-                  <div className="flex justify-between items-start mb-2">
+                <div key={dataset.id} className="p-4 rounded-xl border-2 bg-card hover:border-primary/30 transition-colors">
+                  <div className="flex justify-between items-start mb-3">
                     <div>
-                      <h3 className="font-medium">{dataset.name}</h3>
-                      <p className="text-sm text-muted-foreground line-clamp-2">{dataset.description}</p>
+                      <h3 className="font-semibold text-base">{dataset.name}</h3>
+                      <p className="text-sm text-muted-foreground line-clamp-2 mt-1">{dataset.description}</p>
                     </div>
+                    <Badge variant="secondary">{dataset.image_count} images</Badge>
                   </div>
                   <div className="flex gap-4 text-sm text-muted-foreground">
-                    <span>{dataset.image_count} images</span>
-                    <span>{dataset.annotation_count} annotations</span>
+                    <span className="flex items-center gap-1">
+                      <Database className="h-3.5 w-3.5" />
+                      {dataset.annotation_count} annotations
+                    </span>
                     <span>Created {new Date(dataset.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>
               ))}
               {datasets.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  No datasets found
+                <div className="text-center py-12">
+                  <Database className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
+                  <p className="text-muted-foreground">No datasets found</p>
                 </div>
               )}
             </div>
@@ -364,4 +499,3 @@ export const ApiSettings = () => {
     </div>
   );
 };
-

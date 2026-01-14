@@ -2605,8 +2605,8 @@ const ImageAnnotation = () => {
     try {
       // Get current image dimensions
       const img = displayImage || currentImage;
-      const imageWidth = img?.naturalWidth || 0;
-      const imageHeight = img?.naturalHeight || 0;
+      const imageWidth = (img as any)?.naturalWidth || 0;
+      const imageHeight = (img as any)?.naturalHeight || 0;
 
       // Convert annotations to COCO format for this image
       const annotationsData = annotations.map((ann, idx) => {

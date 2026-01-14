@@ -1094,7 +1094,7 @@ export class ApiClient {
       if (onProgress) onProgress(96);
 
       // Create blob directly from chunks (more efficient than combining into one array)
-      const blob = new Blob(chunks, { type: 'application/json' });
+      const blob = new Blob(chunks as BlobPart[], { type: 'application/json' });
       
       if (onProgress) onProgress(97);
 
@@ -1336,7 +1336,7 @@ export class ApiClient {
       if (onProgress) onProgress(96);
 
       // Create blob directly from chunks (more efficient than combining into one array)
-      const blob = new Blob(chunks, { type: 'application/zip' });
+      const blob = new Blob(chunks as BlobPart[], { type: 'application/zip' });
       
       if (onProgress) onProgress(97);
 

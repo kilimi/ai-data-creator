@@ -229,10 +229,10 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
     setDeletingFailedTasks(true);
     try {
       const response = await api.deleteFailedTasks(project.id);
-      if (response.success) {
+      if (response.success && response.data) {
         toast({
           title: "Success",
-          description: response.message || `Deleted ${response.data.deleted_count} failed task(s)`,
+          description: `Deleted ${response.data.deleted_count} failed task(s)`,
         });
         fetchTrainingTasks();
       }

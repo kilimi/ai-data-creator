@@ -413,9 +413,9 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
                 <span className="text-gray-400">Ground Truth:</span>
                 <span className="ml-2 text-white font-medium">
                   {metadata.has_ground_truth ? (
-                    metadata.annotation_file_name ? (
-                      <span title={metadata.annotation_file_name}>
-                        Yes ({metadata.annotation_file_name})
+                    (metadata as any).annotation_file_name ? (
+                      <span title={(metadata as any).annotation_file_name}>
+                        Yes ({(metadata as any).annotation_file_name})
                       </span>
                     ) : 'Yes'
                   ) : 'No'}

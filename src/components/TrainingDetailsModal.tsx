@@ -245,7 +245,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <div>
                       <span className="text-gray-400">Model:</span>
                       <span className="ml-2 text-white font-medium">
-                        {metadata?.model_config?.model || metadata?.training_params?.model || metadata?.model_type || '-'}
+                        {metadata?.model_config?.model || metadata?.training_params?.model || (metadata as any)?.model_type || '-'}
                       </span>
                     </div>
                     <div>
@@ -257,13 +257,13 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <div>
                       <span className="text-gray-400">Batch Size:</span>
                       <span className="ml-2 text-white font-medium">
-                        {metadata?.training_params?.batch_size || metadata?.batch_size || metadata?.training_params?.batch || '-'}
+                        {metadata?.training_params?.batch_size || (metadata as any)?.batch_size || metadata?.training_params?.batch || '-'}
                       </span>
                     </div>
                     <div>
                       <span className="text-gray-400">Image Size:</span>
                       <span className="ml-2 text-white font-medium">
-                        {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || metadata?.image_size || '-'}
+                        {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || (metadata as any)?.image_size || '-'}
                       </span>
                     </div>
                     <div>
@@ -347,13 +347,13 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                       <div>
                         <span className="text-gray-400">Batch Size:</span>
                         <span className="ml-2 text-white font-medium">
-                          {metadata?.training_params?.batch_size || metadata?.batch_size || metadata?.training_params?.batch || '-'}
+                          {metadata?.training_params?.batch_size || (metadata as any)?.batch_size || metadata?.training_params?.batch || '-'}
                         </span>
                       </div>
                       <div>
                         <span className="text-gray-400">Image Size:</span>
                         <span className="ml-2 text-white font-medium">
-                          {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || metadata?.image_size || '-'}
+                          {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || (metadata as any)?.image_size || '-'}
                         </span>
                       </div>
                       <div>
@@ -453,7 +453,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                           <div key={key}>
                             <span className="text-gray-400 capitalize">{key.replace(/_/g, ' ')}:</span>
                             <span className="ml-2 text-white font-medium">
-                              {typeof value === 'boolean' ? String(value) : value}
+                              {typeof value === 'boolean' ? String(value) : String(value)}
                             </span>
                           </div>
                         ))}
