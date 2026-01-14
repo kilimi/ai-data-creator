@@ -415,7 +415,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     
     // Handle parameters separately - read current state to decide action
     setMethodParameters(prev => {
-      const isCurrentlySelected = Object.hasOwn(prev, augmentationId);
+      const isCurrentlySelected = augmentationId in prev;
       
       if (isCurrentlySelected) {
         // Remove parameters

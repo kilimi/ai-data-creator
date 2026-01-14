@@ -650,7 +650,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       });
 
       // Get the annotation content from backend
-      const contentResponse = await api.getAnnotationContent(id, annotation.id);
+      const contentResponse = await api.getAnnotationContent(id, String(annotation.id));
       
       if (!contentResponse.success || !contentResponse.data.content) {
         throw new Error("Failed to load annotation content");
@@ -985,7 +985,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       if (api) {
         const response = await api.deleteClassAnnotations(
           id,
-          selectedAnnotation.id,
+          String(selectedAnnotation.id),
           className
         );
         
@@ -1618,7 +1618,12 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             <div className="max-h-[60vh] overflow-y-auto">
               <ClassStatisticsWithManagement 
                 statistics={selectedAnnotation.classStats}
-                annotations={selectedAnnotation.samples || []}
+                annotations={(selectedAnnotation.samples || []).map(s => ({
+                  ...s,
+                  imageId: s.imageId || '',
+                  className: s.className || '',
+                  bbox: s.bbox || [0, 0, 0, 0] as [number, number, number, number]
+                }))}
                 onRenameClass={handleRenameClass}
                 onDeleteClass={handleDeleteClass}
                 onMergeClasses={handleMergeClasses}
@@ -1636,11 +1641,11 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                       <div key={idx} className="rounded-md border border-gray-700 p-2 bg-gray-800">
                         <div className="font-medium text-white">{sample.className}</div>
                         <div className="text-xs text-gray-400">
-                          Image ID: {sample.imageId.substring(0, 6)}...
+                          Image ID: {(sample.imageId || '').substring(0, 6)}...
                         </div>
-                        {sample.confidence && (
+                        {(sample as any).confidence && (
                           <div className="text-xs text-gray-400">
-                            Confidence: {Math.round(sample.confidence * 100)}%
+                            Confidence: {Math.round((sample as any).confidence * 100)}%
                           </div>
                         )}
                         {sample.segmentation && (

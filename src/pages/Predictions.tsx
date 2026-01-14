@@ -120,8 +120,8 @@ export function Predictions() {
   const fetchDatasets = async () => {
     if (!api || !selectedProject) return;
     try {
-      const response = await api.getDatasets(parseInt(selectedProject));
-      setDatasets(response.data || []);
+      const response = await api.getDatasets();
+      setDatasets((response.data || []).filter(d => d.project_id === parseInt(selectedProject)));
     } catch (error) {
       console.error('Error fetching datasets:', error);
     }
