@@ -193,11 +193,15 @@ def read_projects(skip: int = 0, limit: int = 100, include_images: bool = True, 
 
 
 @router.get("/projects/{project_id}/datasets/list")
-def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
+def list_project_datasets(project_id: int, include_thumbnails: bool = True, db: Session = Depends(get_db)):
     """
     Get a lightweight list of datasets for a project.
     Only includes basic dataset info - no images, annotations, or annotation file details.
-    This is optimized for fast loading in the evaluation modal.
+    This is optimized for fast loading in the datasets list view.
+    
+    By default, optimized base64-encoded thumbnails (200x200, ~10-20KB) are included.
+    Set include_thumbnails=False to exclude them for even faster loading.
+    URL-based thumbnails are always included as they're small.
     """
     from sqlalchemy import func
     
@@ -207,7 +211,22 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     
     # Get all datasets for this project with minimal data
-    datasets = db.query(models.Dataset).filter(
+    # Use load_only to avoid loading large binary logo field (can be MBs)
+    from sqlalchemy.orm import load_only
+    datasets = db.query(models.Dataset).options(
+        load_only(
+            models.Dataset.id,
+            models.Dataset.name,
+            models.Dataset.description,
+            models.Dataset._tags,  # Use _tags to access the column directly
+            models.Dataset.project_id,
+            models.Dataset.image_count,
+            models.Dataset.thumbnailUrl,
+            models.Dataset.url,
+            models.Dataset.created_at,
+            models.Dataset.updated_at
+        )
+    ).filter(
         models.Dataset.project_id == project_id
     ).all()
     
@@ -237,9 +256,38 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
         .all()
     )
     
-    # Build minimal response - just enough for the evaluation modal
+    # Build minimal response - optimized for fast loading
+    # Include optimized base64 thumbnails by default (200x200, ~10-20KB each)
+    # These are small enough to include without performance issues
+    import random
+    
     result = []
     for dataset in datasets:
+        # Set random image as logo if no logo is set and images exist
+        # This ensures existing datasets without logos get them automatically
+        if not dataset.thumbnailUrl and not dataset.logo_url and not dataset.logo:
+            images = db.query(models.Image).filter(
+                models.Image.dataset_id == dataset.id
+            ).all()
+            if images:
+                random_image = random.choice(images)
+                if random_image.url:
+                    # Use relative URL - frontend will handle it
+                    if random_image.url.startswith('/'):
+                        dataset.thumbnailUrl = f"{random_image.url}?thumb=300"
+                        dataset.logo_url = f"{random_image.url}?thumb=300"
+                    else:
+                        dataset.thumbnailUrl = random_image.url
+                        dataset.logo_url = random_image.url
+                    db.commit()
+                    db.refresh(dataset)
+        
+        # Include optimized base64 thumbnails by default (they're small now)
+        # URL-based thumbnails are always included
+        thumbnail_url = dataset.thumbnailUrl
+        if thumbnail_url and _is_base64_image(thumbnail_url) and not include_thumbnails:
+            thumbnail_url = None  # Only exclude if explicitly requested
+        
         result.append({
             "id": dataset.id,
             "name": dataset.name,
@@ -249,7 +297,7 @@ def list_project_datasets(project_id: int, db: Session = Depends(get_db)):
             "annotation_count": annotation_counts.get(dataset.id, 0),
             "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
             "tags": dataset.tags,
-            "thumbnailUrl": dataset.thumbnailUrl,
+            "thumbnailUrl": thumbnail_url,
             "url": dataset.url,
             "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
             "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -51,6 +51,22 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
       tags: initialData?.tags || [],
     },
   });
+
+  // Update form and preview when initialData changes (for edit mode)
+  useEffect(() => {
+    if (initialData && mode === "edit") {
+      form.reset({
+        name: initialData.name || "",
+        description: initialData.description || "",
+        tags: initialData.tags || [],
+      });
+      setTags(initialData.tags || []);
+      // Only update logoPreview if no new file is selected
+      if (!logoFile) {
+        setLogoPreview(initialData.thumbnailUrl);
+      }
+    }
+  }, [initialData?.id, initialData?.thumbnailUrl, mode, logoFile, form]);
   
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {

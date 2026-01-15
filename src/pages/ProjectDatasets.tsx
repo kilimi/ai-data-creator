@@ -283,7 +283,15 @@ export default function ProjectDatasets() {
     }
   };
 
-  const handleDatasetUpdated = () => {
+  const handleDatasetUpdated = (updatedDataset?: Dataset) => {
+    // If we have the updated dataset, update it in the local state immediately
+    // This provides instant feedback while the full refresh happens
+    if (updatedDataset) {
+      setDatasets(prevDatasets => 
+        prevDatasets.map(d => d.id === updatedDataset.id ? updatedDataset : d)
+      );
+    }
+    // Also refresh the full list to ensure consistency
     fetchProjectDatasets();
   };
 

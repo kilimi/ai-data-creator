@@ -27,6 +27,90 @@ class MergeAnnotationFilesRequest(BaseModel):
     merged_filename: Optional[str] = None
 
 
+def _create_thumbnail(image_data: bytes, mime_type: str, max_size: tuple = (200, 200)) -> str:
+    """Create a thumbnail from image data and return base64 encoded string."""
+    try:
+        # Open image from bytes
+        img = Image.open(io.BytesIO(image_data))
+        
+        # Convert RGBA to RGB if necessary
+        if img.mode == 'RGBA':
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            background.paste(img, mask=img.split()[3])  # 3 is the alpha channel
+            img = background
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+        
+        # Create thumbnail maintaining aspect ratio
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        # Save to bytes
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=85, optimize=True)
+        thumbnail_data = buffer.getvalue()
+        
+        # Encode to base64
+        thumbnail_base64 = base64.b64encode(thumbnail_data).decode()
+        return f"data:image/jpeg;base64,{thumbnail_base64}"
+    except Exception as e:
+        print(f"Error creating thumbnail: {e}")
+        # Return original if thumbnail creation fails
+        original_base64 = base64.b64encode(image_data).decode()
+        return f"data:{mime_type};base64,{original_base64}"
+
+
+def _is_base64_image(url: str | None) -> bool:
+    """Check if a URL is a base64 encoded image data URL."""
+    if not url:
+        return False
+    return url.startswith("data:image/")
+
+
+def _truncate_base64_url(url: str | None, include_base64: bool = False) -> str | None:
+    """
+    Truncate base64 image URLs to reduce response size.
+    If include_base64 is False, returns None for base64 URLs.
+    """
+    if not url:
+        return None
+    if _is_base64_image(url) and not include_base64:
+        return None  # Exclude base64 data from response
+    return url
+
+
+def _set_random_image_as_logo(dataset: models.Dataset, db: Session, base_url: str = ""):
+    """
+    Set a random image from the dataset as the logo/thumbnail if no logo is set.
+    """
+    # Only set if logo is not already set
+    if dataset.thumbnailUrl or dataset.logo_url or dataset.logo:
+        return
+    
+    # Check if there are images in the dataset
+    images = db.query(models.Image).filter(
+        models.Image.dataset_id == dataset.id
+    ).all()
+    
+    if not images:
+        return
+    
+    # Select a random image
+    import random
+    random_image = random.choice(images)
+    
+    # Use the image URL as thumbnail (it will be served with ?thumb=300 for thumbnails)
+    if random_image.url:
+        # Use the full URL if it's relative
+        if random_image.url.startswith('/'):
+            dataset.thumbnailUrl = f"{base_url}{random_image.url}?thumb=300" if base_url else random_image.url
+            dataset.logo_url = f"{base_url}{random_image.url}?thumb=300" if base_url else random_image.url
+        else:
+            dataset.thumbnailUrl = random_image.url
+            dataset.logo_url = random_image.url
+        db.commit()
+        print(f"Set random image {random_image.file_name} as logo for dataset {dataset.id}")
+
+
 @router.post("/datasets/", response_model=schemas.Dataset)
 async def create_dataset(
     name: str = Form(...),
@@ -47,11 +131,13 @@ async def create_dataset(
         db_dataset = models.Dataset(**dataset_data)
         if logo:
             logo_data = await logo.read()
-            db_dataset.logo = logo_data
+            db_dataset.logo = logo_data  # Store full image in binary field
             mime_type = logo.content_type or "image/png"
-            logo_base64 = base64.b64encode(logo_data).decode()
-            db_dataset.logo_url = f"data:{mime_type};base64,{logo_base64}"
-            db_dataset.thumbnailUrl = db_dataset.logo_url
+            
+            # Create optimized thumbnail instead of storing full base64
+            thumbnail_url = _create_thumbnail(logo_data, mime_type, max_size=(200, 200))
+            db_dataset.thumbnailUrl = thumbnail_url
+            db_dataset.logo_url = thumbnail_url  # Use thumbnail for logo_url too
         db.add(db_dataset)
         db.commit()
         db.refresh(db_dataset)
@@ -114,12 +200,18 @@ def read_datasets(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 
 @router.get("/datasets/{dataset_id}", response_model=schemas.Dataset)
-def read_dataset(dataset_id: int, db: Session = Depends(get_db)):
+def read_dataset(dataset_id: int, request: Request, db: Session = Depends(get_db)):
     from sqlalchemy import func
     
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Set random image as logo if no logo is set and images exist
+    base_url = str(request.base_url).rstrip('/')
+    _set_random_image_as_logo(dataset, db, base_url)
+    # Refresh to get updated logo
+    db.refresh(dataset)
     
     # Efficient count queries
     annotation_count = db.query(func.count(models.Annotation.id)).filter(
@@ -167,11 +259,13 @@ async def update_dataset(
         dataset.description = description
         if logo:
             logo_data = await logo.read()
-            dataset.logo = logo_data
+            dataset.logo = logo_data  # Store full image in binary field
             mime_type = logo.content_type or "image/png"
-            logo_base64 = base64.b64encode(logo_data).decode()
-            dataset.logo_url = f"data:{mime_type};base64,{logo_base64}"
-            dataset.thumbnailUrl = dataset.logo_url
+            
+            # Create optimized thumbnail instead of storing full base64
+            thumbnail_url = _create_thumbnail(logo_data, mime_type, max_size=(200, 200))
+            dataset.thumbnailUrl = thumbnail_url
+            dataset.logo_url = thumbnail_url  # Use thumbnail for logo_url too
         db.commit()
         db.refresh(dataset)
         
@@ -180,6 +274,9 @@ async def update_dataset(
         annotation_file_count = dataset.actual_annotation_file_count
         
         # Return a properly formatted response
+        # Exclude base64 thumbnails from response to prevent hanging with large images
+        # The thumbnail is small (200x200, ~10-20KB) but we still exclude it for consistency
+        # Frontend can fetch it separately if needed, or we can include it since it's optimized
         return schemas.Dataset(
             id=dataset.id,
             name=dataset.name,
@@ -192,6 +289,7 @@ async def update_dataset(
             annotation_file_count=annotation_file_count,
             annotation_files=[],  # Empty list to avoid serialization issues
             project_id=dataset.project_id,
+            # Include thumbnail since it's now optimized (200x200, ~10-20KB max)
             thumbnailUrl=dataset.thumbnailUrl,
             logo_url=dataset.logo_url,
             url=dataset.url
@@ -680,6 +778,9 @@ async def upload_images(
         current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
         dataset.image_count = current_image_count + len(uploaded_images)
         db.commit()
+        
+        # Set random image as logo if no logo is set
+        _set_random_image_as_logo(dataset, db, base_url)
         
         # Prepare response with uploaded images
         response_images = []

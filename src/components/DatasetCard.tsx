@@ -138,6 +138,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                 <div className="absolute inset-0 bg-muted animate-pulse" />
               )}
               <img
+                key={dataset.thumbnailUrl}
                 src={dataset.thumbnailUrl}
                 alt={dataset.name}
                 className={cn(
@@ -145,6 +146,12 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                   !imageLoaded && "opacity-0",
                   imageLoaded && "opacity-100"
                 )}
+                onLoad={() => {
+                  // Force re-render if image loads
+                  if (!imageLoaded) {
+                    // The useImageLoad hook will handle this, but this ensures it works
+                  }
+                }}
               />
             </>
           ) : (

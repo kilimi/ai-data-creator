@@ -143,9 +143,24 @@ async def get_dataset_groups(
     all_dataset_ids = list(set(all_dataset_ids))
     
     # Get all datasets at once
+    # Use load_only to avoid loading large binary logo field (can be MBs)
+    from sqlalchemy.orm import load_only
     all_datasets = {}
     if all_dataset_ids:
-        datasets_list = db.query(models.Dataset).filter(
+        datasets_list = db.query(models.Dataset).options(
+            load_only(
+                models.Dataset.id,
+                models.Dataset.name,
+                models.Dataset.description,
+                models.Dataset._tags,
+                models.Dataset.project_id,
+                models.Dataset.image_count,
+                models.Dataset.thumbnailUrl,
+                models.Dataset.url,
+                models.Dataset.created_at,
+                models.Dataset.updated_at
+            )
+        ).filter(
             models.Dataset.id.in_(all_dataset_ids)
         ).all()
         all_datasets = {d.id: d for d in datasets_list}
@@ -213,6 +228,7 @@ async def get_dataset_groups(
                 {
                     "id": d.id,
                     "name": d.name,
+                    # Include optimized base64 thumbnails (200x200, ~10-20KB) - they're small enough
                     "thumbnailUrl": d.thumbnailUrl,
                     "image_count": d.image_count,
                     "annotation_count": annotation_counts.get(d.id, 0),

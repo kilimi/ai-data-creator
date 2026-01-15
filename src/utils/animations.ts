@@ -86,8 +86,10 @@ export function useImageLoad(src?: string) {
   const [isLoaded, setIsLoaded] = useState(false);
   
   useEffect(() => {
+    // Reset loaded state when src changes
+    setIsLoaded(false);
+    
     if (!src) {
-      setIsLoaded(false);
       return;
     }
     
@@ -98,10 +100,21 @@ export function useImageLoad(src?: string) {
       setIsLoaded(true);
     };
     
+    const handleError = () => {
+      setIsLoaded(false);
+    };
+    
     img.addEventListener('load', handleLoad);
+    img.addEventListener('error', handleError);
+    
+    // If image is already cached, trigger load immediately
+    if (img.complete) {
+      setIsLoaded(true);
+    }
     
     return () => {
       img.removeEventListener('load', handleLoad);
+      img.removeEventListener('error', handleError);
     };
   }, [src]);
   

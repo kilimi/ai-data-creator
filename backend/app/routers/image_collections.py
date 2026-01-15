@@ -432,6 +432,22 @@ async def upload_images_to_collection(
     
     db.commit()
     
+    # Set random image as logo if no logo is set
+    if not dataset.thumbnailUrl and not dataset.logo_url and not dataset.logo:
+        images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        if images:
+            import random
+            random_image = random.choice(images)
+            if random_image.url:
+                if random_image.url.startswith('/'):
+                    dataset.thumbnailUrl = f"{base_url}{random_image.url}?thumb=300" if base_url else random_image.url
+                    dataset.logo_url = f"{base_url}{random_image.url}?thumb=300" if base_url else random_image.url
+                else:
+                    dataset.thumbnailUrl = random_image.url
+                    dataset.logo_url = random_image.url
+                db.commit()
+                print(f"Set random image {random_image.file_name} as logo for dataset {dataset_id}")
+    
     return {
         "message": f"Successfully uploaded {len(files)} images to collection '{collection.name}'",
         "images": [
