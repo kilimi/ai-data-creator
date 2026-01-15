@@ -1,3 +1,4 @@
+import * as ort from 'onnxruntime-web';
 import { SAMSession } from './session';
 import { preprocessImage, imageToImageData, PreprocessedImage, ImageDataResult } from './preprocessor';
 import { EncodingOutput } from './types';

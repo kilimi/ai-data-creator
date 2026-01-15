@@ -121,22 +121,20 @@ export class SAMDecoder {
     inputs.has_mask_input = new ort.Tensor('float32', new Float32Array([0]), [1]);
 
     // Original image size (required by SAM decoder)
-    // GETI calculates this as: ratio = 1024 / max(originalHeight, originalWidth)
-    // Then: [round(originalHeight * ratio), round(originalWidth * ratio)]
-    const ratio = 1024 / Math.max(encoding.originalHeight, encoding.originalWidth);
+    // SAM expects the actual original image dimensions in [height, width] format
+    // NOT the scaled/preprocessed size
     inputs.orig_im_size = new ort.Tensor(
       'float32',
       new Float32Array([
-        Math.round(encoding.originalHeight * ratio),
-        Math.round(encoding.originalWidth * ratio)
+        encoding.originalHeight,
+        encoding.originalWidth
       ]),
       [2]
     );
     
     console.log('[SAM] orig_im_size:', {
       original: [encoding.originalHeight, encoding.originalWidth],
-      ratio,
-      scaled: [Math.round(encoding.originalHeight * ratio), Math.round(encoding.originalWidth * ratio)],
+      processed: [encoding.processedHeight, encoding.processedWidth],
     });
 
     return inputs;
@@ -150,21 +148,34 @@ export class SAMDecoder {
     const outputNames = this.session.getOutputNames();
     
     // SAM decoder outputs: masks, iou_predictions, low_res_masks
-    const masksTensor = outputs['masks'] || outputs[outputNames.find(n => n.includes('mask')) || outputNames[0]];
+    // Try to get full-resolution masks first, fallback to low-res if needed
+    const masksTensor = outputs['masks'] || outputs['low_res_masks'] || outputs[outputNames.find(n => n.includes('mask') && !n.includes('low')) || outputNames[0]];
+    const lowResMasksTensor = outputs['low_res_masks'] || outputs[outputNames.find(n => n.includes('low') && n.includes('mask'))];
     const iouPredictions = outputs['iou_predictions'] || outputs[outputNames.find(n => n.includes('iou')) || outputNames[1]];
     
-    if (!masksTensor) {
+    console.log('[SAM] Available outputs:', {
+      outputNames,
+      outputKeys: Object.keys(outputs),
+      hasMasks: !!masksTensor,
+      hasLowResMasks: !!lowResMasksTensor,
+      hasIoU: !!iouPredictions,
+    });
+    
+    if (!masksTensor && !lowResMasksTensor) {
       console.error('No masks tensor found in decoder output', outputNames, Object.keys(outputs));
       return { masks: [], polygons: [], scores: [] };
     }
+    
+    // Use full-res masks if available, otherwise use low-res
+    const finalMasksTensor = masksTensor || lowResMasksTensor;
 
-    const masks = masksTensor.data as Float32Array;
+    const masks = finalMasksTensor.data as Float32Array;
     const iouScores = iouPredictions ? (iouPredictions.data as Float32Array) : null;
     
     // Get mask dimensions from tensor shape
     // SAM decoder outputs masks as [batch, num_masks, height, width]
     // GETI uses: masks.dims[2] for height, masks.dims[3] for width
-    const dims = masksTensor.dims;
+    const dims = finalMasksTensor.dims;
     console.log('[SAM] Mask tensor dims:', dims);
     
     const numMasks = dims.length >= 4 ? dims[1] : 1;
@@ -209,6 +220,8 @@ export class SAMDecoder {
     let maxVal = -Infinity;
     let positiveCount = 0;
     
+    // Try different thresholds if needed - sometimes SAM outputs need sigmoid
+    // First pass: threshold at 0.0 (standard for logits)
     for (let y = 0; y < maskHeight; y++) {
       for (let x = 0; x < maskWidth; x++) {
         // GETI's indexing: maskOffset + y * width + x
@@ -220,8 +233,27 @@ export class SAMDecoder {
         maxVal = Math.max(maxVal, val);
         // SAM outputs logits - threshold at 0.0
         // Positive values = foreground, negative = background
-        if (val > 0.0) positiveCount++;
-        maskData[maskIdx] = val > 0.0 ? 255 : 0;
+        // Some models output after sigmoid, so try both thresholds
+        const threshold = 0.0;
+        const isPositive = val > threshold;
+        if (isPositive) positiveCount++;
+        maskData[maskIdx] = isPositive ? 255 : 0;
+      }
+    }
+    
+    // If threshold at 0.0 gives no results, try sigmoid threshold (0.5)
+    if (positiveCount === 0 && minVal >= 0 && maxVal <= 1) {
+      console.log('[SAM] No pixels with threshold 0.0, trying sigmoid threshold 0.5');
+      positiveCount = 0;
+      for (let y = 0; y < maskHeight; y++) {
+        for (let x = 0; x < maskWidth; x++) {
+          const dataIdx = maskOffset + y * maskWidth + x;
+          const val = masks[dataIdx];
+          const maskIdx = y * maskWidth + x;
+          const isPositive = val > 0.5;
+          if (isPositive) positiveCount++;
+          maskData[maskIdx] = isPositive ? 255 : 0;
+        }
       }
     }
     
@@ -229,9 +261,16 @@ export class SAMDecoder {
       minVal: minVal.toFixed(3),
       maxVal: maxVal.toFixed(3),
       positivePixels: positiveCount,
-      totalPixels: maskSize * maskSize,
-      ratio: (positiveCount / (maskSize * maskSize)).toFixed(3),
+      totalPixels: maskSize,
+      ratio: (positiveCount / maskSize).toFixed(3),
+      maskDimensions: `${maskWidth}x${maskHeight}`,
     });
+    
+    // If no positive pixels, the mask is empty
+    if (positiveCount === 0) {
+      console.warn('[SAM] Mask is completely empty (no positive pixels)');
+      return { masks: [], polygons: [], scores: [] };
+    }
 
     const mask: SegmentationMask = {
       mask: maskData,
@@ -280,11 +319,207 @@ export class SAMDecoder {
   }
 
   private maskToPolygon(mask: SegmentationMask, encoding: EncodingOutput): Point[] {
-    // Scale mask coordinates to original image size
-    // GETI uses: scaleX = (x * originalWidth) / maskWidth
-    // This scales from mask space (256x256) to original image space
-    const scaleX = (x: number) => Math.round((x * encoding.originalWidth) / mask.width);
-    const scaleY = (y: number) => Math.round((y * encoding.originalHeight) / mask.height);
+    // SAM decoder outputs masks at different resolutions depending on the model
+    // The mask coordinates are in the processed image space (1024x1024 with padding)
+    // We need to:
+    // 1. Scale from mask space to processed space (accounting for padding)
+    // 2. Remove padding offset
+    // 3. Scale from processed space to original space
+    
+    // Check if mask matches processed image size (1024x1024) - this means it's in processed space
+    const isProcessedResolution = mask.width === encoding.processedWidth && mask.height === encoding.processedHeight;
+    
+    // Check if mask matches original image size - this means SAM already scaled it
+    const isOriginalResolution = mask.width === encoding.originalWidth && mask.height === encoding.originalHeight;
+    
+    let scaleX: (x: number) => number;
+    let scaleY: (y: number) => number;
+    
+    if (isOriginalResolution) {
+      // Mask is at original resolution - SAM upsampled it from processed space
+      // The mask pixel coordinates (0-5760, 0-3840) represent the processed image space
+      // We need to map from processed space to original space
+      console.log('[SAM] Mask is at original resolution, but coordinates are in processed space');
+      console.log('[SAM] Transformation params:', {
+        scale: encoding.scale,
+        offsetX: encoding.offsetX,
+        offsetY: encoding.offsetY,
+        processedSize: `${encoding.processedWidth}x${encoding.processedHeight}`,
+        originalSize: `${encoding.originalWidth}x${encoding.originalHeight}`,
+      });
+      
+      // When SAM outputs a full-resolution mask, it's upsampled from the processed image
+      // The mask pixel coordinates directly map to the processed image coordinates
+      // But we need to account for the fact that the processed image was scaled and padded
+      
+      // The mask is upsampled: each mask pixel corresponds to a position in processed space
+      // mask.width pixels map to processedWidth pixels
+      const maskToProcessedX = encoding.processedWidth / mask.width;  // 1024 / 5760 ≈ 0.1778
+      const maskToProcessedY = encoding.processedHeight / mask.height; // 1024 / 3840 ≈ 0.2667
+      
+      scaleX = (x: number) => {
+        // x is a pixel index in the mask (0 to mask.width-1 = 0 to 5759)
+        // The mask is upsampled from processed space, so:
+        // mask pixel index -> processed coordinate -> original coordinate
+        
+        // Step 1: Convert mask pixel index to processed coordinate (0 to 1023)
+        // mask.width (5760) pixels map to processedWidth (1024) pixels
+        const processedX = x * maskToProcessedX;
+        
+        // Step 2: Remove padding offset (image was centered in 1024x1024 canvas)
+        // offsetX is the left padding (0 in this case since image width fills 1024)
+        const withoutPaddingX = processedX - encoding.offsetX;
+        
+        // Step 3: Scale from processed space back to original space
+        // The processed image was scaled by: scale = 1024 / max(5760, 3840) = 1024 / 5760
+        // To reverse: originalX = processedX / scale
+        // But we need to account for the fact that the processed image is 1024 wide
+        // and represents the scaled version of the original
+        const originalX = withoutPaddingX / encoding.scale;
+        
+        return Math.max(0, Math.min(encoding.originalWidth - 1, Math.round(originalX)));
+      };
+      scaleY = (y: number) => {
+        // y is a pixel index in the mask (0 to mask.height-1 = 0 to 3839)
+        // The mask is upsampled from processed space
+        
+        // Step 1: Convert mask pixel index to processed coordinate (0 to 1023)
+        // mask.height (3840) pixels map to processedHeight (1024) pixels
+        const processedY = y * maskToProcessedY;
+        
+        // Step 2: Remove padding offset (image was centered vertically)
+        // offsetY is the top padding (170.5 in this case)
+        const withoutPaddingY = processedY - encoding.offsetY;
+        
+        // Step 3: Scale from processed space back to original space
+        // The processed image height represents the scaled original height
+        // originalY = processedY / scale, but we removed padding first
+        const originalY = withoutPaddingY / encoding.scale;
+        
+        return Math.max(0, Math.min(encoding.originalHeight - 1, Math.round(originalY)));
+      };
+      
+      // Test the transformation with known points to verify correctness
+      const testMaskX = mask.width / 2; // Middle of mask
+      const testMaskY = mask.height / 2;
+      const testOriginalX = scaleX(testMaskX);
+      const testOriginalY = scaleY(testMaskY);
+      const expectedOriginalX = encoding.originalWidth / 2;
+      const expectedOriginalY = encoding.originalHeight / 2;
+      
+      console.log('[SAM] Mask coordinate transformation:', {
+        maskToProcessed: `${maskToProcessedX.toFixed(4)}x${maskToProcessedY.toFixed(4)}`,
+        scale: encoding.scale,
+        offset: `${encoding.offsetX}, ${encoding.offsetY}`,
+        testTransform: {
+          maskPoint: `(${testMaskX.toFixed(1)}, ${testMaskY.toFixed(1)})`,
+          originalPoint: `(${testOriginalX}, ${testOriginalY})`,
+          expectedOriginal: `(${expectedOriginalX.toFixed(1)}, ${expectedOriginalY.toFixed(1)})`,
+          xError: Math.abs(testOriginalX - expectedOriginalX),
+          yError: Math.abs(testOriginalY - expectedOriginalY),
+        },
+      });
+      
+      // If the transformation is significantly off, the mask coordinates might be in original space already
+      const xError = Math.abs(testOriginalX - expectedOriginalX);
+      const yError = Math.abs(testOriginalY - expectedOriginalY);
+      
+      console.log('[SAM] Transformation test results:', {
+        xError,
+        yError,
+        threshold: 10,
+        willUseDirectMapping: xError > 10 || yError > 10,
+      });
+      
+      // When mask is at original resolution, SAM typically outputs coordinates in original space
+      // Test both approaches and use the one with smaller error
+      const directScaleX = (x: number) => Math.max(0, Math.min(encoding.originalWidth - 1, Math.round(x)));
+      const directScaleY = (y: number) => Math.max(0, Math.min(encoding.originalHeight - 1, Math.round(y)));
+      
+      const directX = directScaleX(testMaskX);
+      const directY = directScaleY(testMaskY);
+      const directXError = Math.abs(directX - expectedOriginalX);
+      const directYError = Math.abs(directY - expectedOriginalY);
+      const directTotalError = directXError + directYError;
+      const transformTotalError = xError + yError;
+      
+      console.log('[SAM] Comparing mapping approaches:', {
+        directMapping: { result: `(${directX}, ${directY})`, error: directTotalError },
+        transformMapping: { result: `(${testOriginalX}, ${testOriginalY})`, error: transformTotalError },
+      });
+      
+      // For full-resolution masks, SAM outputs coordinates in processed space (upsampled)
+      // The center point test might be misleading - always use transformation mapping
+      // Only fall back to direct mapping if transformation error is extremely large
+      if (transformTotalError > 500) {
+        console.warn('[SAM] Transformation error extremely large, falling back to direct mapping');
+        scaleX = directScaleX;
+        scaleY = directScaleY;
+      } else {
+        console.log('[SAM] Using transformation mapping for full-resolution mask (default)');
+        // Keep the existing scaleX and scaleY functions (transformation-based)
+        // This correctly handles SAM's upsampled full-res masks
+      }
+      
+      // Log a few sample transformations to verify
+      const sampleMaskPoints = [
+        { x: 0, y: 0 },
+        { x: mask.width / 2, y: mask.height / 2 },
+        { x: mask.width - 1, y: mask.height - 1 },
+      ];
+      console.log('[SAM] Sample coordinate transformations:', 
+        sampleMaskPoints.map(p => ({
+          mask: `(${p.x}, ${p.y})`,
+          original: `(${scaleX(p.x)}, ${scaleY(p.y)})`,
+        }))
+      );
+    } else if (isProcessedResolution) {
+      // Mask is at processed resolution (1024x1024) - need to scale and remove padding
+      console.log('[SAM] Mask is at processed resolution, scaling to original');
+      // Scale from processed space to original space, accounting for the preprocessing scale
+      const processedToOriginalX = encoding.originalWidth / encoding.processedWidth;
+      const processedToOriginalY = encoding.originalHeight / encoding.processedHeight;
+      
+      // Remove padding offset and scale
+      scaleX = (x: number) => {
+        // Remove padding offset, then scale to original
+        const withoutPadding = (x - encoding.offsetX) / encoding.scale;
+        return Math.round(withoutPadding);
+      };
+      scaleY = (y: number) => {
+        // Remove padding offset, then scale to original
+        const withoutPadding = (y - encoding.offsetY) / encoding.scale;
+        return Math.round(withoutPadding);
+      };
+    } else {
+      // Mask is at a different resolution (e.g., 256x256) - scale through processed space
+      console.log('[SAM] Mask is at intermediate resolution, scaling through processed space');
+      const maskToProcessedX = encoding.processedWidth / mask.width;
+      const maskToProcessedY = encoding.processedHeight / mask.height;
+      const processedToOriginalX = encoding.originalWidth / encoding.processedWidth;
+      const processedToOriginalY = encoding.originalHeight / encoding.processedHeight;
+      
+      scaleX = (x: number) => {
+        // Scale to processed, remove padding, scale to original
+        const inProcessed = x * maskToProcessedX;
+        const withoutPadding = (inProcessed - encoding.offsetX) / encoding.scale;
+        return Math.round(withoutPadding);
+      };
+      scaleY = (y: number) => {
+        // Scale to processed, remove padding, scale to original
+        const inProcessed = y * maskToProcessedY;
+        const withoutPadding = (inProcessed - encoding.offsetY) / encoding.scale;
+        return Math.round(withoutPadding);
+      };
+      
+      console.log('[SAM] Mask scaling factors:', {
+        maskSize: `${mask.width}x${mask.height}`,
+        processedSize: `${encoding.processedWidth}x${encoding.processedHeight}`,
+        originalSize: `${encoding.originalWidth}x${encoding.originalHeight}`,
+        scale: encoding.scale,
+        offset: `${encoding.offsetX}, ${encoding.offsetY}`,
+      });
+    }
 
     // Find contours in mask (in mask space, 256x256)
     const contours = this.findContours(mask.mask, mask.width, mask.height);
@@ -308,38 +543,179 @@ export class SAMDecoder {
     });
 
     // Scale points from mask space to original image space
-    const scaledPoints = largestContour.map(p => ({
-      x: scaleX(p.x),
-      y: scaleY(p.y),
-    }));
+    const scaledPoints = largestContour.map(p => {
+      const x = scaleX(p.x);
+      const y = scaleY(p.y);
+      // Validate coordinates are within bounds
+      const validX = Math.max(0, Math.min(encoding.originalWidth - 1, x));
+      const validY = Math.max(0, Math.min(encoding.originalHeight - 1, y));
+      return { x: validX, y: validY };
+    });
+    
+    // Remove invalid points (NaN, Infinity, or out of bounds)
+    const validPoints = scaledPoints.filter(p => 
+      isFinite(p.x) && isFinite(p.y) && 
+      p.x >= 0 && p.x < encoding.originalWidth &&
+      p.y >= 0 && p.y < encoding.originalHeight
+    );
+    
+    if (validPoints.length < 3) {
+      console.warn('[SAM] Not enough valid points after scaling:', {
+        original: scaledPoints.length,
+        valid: validPoints.length,
+        firstFew: scaledPoints.slice(0, 5),
+      });
+      return [];
+    }
+    
+    // Ensure polygon is closed (first point == last point)
+    if (validPoints.length > 0) {
+      const first = validPoints[0];
+      const last = validPoints[validPoints.length - 1];
+      if (first.x !== last.x || first.y !== last.y) {
+        validPoints.push({ x: first.x, y: first.y });
+      }
+    }
+    
+    // Use valid points for further processing
+    const pointsToSimplify = validPoints;
     
     // Simplify polygon (remove duplicate/close points)
-    const simplified = this.simplifyPolygon(scaledPoints);
+    const simplified = this.simplifyPolygon(pointsToSimplify);
     
-    console.log('[SAM] Scaled polygon:', {
-      originalPoints: largestContour.length,
-      simplifiedPoints: simplified.length,
-      firstFewScaled: simplified.slice(0, 5),
-    });
+    // Ensure simplified polygon is also closed
+    if (simplified.length > 0) {
+      const first = simplified[0];
+      const last = simplified[simplified.length - 1];
+      if (first.x !== last.x || first.y !== last.y) {
+        simplified.push({ x: first.x, y: first.y });
+      }
+    }
+    
+    // Debug: Check coordinate ranges
+    if (simplified.length > 0) {
+      const xValues = simplified.map(p => p.x);
+      const yValues = simplified.map(p => p.y);
+      const minX = Math.min(...xValues);
+      const maxX = Math.max(...xValues);
+      const minY = Math.min(...yValues);
+      const maxY = Math.max(...yValues);
+      
+      console.log('[SAM] Scaled polygon:', {
+        originalPoints: largestContour.length,
+        simplifiedPoints: simplified.length,
+        isClosed: simplified.length > 0 && simplified[0].x === simplified[simplified.length - 1].x && simplified[0].y === simplified[simplified.length - 1].y,
+        coordinateRanges: {
+          x: `[${minX}, ${maxX}] (image width: ${encoding.originalWidth}, coverage: ${((maxX - minX) / encoding.originalWidth * 100).toFixed(1)}%)`,
+          y: `[${minY}, ${maxY}] (image height: ${encoding.originalHeight}, coverage: ${((maxY - minY) / encoding.originalHeight * 100).toFixed(1)}%)`,
+        },
+        samplePoints: {
+          first: simplified[0],
+          middle: simplified[Math.floor(simplified.length / 2)],
+          last: simplified[simplified.length - 1],
+        },
+        firstFewScaled: simplified.slice(0, 5),
+        lastFewScaled: simplified.slice(-5),
+      });
+      
+      // Check for invalid coordinates
+      const invalidCoords = simplified.filter(p => 
+        !isFinite(p.x) || !isFinite(p.y) || 
+        p.x < 0 || p.x >= encoding.originalWidth ||
+        p.y < 0 || p.y >= encoding.originalHeight
+      );
+      if (invalidCoords.length > 0) {
+        console.warn('[SAM] Invalid coordinates found:', {
+          count: invalidCoords.length,
+          examples: invalidCoords.slice(0, 5),
+        });
+      }
+    }
+    
+    // Validate polygon has at least 3 points
+    if (simplified.length < 3) {
+      console.warn('[SAM] Polygon has too few points:', simplified.length);
+      return [];
+    }
     
     return simplified;
   }
   
   private calculatePolygonArea(points: Point[]): number {
-    if (points.length < 3) return 0;
-    let area = 0;
-    for (let i = 0; i < points.length; i++) {
-      const j = (i + 1) % points.length;
-      area += points[i].x * points[j].y;
-      area -= points[j].x * points[i].y;
+    if (points.length < 3) {
+      console.warn('[SAM] calculatePolygonArea: Not enough points', points.length);
+      return 0;
     }
-    return Math.abs(area / 2);
+    
+    // Remove duplicate consecutive points
+    const cleanedPoints: Point[] = [points[0]];
+    for (let i = 1; i < points.length; i++) {
+      const prev = cleanedPoints[cleanedPoints.length - 1];
+      const curr = points[i];
+      // Only add if point is different from previous
+      if (curr.x !== prev.x || curr.y !== prev.y) {
+        cleanedPoints.push(curr);
+      }
+    }
+    
+    // Remove the closing point if it's a duplicate of the first
+    if (cleanedPoints.length > 2) {
+      const first = cleanedPoints[0];
+      const last = cleanedPoints[cleanedPoints.length - 1];
+      if (first.x === last.x && first.y === last.y) {
+        cleanedPoints.pop(); // Remove duplicate closing point
+      }
+    }
+    
+    if (cleanedPoints.length < 3) {
+      console.warn('[SAM] calculatePolygonArea: Not enough points after cleaning', cleanedPoints.length);
+      return 0;
+    }
+    
+    // Shoelace formula for polygon area
+    // Formula: area = 0.5 * |sum(x_i * y_{i+1} - x_{i+1} * y_i)|
+    let area = 0;
+    const n = cleanedPoints.length;
+    
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n; // Wrap around to first point
+      area += cleanedPoints[i].x * cleanedPoints[j].y;
+      area -= cleanedPoints[j].x * cleanedPoints[i].y;
+    }
+    
+    const calculatedArea = Math.abs(area / 2);
+    
+    // Validate the area makes sense
+    if (isNaN(calculatedArea) || !isFinite(calculatedArea) || calculatedArea <= 0) {
+      console.warn('[SAM] Invalid polygon area calculated:', {
+        area: calculatedArea,
+        rawArea: area,
+        numPoints: cleanedPoints.length,
+        firstFew: cleanedPoints.slice(0, 5),
+        lastFew: cleanedPoints.slice(-5),
+      });
+      return 0;
+    }
+    
+    return calculatedArea;
   }
   
   private simplifyPolygon(points: Point[], threshold: number = 2): Point[] {
     if (points.length <= 3) return points;
     
+    // Adaptive threshold based on image size
+    // For large images, use a larger threshold to avoid over-simplification
+    // For small images, use a smaller threshold
+    const imageSize = Math.max(
+      points.reduce((max, p) => Math.max(max, p.x), 0),
+      points.reduce((max, p) => Math.max(max, p.y), 0)
+    );
+    // Scale threshold based on image size: 2px for 1000px images, proportionally larger for bigger images
+    const adaptiveThreshold = Math.max(2, Math.min(10, (imageSize / 1000) * 2));
+    
     const simplified: Point[] = [points[0]];
+    let skippedCount = 0;
+    
     for (let i = 1; i < points.length - 1; i++) {
       const prev = simplified[simplified.length - 1];
       const curr = points[i];
@@ -348,39 +724,108 @@ export class SAMDecoder {
       // Calculate distance from current point to line between prev and next
       const dx = next.x - prev.x;
       const dy = next.y - prev.y;
-      const dist = Math.abs((dy * curr.x - dx * curr.y + next.x * prev.y - next.y * prev.x) / Math.sqrt(dx * dx + dy * dy));
+      const lineLength = Math.sqrt(dx * dx + dy * dy);
+      
+      if (lineLength < 0.001) {
+        // Points are too close, skip
+        skippedCount++;
+        continue;
+      }
+      
+      const dist = Math.abs((dy * curr.x - dx * curr.y + next.x * prev.y - next.y * prev.x) / lineLength);
       
       // Keep point if it's far enough from the line
-      if (dist > threshold) {
+      if (dist > adaptiveThreshold) {
         simplified.push(curr);
+      } else {
+        skippedCount++;
       }
     }
+    
+    // Always keep the last point
     simplified.push(points[points.length - 1]);
+    
+    // If we removed too many points (>90%), the threshold might be too high
+    // Return original points if simplification was too aggressive
+    const removalRatio = skippedCount / (points.length - 2);
+    if (removalRatio > 0.9) {
+      console.warn('[SAM] Polygon simplification too aggressive, using original points', {
+        original: points.length,
+        simplified: simplified.length,
+        removalRatio: (removalRatio * 100).toFixed(1) + '%',
+        threshold: adaptiveThreshold,
+      });
+      return points;
+    }
+    
+    console.log('[SAM] Polygon simplification:', {
+      original: points.length,
+      simplified: simplified.length,
+      removed: skippedCount,
+      removalRatio: (removalRatio * 100).toFixed(1) + '%',
+      threshold: adaptiveThreshold,
+    });
+    
     return simplified;
   }
 
   private findContours(mask: Uint8Array, width: number, height: number): Point[][] {
-    // Simplified contour finding using marching squares algorithm
-    // For production, consider using a library like OpenCV.js or a dedicated contour finder
-    
+    // Improved contour finding - find edge pixels (255 adjacent to 0 or boundary)
     const contours: Point[][] = [];
     const visited = new Set<string>();
+    
+    // Count foreground pixels for debugging
+    let foregroundCount = 0;
+    for (let i = 0; i < mask.length; i++) {
+      if (mask[i] === 255) foregroundCount++;
+    }
+    console.log('[SAM] Contour finding - foreground pixels:', foregroundCount, 'out of', mask.length);
 
-    // Find all edge pixels (pixels with value 255 adjacent to value 0)
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
+    // Find edge pixels - pixels that are 255 and have at least one 0 neighbor or are on boundary
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
         const idx = y * width + x;
         if (mask[idx] === 255 && !visited.has(`${x},${y}`)) {
-          // Found a new contour
-          const contour = this.traceContour(mask, width, height, x, y, visited);
-          if (contour.length > 0) {
-            contours.push(contour);
+          // Check if this is an edge pixel (has 0 neighbor or is on boundary)
+          const isEdge = this.isEdgePixel(mask, width, height, x, y);
+          if (isEdge) {
+            // Found a new contour starting point
+            const contour = this.traceContour(mask, width, height, x, y, visited);
+            if (contour.length >= 3) { // Need at least 3 points for a valid polygon
+              contours.push(contour);
+            }
           }
         }
       }
     }
-
+    
+    console.log('[SAM] Found', contours.length, 'contours');
     return contours;
+  }
+  
+  private isEdgePixel(mask: Uint8Array, width: number, height: number, x: number, y: number): boolean {
+    // Check if pixel is on boundary
+    if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+      return true;
+    }
+    
+    // Check neighbors - if any neighbor is 0, this is an edge pixel
+    const neighbors = [
+      [x - 1, y - 1], [x, y - 1], [x + 1, y - 1],
+      [x - 1, y],                 [x + 1, y],
+      [x - 1, y + 1], [x, y + 1], [x + 1, y + 1]
+    ];
+    
+    for (const [nx, ny] of neighbors) {
+      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+        const nIdx = ny * width + nx;
+        if (mask[nIdx] === 0) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
   }
 
   private traceContour(
@@ -392,23 +837,30 @@ export class SAMDecoder {
     visited: Set<string>
   ): Point[] {
     const contour: Point[] = [];
+    // Use 4-connectivity for faster tracing (up, right, down, left)
     const directions = [
-      [0, -1], [1, -1], [1, 0], [1, 1],
-      [0, 1], [-1, 1], [-1, 0], [-1, -1]
+      [0, -1], [1, 0], [0, 1], [-1, 0]  // up, right, down, left
     ];
 
     let x = startX;
     let y = startY;
-    let dir = 0;
+    let dir = 0; // Start going up
+    const maxIterations = width * height; // Safety limit
+    let iterations = 0;
 
     do {
-      visited.add(`${x},${y}`);
+      const key = `${x},${y}`;
+      if (visited.has(key) && contour.length > 0) {
+        // We've looped back
+        break;
+      }
+      visited.add(key);
       contour.push({ x, y });
 
-      // Find next edge pixel
+      // Find next edge pixel in clockwise direction
       let found = false;
-      for (let i = 0; i < 8; i++) {
-        const checkDir = (dir + i) % 8;
+      for (let i = 0; i < 4; i++) {
+        const checkDir = (dir + i) % 4;
         const [dx, dy] = directions[checkDir];
         const nx = x + dx;
         const ny = y + dy;
@@ -418,7 +870,7 @@ export class SAMDecoder {
           if (mask[idx] === 255) {
             x = nx;
             y = ny;
-            dir = (checkDir + 6) % 8; // Turn left
+            dir = (checkDir + 3) % 4; // Turn right (for clockwise tracing)
             found = true;
             break;
           }
@@ -426,7 +878,13 @@ export class SAMDecoder {
       }
 
       if (!found) break;
-    } while (x !== startX || y !== startY || contour.length === 1);
+      iterations++;
+    } while ((x !== startX || y !== startY || contour.length < 3) && iterations < maxIterations);
+
+    // If we didn't close the contour, it might be incomplete
+    if (contour.length < 3) {
+      return [];
+    }
 
     return contour;
   }

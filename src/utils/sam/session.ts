@@ -13,12 +13,34 @@ export class SAMSession {
     
     // Configure WASM paths - point to public/wasm directory
     // We've copied the WASM files there so Vite can serve them correctly
+    // Include all WASM files that onnxruntime-web might need
+    // Use paths that work in both main thread and worker contexts
+    // In workers, we can use self.location or relative paths
+    // In main thread, we can use window.location or relative paths
+    let wasmBaseUrl: string;
+    if (typeof window !== 'undefined') {
+      // Main thread - use window.location
+      wasmBaseUrl = new URL('/wasm/', window.location.origin).href;
+    } else if (typeof self !== 'undefined' && self.location) {
+      // Web Worker - use self.location
+      wasmBaseUrl = new URL('/wasm/', self.location.origin).href;
+    } else {
+      // Fallback to relative path
+      wasmBaseUrl = '/wasm/';
+    }
+    console.log('[SAM] Configuring WASM paths with base URL:', wasmBaseUrl);
+    
+    // Set individual paths with absolute URLs
     ort.env.wasm.wasmPaths = {
-      'ort-wasm.wasm': '/wasm/ort-wasm.wasm',
-      'ort-wasm-simd.wasm': '/wasm/ort-wasm-simd.wasm',
-      'ort-wasm-threaded.wasm': '/wasm/ort-wasm-threaded.wasm',
-      'ort-wasm-simd-threaded.wasm': '/wasm/ort-wasm-simd-threaded.wasm',
+      'ort-wasm.wasm': `${wasmBaseUrl}ort-wasm.wasm`,
+      'ort-wasm-simd.wasm': `${wasmBaseUrl}ort-wasm-simd.wasm`,
+      'ort-wasm-threaded.wasm': `${wasmBaseUrl}ort-wasm-threaded.wasm`,
+      'ort-wasm-simd-threaded.wasm': `${wasmBaseUrl}ort-wasm-simd-threaded.wasm`,
+      'ort-wasm-simd-threaded.jsep.wasm': `${wasmBaseUrl}ort-wasm-simd-threaded.jsep.wasm`,
+      'ort-wasm-simd-threaded.asyncify.wasm': `${wasmBaseUrl}ort-wasm-simd-threaded.asyncify.wasm`,
     };
+    
+    console.log('[SAM] WASM paths configured:', ort.env.wasm.wasmPaths);
     
     console.log('[SAM] Loading model from:', modelPath);
     
