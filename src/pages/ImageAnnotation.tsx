@@ -253,6 +253,11 @@ const ImageAnnotation = () => {
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveTimeRef = useRef<number>(Date.now());
 
+  // Save annotation file dialog state
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveAnnotationName, setSaveAnnotationName] = useState('');
+  const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
+
   // Helper function to safely save to localStorage with quota handling
   const safeLocalStorageSet = (key: string, value: string) => {
     try {
@@ -715,8 +720,11 @@ const ImageAnnotation = () => {
       try {
         setIsLoading(true);
         
-        // Load global classes first
-        loadGlobalClasses();
+        // Only load global classes if loading an existing annotation file
+        // Otherwise start with clean slate (no classes)
+        if (annotationId) {
+          loadGlobalClasses();
+        }
         
         // Try to load image collections first
         const collectionsResponse = await api.getImageCollections(id);
@@ -815,6 +823,7 @@ const ImageAnnotation = () => {
       }
     }
   }, [currentImageIndex, allImageNames, currentLayerImageNames, displayLayer, imageCollections, isInitialLoad]);
+
 
   // Update current index when layer changes to maintain the same image if possible
   useEffect(() => {
@@ -1087,6 +1096,8 @@ const ImageAnnotation = () => {
       } else {
         // No saved annotations, clear current ones
         setAnnotations([]);
+      setClasses([]); // Clear classes for fresh start
+      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
         // Only clear selection if there are no annotations
         setSelectedAnnotation(null);
       }
@@ -1096,6 +1107,8 @@ const ImageAnnotation = () => {
     } catch (error) {
       console.error('Error loading annotations:', error);
       setAnnotations([]);
+      setClasses([]); // Clear classes for fresh start
+      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
       setSelectedAnnotation(null);
     }
   };
@@ -1570,12 +1583,83 @@ const ImageAnnotation = () => {
       // Also clear sessionStorage annotation file reference
       sessionStorage.removeItem(`annotation_file_${id}`);
       
-      // Clear annotations state
+      // Clear annotations and classes state for fresh start
       setAnnotations([]);
+      setClasses([]); // Clear classes for fresh start
+      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
       
       console.log(`Cleared ${keysToRemove.length} cached entries for new annotation session`);
     }
   }, [annotationId, isLoading, loadFromAnnotationFile, id]);
+
+  // Fix: Load annotations for current image when both annotation file is loaded AND currentImageName is set
+  // This handles the case where annotation file loads before currentImageName is set
+  useEffect(() => {
+    if (!annotationId || !currentImageName || isLoading) {
+      console.log('[Fix] Skipping - conditions not met:', { annotationId: !!annotationId, currentImageName: !!currentImageName, isLoading });
+      return;
+    }
+
+    // Check if annotation file is loaded in sessionStorage
+    const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+    if (!annotationFileRef) {
+      console.log('[Fix] Annotation file not in sessionStorage yet');
+      return; // Annotation file not loaded yet
+    }
+
+    // Check if annotations are already loaded for this image
+    if (lastLoadedImageRef.current === currentImageName && annotations.length > 0) {
+      console.log('[Fix] Annotations already loaded for:', currentImageName);
+      return; // Already loaded
+    }
+
+    // Load annotations for the current image
+    console.log('[Fix] Loading annotations for current image after annotation file loaded:', {
+      currentImageName,
+      hasAnnotationFile: !!annotationFileRef,
+      lastLoaded: lastLoadedImageRef.current,
+      currentAnnotationsCount: annotations.length
+    });
+    
+    // Use a small timeout to ensure all state is settled
+    const timeoutId = setTimeout(() => {
+      loadAnnotationsForImage(currentImageName);
+    }, 300);
+    
+    return () => clearTimeout(timeoutId);
+  }, [annotationId, currentImageName, isLoading, id, annotations.length, loadAnnotationsForImage]);
+
+  // Second fix: When currentImageName is set (even during initial load) and annotation file exists, load annotations
+  // This handles the case where currentImageName is set after annotation file loads
+  useEffect(() => {
+    if (!currentImageName || !annotationId) {
+      return;
+    }
+
+    // Check if annotation file is loaded
+    const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+    if (!annotationFileRef) {
+      return;
+    }
+
+    // Check if annotations are already loaded
+    if (lastLoadedImageRef.current === currentImageName && annotations.length > 0) {
+      return;
+    }
+
+    // Load annotations with a delay to ensure state is settled
+    const timeoutId = setTimeout(() => {
+      console.log('[Fix2] Loading annotations when currentImageName set:', {
+        currentImageName,
+        isLoading,
+        isInitialLoad,
+        hasAnnotationFile: !!annotationFileRef
+      });
+      loadAnnotationsForImage(currentImageName);
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [currentImageName, annotationId, id, annotations.length, loadAnnotationsForImage]);
 
   const hasAnyAnnotations = Object.values(globalStats).reduce((s, v) => s + v, 0) > 0;
   // If globalStats is empty, check localStorage for any annotations entries as a fallback
@@ -2604,6 +2688,151 @@ const ImageAnnotation = () => {
     }
   };
 
+  // Save new annotation file with name prompt
+  const saveNewAnnotationFile = async (name: string) => {
+    if (!id || !api) {
+      toast({ 
+        title: 'Cannot save', 
+        description: 'Dataset ID or API not available',
+        variant: 'destructive'
+      });
+      return false;
+    }
+
+    if (!name.trim()) {
+      toast({ 
+        title: 'Invalid name', 
+        description: 'Please provide a name for the annotation file',
+        variant: 'destructive'
+      });
+      return false;
+    }
+
+    try {
+      setIsSavingAnnotation(true);
+
+      // Build COCO format with all annotations
+      const imagesArr: any[] = [];
+      const annotationsArr: any[] = [];
+      const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name, supercategory: 'object' }));
+
+      let annId = 1;
+      let imageId = 1;
+
+      for (const imageName of allImageNames) {
+        const storageKey = `annotations_${id}_${imageName}`;
+        const saved = localStorage.getItem(storageKey);
+        
+        if (!saved) {
+          // Add image entry even if no annotations
+          imagesArr.push({ 
+            id: imageId, 
+            file_name: imageName, 
+            width: imageRef.current?.naturalWidth || 0, 
+            height: imageRef.current?.naturalHeight || 0 
+          });
+          imageId++;
+          continue;
+        }
+
+        let parsed: AnnotationShape[] = [];
+        try { 
+          parsed = JSON.parse(saved); 
+        } catch (err) { 
+          parsed = []; 
+        }
+
+        imagesArr.push({ 
+          id: imageId, 
+          file_name: imageName, 
+          width: imageRef.current?.naturalWidth || 0, 
+          height: imageRef.current?.naturalHeight || 0 
+        });
+
+        parsed.forEach((ann) => {
+          if (ann.type === 'polygon') {
+            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
+            const xs = ann.points.map(p => p.x);
+            const ys = ann.points.map(p => p.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const maxX = Math.max(...xs);
+            const maxY = Math.max(...ys);
+            const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+            const polygonArea = calculatePolygonArea(ann.points);
+
+            annotationsArr.push({
+              id: annId++,
+              image_id: imageId,
+              category_id: categoryId,
+              segmentation: [segmentation],
+              area: polygonArea,
+              bbox: [minX, minY, maxX - minX, maxY - minY],
+              iscrowd: 0
+            });
+          }
+        });
+
+        imageId++;
+      }
+
+      const coco = {
+        info: {
+          description: `Segmentation annotations for dataset ${id}`,
+          version: '1.0',
+          year: new Date().getFullYear(),
+          contributor: 'AI Data Creator',
+          date_created: new Date().toISOString()
+        },
+        images: imagesArr,
+        categories: categoryMap,
+        annotations: annotationsArr
+      };
+
+      // Create JSON file
+      const dataStr = JSON.stringify(coco, null, 2);
+      const fileName = name.endsWith('.json') ? name : `${name}.json`;
+      const file = new File([dataStr], fileName, { type: 'application/json' });
+
+      // Upload to backend
+      const response = await api.uploadCocoAnnotationFile(parseInt(id), file);
+      
+      if (response.success) {
+        toast({ 
+          title: 'Saved successfully', 
+          description: `Annotation file "${fileName}" has been created with ${annotationsArr.length} annotations from ${imagesArr.length} images` 
+        });
+        return true;
+      } else {
+        toast({ 
+          title: 'Save failed', 
+          description: response.error || 'Failed to save annotation file',
+          variant: 'destructive'
+        });
+        return false;
+      }
+    } catch (error) {
+      console.error('Error saving annotation file:', error);
+      toast({ 
+        title: 'Save failed', 
+        description: 'An error occurred while saving the annotation file',
+        variant: 'destructive'
+      });
+      return false;
+    } finally {
+      setIsSavingAnnotation(false);
+    }
+  };
+
+  // Handler for save button in dialog
+  const handleSaveAnnotationFile = async () => {
+    const success = await saveNewAnnotationFile(saveAnnotationName);
+    if (success) {
+      setShowSaveDialog(false);
+      setSaveAnnotationName('');
+    }
+  };
+
   // Update database with current annotations
   const updateDatabaseAnnotations = async () => {
     if (!annotationId || !api) {
@@ -2731,9 +2960,9 @@ const ImageAnnotation = () => {
   };
 
   // Save current image annotations to database (single image only)
-  const saveCurrentImageToDatabase = useCallback(async () => {
+  const saveCurrentImageToDatabase = useCallback(async (): Promise<boolean> => {
     if (!annotationId || !api || !currentImageName) {
-      return;
+      return false;
     }
 
     try {
@@ -3039,6 +3268,8 @@ const ImageAnnotation = () => {
 
     // Reset in-memory annotations and class counts
     setAnnotations([]);
+      setClasses([]); // Clear classes for fresh start
+      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
     setClasses(prev => prev.map(c => ({ ...c, count: 0 })));
     setGlobalStats({});
 
@@ -3085,6 +3316,8 @@ const ImageAnnotation = () => {
 
     // Clear in-memory annotations
     setAnnotations([]);
+      setClasses([]); // Clear classes for fresh start
+      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
     
     // Update class counts
     const countsByName: { [name: string]: number } = {};
@@ -3490,6 +3723,49 @@ const ImageAnnotation = () => {
         </div>
 
         <div className="flex items-center gap-2 relative">
+          {!annotationId && (
+            <Button 
+              onClick={() => {
+                // Check if there are any annotations to save
+                const hasAnnotations = allImageNames.some(imageName => {
+                  const storageKey = `annotations_${id}_${imageName}`;
+                  const saved = localStorage.getItem(storageKey);
+                  return saved && saved !== '[]';
+                });
+                
+                if (!hasAnnotations) {
+                  toast({ 
+                    title: 'No annotations', 
+                    description: 'Please create some annotations before saving',
+                    variant: 'destructive'
+                  });
+                  return;
+                }
+                
+                setShowSaveDialog(true);
+              }}
+              disabled={!id || isSavingAnnotation || !allImageNames.some(imageName => {
+                const storageKey = `annotations_${id}_${imageName}`;
+                const saved = localStorage.getItem(storageKey);
+                return saved && saved !== '[]';
+              })}
+              title="Save annotations as new annotation file"
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {isSavingAnnotation ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save
+                </>
+              )}
+            </Button>
+          )}
+          
           <Button 
             onClick={downloadAnnotationsJSON} 
             disabled={!hasAnyAnnotationsStored}
@@ -4401,6 +4677,68 @@ const ImageAnnotation = () => {
           </div>
         )}
       </div>
+
+      {/* Save Annotation File Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save Annotation File</DialogTitle>
+            <DialogDescription>
+              Enter a name for your annotation file. All annotations from all images will be saved.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="annotation-name">Annotation File Name</Label>
+              <Input
+                id="annotation-name"
+                placeholder="e.g., my_segmentation_annotations"
+                value={saveAnnotationName}
+                onChange={(e) => setSaveAnnotationName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && saveAnnotationName.trim()) {
+                    handleSaveAnnotationFile();
+                  }
+                }}
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">
+                .json extension will be added automatically if not provided
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowSaveDialog(false);
+                setSaveAnnotationName('');
+              }}
+              disabled={isSavingAnnotation}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveAnnotationFile}
+              disabled={!saveAnnotationName.trim() || isSavingAnnotation}
+            >
+              {isSavingAnnotation ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* SAM Loading Dialog */}
       <Dialog open={showSamLoadingDialog} onOpenChange={(open) => {

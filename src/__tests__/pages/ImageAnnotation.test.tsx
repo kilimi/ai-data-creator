@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ImageAnnotation from '@/pages/ImageAnnotation';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
@@ -16,6 +17,7 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     useParams: () => ({ id: '1', projectId: 'project1' }),
     useNavigate: () => vi.fn(),
+    useSearchParams: () => [new URLSearchParams()],
   };
 });
 
@@ -46,10 +48,20 @@ const mockImages = [
 ];
 
 const renderImageAnnotation = () => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+  
   return render(
-    <BrowserRouter>
-      <ImageAnnotation />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <ImageAnnotation />
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 };
 
@@ -459,5 +471,634 @@ describe('ImageAnnotation Error Handling', () => {
     });
 
     expect(screen.getByText('Back to Dataset')).toBeInTheDocument();
+  });
+});
+
+describe('ImageAnnotation Save Functionality', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    
+    // Mock localStorage
+    const localStorageMock = (() => {
+      let store: Record<string, string> = {};
+      return {
+        getItem: (key: string) => store[key] || null,
+        setItem: (key: string, value: string) => {
+          store[key] = value.toString();
+        },
+        removeItem: (key: string) => {
+          delete store[key];
+        },
+        clear: () => {
+          store = {};
+        },
+      };
+    })();
+    Object.defineProperty(window, 'localStorage', {
+      value: localStorageMock,
+      writable: true,
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: vi.fn(),
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+    (useToast as any).mockReturnValue({ toast: mockToast });
+    
+    mockApi.get.mockImplementation((url) => {
+      if (url.includes('/images')) {
+        return Promise.resolve({
+          success: true,
+          data: mockImages,
+        });
+      }
+      return Promise.resolve({ success: false });
+    });
+
+    // Mock canvas and image setup
+    const mockContext = {
+      clearRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn(),
+      drawImage: vi.fn(),
+      strokeRect: vi.fn(),
+      fillRect: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      arc: vi.fn(),
+      fillText: vi.fn(),
+    };
+
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => mockContext) as any;
+    HTMLCanvasElement.prototype.getBoundingClientRect = vi.fn(() => ({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 600,
+      x: 0,
+      y: 0,
+      bottom: 600,
+      right: 800,
+      toJSON: () => ({})
+    })) as any;
+
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+      get: () => 800,
+      configurable: true,
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', {
+      get: () => 600,
+      configurable: true,
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'complete', {
+      get: () => true,
+      configurable: true,
+    });
+  });
+
+  it('should show Save button when not in edit mode', async () => {
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    expect(saveButton).toBeInTheDocument();
+  });
+
+  it('should disable Save button when no annotations exist', async () => {
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    expect(saveButton).toBeDisabled();
+  });
+
+  it('should open save dialog when Save button is clicked with annotations', async () => {
+    // Pre-populate localStorage with some annotations
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Save Annotation File')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Enter a name for your annotation file. All annotations from all images will be saved.')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+  });
+
+  it('should show error when clicking Save with no annotations', async () => {
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith({
+        title: 'No annotations',
+        description: 'Please create some annotations before saving',
+        variant: 'destructive',
+      });
+    });
+  });
+
+  it('should allow entering annotation file name in dialog', async () => {
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'my_test_annotations' } });
+
+    expect(input).toHaveValue('my_test_annotations');
+  });
+
+  it('should disable Save button in dialog when name is empty', async () => {
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Save Annotation File')).toBeInTheDocument();
+    });
+
+    const dialogSaveButton = screen.getAllByRole('button', { name: /save/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    expect(dialogSaveButton).toBeDisabled();
+  });
+
+  it('should call uploadCocoAnnotationFile when saving with valid name', async () => {
+    const mockUploadFunc = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        annotation_file_id: 'file123',
+        message: 'File uploaded successfully',
+      }
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: mockUploadFunc,
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+
+    // Pre-populate with annotations
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    // Store classes in localStorage
+    window.localStorage.setItem('classes_1', JSON.stringify([
+      { id: 'class1', name: 'Test Class', color: '#FF0000', visible: true, count: 1 }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'my_test_annotations' } });
+
+    const dialogSaveButton = screen.getAllByRole('button', { name: /save/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    
+    if (dialogSaveButton) {
+      fireEvent.click(dialogSaveButton);
+    }
+
+    await waitFor(() => {
+      expect(mockUploadFunc).toHaveBeenCalledWith(
+        1,
+        expect.any(File)
+      );
+    });
+
+    // Verify the file content
+    const call = mockUploadFunc.mock.calls[0];
+    const file = call[1] as File;
+    expect(file.name).toBe('my_test_annotations.json');
+    expect(file.type).toBe('application/json');
+  });
+
+  it('should show success toast after successful save', async () => {
+    const mockUploadFunc = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        annotation_file_id: 'file123',
+        message: 'File uploaded successfully',
+      }
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: mockUploadFunc,
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    window.localStorage.setItem('classes_1', JSON.stringify([
+      { id: 'class1', name: 'Test Class', color: '#FF0000', visible: true, count: 1 }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'my_test_annotations' } });
+
+    const dialogSaveButton = screen.getAllByRole('button', { name: /save/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    
+    if (dialogSaveButton) {
+      fireEvent.click(dialogSaveButton);
+    }
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith({
+        title: 'Saved successfully',
+        description: expect.stringContaining('my_test_annotations.json'),
+      });
+    });
+  });
+
+  it('should close dialog after successful save', async () => {
+    const mockUploadFunc = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        annotation_file_id: 'file123',
+        message: 'File uploaded successfully',
+      }
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: mockUploadFunc,
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    window.localStorage.setItem('classes_1', JSON.stringify([
+      { id: 'class1', name: 'Test Class', color: '#FF0000', visible: true, count: 1 }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Save Annotation File')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'my_test_annotations' } });
+
+    const dialogSaveButton = screen.getAllByRole('button', { name: /save/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    
+    if (dialogSaveButton) {
+      fireEvent.click(dialogSaveButton);
+    }
+
+    await waitFor(() => {
+      expect(screen.queryByText('Save Annotation File')).not.toBeInTheDocument();
+    });
+  });
+
+  it('should show error toast when save fails', async () => {
+    const mockUploadFunc = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Upload failed',
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: mockUploadFunc,
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    window.localStorage.setItem('classes_1', JSON.stringify([
+      { id: 'class1', name: 'Test Class', color: '#FF0000', visible: true, count: 1 }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'my_test_annotations' } });
+
+    const dialogSaveButton = screen.getAllByRole('button', { name: /save/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    
+    if (dialogSaveButton) {
+      fireEvent.click(dialogSaveButton);
+    }
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith({
+        title: 'Save failed',
+        description: 'Upload failed',
+        variant: 'destructive',
+      });
+    });
+  });
+
+  it('should automatically add .json extension if not provided', async () => {
+    const mockUploadFunc = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        annotation_file_id: 'file123',
+        message: 'File uploaded successfully',
+      }
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: mockUploadFunc,
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    window.localStorage.setItem('classes_1', JSON.stringify([
+      { id: 'class1', name: 'Test Class', color: '#FF0000', visible: true, count: 1 }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'my_annotations_without_extension' } });
+
+    const dialogSaveButton = screen.getAllByRole('button', { name: /save/i }).find(
+      btn => btn.closest('[role="dialog"]')
+    );
+    
+    if (dialogSaveButton) {
+      fireEvent.click(dialogSaveButton);
+    }
+
+    await waitFor(() => {
+      expect(mockUploadFunc).toHaveBeenCalled();
+    });
+
+    const call = mockUploadFunc.mock.calls[0];
+    const file = call[1] as File;
+    expect(file.name).toBe('my_annotations_without_extension.json');
+  });
+
+  it('should allow canceling the save dialog', async () => {
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Save Annotation File')).toBeInTheDocument();
+    });
+
+    const cancelButton = screen.getByRole('button', { name: /cancel/i });
+    fireEvent.click(cancelButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText('Save Annotation File')).not.toBeInTheDocument();
+    });
+  });
+
+  it('should allow saving with Enter key in input field', async () => {
+    const mockUploadFunc = vi.fn().mockResolvedValue({
+      success: true,
+      data: {
+        annotation_file_id: 'file123',
+        message: 'File uploaded successfully',
+      }
+    });
+
+    const mockApiWithUpload = {
+      ...mockApi,
+      uploadCocoAnnotationFile: mockUploadFunc,
+    };
+    
+    (useApi as any).mockReturnValue({ api: mockApiWithUpload });
+
+    window.localStorage.setItem('annotations_1_test-image-1.jpg', JSON.stringify([
+      {
+        id: 'ann1',
+        type: 'polygon',
+        points: [{ x: 100, y: 100 }, { x: 200, y: 100 }, { x: 150, y: 200 }],
+        label: 'Test Class',
+        color: '#FF0000',
+        visible: true,
+      }
+    ]));
+
+    window.localStorage.setItem('classes_1', JSON.stringify([
+      { id: 'class1', name: 'Test Class', color: '#FF0000', visible: true, count: 1 }
+    ]));
+
+    renderImageAnnotation();
+    
+    await waitFor(() => {
+      expect(screen.getByText('Segmentation Annotation')).toBeInTheDocument();
+    });
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g., my_segmentation_annotations')).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText('e.g., my_segmentation_annotations');
+    fireEvent.change(input, { target: { value: 'enter_key_test' } });
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+
+    await waitFor(() => {
+      expect(mockUploadFunc).toHaveBeenCalled();
+    });
   });
 });
