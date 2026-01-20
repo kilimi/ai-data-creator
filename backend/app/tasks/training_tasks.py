@@ -178,9 +178,110 @@ def train_yolo_model(self, task_id: int, training_config: Dict[str, Any]):
         task.task_metadata = {"stage": "preparing_dataset", "celery_task_id": self.request.id}
         db.commit()
         
-        # Create output directory
-        output_base = Path("projects") / str(training_config['project_id']) / "training" / f"task_{task_id}"
-        output_base.mkdir(parents=True, exist_ok=True)
+        # Create output directory path
+        # Path: projects/{project_id}/training/task_{task_id}/training/weights/
+        projects_base = Path("projects")
+        project_dir = projects_base / str(training_config['project_id'])
+        training_base = project_dir / "training"
+        output_base = training_base / f"task_{task_id}"
+        training_output_dir = output_base / "training"
+        weights_dir = training_output_dir / "weights"
+        
+        # Fix permissions on ALL parent directories first (critical for new tasks)
+        # This ensures the entire path is writable, not just the new directories
+        parent_dirs = [projects_base, project_dir, training_base]
+        for parent_dir in parent_dirs:
+            if parent_dir.exists():
+                try:
+                    os.chmod(parent_dir, 0o777)
+                    logger.info(f"Fixed permissions on parent directory: {parent_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not fix permissions on parent {parent_dir}: {e}")
+            else:
+                # Create parent directory if it doesn't exist
+                try:
+                    parent_dir.mkdir(parents=True, exist_ok=True)
+                    os.chmod(parent_dir, 0o777)
+                    logger.info(f"Created and set permissions on parent directory: {parent_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not create/fix parent directory {parent_dir}: {e}")
+        
+        # Now create the new task-specific directories with proper permissions
+        new_dirs = [output_base, training_output_dir, weights_dir]
+        for directory in new_dirs:
+            directory.mkdir(parents=True, exist_ok=True)
+            # Set permissions to allow writing (0o777 for shared Docker volumes)
+            try:
+                os.chmod(directory, 0o777)
+                logger.info(f"Created and set permissions on {directory}")
+            except Exception as e:
+                logger.warning(f"Could not set permissions on {directory}: {e}")
+                # Try to fix existing directory permissions by making it writable
+                try:
+                    if directory.exists():
+                        # Use stat to check current permissions
+                        current_stat = os.stat(directory)
+                        # Add write permission for all (owner, group, others)
+                        new_mode = current_stat.st_mode | 0o222
+                        os.chmod(directory, new_mode)
+                        logger.info(f"Fixed permissions on existing directory {directory}")
+                except Exception as e2:
+                    logger.error(f"Could not fix permissions on {directory}: {e2}")
+        
+        # Remove existing weight files to avoid permission issues
+        # YOLO will recreate them with proper permissions during training
+        if weights_dir.exists():
+            try:
+                for weight_file in weights_dir.glob("*.pt"):
+                    try:
+                        # Remove existing weight files - YOLO will recreate them
+                        # This avoids permission issues with files created by previous runs
+                        weight_file.unlink()
+                        logger.info(f"Removed existing weight file: {weight_file} (will be recreated by YOLO)")
+                    except Exception as e:
+                        logger.warning(f"Could not remove {weight_file}: {e}, attempting to fix permissions")
+                        # If removal fails, try to fix permissions
+                        try:
+                            os.chmod(weight_file, 0o666)
+                            logger.info(f"Fixed permissions on {weight_file} instead of removing")
+                        except Exception as e2:
+                            logger.error(f"Could not fix permissions on {weight_file}: {e2}")
+                            # Last resort: try to make it writable by changing ownership (if possible)
+                            try:
+                                current_uid = os.getuid()
+                                os.chown(weight_file, current_uid, -1)
+                                os.chmod(weight_file, 0o666)
+                                logger.info(f"Changed ownership and permissions on {weight_file}")
+                            except Exception as e3:
+                                logger.error(f"Could not change ownership of {weight_file}: {e3}")
+            except Exception as e:
+                logger.warning(f"Could not check existing weight files: {e}")
+        
+        # Double-check weights directory is writable before training
+        try:
+            # Test write access by creating a temporary file
+            test_file = weights_dir / ".write_test"
+            test_file.touch()
+            # Write something to it
+            test_file.write_text("test")
+            test_file.unlink()
+            logger.info(f"Verified write access to {weights_dir}")
+        except Exception as e:
+            logger.error(f"Cannot write to weights directory {weights_dir}: {e}")
+            # Try one more time to fix permissions
+            try:
+                os.chmod(weights_dir, 0o777)
+                os.chmod(training_output_dir, 0o777)
+                os.chmod(output_base, 0o777)
+                logger.info(f"Re-attempted to fix permissions on training directories")
+                # Try the test again
+                test_file = weights_dir / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+                logger.info(f"Write test passed after fixing permissions")
+            except Exception as e2:
+                logger.error(f"Failed to fix permissions: {e2}")
+                raise Exception(f"Cannot write to training output directory {weights_dir}. Permission denied. Error: {e2}")
         
         dataset_dir = output_base / "dataset"
         model_type = training_config.get('model_type', 'yolo11n-seg.pt')
@@ -309,8 +410,15 @@ def train_yolo_model(self, task_id: int, training_config: Dict[str, Any]):
         logger.info(f"Starting training with args: {train_args}")
         logger.info(f"IMAGE SIZE EXPLICITLY SET TO: {train_args.get('imgsz', 'NOT SET')}")
         
-        # Train the model
-        results = model.train(**train_args)
+        # Set umask to 0 so files are created with 666 permissions (read/write for all)
+        # This ensures files created by YOLO are writable by all processes
+        old_umask = os.umask(0)
+        try:
+            # Train the model
+            results = model.train(**train_args)
+        finally:
+            # Restore original umask
+            os.umask(old_umask)
         
         logger.info(f"Training completed. Checking actual image size used...")
         if hasattr(model, 'trainer') and hasattr(model.trainer, 'args'):

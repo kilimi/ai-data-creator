@@ -280,6 +280,142 @@ async def serve_data_files(file_path: str, request: Request):
     
     return response
 
+# Ensure exports directory exists
+Path("static/exports").mkdir(parents=True, exist_ok=True)
+
+# Add OPTIONS handler for exports CORS preflight
+@app.options("/static/exports/{file_path:path}")
+async def options_export_files(file_path: str, request: Request):
+    """Handle CORS preflight requests for export files"""
+    origin = request.headers.get("origin")
+    allowed_origins = [
+        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
+        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
+        "http://127.0.0.1:8082"
+    ]
+    
+    headers = {
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Max-Age": "86400"
+    }
+    
+    if origin in allowed_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    
+    return JSONResponse(content={}, headers=headers)
+
+# Custom static file handler for exports
+@app.get("/static/exports/{file_path:path}")
+async def serve_export_files(file_path: str, request: Request):
+    """Custom handler for export files with explicit CORS"""
+    full_path = Path("static/exports") / file_path
+    
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Export file not found")
+    
+    # Create FileResponse with explicit CORS headers
+    response = FileResponse(
+        path=str(full_path),
+        media_type='application/octet-stream',
+        filename=full_path.name
+    )
+    
+    # Explicitly add CORS headers
+    origin = request.headers.get("origin")
+    allowed_origins = [
+        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
+        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
+        "http://127.0.0.1:8082"
+    ]
+    
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+    elif origin is None:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+    
+    return response
+
+# Ensure inference_results directory exists
+Path("static/inference_results").mkdir(parents=True, exist_ok=True)
+
+@app.options("/static/inference_results/{file_path:path}")
+async def options_inference_files(file_path: str, request: Request):
+    """Handle CORS preflight requests for inference result files"""
+    origin = request.headers.get("origin")
+    allowed_origins = [
+        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
+        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
+        "http://127.0.0.1:8082"
+    ]
+    
+    headers = {
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Max-Age": "86400"
+    }
+    
+    if origin in allowed_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+    elif origin is None:
+        headers["Access-Control-Allow-Origin"] = "*"
+    
+    return JSONResponse(content={}, headers=headers)
+
+# Custom static file handler for inference results
+@app.get("/static/inference_results/{file_path:path}")
+async def serve_inference_files(file_path: str, request: Request):
+    """Custom handler for inference result images with explicit CORS"""
+    full_path = Path("static/inference_results") / file_path
+    
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Inference result file not found")
+    
+    # Determine media type
+    media_type = None
+    suffix = full_path.suffix.lower()
+    if suffix in ['.jpg', '.jpeg']:
+        media_type = 'image/jpeg'
+    elif suffix == '.png':
+        media_type = 'image/png'
+    elif suffix == '.gif':
+        media_type = 'image/gif'
+    elif suffix == '.webp':
+        media_type = 'image/webp'
+    
+    # Create FileResponse with explicit CORS headers
+    response = FileResponse(
+        path=str(full_path),
+        media_type=media_type or 'image/jpeg',
+        filename=full_path.name
+    )
+    
+    # Explicitly add CORS headers
+    origin = request.headers.get("origin")
+    allowed_origins = [
+        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
+        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
+        "http://127.0.0.1:8082"
+    ]
+    
+    if origin in allowed_origins:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+    elif origin is None:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "*"
+    
+    return response
+
 # CORS middleware is handled by the custom middleware above
 # app.add_middleware(
 #     CORSMiddleware,
@@ -320,7 +456,7 @@ async def health_check(db: Session = Depends(get_db)):
 
 
 # Import routers
-from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup
+from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export
 
 # Include routers
 app.include_router(projects.router)
@@ -335,3 +471,4 @@ app.include_router(database_backup.router)
 app.include_router(training.router)
 app.include_router(predictions.router)
 app.include_router(backup.router)
+app.include_router(export.router)

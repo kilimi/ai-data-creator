@@ -963,9 +963,11 @@ const ImageAnnotation = () => {
               });
               
               cocoData.categories.forEach((cat: any, idx: number) => {
-                categoryIdToName[cat.id.toString()] = cat.name;
-                // Use existing class color if available, otherwise use default color
-                categoryIdToColor[cat.id.toString()] = classColorMap[cat.name] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+                if (cat.id != null && cat.name) {
+                  categoryIdToName[cat.id.toString()] = cat.name;
+                  // Use existing class color if available, otherwise use default color
+                  categoryIdToColor[cat.id.toString()] = classColorMap[cat.name] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+                }
               });
               
               // Find image ID for this image name
@@ -975,6 +977,11 @@ const ImageAnnotation = () => {
                 
                 cocoData.annotations.forEach((annotation: any) => {
                   if (annotation.image_id === imageEntry.id) {
+                    // Handle null category_id
+                    if (annotation.category_id == null) {
+                      console.warn(`Skipping annotation for ${imageName}: null category_id`);
+                      return;
+                    }
                     const className = categoryIdToName[annotation.category_id.toString()];
                     
                     if (className && annotation.segmentation && annotation.segmentation.length > 0) {
@@ -1000,21 +1007,37 @@ const ImageAnnotation = () => {
                         }
                         
                         for (let i = 0; i < segmentation.length; i += 2) {
-                          points.push({
-                            x: segmentation[i] / scaleFactor.x,
-                            y: segmentation[i + 1] / scaleFactor.y
-                          });
+                          let x = segmentation[i] / scaleFactor.x;
+                          let y = segmentation[i + 1] / scaleFactor.y;
+                          
+                          // Filter out invalid coordinates (negative or NaN)
+                          if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+                            continue;
+                          }
+                          
+                          // Clamp to image bounds if we have image dimensions
+                          if (imageEntry.width && imageEntry.height) {
+                            x = Math.max(0, Math.min(x, imageEntry.width - 1));
+                            y = Math.max(0, Math.min(y, imageEntry.height - 1));
+                          }
+                          
+                          points.push({ x, y });
                         }
                         
-                        const color = categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0];
-                        imageAnnotations.push({
-                          id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                          type: 'polygon',
-                          points,
-                          label: className,
-                          color: color,
-                          visible: true
-                        });
+                        // Only add annotation if we have at least 3 valid points
+                        if (points.length >= 3) {
+                          const color = categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0];
+                          imageAnnotations.push({
+                            id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            type: 'polygon',
+                            points,
+                            label: className,
+                            color: color,
+                            visible: true
+                          });
+                        } else {
+                          console.warn(`Skipping annotation for ${imageName}: insufficient valid points (${points.length} < 3)`);
+                        }
                       }
                     }
                   }
@@ -1023,9 +1046,13 @@ const ImageAnnotation = () => {
                 if (imageAnnotations.length > 0) {
                   setAnnotations(imageAnnotations);
                   
-                  // Ensure all classes exist
-                  const classNames = new Set(existingClasses.map(c => c.name));
-                  const newClasses = [...existingClasses];
+                  // Start from existing classes (from state or localStorage) and add any missing ones
+                  // This ensures classes persist across image navigation
+                  const existingFromStorage = (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [];
+                  // Use current classes state if available, otherwise use localStorage or existingClasses
+                  const baseClasses = classes.length > 0 ? classes : (existingClasses.length > 0 ? existingClasses : existingFromStorage);
+                  const classNames = new Set(baseClasses.map(c => c.name));
+                  const newClasses = [...baseClasses];
                   
                   imageAnnotations.forEach((ann) => {
                     if (!classNames.has(ann.label)) {
@@ -1040,7 +1067,7 @@ const ImageAnnotation = () => {
                     }
                   });
                   
-                  // Update class counts
+                  // Update class counts (only for current image)
                   const countsByName: { [name: string]: number } = {};
                   imageAnnotations.forEach((a: any) => {
                     countsByName[a.label] = (countsByName[a.label] || 0) + 1;
@@ -1073,8 +1100,12 @@ const ImageAnnotation = () => {
           countsByName[a.label] = (countsByName[a.label] || 0) + 1;
         });
 
-        // Start from existing classes and add any missing ones
-        const existing = (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [];
+        // Start from existing classes (from state or localStorage) and add any missing ones
+        // This ensures classes persist across image navigation
+        const existingFromStorage = (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [];
+        // Use current classes state if available, otherwise use localStorage
+        // This ensures classes added on previous images are preserved
+        const existing = classes.length > 0 ? classes : existingFromStorage;
         const merged: AnnotationClass[] = [...existing];
         Object.keys(countsByName).forEach(name => {
           if (!merged.find(c => c.name === name)) {
@@ -1088,16 +1119,21 @@ const ImageAnnotation = () => {
           }
         });
 
-        // Update counts for merged classes
-        const updatedClasses = merged.map(c => ({ ...c, count: countsByName[c.name] || 0 }));
+        // Update counts for merged classes (only for current image)
+        // Keep all classes but update counts based on current image annotations
+        const updatedClasses = merged.map(c => ({ 
+          ...c, 
+          count: countsByName[c.name] || 0  // Count only for current image
+        }));
         setClasses(updatedClasses);
         saveGlobalClasses(updatedClasses);
 
       } else {
-        // No saved annotations, clear current ones
+        // No saved annotations for this image, clear current ones
         setAnnotations([]);
-      setClasses([]); // Clear classes for fresh start
-      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
+        // DON'T clear classes - they should persist across all images
+        // Load global classes if they exist, or keep existing classes
+        loadGlobalClasses();
         // Only clear selection if there are no annotations
         setSelectedAnnotation(null);
       }
@@ -1107,8 +1143,9 @@ const ImageAnnotation = () => {
     } catch (error) {
       console.error('Error loading annotations:', error);
       setAnnotations([]);
-      setClasses([]); // Clear classes for fresh start
-      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
+      // DON'T clear classes on error - they should persist across all images
+      // Load global classes if they exist, or keep existing classes
+      loadGlobalClasses();
       setSelectedAnnotation(null);
     }
   };
@@ -1161,7 +1198,9 @@ const ImageAnnotation = () => {
             // Build category ID to name map
             const categoryIdToName: { [id: string]: string } = {};
             cocoData.categories.forEach((cat: any) => {
-              categoryIdToName[cat.id.toString()] = cat.name;
+              if (cat.id != null && cat.name) {
+                categoryIdToName[cat.id.toString()] = cat.name;
+              }
             });
             
             // Build image ID to dimensions map
@@ -1170,13 +1209,20 @@ const ImageAnnotation = () => {
               imageDimensions[img.id.toString()] = { width: img.width || 1, height: img.height || 1 };
             });
             
-            // Count all annotations from COCO data
+            // Count all annotations from COCO data - only count valid ones
+            let totalAnnotations = 0;
+            let validAnnotations = 0;
             cocoData.annotations.forEach((annotation: any) => {
+              totalAnnotations++;
+              // Handle null category_id
+              if (annotation.category_id == null) {
+                console.warn('Annotation has null category_id, skipping:', annotation.id);
+                return;
+              }
               const className = categoryIdToName[annotation.category_id.toString()];
               if (className) {
-                counts[className] = (counts[className] || 0) + 1;
-                
-                // Calculate area for segmentation annotations
+                // Calculate area for segmentation annotations and validate
+                let isValid = true;
                 if (annotation.segmentation && annotation.segmentation[0]) {
                   const segmentation = annotation.segmentation[0];
                   if (segmentation.length >= 6) {
@@ -1192,18 +1238,44 @@ const ImageAnnotation = () => {
                     
                     const points: Point[] = [];
                     for (let i = 0; i < segmentation.length; i += 2) {
-                      points.push({
-                        x: segmentation[i] / scaleFactor.x,
-                        y: segmentation[i + 1] / scaleFactor.y
-                      });
+                      let x = segmentation[i] / scaleFactor.x;
+                      let y = segmentation[i + 1] / scaleFactor.y;
+                      
+                      // Filter out invalid coordinates (negative or NaN)
+                      if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+                        continue;
+                      }
+                      
+                      // Clamp to image bounds if we have image dimensions
+                      if (imageDims) {
+                        x = Math.max(0, Math.min(x, imageDims.width - 1));
+                        y = Math.max(0, Math.min(y, imageDims.height - 1));
+                      }
+                      
+                      points.push({ x, y });
                     }
                     
-                    const area = calculatePolygonArea(points);
-                    totalAreas[className] = (totalAreas[className] || 0) + area;
+                    // Only count annotation if it has at least 3 valid points
+                    if (points.length >= 3) {
+                      validAnnotations++;
+                      counts[className] = (counts[className] || 0) + 1;
+                      const area = calculatePolygonArea(points);
+                      totalAreas[className] = (totalAreas[className] || 0) + area;
+                    } else {
+                      isValid = false;
+                    }
+                  } else {
+                    isValid = false;
                   }
+                } else {
+                  // No segmentation, but has bbox - count it
+                  validAnnotations++;
+                  counts[className] = (counts[className] || 0) + 1;
                 }
               }
             });
+            
+            console.log(`Statistics: ${validAnnotations}/${totalAnnotations} valid annotations counted`);
             
             console.log('Computed global stats from sessionStorage:', counts);
           }
@@ -1340,6 +1412,20 @@ const ImageAnnotation = () => {
               annotations: cocoData.annotations?.length,
               categories: cocoData.categories?.length
             });
+            
+            // Log sample annotation to verify format
+            if (cocoData.annotations && cocoData.annotations.length > 0) {
+              const sampleAnn = cocoData.annotations[0];
+              console.log('Sample annotation from API:', {
+                id: sampleAnn.id,
+                image_id: sampleAnn.image_id,
+                category_id: sampleAnn.category_id,
+                has_segmentation: !!sampleAnn.segmentation,
+                segmentation_length: sampleAnn.segmentation?.length || 0,
+                first_polygon_length: sampleAnn.segmentation?.[0]?.length || 0
+              });
+            }
+            
             return loadAnnotationsFromCOCO(cocoData, annotationFileId);
           } catch (parseError) {
             console.error('Failed to parse COCO JSON:', parseError);
@@ -1486,10 +1572,12 @@ const ImageAnnotation = () => {
         cocoData.annotations.forEach((annotation: any) => {
           if (annotation.image_id === imageEntry.id) {
             // Handle null category_id
+            if (annotation.category_id == null) {
+              console.warn(`Skipping annotation for ${imageName}: null category_id`);
+              return;
+            }
             const categoryId = annotation.category_id;
-            const className = categoryId != null 
-              ? categoryIdToName[categoryId.toString()] 
-              : null;
+            const className = categoryIdToName[categoryId.toString()];
             
             if (className && annotation.segmentation && annotation.segmentation.length > 0) {
               const segmentation = annotation.segmentation[0];
@@ -1506,10 +1594,21 @@ const ImageAnnotation = () => {
                   : { x: 1, y: 1 };
                 
                 for (let i = 0; i < segmentation.length; i += 2) {
-                  points.push({
-                    x: segmentation[i] / scaleFactor.x,
-                    y: segmentation[i + 1] / scaleFactor.y
-                  });
+                  let x = segmentation[i] / scaleFactor.x;
+                  let y = segmentation[i + 1] / scaleFactor.y;
+                  
+                  // Filter out invalid coordinates (negative or NaN)
+                  if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+                    continue;
+                  }
+                  
+                  // Clamp to image bounds if we have image dimensions
+                  if (imageEntry.width && imageEntry.height) {
+                    x = Math.max(0, Math.min(x, imageEntry.width - 1));
+                    y = Math.max(0, Math.min(y, imageEntry.height - 1));
+                  }
+                  
+                  points.push({ x, y });
                 }
                 
                 imageAnnotations.push({
@@ -1567,7 +1666,14 @@ const ImageAnnotation = () => {
   useEffect(() => {
     if (annotationId && !isLoading) {
       // Wait for images to be loaded before attempting to load annotation file
-      loadFromAnnotationFile(annotationId);
+      console.log('Loading annotation file with ID:', annotationId);
+      loadFromAnnotationFile(annotationId).then((success) => {
+        if (success) {
+          console.log('Annotation file loaded successfully');
+        } else {
+          console.error('Failed to load annotation file');
+        }
+      });
     } else if (!annotationId && !isLoading && id) {
       // Starting new annotations - clear any cached data to ensure clean slate
       console.log('Starting new annotations - clearing cached data');
@@ -1583,10 +1689,11 @@ const ImageAnnotation = () => {
       // Also clear sessionStorage annotation file reference
       sessionStorage.removeItem(`annotation_file_${id}`);
       
-      // Clear annotations and classes state for fresh start
+      // Clear annotations state for fresh start
       setAnnotations([]);
-      setClasses([]); // Clear classes for fresh start
-      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
+      // DON'T clear classes - they should persist across all images
+      // Only clear classes if explicitly starting a completely new annotation session
+      // (which is handled elsewhere when needed)
       
       console.log(`Cleared ${keysToRemove.length} cached entries for new annotation session`);
     }
@@ -3421,6 +3528,10 @@ const ImageAnnotation = () => {
     const newImageName = imageList[newIndex];
     setCurrentImageName(newImageName);
     
+    // Load global classes when navigating to ensure they persist
+    // This ensures classes added on previous images are still available
+    loadGlobalClasses();
+    
     // Update the currentImage object as well
     updateCurrentImages(newImageName, displayLayer, imageCollections);
     
@@ -3555,12 +3666,18 @@ const ImageAnnotation = () => {
                     const categoryIdToColor: { [id: string]: string } = {};
                     
                     cocoData.categories?.forEach((cat: any, idx: number) => {
-                      categoryIdToName[cat.id.toString()] = cat.name;
-                      categoryIdToColor[cat.id.toString()] = DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+                      if (cat.id != null && cat.name) {
+                        categoryIdToName[cat.id.toString()] = cat.name;
+                        categoryIdToColor[cat.id.toString()] = DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+                      }
                     });
                     
                     cocoData.annotations?.forEach((annotation: any) => {
                       if (annotation.image_id === imageEntry.id && annotation.segmentation && annotation.segmentation[0]) {
+                        // Handle null category_id
+                        if (annotation.category_id == null) {
+                          return;
+                        }
                         const segmentation = annotation.segmentation[0];
                         if (segmentation.length >= 6) {
                           const points = [];
@@ -3574,20 +3691,37 @@ const ImageAnnotation = () => {
                             : { x: 1, y: 1 };
                           
                           for (let j = 0; j < segmentation.length; j += 2) {
-                            points.push({ 
-                              x: segmentation[j] / scaleFactor.x, 
-                              y: segmentation[j + 1] / scaleFactor.y 
-                            });
+                            let x = segmentation[j] / scaleFactor.x;
+                            let y = segmentation[j + 1] / scaleFactor.y;
+                            
+                            // Filter out invalid coordinates
+                            if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+                              continue;
+                            }
+                            
+                            // Clamp to image bounds
+                            if (imageEntry.width && imageEntry.height) {
+                              x = Math.max(0, Math.min(x, imageEntry.width - 1));
+                              y = Math.max(0, Math.min(y, imageEntry.height - 1));
+                            }
+                            
+                            points.push({ x, y });
                           }
-                          const className = categoryIdToName[annotation.category_id.toString()];
-                          imageAnnotations.push({
-                            id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                            type: 'polygon',
-                            points,
-                            label: className,
-                            color: categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0],
-                            visible: true
-                          });
+                          
+                          // Only add if we have at least 3 valid points
+                          if (points.length >= 3) {
+                            const className = categoryIdToName[annotation.category_id.toString()];
+                            if (className) {
+                              imageAnnotations.push({
+                                id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                                type: 'polygon',
+                                points,
+                                label: className,
+                                color: categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0],
+                                visible: true
+                              });
+                            }
+                          }
                         }
                       }
                     });

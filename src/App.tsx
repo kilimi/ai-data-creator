@@ -20,6 +20,7 @@ import { ProjectLayout } from "./components/ProjectLayout";
 import ProjectDatasets from "./pages/ProjectDatasets";
 import ProjectModels from "./pages/ProjectModels";
 import ProjectEvaluations from "./pages/ProjectEvaluations";
+import ProjectExports from "./pages/ProjectExports";
 
 const queryClient = new QueryClient();
 
@@ -46,6 +47,7 @@ const App = () => (
             <Route path="datasets" element={<ProjectDatasets />} />
             <Route path="models" element={<ProjectModels />} />
             <Route path="evaluations" element={<ProjectEvaluations />} />
+            <Route path="exports" element={<ProjectExports />} />
           </Route>
           
           <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />

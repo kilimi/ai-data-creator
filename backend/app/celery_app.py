@@ -13,7 +13,7 @@ celery_app = Celery(
     'ai_data_creator',
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks']
+    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks', 'app.tasks.export_tasks']
 )
 
 # Celery configuration
@@ -47,6 +47,7 @@ celery_app.conf.update(
         'app.tasks.evaluation_tasks.*': {'queue': 'training'},
         'app.tasks.augmentation_tasks.*': {'queue': 'training'},
         'app.tasks.dataset_tasks.*': {'queue': 'training'},
+        'app.tasks.export_tasks.*': {'queue': 'training'},
     },
     
     # Retry settings
@@ -66,7 +67,7 @@ from datetime import timedelta
 celery_app.conf.update(
     include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 
              'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks',
-             'app.tasks.backup_tasks']
+             'app.tasks.export_tasks', 'app.tasks.backup_tasks']
 )
 
 # Periodic backup check - runs every hour to check if backup is due

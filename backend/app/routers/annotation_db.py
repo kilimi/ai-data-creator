@@ -5,12 +5,122 @@ from typing import List, Optional, Dict, Any
 import json
 import uuid
 from datetime import datetime
+import numpy as np
 
 from ..database import get_db
 from ..models import Dataset, AnnotationFile, Annotation, AnnotationClass, Image, AnnotationFileImage
 from ..database import SessionLocal
 
 router = APIRouter()
+
+
+def validate_and_normalize_segmentation(
+    segmentation: Any,
+    image_width: Optional[int] = None,
+    image_height: Optional[int] = None,
+    normalize: bool = False
+) -> Optional[List]:
+    """
+    Validate and normalize segmentation coordinates.
+    
+    Args:
+        segmentation: Segmentation data (list of polygons or RLE dict)
+        image_width: Image width for validation (optional)
+        image_height: Image height for validation (optional)
+        normalize: If True, normalize coordinates to 0-1 range. If False, keep as pixel coordinates (integers)
+    
+    Returns:
+        Validated segmentation with integer coordinates (or normalized if normalize=True), or None if invalid
+    """
+    if not segmentation:
+        return None
+    
+    # Handle RLE format (dict) - return as-is
+    if isinstance(segmentation, dict):
+        return segmentation
+    
+    # Handle list of polygons
+    if isinstance(segmentation, list):
+        validated_polygons = []
+        
+        for polygon in segmentation:
+            if not isinstance(polygon, list) or len(polygon) < 6:  # Need at least 3 points (6 values)
+                continue
+            
+            validated_polygon = []
+            
+            # Process coordinates in pairs (x, y)
+            for i in range(0, len(polygon), 2):
+                if i + 1 >= len(polygon):
+                    break
+                
+                x = polygon[i]
+                y = polygon[i + 1]
+                
+                # Convert to float first
+                try:
+                    x = float(x)
+                    y = float(y)
+                except (ValueError, TypeError):
+                    continue  # Skip invalid coordinates
+                
+                # Check for NaN or Inf
+                if np.isnan(x) or np.isnan(y) or np.isinf(x) or np.isinf(y):
+                    continue
+                
+                if normalize:
+                    # Normalize to 0-1 range
+                    if image_width and image_width > 0:
+                        x = x / image_width
+                    if image_height and image_height > 0:
+                        y = y / image_height
+                    
+                    # Clamp to [0, 1]
+                    x = max(0.0, min(1.0, x))
+                    y = max(0.0, min(1.0, y))
+                    validated_polygon.extend([x, y])
+                else:
+                    # Keep as pixel coordinates - convert to integers
+                    # Clamp to image bounds if provided
+                    if image_width and image_width > 0:
+                        x = max(0.0, min(float(image_width - 1), x))
+                    else:
+                        x = max(0.0, x)  # At least ensure non-negative
+                    
+                    if image_height and image_height > 0:
+                        y = max(0.0, min(float(image_height - 1), y))
+                    else:
+                        y = max(0.0, y)  # At least ensure non-negative
+                    
+                    # Convert to integer - ensure we clamp before rounding to prevent any negative values
+                    # Double-check: even after max(0.0, x), ensure no negatives can slip through
+                    x = max(0.0, x)
+                    y = max(0.0, y)
+                    
+                    x_int = int(round(x))
+                    y_int = int(round(y))
+                    
+                    # CRITICAL: Final validation - absolutely no negatives allowed
+                    # This should never happen after clamping, but double-check anyway
+                    if x_int < 0 or y_int < 0:
+                        continue  # Skip this coordinate pair
+                    
+                    if image_width and image_height:
+                        # Only add if within bounds
+                        if x_int < image_width and y_int < image_height:
+                            validated_polygon.extend([x_int, y_int])
+                    else:
+                        # No bounds check, but we've already ensured non-negative
+                        validated_polygon.extend([x_int, y_int])
+            
+            # Only add polygon if it has at least 3 points (6 coordinates)
+            if len(validated_polygon) >= 6:
+                validated_polygons.append(validated_polygon)
+        
+        return validated_polygons if validated_polygons else None
+    
+    # Unknown format - return None
+    return None
 
 
 def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
@@ -226,28 +336,19 @@ async def process_coco_annotation_file(
                 segmentation_normalized = None
                 if 'segmentation' in coco_ann and coco_ann['segmentation']:
                     seg = coco_ann['segmentation']
-                    # COCO segmentation may be a list of polygons (list of lists) or RLE (dict/string)
-                    if isinstance(seg, list):
-                        try:
-                            img_width = image_info.get('width', 1) or 1
-                            img_height = image_info.get('height', 1) or 1
-                            normalized_polygons = []
-                            for polygon in seg:
-                                if not isinstance(polygon, list):
-                                    continue
-                                normalized = []
-                                for i in range(0, len(polygon), 2):
-                                    x = polygon[i]
-                                    y = polygon[i + 1] if i + 1 < len(polygon) else 0
-                                    normalized.append(x / img_width)
-                                    normalized.append(y / img_height)
-                                normalized_polygons.append(normalized)
-                            segmentation_normalized = normalized_polygons
-                        except Exception as e:
-                            # Fallback to storing raw segmentation if normalization fails
-                            segmentation_normalized = coco_ann.get('segmentation')
-                    else:
-                        # RLE or other formats: store as-is
+                    img_width = image_info.get('width', 1) or 1
+                    img_height = image_info.get('height', 1) or 1
+                    
+                    # Validate and normalize segmentation (normalize to 0-1 range)
+                    segmentation_normalized = validate_and_normalize_segmentation(
+                        seg,
+                        image_width=img_width,
+                        image_height=img_height,
+                        normalize=True
+                    )
+                    
+                    # Fallback to storing raw segmentation if validation fails
+                    if segmentation_normalized is None:
                         segmentation_normalized = coco_ann.get('segmentation')
 
                 # Create annotation record (explicitly let database auto-generate ID)
@@ -817,10 +918,26 @@ def process_coco_annotation_file_task(
                     'bbox_width': bbox_width,
                     'bbox_height': bbox_height,
                     'bbox': coco_ann.get('bbox'),  # Keep original for backward compatibility
-                    'segmentation': coco_ann.get('segmentation'),
+                    'segmentation': coco_ann.get('segmentation'),  # Will be validated below
                     'area': coco_ann.get('area'),
                     'confidence': 1.0
                 }
+                
+                # Validate segmentation coordinates before saving
+                if annotation_data['segmentation']:
+                    img_width = image_info.get('width', 1) or 1
+                    img_height = image_info.get('height', 1) or 1
+                    validated_seg = validate_and_normalize_segmentation(
+                        annotation_data['segmentation'],
+                        image_width=img_width,
+                        image_height=img_height,
+                        normalize=False  # Keep as pixel coordinates (integers)
+                    )
+                    if validated_seg is not None:
+                        annotation_data['segmentation'] = validated_seg
+                    else:
+                        # If validation fails, set to None
+                        annotation_data['segmentation'] = None
                 
                 annotation = Annotation(**annotation_data)
                 db.add(annotation)

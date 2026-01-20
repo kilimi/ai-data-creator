@@ -202,17 +202,27 @@ def create_albumentations_transform(augmentation_methods: List[str], method_para
                 p=1.0
             ))
     
-    # Return composed transform with bounding box support
-    # Note: We don't use keypoint_params since we don't have keypoint annotations
-    # If keypoint_params is set, Albumentations expects a 'keypoints' argument
-    return A.Compose(
-        transforms,
-        bbox_params=A.BboxParams(
+    # Return composed transform with bounding box and keypoint support
+    # Keypoints are used for segmentation polygon transformation
+    # Always include keypoint_params if we have any geometric transformations to ensure segmentation is transformed
+    compose_kwargs = {
+        'transforms': transforms,
+        'bbox_params': A.BboxParams(
             format='coco',  # [x, y, width, height]
             label_fields=['class_labels'],
             min_visibility=0.3  # Minimum visibility threshold for bboxes
         )
-    )
+    }
+    
+    # Always add keypoint_params if we have any transforms (needed for segmentation transformation)
+    # Even simple transforms like brightness/contrast don't need it, but if we have any geometric transforms, we need it
+    if transforms:  # If we have any transforms at all, include keypoint support for segmentation
+        compose_kwargs['keypoint_params'] = A.KeypointParams(
+            format='xy',  # List of (x, y) tuples
+            remove_invisible=False  # Keep all keypoints even if partially out of bounds
+        )
+    
+    return A.Compose(**compose_kwargs)
 
 
 def load_image_from_path(image_path: str) -> np.ndarray:
@@ -307,7 +317,7 @@ def transform_segmentation_with_augmentation(
 ) -> Optional[List]:
     """
     Transform segmentation polygon coordinates based on the augmentation applied.
-    Returns transformed segmentation or None if invalid.
+    Returns transformed segmentation with integer coordinates or None if invalid.
     """
     if not segmentation:
         return None
@@ -321,8 +331,8 @@ def transform_segmentation_with_augmentation(
         transformed_polygon = []
         # Polygon is flat list: [x1, y1, x2, y2, x3, y3, ...]
         for i in range(0, len(polygon), 2):
-            x = polygon[i]
-            y = polygon[i + 1] if i + 1 < len(polygon) else 0
+            x = float(polygon[i])
+            y = float(polygon[i + 1]) if i + 1 < len(polygon) else 0.0
             
             for method in augmentation_methods:
                 if method == 'flip_horizontal':
@@ -330,7 +340,13 @@ def transform_segmentation_with_augmentation(
                 elif method == 'flip_vertical':
                     y = image_height - y
             
-            transformed_polygon.extend([x, y])
+            # Convert to integer coordinates and clamp to valid bounds
+            x_int = int(round(max(0, min(x, image_width - 1))))
+            y_int = int(round(max(0, min(y, image_height - 1))))
+            
+            # Only add if coordinates are valid (non-negative and within bounds)
+            if x_int >= 0 and y_int >= 0 and x_int < image_width and y_int < image_height:
+                transformed_polygon.extend([x_int, y_int])
         
         if len(transformed_polygon) >= 6:
             transformed_segmentation.append(transformed_polygon)
@@ -467,6 +483,24 @@ def create_augmented_dataset_task(self, task_id: int):
         category_counts = {}
         annotation_type = 'classification'  # Default, will detect from source
         
+        # Build a mapping of class names to category_ids from source annotation files
+        # This helps preserve category_id consistency across augmented datasets
+        source_class_to_category_id = {}
+        for source_dataset in source_datasets:
+            # Get annotation files for this source dataset
+            source_ann_files = db.query(AnnotationFile).filter(
+                AnnotationFile.dataset_id == source_dataset.id
+            ).all()
+            for ann_file in source_ann_files:
+                source_classes = db.query(AnnotationClass).filter(
+                    AnnotationClass.annotation_file_id == ann_file.id
+                ).all()
+                for ann_class in source_classes:
+                    if ann_class.category_id is not None and ann_class.class_name:
+                        # Use the first category_id we find for each class name
+                        if ann_class.class_name not in source_class_to_category_id:
+                            source_class_to_category_id[ann_class.class_name] = ann_class.category_id
+        
         # Process images
         current_operation = 0
         processed_images = 0
@@ -510,9 +544,24 @@ def create_augmented_dataset_task(self, task_id: int):
                     Annotation.image_id == source_image.id
                 ).all()
                 
-                # Prepare bboxes and labels for Albumentations
+                # Build a mapping from class name to category_id from source annotation file's AnnotationClass
+                # This helps us preserve category_id even if source annotations have null category_id
+                source_class_to_category_id = {}
+                if source_annotations:
+                    # Get the annotation_file_id from the first annotation
+                    source_ann_file_id = source_annotations[0].annotation_file_id
+                    if source_ann_file_id:
+                        source_classes = db.query(AnnotationClass).filter(
+                            AnnotationClass.annotation_file_id == source_ann_file_id
+                        ).all()
+                        for ann_class in source_classes:
+                            if ann_class.category_id is not None:
+                                source_class_to_category_id[ann_class.class_name] = ann_class.category_id
+                
+                # Prepare bboxes, labels, and keypoints (for segmentation) for Albumentations
                 bboxes = []
                 class_labels = []
+                keypoints = []  # List of lists of (x, y) tuples for each annotation's segmentation
                 annotation_data_list = []
                 classification_annotations = []  # Annotations without bboxes (classification)
                 
@@ -529,12 +578,53 @@ def create_augmented_dataset_task(self, task_id: int):
                         if w > 0 and h > 0:
                             bboxes.append([x, y, w, h])
                             class_labels.append(ann.category or 'unknown')
+                            
+                            # Get category_id - use from annotation, or look up from source classes mapping
+                            category_id = ann.category_id
+                            if category_id is None and ann.category:
+                                # First try source class mapping
+                                category_id = source_class_to_category_id.get(ann.category)
+                                # If still None, try looking up from source annotation file's AnnotationClass
+                                if category_id is None:
+                                    source_ann_file_id = ann.annotation_file_id
+                                    if source_ann_file_id:
+                                        ann_class = db.query(AnnotationClass).filter(
+                                            AnnotationClass.annotation_file_id == source_ann_file_id,
+                                            AnnotationClass.class_name == ann.category
+                                        ).first()
+                                        if ann_class and ann_class.category_id is not None:
+                                            category_id = ann_class.category_id
+                                            # Cache it for future use
+                                            source_class_to_category_id[ann.category] = category_id
+                            
+                            # Convert segmentation to keypoint format for Albumentations
+                            ann_keypoints = []
+                            if ann.segmentation and isinstance(ann.segmentation, list):
+                                # Segmentation is a list of polygons (COCO format)
+                                # Each polygon is a flat list: [x1, y1, x2, y2, ...]
+                                for polygon in ann.segmentation:
+                                    if polygon and isinstance(polygon, list) and len(polygon) >= 6:
+                                        # Convert flat list to list of (x, y) tuples
+                                        polygon_keypoints = []
+                                        for i in range(0, len(polygon), 2):
+                                            if i + 1 < len(polygon):
+                                                px = float(polygon[i])
+                                                py = float(polygon[i + 1])
+                                                # Clamp to image bounds
+                                                px = max(0, min(px, image_width))
+                                                py = max(0, min(py, image_height))
+                                                polygon_keypoints.append((px, py))
+                                        if len(polygon_keypoints) >= 3:  # At least 3 points for a valid polygon
+                                            ann_keypoints.extend(polygon_keypoints)
+                            
                             annotation_data_list.append({
                                 'category': ann.category,
                                 'segmentation': ann.segmentation,
                                 'area': ann.area,
-                                'category_id': ann.category_id
+                                'category_id': category_id,  # Use resolved category_id
+                                'keypoints': ann_keypoints  # Store original keypoints for reference
                             })
+                            keypoints.append(ann_keypoints)  # Add to keypoints list for Albumentations
                     else:
                         # Classification annotation (no bbox) - store for copying
                         classification_annotations.append(ann)
@@ -553,19 +643,41 @@ def create_augmented_dataset_task(self, task_id: int):
                             augmentation.method_parameters or {}
                         )
                         
-                        # Apply augmentation
+                        # Apply augmentation with bboxes and keypoints (for segmentation)
                         if bboxes and augmentation.transform_annotations:
-                            augmented = transform(
-                                image=image_data, 
-                                bboxes=bboxes, 
-                                class_labels=class_labels
-                            )
+                            # Flatten keypoints list for Albumentations (it expects a flat list)
+                            flat_keypoints = []
+                            for kp_list in keypoints:
+                                flat_keypoints.extend(kp_list)
+                            
+                            # Prepare transform arguments
+                            transform_args = {
+                                'image': image_data,
+                                'bboxes': bboxes,
+                                'class_labels': class_labels
+                            }
+                            
+                            # Only add keypoints if we have them (Albumentations will handle it even without keypoint_params)
+                            if flat_keypoints:
+                                transform_args['keypoints'] = flat_keypoints
+                            
+                            augmented = transform(**transform_args)
                             transformed_bboxes = augmented['bboxes']
                             transformed_labels = augmented['class_labels']
+                            # Get transformed keypoints if available, otherwise use original
+                            transformed_keypoints = augmented.get('keypoints', flat_keypoints if flat_keypoints else [])
+                            
+                            # Log keypoint transformation for debugging
+                            if flat_keypoints and transformed_keypoints:
+                                logger.debug(f"Keypoint transformation: {len(flat_keypoints)} -> {len(transformed_keypoints)} keypoints")
+                                if len(transformed_keypoints) > 0:
+                                    sample_kp = transformed_keypoints[0]
+                                    logger.debug(f"Sample transformed keypoint format: {type(sample_kp)}, value: {sample_kp}")
                         else:
                             augmented = transform(image=image_data)
                             transformed_bboxes = []
                             transformed_labels = []
+                            transformed_keypoints = []
                         
                         augmented_image = augmented['image']
                         aug_height, aug_width = augmented_image.shape[:2]
@@ -617,13 +729,101 @@ def create_augmented_dataset_task(self, task_id: int):
                         
                         # Create annotations for augmented image
                         if augmentation.transform_annotations and transformed_bboxes:
+                            # Reconstruct keypoints per annotation from transformed flat list
+                            keypoint_idx = 0
                             for bbox_idx, (bbox, label) in enumerate(zip(transformed_bboxes, transformed_labels)):
                                 if bbox_idx < len(annotation_data_list):
                                     ann_data = annotation_data_list[bbox_idx]
                                     
-                                    # Transform segmentation if present
+                                    # Transform segmentation using transformed keypoints from Albumentations
                                     transformed_seg = None
-                                    if ann_data.get('segmentation'):
+                                    if ann_data.get('keypoints') and len(ann_data['keypoints']) > 0:
+                                        # Get the transformed keypoints for this annotation
+                                        num_keypoints = len(ann_data['keypoints'])
+                                        if keypoint_idx + num_keypoints <= len(transformed_keypoints):
+                                            ann_transformed_kp = transformed_keypoints[keypoint_idx:keypoint_idx + num_keypoints]
+                                            keypoint_idx += num_keypoints
+                                            
+                                            # Convert keypoints back to COCO segmentation format (flat list)
+                                            # Group keypoints back into polygons (assuming one polygon per annotation for now)
+                                            if ann_transformed_kp:
+                                                # Albumentations returns keypoints as list of [x, y] or (x, y)
+                                                # Convert to flat list [x1, y1, x2, y2, ...]
+                                                # Filter and clamp points to ensure they're within image bounds
+                                                flat_seg = []
+                                                valid_points = 0
+                                                points_outside = 0
+                                                
+                                                for kp in ann_transformed_kp:
+                                                    # Handle both tuple and list formats from Albumentations
+                                                    if isinstance(kp, (list, tuple)) and len(kp) >= 2:
+                                                        kx = float(kp[0])
+                                                        ky = float(kp[1])
+                                                    else:
+                                                        logger.warning(f"Invalid keypoint format: {kp}")
+                                                        continue
+                                                    
+                                                    # Check if point is way outside bounds (more than 10% outside)
+                                                    # If so, don't include it - it's likely from a transformation that moved it too far
+                                                    margin = max(aug_width, aug_height) * 0.1
+                                                    if kx < -margin or kx > aug_width + margin or ky < -margin or ky > aug_height + margin:
+                                                        points_outside += 1
+                                                        continue
+                                                    
+                                                    # Clamp to augmented image bounds (strictly within [0, width/height])
+                                                    kx = max(0.0, min(kx, float(aug_width - 1)))
+                                                    ky = max(0.0, min(ky, float(aug_height - 1)))
+                                                    
+                                                    # Only add point if it's valid (not NaN or Inf)
+                                                    if not (np.isnan(kx) or np.isnan(ky) or np.isinf(kx) or np.isinf(ky)):
+                                                        # Convert to integer coordinates (round to nearest integer)
+                                                        kx_int = int(round(kx))
+                                                        ky_int = int(round(ky))
+                                                        # Final check: ensure no negatives after rounding
+                                                        if kx_int >= 0 and ky_int >= 0 and kx_int < aug_width and ky_int < aug_height:
+                                                            flat_seg.extend([kx_int, ky_int])
+                                                            valid_points += 1
+                                                    else:
+                                                        logger.warning(f"Invalid keypoint value (NaN/Inf): ({kx}, {ky})")
+                                                
+                                                # Final validation: ensure NO negative coordinates and convert to integers
+                                                # Double-check all coordinates are valid before saving
+                                                validated_seg = []
+                                                for coord_idx in range(0, len(flat_seg), 2):
+                                                    if coord_idx + 1 < len(flat_seg):
+                                                        x = flat_seg[coord_idx]
+                                                        y = flat_seg[coord_idx + 1]
+                                                        
+                                                        # Convert to integer (should already be int, but ensure it)
+                                                        x_int = int(x) if isinstance(x, (int, float)) else x
+                                                        y_int = int(y) if isinstance(y, (int, float)) else y
+                                                        
+                                                        # Final validation - no negatives, no NaN, no Inf, within bounds
+                                                        if (x_int >= 0 and y_int >= 0 and 
+                                                            x_int < aug_width and y_int < aug_height and
+                                                            not (np.isnan(x_int) or np.isnan(y_int) or np.isinf(x_int) or np.isinf(y_int))):
+                                                            validated_seg.extend([x_int, y_int])
+                                                
+                                                # Only create segmentation if we have at least 3 valid points after final validation
+                                                # and at least 50% of original points are valid
+                                                original_point_count = len(ann_transformed_kp)
+                                                final_valid_points = len(validated_seg) // 2
+                                                
+                                                if final_valid_points >= 3 and len(validated_seg) >= 6:
+                                                    # Check if we kept enough points (at least 50% of original)
+                                                    if final_valid_points >= original_point_count * 0.5:
+                                                        transformed_seg = [validated_seg]
+                                                        logger.debug(f"Transformed segmentation for annotation {bbox_idx}: {final_valid_points}/{original_point_count} valid points after validation")
+                                                    else:
+                                                        logger.warning(f"Too many points lost for annotation {bbox_idx}: {final_valid_points}/{original_point_count} valid (need at least 50%)")
+                                                else:
+                                                    logger.warning(f"Insufficient valid points for annotation {bbox_idx}: {final_valid_points} points (need at least 3), {points_outside} points outside bounds")
+                                        else:
+                                            logger.warning(f"Not enough transformed keypoints for annotation {bbox_idx}: need {num_keypoints}, have {len(transformed_keypoints) - keypoint_idx}")
+                                    
+                                    # If segmentation transformation failed, try fallback method
+                                    if not transformed_seg and ann_data.get('segmentation'):
+                                        logger.warning(f"Failed to transform segmentation using keypoints for annotation {bbox_idx}, using fallback method")
                                         transformed_seg = transform_segmentation_with_augmentation(
                                             ann_data['segmentation'],
                                             aug_width,
@@ -632,29 +832,178 @@ def create_augmented_dataset_task(self, task_id: int):
                                             augmentation.method_parameters or {}
                                         )
                                     
+                                    # Final validation: ensure transformed_seg has no negative coordinates
+                                    # This is CRITICAL - we must NEVER save negative coordinates
+                                    if transformed_seg:
+                                        # Validate all coordinates in transformed_seg
+                                        validated_seg_final = []
+                                        for polygon in transformed_seg:
+                                            if isinstance(polygon, list) and len(polygon) >= 6:
+                                                validated_polygon = []
+                                                has_invalid = False
+                                                
+                                                for coord_idx in range(0, len(polygon), 2):
+                                                    if coord_idx + 1 < len(polygon):
+                                                        x = float(polygon[coord_idx])
+                                                        y = float(polygon[coord_idx + 1])
+                                                        
+                                                        # Convert to integer coordinates
+                                                        x_int = int(round(x))
+                                                        y_int = int(round(y))
+                                                        
+                                                        # STRICT validation - reject if ANY coordinate is invalid
+                                                        if (x_int < 0 or y_int < 0 or 
+                                                            x_int >= aug_width or y_int >= aug_height or
+                                                            np.isnan(x_int) or np.isnan(y_int) or 
+                                                            np.isinf(x_int) or np.isinf(y_int)):
+                                                            has_invalid = True
+                                                            logger.warning(f"Invalid coordinate in annotation {bbox_idx} for {file_name}: ({x_int}, {y_int}), image size: {aug_width}x{aug_height}")
+                                                            break
+                                                        
+                                                        validated_polygon.extend([x_int, y_int])
+                                                
+                                                # Only add polygon if it has no invalid coordinates and enough points
+                                                if not has_invalid and len(validated_polygon) >= 6:
+                                                    validated_seg_final.append(validated_polygon)
+                                                else:
+                                                    if has_invalid:
+                                                        logger.warning(f"Rejecting polygon in annotation {bbox_idx} for {file_name}: contains invalid coordinates")
+                                        
+                                        if validated_seg_final:
+                                            transformed_seg = validated_seg_final
+                                            # Final double-check: verify NO negative coordinates in final result
+                                            for poly in validated_seg_final:
+                                                for i in range(0, len(poly), 2):
+                                                    if i + 1 < len(poly):
+                                                        if poly[i] < 0 or poly[i + 1] < 0:
+                                                            logger.error(f"CRITICAL: Negative coordinate found in validated_seg_final! This should never happen. Value: ({poly[i]}, {poly[i+1]})")
+                                                            transformed_seg = None
+                                                            break
+                                                if transformed_seg is None:
+                                                    break
+                                        else:
+                                            logger.warning(f"Rejecting annotation {bbox_idx} for {file_name}: all polygons invalid after validation")
+                                            transformed_seg = None
+                                    
+                                    # Log if segmentation is still None
+                                    if not transformed_seg:
+                                        logger.warning(f"No segmentation for annotation {bbox_idx} (category: {label})")
+                                    
                                     # Calculate new area and convert numpy types to Python floats
                                     new_area = float(bbox[2] * bbox[3]) if len(bbox) >= 4 else ann_data.get('area')
                                     
                                     # Convert bbox values to Python floats (Albumentations returns numpy types)
                                     bbox_list = [float(v) for v in bbox]
                                     
-                                    new_annotation = Annotation(
-                                        annotation_file_id=annotation_file.id,
-                                        image_id=augmented_image_record.id,
-                                        dataset_id=target_dataset.id,
-                                        category=label,
-                                        category_id=ann_data.get('category_id'),
-                                        bbox=bbox_list,
-                                        bbox_x=float(bbox[0] / aug_width) if aug_width > 0 else 0,
-                                        bbox_y=float(bbox[1] / aug_height) if aug_height > 0 else 0,
-                                        bbox_width=float(bbox[2] / aug_width) if aug_width > 0 else 0,
-                                        bbox_height=float(bbox[3] / aug_height) if aug_height > 0 else 0,
-                                        segmentation=transformed_seg,
-                                        area=float(new_area) if new_area is not None else None,
-                                        uploaded_at=datetime.utcnow()
-                                    )
-                                    db.add(new_annotation)
-                                    processed_annotations += 1
+                                    # Get category_id - use from ann_data, or look up from target annotation file's AnnotationClass
+                                    category_id = ann_data.get('category_id')
+                                    if category_id is None and label:
+                                        # Look up category_id from target annotation file's AnnotationClass
+                                        ann_class = db.query(AnnotationClass).filter(
+                                            AnnotationClass.annotation_file_id == annotation_file.id,
+                                            AnnotationClass.class_name == label
+                                        ).first()
+                                        if ann_class and ann_class.category_id is not None:
+                                            category_id = ann_class.category_id
+                                        else:
+                                            # If still None, assign a category_id based on class name order
+                                            # This ensures we always have a category_id
+                                            all_classes = db.query(AnnotationClass).filter(
+                                                AnnotationClass.annotation_file_id == annotation_file.id
+                                            ).order_by(AnnotationClass.id).all()
+                                            class_names = [c.class_name for c in all_classes]
+                                            if label in class_names:
+                                                category_id = class_names.index(label) + 1
+                                            else:
+                                                # New class, assign next available ID
+                                                max_category_id = max([c.category_id for c in all_classes if c.category_id is not None], default=0)
+                                                category_id = max_category_id + 1
+                                    
+                                    # FINAL CHECK: Verify no negative coordinates and ensure all are integers before saving
+                                    # This is the last line of defense - reject if ANY coordinate is negative
+                                    if transformed_seg:
+                                        final_seg = []
+                                        for polygon in transformed_seg:
+                                            if isinstance(polygon, list):
+                                                final_polygon = []
+                                                has_invalid = False
+                                                for coord_idx in range(0, len(polygon), 2):
+                                                    if coord_idx + 1 < len(polygon):
+                                                        x = polygon[coord_idx]
+                                                        y = polygon[coord_idx + 1]
+                                                        
+                                                        # Convert to integer if not already
+                                                        x_int = int(round(float(x))) if not isinstance(x, int) else int(x)
+                                                        y_int = int(round(float(y))) if not isinstance(y, int) else int(y)
+                                                        
+                                                        # Final validation: no negatives, within bounds
+                                                        if x_int < 0 or y_int < 0 or x_int >= aug_width or y_int >= aug_height:
+                                                            logger.error(f"ABORTING: Found invalid coordinate ({x_int}, {y_int}) in annotation {bbox_idx} for {file_name} - rejecting entire annotation")
+                                                            has_invalid = True
+                                                            break
+                                                        
+                                                        final_polygon.extend([x_int, y_int])
+                                                
+                                                if not has_invalid and len(final_polygon) >= 6:
+                                                    final_seg.append(final_polygon)
+                                                else:
+                                                    if has_invalid:
+                                                        transformed_seg = None
+                                                        break
+                                        
+                                        if transformed_seg is not None:
+                                            transformed_seg = final_seg if final_seg else None
+                                    
+                                    # Only create annotation if we have valid segmentation (or if it's a bbox-only annotation)
+                                    if transformed_seg or (not ann_data.get('segmentation') and bbox_list):
+                                        # One more safety check right before database save - ensure all integers and no negatives
+                                        if transformed_seg:
+                                            for polygon in transformed_seg:
+                                                if isinstance(polygon, list):
+                                                    for coord_idx in range(0, len(polygon), 2):
+                                                        if coord_idx + 1 < len(polygon):
+                                                            x = polygon[coord_idx]
+                                                            y = polygon[coord_idx + 1]
+                                                            # Ensure integer and validate
+                                                            x_int = int(x) if isinstance(x, (int, float)) else x
+                                                            y_int = int(y) if isinstance(y, (int, float)) else y
+                                                            if x_int < 0 or y_int < 0 or x_int >= aug_width or y_int >= aug_height:
+                                                                logger.error(f"CRITICAL ERROR: Invalid coordinate detected right before DB save! Rejecting annotation {bbox_idx}: ({x_int}, {y_int})")
+                                                                transformed_seg = None
+                                                                break
+                                                        if transformed_seg is None:
+                                                            break
+                                                if transformed_seg is None:
+                                                    break
+                                        
+                                        if transformed_seg or (not ann_data.get('segmentation') and bbox_list):
+                                            new_annotation = Annotation(
+                                                annotation_file_id=annotation_file.id,
+                                                image_id=augmented_image_record.id,
+                                                dataset_id=target_dataset.id,
+                                                category=label,
+                                                category_id=category_id,  # Use resolved category_id
+                                                bbox=bbox_list,
+                                                bbox_x=float(bbox[0] / aug_width) if aug_width > 0 else 0,
+                                                bbox_y=float(bbox[1] / aug_height) if aug_height > 0 else 0,
+                                                bbox_width=float(bbox[2] / aug_width) if aug_width > 0 else 0,
+                                                bbox_height=float(bbox[3] / aug_height) if aug_height > 0 else 0,
+                                                segmentation=transformed_seg,
+                                                area=float(new_area) if new_area is not None else None,
+                                                uploaded_at=datetime.utcnow()
+                                            )
+                                            db.add(new_annotation)
+                                            processed_annotations += 1
+                                            
+                                            # Log annotation creation for debugging
+                                            if transformed_seg:
+                                                logger.debug(f"Created annotation for {file_name}: category={label}, segmentation_points={sum(len(p) for p in transformed_seg) if isinstance(transformed_seg, list) else 0}")
+                                            else:
+                                                logger.debug(f"Created annotation for {file_name}: category={label}, no segmentation")
+                                        else:
+                                            logger.warning(f"Skipping annotation {bbox_idx} for {file_name}: failed final validation check")
+                                    else:
+                                        logger.warning(f"Skipping annotation {bbox_idx} for {file_name}: no valid segmentation after transformation")
                                     
                                     # Track category counts and detect annotation type
                                     annotation_type = 'detection' if transformed_seg else 'detection'
@@ -665,12 +1014,35 @@ def create_augmented_dataset_task(self, task_id: int):
                         # Copy classification annotations (no bbox) - they apply to the whole image
                         if classification_annotations:
                             for ann in classification_annotations:
+                                # Get category_id - use from annotation, or look up from target annotation file's AnnotationClass
+                                category_id = ann.category_id
+                                if category_id is None and ann.category:
+                                    # Look up category_id from target annotation file's AnnotationClass
+                                    ann_class = db.query(AnnotationClass).filter(
+                                        AnnotationClass.annotation_file_id == annotation_file.id,
+                                        AnnotationClass.class_name == ann.category
+                                    ).first()
+                                    if ann_class and ann_class.category_id is not None:
+                                        category_id = ann_class.category_id
+                                    else:
+                                        # If still None, assign a category_id based on class name order
+                                        all_classes = db.query(AnnotationClass).filter(
+                                            AnnotationClass.annotation_file_id == annotation_file.id
+                                        ).order_by(AnnotationClass.id).all()
+                                        class_names = [c.class_name for c in all_classes]
+                                        if ann.category in class_names:
+                                            category_id = class_names.index(ann.category) + 1
+                                        else:
+                                            # New class, assign next available ID
+                                            max_category_id = max([c.category_id for c in all_classes if c.category_id is not None], default=0)
+                                            category_id = max_category_id + 1
+                                
                                 new_annotation = Annotation(
                                     annotation_file_id=annotation_file.id,
                                     image_id=augmented_image_record.id,
                                     dataset_id=target_dataset.id,
                                     category=ann.category,
-                                    category_id=ann.category_id,
+                                    category_id=category_id,  # Use resolved category_id
                                     bbox=None,
                                     bbox_x=None,
                                     bbox_y=None,
@@ -689,12 +1061,35 @@ def create_augmented_dataset_task(self, task_id: int):
                         # Copy annotations without transformation if disabled
                         if not augmentation.transform_annotations and source_annotations:
                             for ann in source_annotations:
+                                # Get category_id - use from annotation, or look up from target annotation file's AnnotationClass
+                                category_id = ann.category_id
+                                if category_id is None and ann.category:
+                                    # Look up category_id from target annotation file's AnnotationClass
+                                    ann_class = db.query(AnnotationClass).filter(
+                                        AnnotationClass.annotation_file_id == annotation_file.id,
+                                        AnnotationClass.class_name == ann.category
+                                    ).first()
+                                    if ann_class and ann_class.category_id is not None:
+                                        category_id = ann_class.category_id
+                                    else:
+                                        # If still None, assign a category_id based on class name order
+                                        all_classes = db.query(AnnotationClass).filter(
+                                            AnnotationClass.annotation_file_id == annotation_file.id
+                                        ).order_by(AnnotationClass.id).all()
+                                        class_names = [c.class_name for c in all_classes]
+                                        if ann.category in class_names:
+                                            category_id = class_names.index(ann.category) + 1
+                                        else:
+                                            # New class, assign next available ID
+                                            max_category_id = max([c.category_id for c in all_classes if c.category_id is not None], default=0)
+                                            category_id = max_category_id + 1
+                                
                                 new_annotation = Annotation(
                                     annotation_file_id=annotation_file.id,
                                     image_id=augmented_image_record.id,
                                     dataset_id=target_dataset.id,
                                     category=ann.category,
-                                    category_id=ann.category_id,
+                                    category_id=category_id,  # Use resolved category_id
                                     bbox=ann.bbox,
                                     bbox_x=ann.bbox_x,
                                     bbox_y=ann.bbox_y,
@@ -779,15 +1174,53 @@ def create_augmented_dataset_task(self, task_id: int):
             "category_distribution": category_counts
         }
         
-        # Create AnnotationClass entries for each category
+        # Create AnnotationClass entries for each category with proper category_id
+        # Try to preserve category_id from source classes, otherwise assign sequentially
+        category_id_counter = 1
+        used_category_ids = set()
+        
         for category_name, count in category_counts.items():
-            ann_class = AnnotationClass(
-                annotation_file_id=annotation_file.id,
-                class_name=category_name,
-                count=count,
-                created_at=datetime.utcnow()
-            )
-            db.add(ann_class)
+            # Check if AnnotationClass already exists (might have been created earlier)
+            existing_class = db.query(AnnotationClass).filter(
+                AnnotationClass.annotation_file_id == annotation_file.id,
+                AnnotationClass.class_name == category_name
+            ).first()
+            
+            if existing_class:
+                # Update count if class already exists
+                existing_class.count = count
+                # Ensure it has a category_id
+                if existing_class.category_id is None:
+                    # Try to use source category_id if available
+                    category_id = source_class_to_category_id.get(category_name)
+                    if category_id is None or category_id in used_category_ids:
+                        # Assign next available ID
+                        while category_id_counter in used_category_ids:
+                            category_id_counter += 1
+                        category_id = category_id_counter
+                        category_id_counter += 1
+                    existing_class.category_id = category_id
+                    used_category_ids.add(category_id)
+            else:
+                # Try to use source category_id if available
+                category_id = source_class_to_category_id.get(category_name)
+                if category_id is None or category_id in used_category_ids:
+                    # Assign next available ID
+                    while category_id_counter in used_category_ids:
+                        category_id_counter += 1
+                    category_id = category_id_counter
+                    category_id_counter += 1
+                used_category_ids.add(category_id)
+                
+                # Create new AnnotationClass with category_id
+                ann_class = AnnotationClass(
+                    annotation_file_id=annotation_file.id,
+                    class_name=category_name,
+                    category_id=category_id,
+                    count=count,
+                    created_at=datetime.utcnow()
+                )
+                db.add(ann_class)
         
         db.commit()
         

@@ -6,7 +6,7 @@ import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { useProject } from '@/hooks/use-projects';
 import { ProjectContext } from '@/hooks/use-project-context';
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Database, Brain, Activity, Loader2 } from "lucide-react";
+import { ArrowLeft, Database, Brain, Activity, Loader2, Download } from "lucide-react";
 
 interface NavItemProps {
   to: string;
@@ -59,6 +59,7 @@ export function ProjectLayout() {
     const path = location.pathname;
     if (path.includes('/models')) return 'models';
     if (path.includes('/evaluations')) return 'evaluations';
+    if (path.includes('/exports')) return 'exports';
     return 'datasets';
   };
   
@@ -129,6 +130,12 @@ export function ProjectLayout() {
                   icon={<Activity className="h-5 w-5" />}
                   label="Evaluations"
                   isActive={activeSection === 'evaluations'}
+                />
+                <NavItem
+                  to={`/projects/${id}/exports`}
+                  icon={<Download className="h-5 w-5" />}
+                  label="Export"
+                  isActive={activeSection === 'exports'}
                 />
               </nav>
             </div>

@@ -203,13 +203,28 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
                             }
                             augmented_annotations.append(annotation_data)
                             
+                            # Validate segmentation coordinates before saving
+                            segmentation = annotation.segmentation
+                            if segmentation:
+                                from ..routers.annotation_db import validate_and_normalize_segmentation
+                                validated_seg = validate_and_normalize_segmentation(
+                                    segmentation,
+                                    image_width=augmented_image.width,
+                                    image_height=augmented_image.height,
+                                    normalize=False  # Keep as pixel coordinates (integers)
+                                )
+                                if validated_seg is not None:
+                                    segmentation = validated_seg
+                                else:
+                                    segmentation = None
+                            
                             # Create database entry
                             new_annotation = models.Annotation(
                                 image_id=augmented_image.id,
                                 dataset_id=target_dataset.id,
                                 category=annotation.category,
                                 bbox=annotation.bbox,
-                                segmentation=annotation.segmentation,
+                                segmentation=segmentation,
                                 area=annotation.area,
                                 uploaded_at=datetime.utcnow()
                             )
@@ -228,13 +243,28 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
                             if transformed_annotation:
                                 augmented_annotations.append(transformed_annotation)
                                 
+                                # Validate segmentation coordinates before saving
+                                segmentation = transformed_annotation.get('segmentation')
+                                if segmentation:
+                                    from ..routers.annotation_db import validate_and_normalize_segmentation
+                                    validated_seg = validate_and_normalize_segmentation(
+                                        segmentation,
+                                        image_width=augmented_image.width,
+                                        image_height=augmented_image.height,
+                                        normalize=False  # Keep as pixel coordinates (integers)
+                                    )
+                                    if validated_seg is not None:
+                                        segmentation = validated_seg
+                                    else:
+                                        segmentation = None
+                                
                                 # Create database entry
                                 new_annotation = models.Annotation(
                                     image_id=augmented_image.id,
                                     dataset_id=target_dataset.id,
                                     category=transformed_annotation['category'],
                                     bbox=transformed_annotation['bbox'],
-                                    segmentation=transformed_annotation['segmentation'],
+                                    segmentation=segmentation,
                                     area=transformed_annotation['area'],
                                     uploaded_at=datetime.utcnow()
                                 )

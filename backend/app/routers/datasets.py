@@ -2669,6 +2669,21 @@ async def process_merged_data_directly(db: Session, merged_file_id: str, merged_
                     bbox[3] / img_height if img_height > 0 else 0
                 ] if bbox else None
 
+                # Validate segmentation coordinates before saving
+                segmentation = ann_data.get("segmentation")
+                if segmentation:
+                    from .annotation_db import validate_and_normalize_segmentation
+                    validated_seg = validate_and_normalize_segmentation(
+                        segmentation,
+                        image_width=img_width,
+                        image_height=img_height,
+                        normalize=False  # Keep as pixel coordinates (integers)
+                    )
+                    if validated_seg is not None:
+                        segmentation = validated_seg
+                    else:
+                        segmentation = None
+                
                 # Create annotation record
                 annotation = models.Annotation(
                     annotation_file_id=merged_file_id,
@@ -2683,7 +2698,7 @@ async def process_merged_data_directly(db: Session, merged_file_id: str, merged_
                     bbox_width=normalized_bbox[2] if normalized_bbox else None,
                     bbox_height=normalized_bbox[3] if normalized_bbox else None,
                     bbox=bbox,
-                    segmentation=ann_data.get("segmentation"),
+                    segmentation=segmentation,
                     area=ann_data.get("area"),
                     confidence=1.0
                 )
