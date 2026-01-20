@@ -6,7 +6,7 @@ import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { useProject } from '@/hooks/use-projects';
 import { ProjectContext } from '@/hooks/use-project-context';
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Database, Brain, Activity, Loader2, Download } from "lucide-react";
+import { ArrowLeft, Database, Brain, Activity, Loader2, Download, Workflow } from "lucide-react";
 
 interface NavItemProps {
   to: string;
@@ -58,6 +58,7 @@ export function ProjectLayout() {
   const getActiveSection = () => {
     const path = location.pathname;
     if (path.includes('/models')) return 'models';
+    if (path.includes('/pipelines')) return 'pipelines';
     if (path.includes('/evaluations')) return 'evaluations';
     if (path.includes('/exports')) return 'exports';
     return 'datasets';
@@ -124,6 +125,12 @@ export function ProjectLayout() {
                   icon={<Brain className="h-5 w-5" />}
                   label="Models"
                   isActive={activeSection === 'models'}
+                />
+                <NavItem
+                  to={`/projects/${id}/pipelines`}
+                  icon={<Workflow className="h-5 w-5" />}
+                  label="Pipelines"
+                  isActive={activeSection === 'pipelines'}
                 />
                 <NavItem
                   to={`/projects/${id}/evaluations`}

@@ -39,6 +39,13 @@ class ExportRequest(BaseModel):
     checkpoint: str = "best"  # "best" or "last"
     export_format: str = "onnx"  # Currently only "onnx" supported
     task_name: Optional[str] = None
+    # ONNX export parameters
+    half: bool = False  # FP16 quantization
+    imgsz: Optional[int] = 640  # Image size (height/width)
+    simplify: bool = False  # Simplify ONNX model
+    opset: Optional[int] = None  # ONNX opset version
+    dynamic: bool = False  # Dynamic axes
+    workspace: Optional[int] = None  # Workspace size in MB
 
 
 @router.post("/export/yolo/start")
@@ -113,7 +120,14 @@ async def start_yolo_export(
             "checkpoint": request.checkpoint,
             "export_format": request.export_format,
             "training_task_id": request.task_id,
-            "output_dir": str(Path(training_task.task_metadata.get('results_dir', '.')) / "exports")
+            "output_dir": str(Path(training_task.task_metadata.get('results_dir', '.')) / "exports"),
+            # ONNX export parameters
+            "half": request.half,
+            "imgsz": request.imgsz,
+            "simplify": request.simplify,
+            "opset": request.opset,
+            "dynamic": request.dynamic,
+            "workspace": request.workspace,
         }
         
         # Start export in background

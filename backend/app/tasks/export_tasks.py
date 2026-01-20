@@ -97,10 +97,32 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
             checkpoint = export_config.get('checkpoint', 'best')
             model_stem = Path(model_path).stem
             output_filename = f"{model_stem}_{checkpoint}.onnx"
+            
+            # Add precision suffix to filename if using FP16
+            if export_config.get('half', False):
+                output_filename = output_filename.replace('.onnx', '_fp16.onnx')
+            
             output_path = output_dir / output_filename
             
+            # Prepare export parameters
+            export_kwargs = {
+                'format': 'onnx',
+                'imgsz': export_config.get('imgsz', 640),
+                'half': export_config.get('half', False),
+                'simplify': export_config.get('simplify', False),
+                'dynamic': export_config.get('dynamic', False),
+            }
+            
+            # Add optional parameters if provided
+            if export_config.get('opset') is not None:
+                export_kwargs['opset'] = export_config['opset']
+            if export_config.get('workspace') is not None:
+                export_kwargs['workspace'] = export_config['workspace']
+            
+            logger.info(f"Exporting ONNX with parameters: {export_kwargs}")
+            
             # Export to ONNX - YOLO exports to the same directory as the model
-            model.export(format='onnx', imgsz=640)  # Default image size, can be made configurable
+            model.export(**export_kwargs)
             
             # Find the exported file (YOLO exports to same directory as model by default)
             model_dir = Path(model_path).parent
@@ -134,7 +156,15 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
             "exported_file": str(output_path),
             "exported_file_url": relative_path,
             "export_format": export_format,
-            "file_size": output_path.stat().st_size if output_path.exists() else 0
+            "file_size": output_path.stat().st_size if output_path.exists() else 0,
+            "export_parameters": {
+                "half": export_config.get('half', False),
+                "imgsz": export_config.get('imgsz', 640),
+                "simplify": export_config.get('simplify', False),
+                "opset": export_config.get('opset'),
+                "dynamic": export_config.get('dynamic', False),
+                "workspace": export_config.get('workspace'),
+            }
         }
         db.commit()
         

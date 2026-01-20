@@ -46,6 +46,13 @@ export function ExportModelModal({
   const [exportName, setExportName] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [modelInfo, setModelInfo] = useState<any>(null);
+  // ONNX export parameters
+  const [half, setHalf] = useState(false);
+  const [imgsz, setImgsz] = useState<number>(640);
+  const [simplify, setSimplify] = useState(false);
+  const [opset, setOpset] = useState<number | ''>('');
+  const [dynamic, setDynamic] = useState(false);
+  const [workspace, setWorkspace] = useState<number | ''>('');
 
   // Filter to only completed YOLO training tasks
   const availableModels = trainingTasks.filter(
@@ -65,9 +72,10 @@ export function ExportModelModal({
       setModelInfo(task);
       // Generate default export name
       const checkpoint = selectedCheckpoint === 'best' ? 'best' : 'last';
-      setExportName(`${task.name} - ${checkpoint} to ${exportFormat.toUpperCase()}`);
+      const precision = half ? 'FP16' : 'FP32';
+      setExportName(`${task.name} - ${checkpoint} to ${exportFormat.toUpperCase()} (${precision})`);
     }
-  }, [selectedModel, selectedCheckpoint, exportFormat, availableModels]);
+  }, [selectedModel, selectedCheckpoint, exportFormat, half, availableModels]);
 
   const handleExport = async () => {
     if (!selectedModel || !api) {
@@ -90,7 +98,13 @@ export function ExportModelModal({
           task_id: parseInt(selectedModel),
           checkpoint: selectedCheckpoint,
           export_format: exportFormat,
-          task_name: exportName || undefined
+          task_name: exportName || undefined,
+          half: half,
+          imgsz: imgsz,
+          simplify: simplify,
+          opset: opset || undefined,
+          dynamic: dynamic,
+          workspace: workspace || undefined,
         }),
       });
 
@@ -115,6 +129,12 @@ export function ExportModelModal({
         setExportFormat('onnx');
         setExportName('');
         setModelInfo(null);
+        setHalf(false);
+        setImgsz(640);
+        setSimplify(false);
+        setOpset('');
+        setDynamic(false);
+        setWorkspace('');
       } else {
         throw new Error(result.error || 'Failed to start export');
       }
@@ -288,6 +308,127 @@ export function ExportModelModal({
               </div>
             </CardContent>
           </Card>
+
+          {/* ONNX Export Parameters */}
+          {exportFormat === 'onnx' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">ONNX Export Parameters</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="half"
+                      checked={half}
+                      onChange={(e) => setHalf(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="half" className="flex-1 cursor-pointer">
+                      <div className="font-medium">FP16 Quantization (Half Precision)</div>
+                      <div className="text-sm text-muted-foreground">
+                        Export model with FP16 precision to reduce file size and improve inference speed. May slightly reduce accuracy.
+                      </div>
+                    </Label>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <Label htmlFor="imgsz">Image Size</Label>
+                    <input
+                      id="imgsz"
+                      type="number"
+                      min="128"
+                      max="2048"
+                      step="32"
+                      value={imgsz}
+                      onChange={(e) => setImgsz(parseInt(e.target.value) || 640)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Input image size (height/width). Common values: 640, 1280. Default: 640.
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="simplify"
+                      checked={simplify}
+                      onChange={(e) => setSimplify(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="simplify" className="flex-1 cursor-pointer">
+                      <div className="font-medium">Simplify Model</div>
+                      <div className="text-sm text-muted-foreground">
+                        Simplify ONNX model by removing redundant operators. May improve compatibility.
+                      </div>
+                    </Label>
+                  </div>
+
+                  <Separator />
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="dynamic"
+                      checked={dynamic}
+                      onChange={(e) => setDynamic(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="dynamic" className="flex-1 cursor-pointer">
+                      <div className="font-medium">Dynamic Axes</div>
+                      <div className="text-sm text-muted-foreground">
+                        Allow dynamic input shapes. Useful for variable-size inputs but may reduce optimization.
+                      </div>
+                    </Label>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <Label htmlFor="opset">ONNX Opset Version (Optional)</Label>
+                    <input
+                      id="opset"
+                      type="number"
+                      min="7"
+                      max="17"
+                      value={opset}
+                      onChange={(e) => setOpset(e.target.value ? parseInt(e.target.value) : '')}
+                      placeholder="Auto (default)"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      ONNX opset version (7-17). Leave empty for default. Higher versions support more operators.
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-2">
+                    <Label htmlFor="workspace">Workspace Size (MB, Optional)</Label>
+                    <input
+                      id="workspace"
+                      type="number"
+                      min="1"
+                      max="4096"
+                      value={workspace}
+                      onChange={(e) => setWorkspace(e.target.value ? parseInt(e.target.value) : '')}
+                      placeholder="Auto (default)"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Workspace size in MB for TensorRT optimization. Leave empty for default.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Export Name */}
           <Card>

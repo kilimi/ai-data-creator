@@ -373,3 +373,17 @@ class BackupRecord(Base):
     backup_metadata = Column('metadata', JSON, nullable=True)  # Additional backup metadata (column name is 'metadata' but attribute is 'backup_metadata')
 
     parent_backup = relationship("BackupRecord", remote_side=[id])
+
+
+class Pipeline(Base):
+    __tablename__ = "pipelines"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), index=True)
+    name = Column(String, index=True)
+    nodes = Column(JSON)  # ReactFlow nodes
+    edges = Column(JSON)  # ReactFlow edges
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("Project")

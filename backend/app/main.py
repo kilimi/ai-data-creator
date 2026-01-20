@@ -456,7 +456,7 @@ async def health_check(db: Session = Depends(get_db)):
 
 
 # Import routers
-from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export
+from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines
 
 # Include routers
 app.include_router(projects.router)
@@ -472,3 +472,4 @@ app.include_router(training.router)
 app.include_router(predictions.router)
 app.include_router(backup.router)
 app.include_router(export.router)
+app.include_router(pipelines.router)

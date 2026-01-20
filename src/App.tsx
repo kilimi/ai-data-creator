@@ -21,6 +21,7 @@ import ProjectDatasets from "./pages/ProjectDatasets";
 import ProjectModels from "./pages/ProjectModels";
 import ProjectEvaluations from "./pages/ProjectEvaluations";
 import ProjectExports from "./pages/ProjectExports";
+import ProjectPipelines from "./pages/ProjectPipelines";
 
 const queryClient = new QueryClient();
 
@@ -46,6 +47,7 @@ const App = () => (
             <Route index element={<ProjectDatasets />} />
             <Route path="datasets" element={<ProjectDatasets />} />
             <Route path="models" element={<ProjectModels />} />
+            <Route path="pipelines" element={<ProjectPipelines />} />
             <Route path="evaluations" element={<ProjectEvaluations />} />
             <Route path="exports" element={<ProjectExports />} />
           </Route>
