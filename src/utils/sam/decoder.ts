@@ -1,5 +1,5 @@
 import { SAMSession } from './session';
-import { EncodingOutput, SAMPrompt, SAMResult, Point, SegmentationMask } from './types';
+import { EncodingOutput, SAMPrompt, SAMResult, Point, Coordinate, SegmentationMask } from './types';
 import * as ort from 'onnxruntime-web';
 
 export class SAMDecoder {
@@ -42,8 +42,8 @@ export class SAMDecoder {
     }
   }
 
-  private prepareDecoderInputs(encoding: EncodingOutput, prompt: SAMPrompt): ort.InferenceSession.OnnxValueMapType {
-    const inputs: ort.InferenceSession.OnnxValueMapType = {};
+  private prepareDecoderInputs(encoding: EncodingOutput, prompt: SAMPrompt): Record<string, ort.Tensor> {
+    const inputs: Record<string, ort.Tensor> = {};
 
     // Image embeddings
     inputs.image_embeddings = new ort.Tensor(
@@ -318,7 +318,7 @@ export class SAMDecoder {
     };
   }
 
-  private maskToPolygon(mask: SegmentationMask, encoding: EncodingOutput): Point[] {
+  private maskToPolygon(mask: SegmentationMask, encoding: EncodingOutput): Coordinate[] {
     // SAM decoder outputs masks at different resolutions depending on the model
     // The mask coordinates are in the processed image space (1024x1024 with padding)
     // We need to:
@@ -641,14 +641,14 @@ export class SAMDecoder {
     return simplified;
   }
   
-  private calculatePolygonArea(points: Point[]): number {
+  private calculatePolygonArea(points: Coordinate[]): number {
     if (points.length < 3) {
       console.warn('[SAM] calculatePolygonArea: Not enough points', points.length);
       return 0;
     }
     
     // Remove duplicate consecutive points
-    const cleanedPoints: Point[] = [points[0]];
+    const cleanedPoints: Coordinate[] = [points[0]];
     for (let i = 1; i < points.length; i++) {
       const prev = cleanedPoints[cleanedPoints.length - 1];
       const curr = points[i];
@@ -700,7 +700,7 @@ export class SAMDecoder {
     return calculatedArea;
   }
   
-  private simplifyPolygon(points: Point[], threshold: number = 2): Point[] {
+  private simplifyPolygon(points: Coordinate[], threshold: number = 2): Coordinate[] {
     if (points.length <= 3) return points;
     
     // Adaptive threshold based on image size
@@ -713,7 +713,7 @@ export class SAMDecoder {
     // Scale threshold based on image size: 2px for 1000px images, proportionally larger for bigger images
     const adaptiveThreshold = Math.max(2, Math.min(10, (imageSize / 1000) * 2));
     
-    const simplified: Point[] = [points[0]];
+    const simplified: Coordinate[] = [points[0]];
     let skippedCount = 0;
     
     for (let i = 1; i < points.length - 1; i++) {
@@ -769,9 +769,9 @@ export class SAMDecoder {
     return simplified;
   }
 
-  private findContours(mask: Uint8Array, width: number, height: number): Point[][] {
+  private findContours(mask: Uint8Array, width: number, height: number): Coordinate[][] {
     // Improved contour finding - find edge pixels (255 adjacent to 0 or boundary)
-    const contours: Point[][] = [];
+    const contours: Coordinate[][] = [];
     const visited = new Set<string>();
     
     // Count foreground pixels for debugging
@@ -835,8 +835,8 @@ export class SAMDecoder {
     startX: number,
     startY: number,
     visited: Set<string>
-  ): Point[] {
-    const contour: Point[] = [];
+  ): Coordinate[] {
+    const contour: Coordinate[] = [];
     // Use 4-connectivity for faster tracing (up, right, down, left)
     const directions = [
       [0, -1], [1, 0], [0, 1], [-1, 0]  // up, right, down, left

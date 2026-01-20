@@ -6,7 +6,7 @@ import fs from 'fs';
 // Plugin to ensure WASM files are served with correct MIME type
 const wasmPlugin = () => ({
   name: 'wasm-mime-type',
-  configureServer(server) {
+  configureServer(server: any) {
     // Run FIRST in the middleware chain to catch WASM requests
     // Must run before Vite's static file middleware
     server.middlewares.use((req: any, res: any, next: any) => {
@@ -110,7 +110,7 @@ export default defineConfig(async ({ mode }) => {
             'ui': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-slot'],
           },
           // Ensure WASM files are treated as assets
-          assetFileNames: (assetInfo) => {
+          assetFileNames: (assetInfo: any) => {
             if (assetInfo.name?.endsWith('.wasm')) {
               return 'wasm/[name][extname]';
             }
