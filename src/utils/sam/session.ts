@@ -30,15 +30,8 @@ export class SAMSession {
     }
     console.log('[SAM] Configuring WASM paths with base URL:', wasmBaseUrl);
     
-    // Set individual paths with absolute URLs
-    ort.env.wasm.wasmPaths = {
-      'ort-wasm.wasm': `${wasmBaseUrl}ort-wasm.wasm`,
-      'ort-wasm-simd.wasm': `${wasmBaseUrl}ort-wasm-simd.wasm`,
-      'ort-wasm-threaded.wasm': `${wasmBaseUrl}ort-wasm-threaded.wasm`,
-      'ort-wasm-simd-threaded.wasm': `${wasmBaseUrl}ort-wasm-simd-threaded.wasm`,
-      'ort-wasm-simd-threaded.jsep.wasm': `${wasmBaseUrl}ort-wasm-simd-threaded.jsep.wasm`,
-      'ort-wasm-simd-threaded.asyncify.wasm': `${wasmBaseUrl}ort-wasm-simd-threaded.asyncify.wasm`,
-    };
+    // Set WASM path prefix (simpler approach)
+    ort.env.wasm.wasmPaths = wasmBaseUrl;
     
     console.log('[SAM] WASM paths configured:', ort.env.wasm.wasmPaths);
     

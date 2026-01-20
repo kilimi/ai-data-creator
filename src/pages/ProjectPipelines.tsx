@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useParams, useOutletContext } from 'react-router-dom';
 import ReactFlow, {
   Node,
@@ -21,30 +21,57 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
-import { Save, Trash2, Plus, Settings, Workflow } from 'lucide-react';
+import { 
+  Save, 
+  Trash2, 
+  Plus, 
+  Settings, 
+  Workflow, 
+  Box, 
+  Target, 
+  Gauge, 
+  ArrowRight,
+  ChevronLeft,
+  Sparkles,
+  Layers,
+  Filter,
+  Percent,
+  Calendar,
+  Edit3,
+  Play,
+  MoreVertical,
+  Copy,
+  CheckCircle2
+} from 'lucide-react';
 import { Project } from '@/types';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Slider } from '@/components/ui/slider';
 
 interface OutletContext {
   project: Project | null;
   loading: boolean;
 }
 
-// Custom Node Components
+// Custom Node Components with modern design
 const ModelInputNode = ({ data }: any) => {
   return (
-    <div className="px-4 py-3 shadow-lg rounded-lg bg-blue-500 text-white border-2 border-blue-600 min-w-[200px]">
-      <div className="flex items-center gap-2 mb-2">
-        <Settings className="h-4 w-4" />
-        <div className="font-semibold">Model Input</div>
+    <div className="px-4 py-3 shadow-lg rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 text-white border border-blue-400/30 min-w-[180px] backdrop-blur-sm">
+      <div className="flex items-center gap-2.5 mb-2">
+        <div className="p-1.5 bg-white/20 rounded-lg">
+          <Box className="h-4 w-4" />
+        </div>
+        <span className="font-semibold text-sm">Model Input</span>
       </div>
       {data.modelName && (
-        <div className="text-xs bg-blue-600/50 px-2 py-1 rounded mt-1">
+        <div className="text-xs bg-white/20 px-2.5 py-1.5 rounded-lg mt-1.5 truncate font-medium">
           {data.modelName}
         </div>
       )}
       {!data.modelName && (
-        <div className="text-xs text-blue-200">No model selected</div>
+        <div className="text-xs text-blue-100/80 italic">Click to configure</div>
       )}
     </div>
   );
@@ -52,13 +79,17 @@ const ModelInputNode = ({ data }: any) => {
 
 const AreaThresholdNode = ({ data }: any) => {
   return (
-    <div className="px-4 py-3 shadow-lg rounded-lg bg-green-500 text-white border-2 border-green-600 min-w-[200px]">
-      <div className="flex items-center gap-2 mb-2">
-        <Settings className="h-4 w-4" />
-        <div className="font-semibold">Area Threshold</div>
+    <div className="px-4 py-3 shadow-lg rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white border border-emerald-400/30 min-w-[180px] backdrop-blur-sm">
+      <div className="flex items-center gap-2.5 mb-2">
+        <div className="p-1.5 bg-white/20 rounded-lg">
+          <Target className="h-4 w-4" />
+        </div>
+        <span className="font-semibold text-sm">Area Filter</span>
       </div>
-      <div className="text-xs bg-green-600/50 px-2 py-1 rounded mt-1">
-        Min: {data.minArea || 0} | Max: {data.maxArea || '∞'}
+      <div className="flex items-center gap-2 text-xs bg-white/20 px-2.5 py-1.5 rounded-lg mt-1.5 font-medium">
+        <span>{data.minArea || 0}</span>
+        <ArrowRight className="h-3 w-3" />
+        <span>{data.maxArea || '∞'}</span>
       </div>
     </div>
   );
@@ -66,13 +97,16 @@ const AreaThresholdNode = ({ data }: any) => {
 
 const ConfidenceThresholdNode = ({ data }: any) => {
   return (
-    <div className="px-4 py-3 shadow-lg rounded-lg bg-purple-500 text-white border-2 border-purple-600 min-w-[200px]">
-      <div className="flex items-center gap-2 mb-2">
-        <Settings className="h-4 w-4" />
-        <div className="font-semibold">Confidence Filter</div>
+    <div className="px-4 py-3 shadow-lg rounded-xl bg-gradient-to-br from-violet-500 to-violet-600 text-white border border-violet-400/30 min-w-[180px] backdrop-blur-sm">
+      <div className="flex items-center gap-2.5 mb-2">
+        <div className="p-1.5 bg-white/20 rounded-lg">
+          <Gauge className="h-4 w-4" />
+        </div>
+        <span className="font-semibold text-sm">Confidence</span>
       </div>
-      <div className="text-xs bg-purple-600/50 px-2 py-1 rounded mt-1">
-        Min: {data.minConfidence || 0}
+      <div className="text-xs bg-white/20 px-2.5 py-1.5 rounded-lg mt-1.5 font-medium flex items-center gap-1.5">
+        <Percent className="h-3 w-3" />
+        <span>Min: {((data.minConfidence || 0.25) * 100).toFixed(0)}%</span>
       </div>
     </div>
   );
@@ -80,12 +114,14 @@ const ConfidenceThresholdNode = ({ data }: any) => {
 
 const OutputNode = ({ data }: any) => {
   return (
-    <div className="px-4 py-3 shadow-lg rounded-lg bg-orange-500 text-white border-2 border-orange-600 min-w-[200px]">
-      <div className="flex items-center gap-2 mb-2">
-        <Settings className="h-4 w-4" />
-        <div className="font-semibold">Output</div>
+    <div className="px-4 py-3 shadow-lg rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 text-white border border-amber-400/30 min-w-[180px] backdrop-blur-sm">
+      <div className="flex items-center gap-2.5 mb-2">
+        <div className="p-1.5 bg-white/20 rounded-lg">
+          <Layers className="h-4 w-4" />
+        </div>
+        <span className="font-semibold text-sm">Output</span>
       </div>
-      <div className="text-xs bg-orange-600/50 px-2 py-1 rounded mt-1">
+      <div className="text-xs bg-white/20 px-2.5 py-1.5 rounded-lg mt-1.5 font-medium">
         {data.outputCount || 0} detections
       </div>
     </div>
@@ -98,6 +134,30 @@ const nodeTypes: NodeTypes = {
   confidenceThreshold: ConfidenceThresholdNode,
   output: OutputNode,
 };
+
+// Node palette item component
+const NodePaletteItem = ({ icon: Icon, label, color, onClick }: { 
+  icon: any; 
+  label: string; 
+  color: string; 
+  onClick: () => void;
+}) => (
+  <TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className={`w-14 h-14 rounded-xl flex flex-col items-center justify-center gap-1 transition-all hover:scale-105 active:scale-95 ${color} text-white shadow-lg hover:shadow-xl`}
+        >
+          <Icon className="h-5 w-5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        <p>{label}</p>
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+);
 
 export default function ProjectPipelines() {
   const { id } = useParams<{ id: string }>();
@@ -164,7 +224,6 @@ export default function ProjectPipelines() {
       return;
     }
 
-    // Validate pipeline has at least a model input
     const modelNode = nodes.find(n => n.type === 'modelInput');
     if (!modelNode || !modelNode.data.modelId) {
       toast({
@@ -270,15 +329,18 @@ export default function ProjectPipelines() {
     (params: Connection) => {
       if (!params.source || !params.target) return;
       
-      // Only allow connections from output to input
       const sourceNode = nodes.find(n => n.id === params.source);
       const targetNode = nodes.find(n => n.id === params.target);
       
       if (sourceNode && targetNode) {
-        // Allow connections from any node type to processing nodes or output
-        // Model Input -> Area Threshold/Confidence Filter -> Output
         if (targetNode.type !== 'modelInput') {
-          setEdges((eds) => addEdge({ ...params, type: 'smoothstep', animated: true }, eds));
+          setEdges((eds) => addEdge({ 
+            ...params, 
+            type: 'smoothstep', 
+            animated: true,
+            style: { stroke: '#94a3b8', strokeWidth: 2 },
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' }
+          }, eds));
         }
       }
     },
@@ -289,7 +351,7 @@ export default function ProjectPipelines() {
     const newNode: Node = {
       id: `${type}-${Date.now()}`,
       type,
-      position: { x: Math.random() * 400 + 100, y: Math.random() * 400 + 100 },
+      position: { x: Math.random() * 300 + 150, y: Math.random() * 300 + 100 },
       data: {
         label: type,
         ...(type === 'modelInput' ? { modelName: '' } : {}),
@@ -350,35 +412,51 @@ export default function ProjectPipelines() {
     setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
   };
 
-
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Pipeline Builder</h1>
-          <p className="text-muted-foreground mt-1">
-            Create and manage post-processing pipelines for model predictions
-          </p>
+        <div className="flex items-center gap-4">
+          {!showPipelineList && (
+            <Button 
+              variant="ghost" 
+              size="icon"
+              onClick={() => {
+                setShowPipelineList(true);
+                setIsCreatingNew(false);
+              }}
+              className="shrink-0"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+          )}
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20">
+                <Workflow className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold">
+                  {showPipelineList ? 'Pipelines' : isCreatingNew ? 'New Pipeline' : 'Edit Pipeline'}
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  {showPipelineList ? 'Create and manage post-processing pipelines' : 'Drag nodes to build your pipeline'}
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="flex gap-2">
           {!showPipelineList && (
-            <>
-              <Button variant="outline" onClick={() => {
-                setShowPipelineList(true);
-                setIsCreatingNew(false);
-              }}>
-                Back to Pipelines
-              </Button>
-              <Button onClick={() => setShowSaveDialog(true)} disabled={nodes.length === 0}>
-                <Save className="w-4 h-4 mr-2" />
-                Save Pipeline
-              </Button>
-            </>
+            <Button onClick={() => setShowSaveDialog(true)} disabled={nodes.length === 0}>
+              <Save className="w-4 h-4 mr-2" />
+              Save
+            </Button>
           )}
           {showPipelineList && (
-            <Button onClick={createNewPipeline}>
-              <Plus className="w-4 h-4 mr-2" />
-              New Pipeline
+            <Button onClick={createNewPipeline} className="gap-2">
+              <Plus className="w-4 h-4" />
+              <span>New Pipeline</span>
             </Button>
           )}
         </div>
@@ -388,46 +466,90 @@ export default function ProjectPipelines() {
       {showPipelineList && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {savedPipelines.map((pipeline) => (
-            <Card key={pipeline.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <CardTitle className="text-base">{pipeline.name}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2 text-sm text-muted-foreground">
-                  <div>Nodes: {pipeline.nodes?.length || 0}</div>
-                  <div>Created: {new Date(pipeline.created_at).toLocaleDateString()}</div>
+            <Card 
+              key={pipeline.id} 
+              className="group hover:shadow-lg transition-all hover:border-primary/30 cursor-pointer"
+              onClick={() => loadPipeline(pipeline.id.toString())}
+            >
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-gradient-to-br from-violet-500/20 to-violet-500/5 border border-violet-500/20">
+                      <Workflow className="h-4 w-4 text-violet-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base group-hover:text-primary transition-colors">
+                        {pipeline.name}
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <Calendar className="h-3 w-3" />
+                        {new Date(pipeline.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100">
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={(e) => {
+                        e.stopPropagation();
+                        loadPipeline(pipeline.id.toString());
+                      }}>
+                        <Edit3 className="h-4 w-4 mr-2" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={(e) => {
+                        e.stopPropagation();
+                        // TODO: Duplicate pipeline
+                      }}>
+                        <Copy className="h-4 w-4 mr-2" />
+                        Duplicate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deletePipeline(pipeline.id.toString());
+                        }}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
-                <div className="flex gap-2 mt-4">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => loadPipeline(pipeline.id.toString())}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => deletePipeline(pipeline.id.toString())}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-xs">
+                    <Layers className="h-3 w-3 mr-1" />
+                    {pipeline.nodes?.length || 0} nodes
+                  </Badge>
+                  <Badge variant="outline" className="text-xs">
+                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    Ready
+                  </Badge>
                 </div>
               </CardContent>
             </Card>
           ))}
+          
+          {/* Empty State */}
           {savedPipelines.length === 0 && (
-            <Card className="col-span-full">
-              <CardContent className="text-center py-12">
-                <Workflow className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-                <h3 className="text-lg font-medium mb-2">No Pipelines Yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Create your first pipeline to start processing model predictions
+            <Card className="col-span-full border-dashed">
+              <CardContent className="text-center py-16">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+                  <Workflow className="w-8 h-8 text-primary" />
+                </div>
+                <h3 className="text-lg font-semibold mb-2">No Pipelines Yet</h3>
+                <p className="text-muted-foreground mb-6 max-w-sm mx-auto">
+                  Create your first pipeline to automate post-processing of model predictions
                 </p>
-                <Button onClick={createNewPipeline}>
-                  <Plus className="w-4 h-4 mr-2" />
+                <Button onClick={createNewPipeline} className="gap-2">
+                  <Sparkles className="w-4 h-4" />
                   Create Pipeline
                 </Button>
               </CardContent>
@@ -438,51 +560,37 @@ export default function ProjectPipelines() {
 
       {/* Pipeline Builder View */}
       {!showPipelineList && (
-      <div className="grid grid-cols-4 gap-4">
-        {/* Node Palette */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Node Palette</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button
-              variant="outline"
-              className="w-full justify-start"
+        <div className="flex gap-4 h-[calc(100vh-220px)]">
+          {/* Node Palette - Vertical */}
+          <div className="flex flex-col gap-2 p-2 bg-muted/50 rounded-xl border">
+            <NodePaletteItem
+              icon={Box}
+              label="Model Input"
+              color="bg-gradient-to-br from-blue-500 to-blue-600"
               onClick={() => addNode('modelInput')}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Model Input
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
+            />
+            <NodePaletteItem
+              icon={Target}
+              label="Area Filter"
+              color="bg-gradient-to-br from-emerald-500 to-emerald-600"
               onClick={() => addNode('areaThreshold')}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Area Threshold
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
+            />
+            <NodePaletteItem
+              icon={Gauge}
+              label="Confidence"
+              color="bg-gradient-to-br from-violet-500 to-violet-600"
               onClick={() => addNode('confidenceThreshold')}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Confidence Filter
-            </Button>
-            <Button
-              variant="outline"
-              className="w-full justify-start"
+            />
+            <NodePaletteItem
+              icon={Layers}
+              label="Output"
+              color="bg-gradient-to-br from-amber-500 to-orange-500"
               onClick={() => addNode('output')}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Output
-            </Button>
-          </CardContent>
-        </Card>
+            />
+          </div>
 
-        {/* Pipeline Canvas */}
-        <div className="col-span-3">
-          <Card className="h-[600px]">
+          {/* Pipeline Canvas */}
+          <Card className="flex-1 overflow-hidden">
             <CardContent className="p-0 h-full">
               <ReactFlow
                 nodes={nodes}
@@ -493,72 +601,60 @@ export default function ProjectPipelines() {
                 onNodeClick={onNodeClick}
                 nodeTypes={nodeTypes}
                 fitView
+                className="bg-muted/30"
               >
-                <Background />
-                <Controls />
-                <MiniMap />
+                <Background color="#94a3b8" gap={20} size={1} />
+                <Controls className="bg-background border rounded-lg shadow-lg" />
+                <MiniMap 
+                  className="bg-background border rounded-lg shadow-lg !bottom-4 !right-4"
+                  nodeColor={(node) => {
+                    switch (node.type) {
+                      case 'modelInput': return '#3b82f6';
+                      case 'areaThreshold': return '#10b981';
+                      case 'confidenceThreshold': return '#8b5cf6';
+                      case 'output': return '#f59e0b';
+                      default: return '#64748b';
+                    }
+                  }}
+                />
               </ReactFlow>
             </CardContent>
           </Card>
         </div>
-      </div>
       )}
-
-      {/* Save Pipeline Dialog */}
-      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Save Pipeline</DialogTitle>
-            <DialogDescription>
-              Enter a name for your pipeline. You can run it later from the Evaluations page.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="pipeline-name">Pipeline Name</Label>
-              <Input
-                id="pipeline-name"
-                value={pipelineName}
-                onChange={(e) => setPipelineName(e.target.value)}
-                placeholder="e.g., Small Object Filter"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && pipelineName.trim()) {
-                    savePipeline();
-                  }
-                }}
-                autoFocus
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={savePipeline} disabled={!pipelineName.trim()}>
-              <Save className="w-4 h-4 mr-2" />
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Node Configuration Dialog */}
       <Dialog open={showNodeConfig} onOpenChange={setShowNodeConfig}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Configure Node</DialogTitle>
-            <DialogDescription>
-              Configure the settings for {selectedNode?.type || 'this node'}
-            </DialogDescription>
+            <DialogTitle className="flex items-center gap-3">
+              <div className={`p-2 rounded-lg ${
+                selectedNode?.type === 'modelInput' ? 'bg-blue-500/20 text-blue-500' :
+                selectedNode?.type === 'areaThreshold' ? 'bg-emerald-500/20 text-emerald-500' :
+                selectedNode?.type === 'confidenceThreshold' ? 'bg-violet-500/20 text-violet-500' :
+                'bg-amber-500/20 text-amber-500'
+              }`}>
+                {selectedNode?.type === 'modelInput' && <Box className="h-5 w-5" />}
+                {selectedNode?.type === 'areaThreshold' && <Target className="h-5 w-5" />}
+                {selectedNode?.type === 'confidenceThreshold' && <Gauge className="h-5 w-5" />}
+                {selectedNode?.type === 'output' && <Layers className="h-5 w-5" />}
+              </div>
+              Configure {selectedNode?.type === 'modelInput' ? 'Model Input' :
+                         selectedNode?.type === 'areaThreshold' ? 'Area Filter' :
+                         selectedNode?.type === 'confidenceThreshold' ? 'Confidence Filter' : 'Output'}
+            </DialogTitle>
           </DialogHeader>
           
-          {selectedNode?.type === 'modelInput' && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Select Model</Label>
-                <Select value={nodeConfig.modelId} onValueChange={(v) => setNodeConfig({ ...nodeConfig, modelId: v })}>
+          <div className="space-y-6 py-4">
+            {selectedNode?.type === 'modelInput' && (
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">Trained Model</Label>
+                <Select
+                  value={nodeConfig.modelId}
+                  onValueChange={(value) => setNodeConfig(prev => ({ ...prev, modelId: value }))}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select a model" />
+                    <SelectValue placeholder="Select a trained model" />
                   </SelectTrigger>
                   <SelectContent>
                     {trainingTasks.map((task) => (
@@ -569,60 +665,106 @@ export default function ProjectPipelines() {
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-          )}
+            )}
 
-          {selectedNode?.type === 'areaThreshold' && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Minimum Area (pixels²)</Label>
-                <Input
-                  type="number"
-                  value={nodeConfig.minArea}
-                  onChange={(e) => setNodeConfig({ ...nodeConfig, minArea: parseFloat(e.target.value) || 0 })}
-                  min="0"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Maximum Area (pixels², optional)</Label>
-                <Input
-                  type="number"
-                  value={nodeConfig.maxArea}
-                  onChange={(e) => setNodeConfig({ ...nodeConfig, maxArea: e.target.value })}
-                  placeholder="Leave empty for no maximum"
-                  min="0"
-                />
-              </div>
-            </div>
-          )}
+            {selectedNode?.type === 'areaThreshold' && (
+              <>
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Minimum Area (px²)</Label>
+                  <Input
+                    type="number"
+                    value={nodeConfig.minArea}
+                    onChange={(e) => setNodeConfig(prev => ({ ...prev, minArea: parseInt(e.target.value) || 0 }))}
+                    placeholder="0"
+                  />
+                </div>
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Maximum Area (px²)</Label>
+                  <Input
+                    type="text"
+                    value={nodeConfig.maxArea}
+                    onChange={(e) => setNodeConfig(prev => ({ ...prev, maxArea: e.target.value }))}
+                    placeholder="No limit"
+                  />
+                </div>
+              </>
+            )}
 
-          {selectedNode?.type === 'confidenceThreshold' && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Minimum Confidence (0-1)</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={nodeConfig.minConfidence}
-                  onChange={(e) => setNodeConfig({ ...nodeConfig, minConfidence: parseFloat(e.target.value) || 0 })}
-                  min="0"
-                  max="1"
+            {selectedNode?.type === 'confidenceThreshold' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Minimum Confidence</Label>
+                  <span className="text-lg font-semibold text-primary">
+                    {(nodeConfig.minConfidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <Slider
+                  value={[nodeConfig.minConfidence * 100]}
+                  onValueChange={(value) => setNodeConfig(prev => ({ ...prev, minConfidence: value[0] / 100 }))}
+                  max={100}
+                  min={0}
+                  step={1}
+                  className="w-full"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Predictions below this confidence will be filtered out
+                </p>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              if (selectedNode) {
-                deleteNode(selectedNode.id);
-              }
-              setShowNodeConfig(false);
-            }}>
-              <Trash2 className="w-4 h-4 mr-2" />
-              Delete
+          <DialogFooter className="gap-2">
+            {selectedNode && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  deleteNode(selectedNode.id);
+                  setShowNodeConfig(false);
+                  setSelectedNode(null);
+                }}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
+              </Button>
+            )}
+            <Button onClick={saveNodeConfig} className="flex-1">
+              Save Changes
             </Button>
-            <Button onClick={saveNodeConfig}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Pipeline Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-primary/20">
+                <Save className="h-5 w-5 text-primary" />
+              </div>
+              Save Pipeline
+            </DialogTitle>
+            <DialogDescription>
+              Give your pipeline a name to save it for later use
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={pipelineName}
+              onChange={(e) => setPipelineName(e.target.value)}
+              placeholder="My Pipeline"
+              className="h-12"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={savePipeline}>
+              <Save className="w-4 h-4 mr-2" />
+              Save Pipeline
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

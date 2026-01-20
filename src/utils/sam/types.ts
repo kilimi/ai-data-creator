@@ -2,6 +2,13 @@
  * Type definitions for SAM (Segment Anything Model)
  */
 
+// Simple coordinate point (for internal polygon processing)
+export interface Coordinate {
+  x: number;
+  y: number;
+}
+
+// Point with label (for SAM prompt input)
 export interface Point {
   x: number;
   y: number;
@@ -41,6 +48,6 @@ export interface SAMPrompt {
 
 export interface SAMResult {
   masks: SegmentationMask[];
-  polygons: Point[][];
+  polygons: Coordinate[][];
   scores: number[];
 }

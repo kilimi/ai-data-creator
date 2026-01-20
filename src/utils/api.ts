@@ -14,7 +14,7 @@ export class ApiClient {
   /**
    * Helper method to make API requests
    */
-  private async request<T>(endpoint: string, options: RequestInit = {}, retries: number = 2): Promise<ApiResponse<T>> {
+  async request<T>(endpoint: string, options: RequestInit = {}, retries: number = 2): Promise<ApiResponse<T>> {
     const url = `${this.config.baseUrl}${endpoint}`;
     
     for (let attempt = 1; attempt <= retries; attempt++) {
