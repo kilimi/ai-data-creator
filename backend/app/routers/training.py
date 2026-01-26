@@ -880,6 +880,8 @@ async def rerun_training(
         # If dataset_configs is empty or invalid, try to reconstruct from dataset_ids
         if not reconstructed_configs:
             dataset_ids = metadata.get('dataset_ids', [])
+            model_type = metadata.get('model_type', '')
+            is_segmentation = '-seg' in model_type.lower()
             
             if dataset_ids:
                 # Try to find annotation files for these datasets
@@ -888,22 +890,47 @@ async def rerun_training(
                     if not dataset:
                         continue
                     
-                    # Get the first annotation file for this dataset
-                    # This is a fallback - ideally we'd have the annotation_file_id stored
-                    ann_file = db.query(AnnotationFile).filter(
+                    # Get annotation files for this dataset
+                    ann_files = db.query(AnnotationFile).filter(
                         AnnotationFile.dataset_id == dataset_id
-                    ).first()
+                    ).all()
                     
-                    if ann_file:
+                    if ann_files:
+                        # Try to find an annotation file matching the model type
+                        selected_ann_file = None
+                        
+                        for ann_file in ann_files:
+                            # Check if this annotation file has segmentation data
+                            has_segmentation = db.query(Annotation).filter(
+                                Annotation.annotation_file_id == ann_file.id,
+                                Annotation.segmentation.isnot(None)
+                            ).first() is not None
+                            
+                            if is_segmentation and has_segmentation:
+                                selected_ann_file = ann_file
+                                logger.info(f"Found matching segmentation annotation file {ann_file.id} for dataset {dataset_id}")
+                                break
+                            elif not is_segmentation and not has_segmentation:
+                                selected_ann_file = ann_file
+                                logger.info(f"Found matching bbox annotation file {ann_file.id} for dataset {dataset_id}")
+                                break
+                        
+                        # Fallback to first if no match found
+                        if not selected_ann_file:
+                            selected_ann_file = ann_files[0]
+                            logger.warning(
+                                f"No matching annotation type found, using first annotation file {selected_ann_file.id} for dataset {dataset_id}"
+                            )
+                        
                         reconstructed_configs.append({
                             'dataset_id': dataset_id,
-                            'annotation_file_id': ann_file.id,
+                            'annotation_file_id': selected_ann_file.id,
                             'image_collection': None,
                             'split': {'train': 80, 'val': 20, 'test': 0}
                         })
                         logger.warning(
                             f"Reconstructed dataset config for task {task_id}: "
-                            f"using first annotation file {ann_file.id} for dataset {dataset_id}"
+                            f"using annotation file {selected_ann_file.id} ({selected_ann_file.name}) for dataset {dataset_id}"
                         )
         
         if not reconstructed_configs:
