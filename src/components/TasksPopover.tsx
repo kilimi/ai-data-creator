@@ -253,13 +253,15 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       <Popover>
         <PopoverTrigger asChild>
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon"
-            className="h-9 w-9 relative"
-            style={{
-              borderColor: runningTaskCount > 0 ? '#3b82f6' : pendingTaskCount > 0 ? '#eab308' : undefined,
-              backgroundColor: runningTaskCount > 0 ? '#eff6ff' : pendingTaskCount > 0 ? '#fef9c3' : undefined
-            }}
+            className={`h-9 w-9 relative ${
+              runningTaskCount > 0 
+                ? 'text-blue-400 hover:text-blue-300 hover:bg-blue-500/10' 
+                : pendingTaskCount > 0 
+                  ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10' 
+                  : ''
+            }`}
             disabled={loading}
             title={
               activeTaskCount > 0 
@@ -272,24 +274,18 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
             ) : (
               <>
                 {activeTaskCount > 0 ? (
-                  <Loader2 
-                    className="h-4 w-4 animate-spin"
-                    style={{
-                      color: runningTaskCount > 0 ? '#2563eb' : '#ca8a04'
-                    }}
-                  />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <ListTodo className="h-4 w-4" />
                 )}
                 {activeTaskCount > 0 && (
-                  <Badge 
-                    className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs font-medium text-white"
-                    style={{
-                      backgroundColor: runningTaskCount > 0 ? '#2563eb' : '#ca8a04'
-                    }}
+                  <span 
+                    className={`absolute -top-1 -right-1 h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${
+                      runningTaskCount > 0 ? 'bg-blue-500' : 'bg-yellow-500'
+                    }`}
                   >
                     {activeTaskCount > 9 ? '9+' : activeTaskCount}
-                  </Badge>
+                  </span>
                 )}
               </>
             )}
