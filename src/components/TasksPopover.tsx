@@ -271,13 +271,16 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <>
-                <ListTodo 
-                  className="h-4 w-4"
-                  style={{
-                    color: runningTaskCount > 0 ? '#2563eb' : pendingTaskCount > 0 ? '#ca8a04' : undefined,
-                    animation: runningTaskCount > 0 ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : undefined
-                  }}
-                />
+                {activeTaskCount > 0 ? (
+                  <Loader2 
+                    className="h-4 w-4 animate-spin"
+                    style={{
+                      color: runningTaskCount > 0 ? '#2563eb' : '#ca8a04'
+                    }}
+                  />
+                ) : (
+                  <ListTodo className="h-4 w-4" />
+                )}
                 {activeTaskCount > 0 && (
                   <Badge 
                     className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs font-medium text-white"
