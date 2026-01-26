@@ -633,6 +633,22 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                     )}
                   </Button>
                 )}
+                {getTaskNavigationUrl(selectedTask) && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      const url = getTaskNavigationUrl(selectedTask);
+                      if (url) {
+                        navigate(url);
+                        setIsDetailOpen(false);
+                      }
+                    }}
+                  >
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    Go to
+                  </Button>
+                )}
                 <Button variant="outline" onClick={() => setIsDetailOpen(false)}>
                   Close
                 </Button>
