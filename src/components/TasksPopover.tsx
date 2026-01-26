@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -26,7 +27,8 @@ import {
   Layers,
   Brain,
   Copy,
-  Sparkles
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 
 interface TasksPopoverProps {
@@ -34,12 +36,12 @@ interface TasksPopoverProps {
 }
 
 export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
+  const navigate = useNavigate();
   const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks } = useTasks(projectId);
   const { toast } = useToast();
   const [cancellingTasks, setCancellingTasks] = useState<Set<number>>(new Set());
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
-  const [hiddenTaskIds, setHiddenTaskIds] = useState<Set<number>>(new Set());
 
   const getTaskTypeIcon = (taskType: string) => {
     switch (taskType) {
@@ -167,17 +169,55 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
     setIsDetailOpen(true);
   };
 
-  const handleClearView = () => {
-    const completedOrFailedTaskIds = tasks
-      .filter(task => task.status === 'completed' || task.status === 'failed')
-      .map(task => task.id);
-    setHiddenTaskIds(new Set(completedOrFailedTaskIds));
-  };
+  // Filter tasks: only show running/pending tasks OR tasks completed within 1 hour
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+  const now = Date.now();
+  
+  const filteredTasks = tasks.filter(task => {
+    // Always show active tasks (pending/running)
+    if (task.status === 'pending' || task.status === 'running') {
+      return true;
+    }
+    // Show completed/failed/cancelled tasks only if completed within last hour
+    if (task.completed_at) {
+      const completedTime = new Date(task.completed_at).getTime();
+      return (now - completedTime) < ONE_HOUR_MS;
+    }
+    return false;
+  });
 
-  const visibleTasks = tasks.filter(task => !hiddenTaskIds.has(task.id));
+  const visibleTasks = filteredTasks;
   const visibleActiveTaskCount = visibleTasks.filter(task => 
     task.status === 'pending' || task.status === 'running'
   ).length;
+
+  // Get navigation URL based on task type and metadata
+  const getTaskNavigationUrl = (task: Task): string | null => {
+    const metadata = task.task_metadata || task.metadata || {};
+    const taskProjectId = metadata.project_id || projectId;
+    
+    if (!taskProjectId) return null;
+    
+    switch (task.task_type) {
+      case 'training':
+        return `/projects/${taskProjectId}/models`;
+      case 'evaluation':
+        return `/projects/${taskProjectId}/evaluations`;
+      case 'augmentation':
+      case 'duplication':
+        return `/projects/${taskProjectId}/datasets`;
+      default:
+        return `/projects/${taskProjectId}`;
+    }
+  };
+
+  const handleGoToTask = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = getTaskNavigationUrl(task);
+    if (url) {
+      navigate(url);
+    }
+  };
   
   // Count running and pending tasks
   const runningTaskCount = activeTasks.filter(task => task.status === 'running').length;
@@ -252,25 +292,19 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[650px] p-0 max-h-[80vh] flex flex-col" align="end">
+        <PopoverContent className="w-[700px] p-0 max-h-[80vh] flex flex-col" align="end">
           <div className="p-4 border-b flex-shrink-0">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-lg">Tasks</h3>
+              <div>
+                <h3 className="font-semibold text-lg">Tasks</h3>
+                <p className="text-xs text-muted-foreground">Active & recent (last hour)</p>
+              </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleClearView}
-                  disabled={visibleTasks.filter(t => t.status === 'completed' || t.status === 'failed').length === 0}
-                  className="h-7 text-xs"
-                >
-                  Clear
-                </Button>
                 <Badge variant="secondary" className="text-xs">
                   {visibleActiveTaskCount} active
                 </Badge>
                 <Badge variant="outline" className="text-xs">
-                  {visibleTasks.length} visible
+                  {visibleTasks.length} total
                 </Badge>
               </div>
             </div>
@@ -280,7 +314,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
             {visibleTasks.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <ListTodo className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>{tasks.length > 0 ? 'All tasks cleared from view' : 'No tasks found'}</p>
+                <p>No active or recent tasks</p>
               </div>
             ) : (
               <div className="p-2 pb-4">
@@ -290,6 +324,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                       <th className="px-3 py-3 font-medium text-muted-foreground">Type</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground">Task Name</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground">Status</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-20"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -310,10 +345,9 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                         <td className="px-3 py-4">
                           <div className="flex items-center gap-2">
                             {getTaskTypeIcon(task.task_type)}
-                            <span className="font-medium truncate max-w-[200px]" title={task.name}>
+                            <span className="font-medium truncate max-w-[180px]" title={task.name}>
                               {task.name}
                             </span>
-                            {/* Show error indicator if task has errors */}
                             {((task.error_message) || 
                               (task.task_metadata?.errors && task.task_metadata.errors.length > 0) ||
                               (task.task_metadata?.errors_count && task.task_metadata.errors_count > 0)) && (
@@ -332,6 +366,19 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                             {getStatusIcon(task.status)}
                             <span className="ml-1 capitalize">{task.status}</span>
                           </Badge>
+                        </td>
+                        <td className="px-3 py-4">
+                          {getTaskNavigationUrl(task) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs gap-1"
+                              onClick={(e) => handleGoToTask(task, e)}
+                            >
+                              Go to
+                              <ExternalLink className="w-3 h-3" />
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))}
