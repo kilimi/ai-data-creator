@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Settings, FolderOpen, Sparkles, Brain } from "lucide-react";
+import { Settings, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TasksPopover } from "./TasksPopover";
 
@@ -42,13 +42,6 @@ export function Navbar() {
         </div>
         
         <div className="flex items-center gap-4">
-          <Button className="h-9 px-4" asChild>
-            <Link to="/projects/new" className="flex items-center gap-2">
-              <FolderOpen className="h-4 w-4" />
-              New Project
-            </Link>
-          </Button>
-          
           <TasksPopover />
           
           <Button
