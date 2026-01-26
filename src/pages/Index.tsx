@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
-import { Plus, Search, Settings, Database, Brain, Activity, Tag, Filter, Sparkles, RefreshCw, FolderOpen, Home } from "lucide-react";
+import { Plus, Search, Settings, Activity, Tag, Filter, Sparkles, RefreshCw, FolderOpen, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -20,51 +20,29 @@ import { useApi } from "@/hooks/use-api";
 import { useStableLoading } from "@/hooks/useStableLoading";
 import { cn } from "@/lib/utils";
 
-interface SidebarNavItemProps {
-  to?: string;
-  icon: React.ReactNode;
-  label: string;
-  count?: number;
-  isActive: boolean;
-  onClick?: () => void;
+// Quick project item for sidebar
+interface QuickProjectItemProps {
+  project: Project;
 }
 
-function SidebarNavItem({ to, icon, label, count, isActive, onClick }: SidebarNavItemProps) {
-  const content = (
-    <div
-      className={cn(
-        "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 cursor-pointer",
-        "hover:bg-gray-800/50 group",
-        isActive 
-          ? "bg-primary/10 border-l-4 border-primary text-primary" 
-          : "text-gray-400 hover:text-white border-l-4 border-transparent"
-      )}
-      onClick={onClick}
+function QuickProjectItem({ project }: QuickProjectItemProps) {
+  return (
+    <Link 
+      to={`/projects/${project.id}/datasets`}
+      className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-800/50 transition-colors group"
     >
-      <span className={cn(
-        "transition-colors",
-        isActive ? "text-primary" : "text-gray-500 group-hover:text-gray-300"
-      )}>
-        {icon}
-      </span>
-      <span className="font-medium">{label}</span>
-      {count !== undefined && (
-        <span className={cn(
-          "ml-auto text-xs px-2 py-0.5 rounded-full",
-          isActive 
-            ? "bg-primary/20 text-primary" 
-            : "bg-gray-700 text-gray-400"
-        )}>
-          {count}
-        </span>
-      )}
-    </div>
+      <div className="w-8 h-8 rounded-md bg-primary/20 flex items-center justify-center flex-shrink-0">
+        <FolderOpen className="h-4 w-4 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
+        <p className="text-xs text-muted-foreground">
+          {project.datasets?.length || 0} datasets
+        </p>
+      </div>
+      <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+    </Link>
   );
-
-  if (to) {
-    return <Link to={to}>{content}</Link>;
-  }
-  return content;
 }
 
 export default function Index() {
@@ -79,7 +57,9 @@ export default function Index() {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
   const [refetchTrigger, setRefetchTrigger] = useState(0);
-  const [activeSection, setActiveSection] = useState<"projects" | "settings">("projects");
+  const [sidebarVisible, setSidebarVisible] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const triggerZoneRef = useRef<HTMLDivElement>(null);
   
   // Use stable loading to prevent flickering
   const stableLoading = useStableLoading(loading, 250);
@@ -196,76 +176,73 @@ export default function Index() {
     <div className="min-h-screen bg-background">
       <Navbar />
       
-      <div className="pt-16 flex">
-        {/* Sidebar Navigation */}
-        <aside className="w-64 min-h-[calc(100vh-4rem)] border-r border-gray-800 bg-gray-950/50 fixed left-0 top-16">
-          <div className="p-4">
-            {/* App Header */}
-            <div className="mb-6">
-              <div className="flex items-center gap-2 mb-2">
+      <div className="pt-16">
+        {/* Invisible trigger zone on left edge */}
+        <div 
+          ref={triggerZoneRef}
+          className="fixed left-0 top-16 w-4 h-[calc(100vh-4rem)] z-40"
+          onMouseEnter={() => setSidebarVisible(true)}
+        />
+
+        {/* Auto-hide Sidebar */}
+        <aside 
+          ref={sidebarRef}
+          className={cn(
+            "fixed left-0 top-16 w-72 h-[calc(100vh-4rem)] border-r border-border/50 bg-background/95 backdrop-blur-sm z-50",
+            "transition-transform duration-300 ease-in-out",
+            sidebarVisible ? "translate-x-0" : "-translate-x-full"
+          )}
+          onMouseLeave={() => setSidebarVisible(false)}
+        >
+          <div className="p-4 h-full flex flex-col">
+            {/* Header */}
+            <div className="mb-4 pb-4 border-b border-border/50">
+              <div className="flex items-center gap-2">
                 <div className="h-8 w-8 rounded-lg bg-primary/20 flex items-center justify-center">
                   <Sparkles className="h-4 w-4 text-primary" />
                 </div>
-                <span className="text-xs text-gray-500 uppercase tracking-wider">Workspace</span>
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">LAI Studio</h2>
+                  <p className="text-xs text-muted-foreground">Quick Access</p>
+                </div>
               </div>
-              <h2 className="text-lg font-semibold text-white truncate px-2">
-                LAI Studio
-              </h2>
             </div>
             
-            {/* Navigation Links */}
-            <nav className="space-y-1">
-              <SidebarNavItem
-                icon={<FolderOpen className="h-5 w-5" />}
-                label="Projects"
-                count={stats.totalProjects}
-                isActive={activeSection === 'projects'}
-                onClick={() => setActiveSection('projects')}
-              />
-              <SidebarNavItem
-                icon={<Database className="h-5 w-5" />}
-                label="Datasets"
-                count={stats.totalDatasets}
-                isActive={false}
-                onClick={() => {}}
-              />
-              <SidebarNavItem
-                icon={<Brain className="h-5 w-5" />}
-                label="Models"
-                isActive={false}
-                onClick={() => {}}
-              />
-              <SidebarNavItem
-                to="/settings"
-                icon={<Settings className="h-5 w-5" />}
-                label="Settings"
-                isActive={activeSection === 'settings'}
-              />
-            </nav>
-
-            {/* Quick Stats */}
-            <div className="mt-8 pt-6 border-t border-gray-800">
-              <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-4 px-2">Quick Stats</h3>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-900/50">
-                  <span className="text-sm text-gray-400">Projects</span>
-                  <span className="text-sm font-semibold text-white">{stats.totalProjects}</span>
-                </div>
-                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-900/50">
-                  <span className="text-sm text-gray-400">Datasets</span>
-                  <span className="text-sm font-semibold text-white">{stats.totalDatasets}</span>
-                </div>
-                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-900/50">
-                  <span className="text-sm text-gray-400">Images</span>
-                  <span className="text-sm font-semibold text-white">{stats.totalImages.toLocaleString()}</span>
-                </div>
+            {/* Recent Projects */}
+            <div className="flex-1 overflow-y-auto">
+              <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-3 px-1">
+                Projects ({stats.totalProjects})
+              </h3>
+              <div className="space-y-1">
+                {projects.slice(0, 8).map(project => (
+                  <QuickProjectItem key={project.id} project={project} />
+                ))}
+                {projects.length === 0 && !loading && (
+                  <p className="text-sm text-muted-foreground px-3 py-2">No projects yet</p>
+                )}
               </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="pt-4 mt-4 border-t border-border/50 space-y-2">
+              <Button asChild variant="outline" size="sm" className="w-full justify-start gap-2">
+                <Link to="/projects/new">
+                  <Plus className="h-4 w-4" />
+                  New Project
+                </Link>
+              </Button>
+              <Button asChild variant="ghost" size="sm" className="w-full justify-start gap-2">
+                <Link to="/settings">
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </Link>
+              </Button>
             </div>
           </div>
         </aside>
         
         {/* Main Content */}
-        <main className="flex-1 ml-64">
+        <main className="flex-1">
           <div className="container max-w-6xl mx-auto px-6 py-6">
             {/* Page Header */}
             <div className="flex items-center justify-between mb-6">
@@ -378,7 +355,7 @@ export default function Index() {
             ) : filteredAndSortedProjects().length === 0 ? (
               <Card className="glass-card p-12 text-center">
                 <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-primary/10 via-accent/10 to-secondary/10 flex items-center justify-center">
-                  <Brain className="w-10 h-10 text-primary" />
+                  <FolderOpen className="w-10 h-10 text-primary" />
                 </div>
                 <h3 className="text-xl font-semibold mb-2">
                   {searchQuery || selectedTag ? "No matching projects" : "No projects yet"}
