@@ -35,7 +35,9 @@ import { Dataset, DatasetGroup } from "@/types";
 import { YoloSettingsDialog } from "./YoloSettingsDialog";
 import { MaskRCNNSettingsDialog } from "./MaskRCNNSettingsDialog";
 import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
+import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
+import { useToast } from "@/hooks/use-toast";
 
 interface TrainModelModalProps {
   open: boolean;
@@ -72,6 +74,7 @@ interface ModelConfig {
 
 export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], projectId }: TrainModelModalProps) {
   const { api } = useApi();
+  const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
   const [modelSettings, setModelSettings] = useState<any>({});
@@ -82,6 +85,15 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [showClassDialog, setShowClassDialog] = useState(false);
   const [classStats, setClassStats] = useState<any | null>(null);
   const [customName, setCustomName] = useState('');
+
+  // Training started dialog state
+  const [showTrainingStarted, setShowTrainingStarted] = useState(false);
+  const [trainingInfo, setTrainingInfo] = useState({
+    taskId: '',
+    modelName: '',
+    datasetsCount: 0,
+    epochs: 0
+  });
 
   // Dataset settings
   const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
@@ -263,7 +275,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     try {
       // Check if model is implemented
       if (selectedModel !== 'yolo' && selectedModel !== 'rf-detr') {
-        alert(`${selectedModel?.toUpperCase()} training is not yet implemented`);
+        toast({
+          title: "Not Implemented",
+          description: `${selectedModel?.toUpperCase()} training is not yet implemented`,
+          variant: "destructive",
+        });
         setIsTraining(false);
         return;
       }
@@ -342,23 +358,16 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         const taskId = responseData.task_id;
         console.log('Training started successfully. Task ID:', taskId);
         
-        const message = `Training started successfully!
-        
-Task ID: ${taskId}
-Model: ${modelName}
-Datasets: ${selectedDatasets.length}
-Epochs: ${modelSettings.epochs || 100}
-
-You can monitor progress:
-• Check the Tasks panel in your project
-• Task will update progress as training runs
-• Training runs on GPU service (port 9998)
-
-The training service will update progress every epoch.`;
-        
-        alert(message);
+        // Show training started dialog
+        setTrainingInfo({
+          taskId: taskId || 'unknown',
+          modelName: modelName,
+          datasetsCount: selectedDatasets.length,
+          epochs: modelSettings.epochs || 100
+        });
         
         onOpenChange(false);
+        setShowTrainingStarted(true);
         
         // Reset form
         setSelectedDatasets([]);
@@ -367,11 +376,19 @@ The training service will update progress every epoch.`;
       } else {
         const errorMsg = response.error || JSON.stringify(response) || 'Unknown error';
         console.error('Failed to start training. Full response:', response);
-        alert(`Failed to start training: ${errorMsg}`);
+        toast({
+          title: "Training Failed",
+          description: errorMsg,
+          variant: "destructive",
+        });
       }
     } catch (error) {
       console.error('Error starting training:', error);
-      alert(`Error starting training: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast({
+        title: "Error Starting Training",
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: "destructive",
+      });
     } finally {
       setIsTraining(false);
     }
@@ -959,6 +976,16 @@ The training service will update progress every epoch.`;
         onOpenChange={setShowWandbSettings}
         settings={wandbSettings}
         onSettingsUpdate={setWandbSettings}
+      />
+
+      {/* Training Started Success Dialog */}
+      <TrainingStartedDialog
+        open={showTrainingStarted}
+        onOpenChange={setShowTrainingStarted}
+        taskId={trainingInfo.taskId}
+        modelName={trainingInfo.modelName}
+        datasetsCount={trainingInfo.datasetsCount}
+        epochs={trainingInfo.epochs}
       />
     </>
   );
