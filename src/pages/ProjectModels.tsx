@@ -42,12 +42,35 @@ const getModelFamily = (modelName: string) => {
 
 const getModelSize = (modelName: string) => {
   if (!modelName) return '-';
-  const sizes = ['n', 's', 'm', 'l', 'x'];
-  for (const size of sizes) {
-    if (modelName.endsWith(size) || modelName.includes(`${size}.pt`)) {
-      return size.toUpperCase();
+  const lower = modelName.toLowerCase();
+  
+  // YOLO sizes (nano, small, medium, large, x-large)
+  if (lower.includes('yolo')) {
+    // Match patterns like: yolo11n, yolov8s, yolo11n-seg, yolov8m-cls, etc.
+    const match = modelName.match(/yolo(?:v?\d+)?([nsmxl])(?:-|\.)/i);
+    if (match) {
+      const size = match[1].toLowerCase();
+      const sizeMap: Record<string, string> = {
+        'n': 'Nano',
+        's': 'Small',
+        'm': 'Medium',
+        'l': 'Large',
+        'x': 'X-Large'
+      };
+      return sizeMap[size] || size.toUpperCase();
     }
   }
+  
+  // RT-DETR sizes
+  if (lower.includes('rtdetr') || lower.includes('rt-detr')) {
+    if (lower.includes('r18')) return 'ResNet-18';
+    if (lower.includes('r34')) return 'ResNet-34';
+    if (lower.includes('r50')) return 'ResNet-50';
+    if (lower.includes('r101')) return 'ResNet-101';
+    if (lower.includes('l')) return 'Large';
+    if (lower.includes('x')) return 'X-Large';
+  }
+  
   return '-';
 };
 
