@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useParams, useLocation, Outlet } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
@@ -7,6 +7,8 @@ import { useProject } from '@/hooks/use-projects';
 import { ProjectContext } from '@/hooks/use-project-context';
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Database, Brain, Activity, Loader2, Download, Workflow } from "lucide-react";
+import { createApiClient } from '@/utils/api';
+import { API_CONFIG } from '@/config/api';
 
 interface NavItemProps {
   to: string;
@@ -53,6 +55,57 @@ export function ProjectLayout() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const { project, loading, refetch } = useProject(id || '');
+  
+  // State for counts
+  const [modelsCount, setModelsCount] = useState<number | undefined>(undefined);
+  const [pipelinesCount, setPipelinesCount] = useState<number | undefined>(undefined);
+  const [evaluationsCount, setEvaluationsCount] = useState<number | undefined>(undefined);
+  const [exportsCount, setExportsCount] = useState<number | undefined>(undefined);
+  
+  // Fetch counts for sidebar
+  useEffect(() => {
+    if (!id) return;
+    
+    const apiClient = createApiClient(API_CONFIG);
+    
+    // Fetch models count (training tasks)
+    apiClient.request<any[]>(`/tasks/?project_id=${id}&task_type=training&limit=1000`)
+      .then(res => {
+        if (res.success && res.data) {
+          // Count completed training tasks as models
+          const completed = res.data.filter(t => t.status === 'completed').length;
+          setModelsCount(completed);
+        }
+      })
+      .catch(() => setModelsCount(0));
+    
+    // Fetch pipelines count
+    apiClient.request<any[]>(`/pipelines/?project_id=${id}`)
+      .then(res => {
+        if (res.success && res.data) {
+          setPipelinesCount(res.data.length);
+        }
+      })
+      .catch(() => setPipelinesCount(0));
+    
+    // Fetch evaluations count
+    apiClient.request<any[]>(`/tasks/?project_id=${id}&task_type=evaluation&limit=1000`)
+      .then(res => {
+        if (res.success && res.data) {
+          setEvaluationsCount(res.data.length);
+        }
+      })
+      .catch(() => setEvaluationsCount(0));
+    
+    // Fetch exports count
+    apiClient.request<any[]>(`/tasks/?project_id=${id}&task_type=export&limit=1000`)
+      .then(res => {
+        if (res.success && res.data) {
+          setExportsCount(res.data.length);
+        }
+      })
+      .catch(() => setExportsCount(0));
+  }, [id]);
   
   // Determine active section from path
   const getActiveSection = () => {
@@ -123,25 +176,29 @@ export function ProjectLayout() {
                 <NavItem
                   to={`/projects/${id}/models`}
                   icon={<Brain className="h-5 w-5" />}
-                  label="Train Model"
+                  label="Models"
+                  count={modelsCount}
                   isActive={activeSection === 'models'}
                 />
                 <NavItem
                   to={`/projects/${id}/pipelines`}
                   icon={<Workflow className="h-5 w-5" />}
                   label="Pipelines"
+                  count={pipelinesCount}
                   isActive={activeSection === 'pipelines'}
                 />
                 <NavItem
                   to={`/projects/${id}/evaluations`}
                   icon={<Activity className="h-5 w-5" />}
                   label="Evaluations"
+                  count={evaluationsCount}
                   isActive={activeSection === 'evaluations'}
                 />
                 <NavItem
                   to={`/projects/${id}/exports`}
                   icon={<Download className="h-5 w-5" />}
                   label="Convert"
+                  count={exportsCount}
                   isActive={activeSection === 'exports'}
                 />
               </nav>
