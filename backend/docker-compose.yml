@@ -53,6 +53,7 @@ services:
       - ./projects:/app/projects
       - ./data:/app/data
       - ./backups:/app/backups
+      - ./runs:/app/runs
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - REDIS_URL=redis://redis:6379/0

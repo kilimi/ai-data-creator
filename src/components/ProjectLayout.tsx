@@ -123,7 +123,7 @@ export function ProjectLayout() {
                 <NavItem
                   to={`/projects/${id}/models`}
                   icon={<Brain className="h-5 w-5" />}
-                  label="Models"
+                  label="Train Model"
                   isActive={activeSection === 'models'}
                 />
                 <NavItem
@@ -141,7 +141,7 @@ export function ProjectLayout() {
                 <NavItem
                   to={`/projects/${id}/exports`}
                   icon={<Download className="h-5 w-5" />}
-                  label="Export"
+                  label="Convert"
                   isActive={activeSection === 'exports'}
                 />
               </nav>

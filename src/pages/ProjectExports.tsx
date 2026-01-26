@@ -7,7 +7,8 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { ExportModelModal } from '@/components/ExportModelModal';
 import { ExportDetailsModal } from '@/components/ExportDetailsModal';
-import { AlertCircle, Download, Brain, Trash2, Pencil, Search, SlidersHorizontal } from "lucide-react";
+import { TestInferenceModal } from '@/components/TestInferenceModal';
+import { AlertCircle, Download, Brain, Trash2, Pencil, Search, SlidersHorizontal, TestTube } from "lucide-react";
 import { Project } from '@/types';
 import {
   Select,
@@ -45,6 +46,7 @@ export default function ProjectExports() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
+  const [testInference, setTestInference] = useState<{ id: number; onnxFilePath: string } | null>(null);
 
   // Fetch all tasks
   const fetchTasks = async () => {
@@ -185,9 +187,9 @@ export default function ProjectExports() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Download className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-bold">Model Exports</h1>
+          <h1 className="text-2xl font-bold">Model Conversions</h1>
           <Badge variant="secondary" className="ml-2">
-            {exportTasks.length} exports
+            {exportTasks.length} conversions
           </Badge>
         </div>
         
@@ -198,7 +200,7 @@ export default function ProjectExports() {
           onClick={() => setShowExportModal(true)}
         >
           <Download className="w-4 h-4 mr-2" />
-          New Export
+          Convert Model
         </Button>
       </div>
 
@@ -207,7 +209,7 @@ export default function ProjectExports() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <Input
-            placeholder="Search exports by name or format..."
+            placeholder="Search conversions by name or format..."
             className="pl-9"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -317,41 +319,52 @@ export default function ProjectExports() {
                     <td className="px-4 py-3 text-sm">
                       <div className="flex items-center gap-2">
                         {task.status === 'completed' && exportedFile && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              // Download the exported file using task name as filename
-                              window.open(`http://localhost:9999/export/download/${task.id}`, '_blank');
-                            }}
-                            title="Download exported model"
-                          >
-                            <Download className="h-4 w-4" />
-                          </Button>
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTestInference({ id: task.id, onnxFilePath: exportedFile });
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
+                              title="Test inference"
+                            >
+                              <TestTube className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(`http://localhost:9999/export/download/${task.id}`, '_blank');
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-blue-800 text-blue-300 border border-blue-700 hover:bg-blue-700 hover:text-white transition-colors"
+                              title="Download exported model"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
                             setRenamingTask({ id: task.id, name: task.name });
                             setNewTaskName(task.name);
                           }}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
                           title="Rename export"
                         >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
                             if (window.confirm(`Are you sure you want to delete "${task.name || `Export #${task.id}`}"? ${task.status === 'running' || task.status === 'pending' ? 'This will cancel the task if it is running.' : ''}`)) {
                               handleDeleteTask(task.id);
                             }
                           }}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
                           title="Delete export"
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -367,7 +380,7 @@ export default function ProjectExports() {
           <p className="text-muted-foreground mb-6">
             {searchQuery 
               ? "No exports match your search criteria"
-              : "You haven't exported any models yet. Create your first export to get started."
+              : "You haven't converted any models yet. Convert your first model to get started."
             }
           </p>
           {!searchQuery && (
@@ -398,6 +411,18 @@ export default function ProjectExports() {
             if (!open) setSelectedTaskId(null);
           }}
           taskId={selectedTaskId}
+        />
+      )}
+
+      {/* Test Inference Modal */}
+      {testInference && (
+        <TestInferenceModal
+          open={!!testInference}
+          onOpenChange={(open) => {
+            if (!open) setTestInference(null);
+          }}
+          onnxFilePath={testInference.onnxFilePath}
+          taskId={testInference.id}
         />
       )}
 

@@ -1,10 +1,8 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Download, AlertCircle, CheckCircle2, XCircle, Clock, Info, TestTube } from "lucide-react";
+import { AlertCircle, CheckCircle2, XCircle, Clock, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApi } from "@/hooks/use-api";
-import { TestInferenceModal } from "@/components/TestInferenceModal";
 
 interface ExportDetailsModalProps {
   open: boolean;
@@ -45,7 +43,6 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
   const [task, setTask] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showTestInference, setShowTestInference] = useState(false);
 
   useEffect(() => {
     if (open && taskId) {
@@ -152,7 +149,7 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Info className="h-5 w-5 text-primary" />
-            Export Task Details
+            Conversion Task Details
           </DialogTitle>
         </DialogHeader>
 
@@ -217,7 +214,7 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
             {/* Export Configuration */}
             {task.task_metadata && (
               <div className="space-y-4">
-                <h4 className="font-semibold text-base">Export Configuration</h4>
+                <h4 className="font-semibold text-base">Conversion Configuration</h4>
                 <div className="bg-muted/50 rounded-lg p-4 space-y-3">
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
@@ -229,7 +226,7 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
                       <div className="font-medium capitalize">{task.task_metadata.checkpoint || '-'}</div>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Export Format:</span>
+                      <span className="text-muted-foreground">Target Format:</span>
                       <div className="font-medium uppercase">{task.task_metadata.export_format || 'ONNX'}</div>
                     </div>
                     <div>
@@ -241,14 +238,14 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
               </div>
             )}
 
-            {/* Export Results */}
+            {/* Conversion Results */}
             {task.status === 'completed' && task.task_metadata?.exported_file && (
               <div className="space-y-4">
-                <h4 className="font-semibold text-base">Export Results</h4>
+                <h4 className="font-semibold text-base">Conversion Results</h4>
                 <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 space-y-3">
                   <div className="flex items-center gap-2 text-green-400">
                     <CheckCircle2 className="h-5 w-5" />
-                    <span className="font-medium">Export completed successfully</span>
+                    <span className="font-medium">Conversion completed successfully</span>
                   </div>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
@@ -259,29 +256,6 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
                       <span className="text-muted-foreground">File Path:</span>
                       <div className="font-medium text-xs break-all">{task.task_metadata.exported_file}</div>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    {task.task_metadata.exported_file && (
-                      <>
-                        <Button
-                          onClick={() => {
-                            window.open(`http://localhost:9999/export/download/${task.id}`, '_blank');
-                          }}
-                          className="flex-1"
-                        >
-                          <Download className="h-4 w-4 mr-2" />
-                          Download Exported Model
-                        </Button>
-                        <Button
-                          onClick={() => setShowTestInference(true)}
-                          variant="outline"
-                          className="flex-1"
-                        >
-                          <TestTube className="h-4 w-4 mr-2" />
-                          Test Inference
-                        </Button>
-                      </>
-                    )}
                   </div>
                 </div>
               </div>
@@ -294,7 +268,7 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
                 <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 space-y-3">
                   <div className="flex items-center gap-2 text-red-400">
                     <XCircle className="h-5 w-5" />
-                    <span className="font-medium">Export failed</span>
+                    <span className="font-medium">Conversion failed</span>
                   </div>
                   {task.error_message && (
                     <div className="space-y-2">
@@ -350,16 +324,6 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
           </div>
         ) : null}
       </DialogContent>
-
-      {/* Test Inference Modal */}
-      {task?.task_metadata?.exported_file && (
-        <TestInferenceModal
-          open={showTestInference}
-          onOpenChange={setShowTestInference}
-          onnxFilePath={task.task_metadata.exported_file}
-          taskId={task.id}
-        />
-      )}
     </Dialog>
   );
 }

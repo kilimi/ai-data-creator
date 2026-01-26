@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -7,6 +8,11 @@ import json
 import shutil
 from pathlib import Path
 import logging
+import re
+import tempfile
+import uuid
+import subprocess
+import sys
 
 from ..database import get_db, SessionLocal
 from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection
@@ -48,6 +54,7 @@ class YoloTrainingRequest(BaseModel):
     weight_decay: float = 0.0005
     save_period: int = -1  # -1 = only best and last, or save every N epochs
     augmentations: Optional[Dict[str, Any]] = None  # Augmentation settings
+    remove_images_without_annotations: bool = True  # Remove images that have no annotations
     # Weights & Biases integration
     use_wandb: bool = False
     wandb_project: Optional[str] = None
@@ -80,7 +87,8 @@ def prepare_yolo_dataset(
     db: Session,
     dataset_configs: List[Dict[str, Any]],
     output_dir: Path,
-    model_type: str = "yolo11n-seg.pt"
+    model_type: str = "yolo11n-seg.pt",
+    remove_images_without_annotations: bool = True
 ) -> Dict[str, Any]:
     """
     Prepare YOLO format dataset from database annotations.
@@ -241,6 +249,11 @@ def prepare_yolo_dataset(
                     Annotation.annotation_file_id == annotation_file_id
                 ).all()
                 
+                # Skip images without annotations if the flag is set
+                if remove_images_without_annotations and not annotations:
+                    logger.debug(f"Skipping image {image.id} ({image.file_name}) - no annotations found")
+                    continue
+                
                 # Create YOLO format label file
                 label_lines = []
                 for annotation in annotations:
@@ -356,11 +369,15 @@ def prepare_yolo_dataset(
                         # YOLO detection format
                         label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
                 
-                # Write label file
+                # Write label file (create empty file if no annotations but image is kept)
                 if label_lines:
                     label_path = lbl_dir / (src_image_path.stem + '.txt')
                     with open(label_path, 'w') as f:
                         f.write('\n'.join(label_lines))
+                elif not remove_images_without_annotations:
+                    # Create empty label file if we're keeping images without annotations
+                    label_path = lbl_dir / (src_image_path.stem + '.txt')
+                    label_path.touch()
                 
                 total_images[split_name] += 1
     
@@ -522,7 +539,8 @@ async def train_yolo_model_task(
             db,
             training_config['dataset_configs'],
             dataset_dir,
-            model_type=model_type
+            model_type=model_type,
+            remove_images_without_annotations=training_config.get('remove_images_without_annotations', True)
         )
         
         logger.info(f"Dataset prepared: {dataset_info}")
@@ -721,7 +739,8 @@ async def start_yolo_training(
                     "model": request.model_type,
                     "task": "detect",
                     "augmentations": request.augmentations or {}
-                }
+                },
+                "remove_images_without_annotations": request.remove_images_without_annotations
             }
         )
         db.add(task)
@@ -789,6 +808,308 @@ async def start_yolo_training(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/training/{task_id}/rerun")
+async def rerun_training(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Rerun a training task with the same settings.
+    Creates a new task with identical configuration and starts training.
+    """
+    try:
+        # Get the original task
+        original_task = db.query(Task).filter(Task.id == task_id).first()
+        if not original_task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        
+        if original_task.task_type not in ['yolo_training', 'training']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task type {original_task.task_type} is not supported for rerun"
+            )
+        
+        # Extract configuration from task metadata
+        metadata = original_task.task_metadata or {}
+        training_params = metadata.get('training_params', {})
+        dataset_configs = metadata.get('dataset_configs', [])
+        
+        # Log full metadata structure for debugging
+        logger.info(f"Rerun task {task_id}: Full metadata keys = {list(metadata.keys())}")
+        logger.info(f"Rerun task {task_id}: dataset_configs type = {type(dataset_configs)}, count = {len(dataset_configs) if dataset_configs else 0}")
+        logger.info(f"Rerun task {task_id}: dataset_ids = {metadata.get('dataset_ids', [])}")
+        if dataset_configs:
+            logger.info(f"Rerun task {task_id}: First dataset_config sample = {dataset_configs[0] if len(dataset_configs) > 0 else 'N/A'}")
+        
+        # Reconstruct dataset_configs (remove names, keep only IDs and config)
+        reconstructed_configs = []
+        
+        # First, try to use dataset_configs from metadata
+        if dataset_configs and isinstance(dataset_configs, list) and len(dataset_configs) > 0:
+            logger.info(f"Processing {len(dataset_configs)} dataset configs from metadata")
+            for idx, config in enumerate(dataset_configs):
+                if not isinstance(config, dict):
+                    logger.warning(f"Dataset config {idx} is not a dict: {type(config)}")
+                    continue
+                    
+                dataset_id = config.get('dataset_id')
+                annotation_file_id = config.get('annotation_file_id')
+                
+                # Validate required fields - handle both int and string types
+                if not dataset_id or annotation_file_id is None:
+                    logger.warning(f"Dataset config {idx} missing required fields: dataset_id={dataset_id}, annotation_file_id={annotation_file_id}")
+                    continue
+                
+                # Convert annotation_file_id to int if it's a string
+                try:
+                    annotation_file_id = int(annotation_file_id) if isinstance(annotation_file_id, str) else annotation_file_id
+                    dataset_id = int(dataset_id) if isinstance(dataset_id, str) else dataset_id
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid dataset_id or annotation_file_id in config {idx}: {config}, error: {e}")
+                    continue
+                
+                reconstructed_configs.append({
+                    'dataset_id': dataset_id,
+                    'annotation_file_id': annotation_file_id,
+                    'image_collection': config.get('image_collection'),
+                    'split': config.get('split', {'train': 80, 'val': 20, 'test': 0})
+                })
+                logger.info(f"Reconstructed config {idx}: dataset_id={dataset_id}, annotation_file_id={annotation_file_id}")
+        
+        # If dataset_configs is empty or invalid, try to reconstruct from dataset_ids
+        if not reconstructed_configs:
+            dataset_ids = metadata.get('dataset_ids', [])
+            
+            if dataset_ids:
+                # Try to find annotation files for these datasets
+                for dataset_id in dataset_ids:
+                    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+                    if not dataset:
+                        continue
+                    
+                    # Get the first annotation file for this dataset
+                    # This is a fallback - ideally we'd have the annotation_file_id stored
+                    ann_file = db.query(AnnotationFile).filter(
+                        AnnotationFile.dataset_id == dataset_id
+                    ).first()
+                    
+                    if ann_file:
+                        reconstructed_configs.append({
+                            'dataset_id': dataset_id,
+                            'annotation_file_id': ann_file.id,
+                            'image_collection': None,
+                            'split': {'train': 80, 'val': 20, 'test': 0}
+                        })
+                        logger.warning(
+                            f"Reconstructed dataset config for task {task_id}: "
+                            f"using first annotation file {ann_file.id} for dataset {dataset_id}"
+                        )
+        
+        if not reconstructed_configs:
+            # Log the metadata structure for debugging
+            logger.error(f"Task {task_id} metadata structure: {json.dumps(metadata, indent=2, default=str)}")
+            logger.error(f"Task {task_id} task_type: {original_task.task_type}")
+            logger.error(f"Task {task_id} project_id: {original_task.project_id}")
+            
+            # Try one more fallback: check if we can get dataset_ids from the project
+            if original_task.project_id:
+                # Try to find any datasets in the project and use the first annotation file
+                project_datasets = db.query(Dataset).filter(Dataset.project_id == original_task.project_id).all()
+                if project_datasets:
+                    logger.warning(f"Attempting fallback: using first dataset from project {original_task.project_id}")
+                    for dataset in project_datasets[:1]:  # Just use first dataset as last resort
+                        ann_file = db.query(AnnotationFile).filter(
+                            AnnotationFile.dataset_id == dataset.id
+                        ).first()
+                        if ann_file:
+                            reconstructed_configs.append({
+                                'dataset_id': dataset.id,
+                                'annotation_file_id': ann_file.id,
+                                'image_collection': None,
+                                'split': {'train': 80, 'val': 20, 'test': 0}
+                            })
+                            logger.warning(f"Fallback: Using dataset {dataset.id} with annotation file {ann_file.id}")
+                            break
+            
+            if not reconstructed_configs:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Cannot rerun task {task_id}: dataset configuration not found in task metadata. "
+                        f"The task may have been created with an older version of the system or the metadata was corrupted. "
+                        f"Please check the task metadata or create a new training task manually. "
+                        f"Metadata keys available: {list(metadata.keys())}"
+                    )
+                )
+        
+        # Determine model type
+        model_type = metadata.get('model_type') or metadata.get('model_config', {}).get('model') or 'yolo11n-seg.pt'
+        
+        # Reconstruct YoloTrainingRequest
+        request_data = {
+            'project_id': original_task.project_id,
+            'dataset_configs': reconstructed_configs,
+            'model_type': model_type,
+            'epochs': training_params.get('epochs', metadata.get('epochs', 100)),
+            'batch_size': training_params.get('batch_size', 16),
+            'image_size': training_params.get('image_size', training_params.get('imgsz', 640)),
+            'device': training_params.get('device', '0'),
+            'task_name': f"{original_task.name} (Rerun)",
+            'patience': training_params.get('patience', 50),
+            'optimizer': training_params.get('optimizer', 'auto'),
+            'learning_rate': training_params.get('lr0', training_params.get('learning_rate', 0.01)),
+            'momentum': training_params.get('momentum', 0.937),
+            'weight_decay': training_params.get('weight_decay', 0.0005),
+            'save_period': training_params.get('save_period', -1),
+            'augmentations': metadata.get('model_config', {}).get('augmentations'),
+            'remove_images_without_annotations': metadata.get('remove_images_without_annotations', True),
+            'use_wandb': metadata.get('use_wandb', False),
+            'wandb_project': metadata.get('wandb_project'),
+            'wandb_entity': metadata.get('wandb_entity'),
+        }
+        
+        # Create YoloTrainingRequest
+        request = YoloTrainingRequest(**request_data)
+        
+        # Start training using the existing endpoint logic
+        # Validate datasets exist
+        for config in request.dataset_configs:
+            dataset = db.query(Dataset).filter(Dataset.id == config['dataset_id']).first()
+            if not dataset:
+                raise HTTPException(status_code=404, detail=f"Dataset {config['dataset_id']} not found")
+            
+            ann_file = db.query(AnnotationFile).filter(
+                AnnotationFile.id == config['annotation_file_id']
+            ).first()
+            if not ann_file:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Annotation file {config['annotation_file_id']} not found"
+                )
+        
+        # Create new task
+        task_name = request.task_name or f"YOLO Training - {request.model_type} (Rerun)"
+        
+        # Prepare dataset configs with names for metadata
+        dataset_configs_with_names = []
+        for config in request.dataset_configs:
+            dataset = db.query(Dataset).filter(Dataset.id == config['dataset_id']).first()
+            ann_file = db.query(AnnotationFile).filter(
+                AnnotationFile.id == config['annotation_file_id']
+            ).first()
+            
+            dataset_configs_with_names.append({
+                'dataset_id': config['dataset_id'],
+                'dataset_name': dataset.name if dataset else None,
+                'annotation_file_id': config['annotation_file_id'],
+                'annotation_file_name': ann_file.name if ann_file else None,
+                'image_collection': config.get('image_collection'),
+                'split': config.get('split', {'train': 80, 'val': 20, 'test': 0})
+            })
+        
+        task = Task(
+            name=task_name,
+            description=f"Training YOLO model with {len(request.dataset_configs)} dataset(s) (Rerun of task {task_id})",
+            task_type="yolo_training",
+            status="pending",
+            project_id=request.project_id,
+            progress=0,
+            task_metadata={
+                "model_type": request.model_type,
+                "epochs": request.epochs,
+                "batch_size": request.batch_size,
+                "image_size": request.image_size,
+                "dataset_count": len(request.dataset_configs),
+                "dataset_ids": [config['dataset_id'] for config in request.dataset_configs],
+                "dataset_configs": dataset_configs_with_names,
+                "training_params": {
+                    "batch_size": request.batch_size,
+                    "epochs": request.epochs,
+                    "image_size": request.image_size,
+                    "imgsz": request.image_size,
+                    "device": request.device,
+                    "optimizer": request.optimizer,
+                    "lr0": request.learning_rate,
+                    "momentum": request.momentum,
+                    "weight_decay": request.weight_decay,
+                    "save_period": request.save_period,
+                    "patience": request.patience
+                },
+                "model_config": {
+                    "model": request.model_type,
+                    "task": "detect",
+                    "augmentations": request.augmentations or {}
+                },
+                "rerun_of_task_id": task_id
+            }
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        
+        # Prepare training config
+        training_config = {
+            'project_id': request.project_id,
+            'dataset_configs': request.dataset_configs,
+            'model_type': request.model_type,
+            'epochs': request.epochs,
+            'batch_size': request.batch_size,
+            'image_size': request.image_size,
+            'device': request.device,
+            'patience': request.patience,
+            'optimizer': request.optimizer,
+            'learning_rate': request.learning_rate,
+            'momentum': request.momentum,
+            'weight_decay': request.weight_decay,
+            'save_period': request.save_period,
+            'augmentations': request.augmentations or {},
+            'use_wandb': request.use_wandb,
+            'wandb_project': request.wandb_project,
+            'wandb_entity': request.wandb_entity,
+        }
+        
+        # Start background task
+        if USE_CELERY:
+            # Use Celery for proper task queuing
+            celery_task = celery_train_task.delay(task.id, training_config)
+            logger.info(f"Queued rerun training task {task.id} in Celery (task_id: {celery_task.id}, rerun of {task_id})")
+            
+            # Store Celery task ID in metadata
+            task.task_metadata = {
+                **task.task_metadata,
+                "celery_task_id": celery_task.id
+            }
+            db.commit()
+        else:
+            # Fallback to FastAPI BackgroundTasks (not recommended for production)
+            logger.warning("Using BackgroundTasks instead of Celery - tasks may run concurrently!")
+            background_tasks.add_task(
+                train_yolo_model_task,
+                task.id,
+                training_config
+            )
+        
+        return {
+            "success": True,
+            "task_id": task.id,
+            "original_task_id": task_id,
+            "message": "Training rerun started",
+            "task": {
+                "id": task.id,
+                "name": task.name,
+                "status": task.status,
+                "progress": task.progress
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rerunning training task {task_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/training/task/{task_id}/status")
 async def get_training_status(task_id: int, db: Session = Depends(get_db)):
     """Get the status of a training task"""
@@ -849,7 +1170,8 @@ async def start_rtdetr_training(
             db=db,
             dataset_configs=request.dataset_configs,
             output_dir=output_dir,
-            model_type=request.model_type
+            model_type=request.model_type,
+            remove_images_without_annotations=True  # RT-DETR should also remove images without annotations
         )
         
         # Create data.yaml for RT-DETR
@@ -927,4 +1249,458 @@ async def start_rtdetr_training(
     except Exception as e:
         logger.error(f"Error starting RT-DETR training: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/training/{task_id}/checkpoints")
+async def list_checkpoints(task_id: int, db: Session = Depends(get_db)):
+    """
+    List all available checkpoints for a training task.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+    
+    if task.task_type not in ['yolo_training', 'training']:
+        raise HTTPException(status_code=400, detail="Task is not a training task")
+    
+    task_metadata = task.task_metadata or {}
+    results_dir = task_metadata.get('results_dir')
+    best_model = task_metadata.get('best_model')
+    last_model = task_metadata.get('last_model')
+    yolo_best_model = task_metadata.get('yolo_best_model')
+    yolo_last_model = task_metadata.get('yolo_last_model')
+    yolo_results_dir = task_metadata.get('yolo_results_dir')
+    
+    checkpoints = []
+    checkpoint_names_seen = set()  # Track which checkpoints we've already added
+    
+    # Add best and last models if available (prefer expected location, fallback to YOLO)
+    if best_model and Path(best_model).exists():
+        size = Path(best_model).stat().st_size if Path(best_model).exists() else None
+        checkpoints.append({
+            'name': 'best',
+            'path': best_model,
+            'epoch': None,
+            'size': size
+        })
+        checkpoint_names_seen.add('best.pt')
+    elif yolo_best_model and Path(yolo_best_model).exists():
+        size = Path(yolo_best_model).stat().st_size if Path(yolo_best_model).exists() else None
+        checkpoints.append({
+            'name': 'best',
+            'path': yolo_best_model,
+            'epoch': None,
+            'size': size
+        })
+        checkpoint_names_seen.add('best.pt')
+    
+    if last_model and Path(last_model).exists():
+        size = Path(last_model).stat().st_size if Path(last_model).exists() else None
+        checkpoints.append({
+            'name': 'last',
+            'path': last_model,
+            'epoch': None,
+            'size': size
+        })
+        checkpoint_names_seen.add('last.pt')
+    elif yolo_last_model and Path(yolo_last_model).exists():
+        size = Path(yolo_last_model).stat().st_size if Path(yolo_last_model).exists() else None
+        checkpoints.append({
+            'name': 'last',
+            'path': yolo_last_model,
+            'epoch': None,
+            'size': size
+        })
+        checkpoint_names_seen.add('last.pt')
+    
+    # Look for additional checkpoints in weights directory (expected location)
+    if results_dir:
+        weights_dir = Path(results_dir) / "weights"
+        if weights_dir.exists():
+            # Look for epoch checkpoints (e.g., epoch10.pt, epoch20.pt)
+            for checkpoint_file in weights_dir.glob("*.pt"):
+                if checkpoint_file.name not in checkpoint_names_seen:
+                    # Try to extract epoch number from filename
+                    epoch_match = re.search(r'epoch(\d+)', checkpoint_file.name, re.IGNORECASE)
+                    epoch = int(epoch_match.group(1)) if epoch_match else None
+                    
+                    size = checkpoint_file.stat().st_size if checkpoint_file.exists() else None
+                    checkpoints.append({
+                        'name': checkpoint_file.name,
+                        'path': str(checkpoint_file),
+                        'epoch': epoch,
+                        'size': size
+                    })
+                    checkpoint_names_seen.add(checkpoint_file.name)
+    
+    # Also check YOLO location for additional checkpoints
+    if yolo_results_dir:
+        yolo_weights_dir = Path(yolo_results_dir) / "weights"
+        if yolo_weights_dir.exists():
+            for checkpoint_file in yolo_weights_dir.glob("*.pt"):
+                if checkpoint_file.name not in checkpoint_names_seen:
+                    # Try to extract epoch number from filename
+                    epoch_match = re.search(r'epoch(\d+)', checkpoint_file.name, re.IGNORECASE)
+                    epoch = int(epoch_match.group(1)) if epoch_match else None
+                    
+                    size = checkpoint_file.stat().st_size if checkpoint_file.exists() else None
+                    checkpoints.append({
+                        'name': checkpoint_file.name,
+                        'path': str(checkpoint_file),
+                        'epoch': epoch,
+                        'size': size
+                    })
+                    checkpoint_names_seen.add(checkpoint_file.name)
+    
+    # Sort by epoch if available, otherwise by name
+    checkpoints.sort(key=lambda x: (x['epoch'] if x['epoch'] is not None else 9999, x['name']))
+    
+    return {
+        "success": True,
+        "checkpoints": checkpoints
+    }
+
+
+@router.get("/training/{task_id}/download")
+async def download_checkpoint(
+    task_id: int,
+    checkpoint: str = Query(..., description="Checkpoint name (e.g., 'best', 'last', 'epoch10.pt')"),
+    db: Session = Depends(get_db)
+):
+    """
+    Download a specific checkpoint from a training task.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Training task not found")
+    
+    if task.task_type not in ['yolo_training', 'training']:
+        raise HTTPException(status_code=400, detail="Task is not a training task")
+    
+    task_metadata = task.task_metadata or {}
+    results_dir = task_metadata.get('results_dir')
+    best_model = task_metadata.get('best_model')
+    last_model = task_metadata.get('last_model')
+    yolo_best_model = task_metadata.get('yolo_best_model')
+    yolo_last_model = task_metadata.get('yolo_last_model')
+    yolo_results_dir = task_metadata.get('yolo_results_dir')
+    
+    model_path = None
+    
+    # Check for best/last models (prefer expected location, fallback to YOLO location)
+    if checkpoint == 'best':
+        if best_model:
+            model_path = Path(best_model)
+        elif yolo_best_model:
+            model_path = Path(yolo_best_model)
+    elif checkpoint == 'last':
+        if last_model:
+            model_path = Path(last_model)
+        elif yolo_last_model:
+            model_path = Path(yolo_last_model)
+    elif results_dir:
+        # Look in weights directory
+        weights_dir = Path(results_dir) / "weights"
+        if weights_dir.exists():
+            # Try exact match first
+            potential_path = weights_dir / checkpoint
+            if potential_path.exists() and potential_path.suffix == '.pt':
+                model_path = potential_path
+            else:
+                # Try with .pt extension if not provided
+                potential_path = weights_dir / f"{checkpoint}.pt"
+                if potential_path.exists():
+                    model_path = potential_path
+    
+    # If not found in expected location, check YOLO location
+    if (not model_path or not model_path.exists()) and yolo_results_dir:
+        yolo_weights_dir = Path(yolo_results_dir) / "weights"
+        if yolo_weights_dir.exists():
+            potential_path = yolo_weights_dir / checkpoint
+            if potential_path.exists() and potential_path.suffix == '.pt':
+                model_path = potential_path
+            else:
+                potential_path = yolo_weights_dir / f"{checkpoint}.pt"
+                if potential_path.exists():
+                    model_path = potential_path
+    
+    if not model_path or not model_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Checkpoint '{checkpoint}' not found for task {task_id}"
+        )
+    
+    # Sanitize filename for download
+    safe_filename = re.sub(r'[<>:"/\\|?*]', '_', task.name)
+    safe_filename = safe_filename.strip('. ')
+    if not safe_filename:
+        safe_filename = f"model_{task_id}"
+    
+    # Add checkpoint name to filename
+    checkpoint_name = checkpoint.replace('.pt', '')
+    download_filename = f"{safe_filename}_{checkpoint_name}.pt"
+    
+    return FileResponse(
+        path=str(model_path),
+        filename=download_filename,
+        media_type='application/octet-stream'
+    )
+
+
+@router.post("/training/{task_id}/test-inference")
+async def test_training_model_inference(
+    task_id: int,
+    image: UploadFile = File(...),
+    checkpoint: str = Query("best", description="Checkpoint to use (best, last, or specific checkpoint)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Test YOLO .pt model inference on an uploaded image.
+    Returns predictions with bounding boxes and confidence scores.
+    """
+    try:
+        # Verify the training task exists
+        task = db.query(Task).filter(Task.id == task_id).first()
+        
+        if not task:
+            raise HTTPException(status_code=404, detail="Training task not found")
+        
+        if task.task_type not in ['yolo_training', 'training']:
+            raise HTTPException(status_code=400, detail="Task is not a training task")
+        
+        if task.status != 'completed':
+            raise HTTPException(
+                status_code=400,
+                detail=f"Training task is not completed. Current status: {task.status}"
+            )
+        
+        # Get model path based on checkpoint
+        task_metadata = task.task_metadata or {}
+        model_path = None
+        
+        if checkpoint == "best":
+            model_path = task_metadata.get('best_model')
+        elif checkpoint == "last":
+            model_path = task_metadata.get('last_model')
+        elif task_metadata.get('results_dir'):
+            weights_dir = Path(task_metadata['results_dir']) / "weights"
+            if weights_dir.exists():
+                potential_path = weights_dir / checkpoint
+                if potential_path.exists() and potential_path.suffix == '.pt':
+                    model_path = str(potential_path)
+                else:
+                    potential_path = weights_dir / f"{checkpoint}.pt"
+                    if potential_path.exists():
+                        model_path = str(potential_path)
+        
+        if not model_path or not Path(model_path).exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model checkpoint '{checkpoint}' not found for task {task_id}"
+            )
+        
+        # Get class names from task metadata
+        class_names = task_metadata.get('class_names', [])
+        
+        # Save uploaded image to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image:
+            tmp_image_path = tmp_image.name
+            content = await image.read()
+            tmp_image.write(content)
+        
+        try:
+            # Create temporary output directory
+            output_dir = Path(tempfile.gettempdir()) / f"inference_{uuid.uuid4().hex[:8]}"
+            output_dir.mkdir(exist_ok=True)
+            
+            # Create Python script for inference using YOLO
+            script_path = output_dir / "run_inference.py"
+            result_json_path = output_dir / "results.json"
+            annotated_image_path = output_dir / "annotated.jpg"
+            
+            # Generate the inference script using YOLO
+            inference_script = """from ultralytics import YOLO
+import cv2
+import json
+import sys
+import numpy as np
+
+# Main inference
+model_path = sys.argv[1]
+image_path = sys.argv[2]
+output_json = sys.argv[3]
+output_image = sys.argv[4]
+class_names_json = sys.argv[5] if len(sys.argv) > 5 else '[]'
+
+import json as json_module
+class_names = json_module.loads(class_names_json)
+
+# Load YOLO model
+model = YOLO(model_path)
+
+# Run inference
+results = model(image_path, conf=0.25, iou=0.45)
+
+# Process results
+predictions = []
+annotated_img = None
+
+if results and len(results) > 0:
+    result = results[0]
+    
+    # Get annotated image (this will show masks if available)
+    annotated_img = result.plot()
+    
+    # Extract predictions
+    if result.boxes is not None:
+        boxes = result.boxes
+        has_masks = result.masks is not None
+        
+        for i in range(len(boxes)):
+            # Get box coordinates (xyxy format)
+            box = boxes.xyxy[i].cpu().numpy()
+            x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+            
+            # Get confidence and class
+            confidence = float(boxes.conf[i].cpu().numpy())
+            class_id = int(boxes.cls[i].cpu().numpy())
+            
+            # Get class name
+            class_name = class_names[class_id] if class_id < len(class_names) else f'Class {class_id}'
+            
+            pred = {
+                'bbox': [x1, y1, x2 - x1, y2 - y1],
+                'confidence': confidence,
+                'class_id': class_id,
+                'class': class_name
+            }
+            
+            # Extract segmentation mask if available
+            if has_masks and result.masks is not None:
+                try:
+                    mask = result.masks.data[i].cpu().numpy()
+                    # Get original image dimensions from result
+                    orig_shape = result.orig_shape  # (height, width)
+                    mask_shape = mask.shape  # (height, width) or (1, height, width)
+                    
+                    # Handle different mask formats
+                    if len(mask_shape) == 3:
+                        mask = mask[0]  # Remove batch dimension if present
+                    
+                    # Resize mask to original image size if needed
+                    if mask.shape != orig_shape[:2]:
+                        mask_resized = cv2.resize(mask, (orig_shape[1], orig_shape[0]), interpolation=cv2.INTER_NEAREST)
+                    else:
+                        mask_resized = mask
+                    
+                    # Convert mask to polygon (contour)
+                    mask_binary = (mask_resized > 0.5).astype(np.uint8) * 255
+                    contours, _ = cv2.findContours(
+                        mask_binary,
+                        cv2.RETR_EXTERNAL,
+                        cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    if len(contours) > 0:
+                        # Get the largest contour
+                        largest_contour = max(contours, key=cv2.contourArea)
+                        # Simplify contour to reduce points (but keep enough detail)
+                        epsilon = 0.001 * cv2.arcLength(largest_contour, True)
+                        approx = cv2.approxPolyDP(largest_contour, epsilon, True)
+                        # Flatten to [x1, y1, x2, y2, ...] format
+                        if len(approx) >= 3:  # Need at least 3 points for a polygon
+                            polygon = approx.reshape(-1, 2).flatten().tolist()
+                            pred['segmentation'] = [polygon]
+                except Exception as e:
+                    # If mask extraction fails, just skip it and use bbox only
+                    import traceback
+                    print(f"Warning: Failed to extract mask for prediction {i}: {e}")
+                    traceback.print_exc()
+            
+            predictions.append(pred)
+
+# Save annotated image
+if annotated_img is not None:
+    cv2.imwrite(output_image, annotated_img)
+
+# Save results
+results_data = {
+    'predictions': predictions,
+    'num_predictions': len(predictions)
+}
+
+with open(output_json, 'w') as f:
+    json.dump(results_data, f, indent=2)
+
+print(f"Found {len(predictions)} predictions")
+"""
+            
+            with open(script_path, 'w') as f:
+                f.write(inference_script)
+            
+            # Run inference script
+            python_executable = sys.executable
+            
+            class_names_json = json.dumps(class_names)
+            cmd = [
+                python_executable,
+                str(script_path),
+                str(model_path),
+                tmp_image_path,
+                str(result_json_path),
+                str(annotated_image_path),
+                class_names_json
+            ]
+            
+            logger.info(f"Running inference with command: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=os.environ.copy()
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                logger.error(f"Inference script error: {error_msg}")
+                raise Exception(f"Inference failed: {error_msg}")
+            
+            # Read results
+            with open(result_json_path, 'r') as f:
+                inference_results = json.load(f)
+            
+            # Copy annotated image to static directory for serving
+            static_dir = Path("static/inference_results")
+            static_dir.mkdir(parents=True, exist_ok=True)
+            annotated_filename = f"annotated_{task_id}_{uuid.uuid4().hex[:8]}.jpg"
+            annotated_static_path = static_dir / annotated_filename
+            shutil.copy2(str(annotated_image_path), str(annotated_static_path))
+            
+            # Cleanup temporary files
+            os.unlink(tmp_image_path)
+            shutil.rmtree(output_dir, ignore_errors=True)
+            
+            return JSONResponse({
+                "success": True,
+                "result": {
+                    "predictions": inference_results.get('predictions', []),
+                    "image_url": f"/static/inference_results/{annotated_filename}"
+                }
+            })
+            
+        except Exception as e:
+            # Cleanup on error
+            if os.path.exists(tmp_image_path):
+                os.unlink(tmp_image_path)
+            logger.error(f"Error running inference: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in test inference: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 

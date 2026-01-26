@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime
 import logging
+import shutil
+from pathlib import Path
 from celery import Celery
 from pydantic import BaseModel
 
@@ -197,7 +199,7 @@ async def update_task(task_id: int, update: TaskUpdateRequest, db: Session = Dep
 
 @router.delete("/tasks/{task_id}")
 async def delete_task(task_id: int, db: Session = Depends(get_db)):
-    """Delete a task and its associated data"""
+    """Delete a task and its associated data, including model files"""
     try:
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
         if not task:
@@ -214,6 +216,30 @@ async def delete_task(task_id: int, db: Session = Depends(get_db)):
                         logger.info(f"Terminated Celery task {celery_task_id} before deletion")
                     except Exception as e:
                         logger.error(f"Failed to terminate Celery task {celery_task_id}: {e}")
+        
+        # Delete training model files if this is a training task
+        if task.task_type in ['yolo_training', 'training']:
+            try:
+                task_metadata = task.task_metadata or {}
+                results_dir = task_metadata.get('results_dir')
+                
+                # Also try to construct the path from project_id and task_id
+                if not results_dir and task.project_id:
+                    training_dir = Path("projects") / str(task.project_id) / "training" / f"task_{task_id}"
+                    if training_dir.exists():
+                        results_dir = str(training_dir / "training")
+                
+                if results_dir:
+                    results_path = Path(results_dir)
+                    if results_path.exists():
+                        # Delete the entire training directory for this task
+                        task_dir = results_path.parent  # Go up to task_{task_id} directory
+                        if task_dir.exists() and task_dir.name.startswith('task_'):
+                            shutil.rmtree(task_dir, ignore_errors=True)
+                            logger.info(f"Deleted training files for task {task_id} from {task_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to delete training files for task {task_id}: {e}")
+                # Continue with database deletion even if file deletion fails
         
         # Delete associated augmentation if exists
         augmentation = db.query(models.Augmentation).filter(models.Augmentation.task_id == task_id).first()

@@ -47,3 +47,11 @@ if __name__ == "__main__":
                     fix_permissions(training_dir)
         else:
             print("Projects directory not found")
+        
+        # Also fix runs directory (where YOLO actually writes)
+        runs_dir = Path("runs")
+        if runs_dir.exists():
+            print(f"Fixing permissions in {runs_dir}")
+            fix_permissions(runs_dir)
+        else:
+            print("Runs directory not found (will be created by YOLO)")

@@ -8,7 +8,9 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { TrainModelModal } from '@/components/TrainModelModal';
 import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
-import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil } from "lucide-react";
+import { DownloadModelModal } from '@/components/DownloadModelModal';
+import { TestTrainingInferenceModal } from '@/components/TestTrainingInferenceModal';
+import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw } from "lucide-react";
 import { Project, DatasetGroup } from '@/types';
 import {
   Select,
@@ -69,6 +71,8 @@ export default function ProjectModels() {
   const [newTaskName, setNewTaskName] = useState('');
   const [datasets, setDatasets] = useState<any[]>([]);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
+  const [downloadModel, setDownloadModel] = useState<{ id: number; name: string } | null>(null);
+  const [testInference, setTestInference] = useState<{ id: number; name: string } | null>(null);
 
   // Fetch training tasks
   const fetchTrainingTasks = async () => {
@@ -79,8 +83,12 @@ export default function ProjectModels() {
       const response = await fetch(`http://localhost:9999/tasks/?project_id=${id}`);
       if (response.ok) {
         const data = await response.json();
-        // Filter to only training tasks (not evaluations)
-        setTrainingTasks(data.filter((t: any) => t.task_type !== 'model_evaluation'));
+        // Filter to only training tasks (yolo_training or training, exclude evaluations and exports)
+        setTrainingTasks(data.filter((t: any) => 
+          (t.task_type === 'yolo_training' || t.task_type === 'training') && 
+          t.task_type !== 'model_evaluation' &&
+          t.task_type !== 'model_export'
+        ));
       }
     } catch (error) {
       console.error('Error fetching training tasks:', error);
@@ -210,9 +218,9 @@ export default function ProjectModels() {
       {/* Page Header */}
       <div className="flex items-center gap-2">
         <Brain className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold">Models</h1>
+        <h1 className="text-2xl font-bold">Train Model</h1>
         <Badge variant="secondary" className="ml-2">
-          {trainingTasks.length} models
+          {trainingTasks.length} training tasks
         </Badge>
       </div>
       
@@ -221,7 +229,7 @@ export default function ProjectModels() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <Input
-            placeholder="Search models by name, type or performance..."
+            placeholder="Search training tasks by name, type or performance..."
             className="pl-9"
             value={modelsSearchQuery}
             onChange={(e) => setModelsSearchQuery(e.target.value)}
@@ -412,6 +420,63 @@ export default function ProjectModels() {
                     </td>
                     <td className="px-4 py-3 text-sm">
                       <div className="flex items-center gap-2">
+                        {(isCompleted || isFailed || task.status === 'stopped') && (
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const response = await fetch(`http://localhost:9999/training/${task.id}/rerun`, {
+                                  method: 'POST'
+                                });
+                                if (response.ok) {
+                                  const data = await response.json();
+                                  toast({
+                                    title: "Training Rerun Started",
+                                    description: `New training task "${data.task.name}" has been created and started.`
+                                  });
+                                  fetchTrainingTasks();
+                                } else {
+                                  const errorData = await response.json();
+                                  throw new Error(errorData.detail || 'Failed to rerun training task');
+                                }
+                              } catch (error) {
+                                toast({
+                                  title: "Error",
+                                  description: error instanceof Error ? error.message : "Failed to rerun training task",
+                                  variant: "destructive"
+                                });
+                              }
+                            }}
+                            className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-purple-800 text-purple-300 border border-purple-700 hover:bg-purple-700 hover:text-white transition-colors"
+                            title="Rerun training with same settings"
+                          >
+                            <RotateCw className="w-4 h-4" />
+                          </button>
+                        )}
+                        {isCompleted && (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTestInference({ id: task.id, name: task.name });
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
+                              title="Test inference"
+                            >
+                              <TestTube className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDownloadModel({ id: task.id, name: task.name });
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-blue-800 text-blue-300 border border-blue-700 hover:bg-blue-700 hover:text-white transition-colors"
+                              title="Download model"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -431,11 +496,43 @@ export default function ProjectModels() {
                             setRenamingTask({ id: task.id, name: task.name });
                             setNewTaskName(task.name);
                           }}
-                          className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
+                          className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
                           title="Rename task"
                         >
-                          <Pencil className="w-3 h-3 mr-1" />
-                          Rename
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!confirm(`Are you sure you want to delete training task "${task.name}"? This will also delete all model files.`)) {
+                              return;
+                            }
+                            try {
+                              const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
+                                method: 'DELETE'
+                              });
+                              if (response.ok) {
+                                toast({
+                                  title: "Task Deleted",
+                                  description: `Training task "${task.name}" has been deleted.`
+                                });
+                                fetchTrainingTasks();
+                              } else {
+                                const data = await response.json();
+                                throw new Error(data.detail || 'Failed to delete task');
+                              }
+                            } catch (error) {
+                              toast({
+                                title: "Error",
+                                description: error instanceof Error ? error.message : "Failed to delete training task",
+                                variant: "destructive"
+                              });
+                            }
+                          }}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
+                          title="Delete training task"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </button>
                         {(isRunning || task.status === 'pending') && (
                           <button
@@ -465,13 +562,12 @@ export default function ProjectModels() {
                                 });
                               }
                             }}
-                            className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
+                            className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
                             title="Stop training"
                           >
-                            <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                             </svg>
-                            Stop
                           </button>
                         )}
                       </div>
@@ -485,9 +581,9 @@ export default function ProjectModels() {
       ) : (
         <div className="text-center py-16">
           <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-          <h3 className="text-lg font-medium mb-2">No models found</h3>
+          <h3 className="text-lg font-medium mb-2">No training tasks found</h3>
           <p className="text-muted-foreground mb-6">
-            This project doesn't have any trained models yet. Train your first model to get started.
+            This project doesn't have any training tasks yet. Train your first model to get started.
           </p>
           <Button variant="outline" onClick={() => setShowTrainModelModal(true)}>
             <Brain className="w-4 h-4 mr-2" />
@@ -649,6 +745,26 @@ export default function ProjectModels() {
           open={true}
           onOpenChange={(open) => !open && setSelectedTaskId(null)}
           taskId={selectedTaskId}
+        />
+      )}
+
+      {/* Download Model Modal */}
+      {downloadModel && (
+        <DownloadModelModal
+          open={true}
+          onOpenChange={(open) => !open && setDownloadModel(null)}
+          taskId={downloadModel.id}
+          taskName={downloadModel.name}
+        />
+      )}
+
+      {/* Test Inference Modal */}
+      {testInference && (
+        <TestTrainingInferenceModal
+          open={true}
+          onOpenChange={(open) => !open && setTestInference(null)}
+          taskId={testInference.id}
+          taskName={testInference.name}
         />
       )}
     </div>

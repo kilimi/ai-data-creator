@@ -81,7 +81,7 @@ export function ExportModelModal({
     if (!selectedModel || !api) {
       toast({
         title: "Error",
-        description: "Please select a model to export",
+        description: "Please select a model to convert",
         variant: "destructive",
       });
       return;
@@ -172,10 +172,10 @@ export function ExportModelModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Download className="h-5 w-5 text-primary" />
-            Export Model
+            Convert Model
           </DialogTitle>
           <DialogDescription>
-            Export a trained YOLO model to ONNX format for deployment.
+            Convert a trained YOLO model to different formats (ONNX, etc.) for deployment.
           </DialogDescription>
         </DialogHeader>
 
@@ -289,7 +289,7 @@ export function ExportModelModal({
           {/* Export Format Selection */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Export Format</CardTitle>
+              <CardTitle className="text-base">Target Format</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -433,11 +433,11 @@ export function ExportModelModal({
           {/* Export Name */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Export Settings</CardTitle>
+              <CardTitle className="text-base">Conversion Settings</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="export-name">Export Task Name (Optional)</Label>
+                <Label htmlFor="export-name">Conversion Task Name (Optional)</Label>
                 <input
                   id="export-name"
                   type="text"
@@ -462,12 +462,12 @@ export function ExportModelModal({
             {isExporting ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                Exporting...
+                Converting...
               </>
             ) : (
               <>
                 <Download className="w-4 h-4 mr-2" />
-                Start Export
+                Start Conversion
               </>
             )}
           </Button>

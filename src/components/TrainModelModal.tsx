@@ -83,6 +83,9 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [classStats, setClassStats] = useState<any | null>(null);
   const [customName, setCustomName] = useState('');
 
+  // Dataset settings
+  const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
+
   // Weights & Biases settings
   const [saveToWandb, setSaveToWandb] = useState(false);
   const [showWandbSettings, setShowWandbSettings] = useState(false);
@@ -293,6 +296,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           weight_decay: modelSettings.weightDecay || 0.0005,
           save_period: modelSettings.savePeriod !== undefined ? modelSettings.savePeriod : -1,
           augmentations: modelSettings.augmentations || {},
+          remove_images_without_annotations: removeImagesWithoutAnnotations,
           use_wandb: saveToWandb,
           wandb_project: saveToWandb ? wandbSettings.project : undefined,
           wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
@@ -799,6 +803,31 @@ The training service will update progress every epoch.`;
                     )}
                   </CardContent>
                 </Card>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Dataset Options */}
+            <div className="space-y-4">
+              <Label className="text-base font-medium">Dataset Options</Label>
+              
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Checkbox
+                    id="remove-images-checkbox"
+                    checked={removeImagesWithoutAnnotations}
+                    onCheckedChange={(checked) => setRemoveImagesWithoutAnnotations(checked as boolean)}
+                  />
+                  <div className="flex-1">
+                    <Label htmlFor="remove-images-checkbox" className="text-sm font-medium cursor-pointer">
+                      Remove images without annotations
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Images that have no annotations will be excluded from the training dataset
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
