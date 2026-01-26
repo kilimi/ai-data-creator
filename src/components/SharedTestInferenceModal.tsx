@@ -16,7 +16,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export interface InferenceResult {
   predictions: Array<{
-    class: string;
+    class?: string;
+    class_id?: number;
     confidence: number;
     bbox: [number, number, number, number];
     segmentation?: number[][];
