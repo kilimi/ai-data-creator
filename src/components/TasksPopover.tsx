@@ -22,7 +22,7 @@ import {
   AlertCircle, 
   X,
   Loader2,
-  Activity,
+  ListTodo,
   Layers,
   Brain,
   Copy,
@@ -52,7 +52,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'evaluation':
         return <Layers className="w-4 h-4 text-orange-500" />;
       default:
-        return <Activity className="w-4 h-4 text-gray-500" />;
+        return <ListTodo className="w-4 h-4 text-gray-500" />;
     }
   };
 
@@ -231,7 +231,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <>
-                <Activity 
+                <ListTodo 
                   className="h-4 w-4"
                   style={{
                     color: runningTaskCount > 0 ? '#2563eb' : pendingTaskCount > 0 ? '#ca8a04' : undefined,
@@ -279,7 +279,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
           <ScrollArea className="flex-1 min-h-0">
             {visibleTasks.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                <Activity className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <ListTodo className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>{tasks.length > 0 ? 'All tasks cleared from view' : 'No tasks found'}</p>
               </div>
             ) : (
