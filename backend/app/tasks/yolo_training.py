@@ -35,6 +35,8 @@ class YOLOTrainingTask(TrainingTask):
         Main entry point for YOLO training task.
         This method contains the actual training logic.
         """
+        logger.info(f"YOLOTrainingTask.execute() called with task_id={task_id}, training_config keys={list(training_config.keys())}")
+        
         self.task_id = task_id
         self.training_config = training_config
         self.db = SessionLocal()
@@ -42,29 +44,45 @@ class YOLOTrainingTask(TrainingTask):
         try:
             celery_task_id = self.request.id if hasattr(self, 'request') and self.request else 'N/A'
             logger.info(f"Starting YOLO training task {task_id} (Celery task {celery_task_id})")
+            logger.info(f"Training config: model_type={training_config.get('model_type')}, epochs={training_config.get('epochs')}, batch_size={training_config.get('batch_size')}")
             
             # Initialize task
+            logger.info(f"Step 1: Initializing task {task_id}")
             self._initialize_task()
+            logger.info(f"Task {task_id} initialized, status set to running")
             
             # Setup directories
+            logger.info(f"Step 2: Setting up directories for task {task_id}")
             self._setup_directories()
+            logger.info(f"Directories set up: output_base={self.output_base}, weights_dir={self.weights_dir}")
             
             # Prepare dataset
+            logger.info(f"Step 3: Preparing dataset for task {task_id}")
             dataset_info = self._prepare_dataset()
+            logger.info(f"Dataset prepared: {len(dataset_info.get('class_names', []))} classes, {dataset_info.get('image_counts', {})}")
             
             # Load model
+            logger.info(f"Step 4: Loading YOLO model for task {task_id}")
             self._load_model()
+            logger.info(f"Model loaded: {self.model}")
             
             # Setup training arguments
+            logger.info(f"Step 5: Building training arguments for task {task_id}")
             train_args = self._build_training_args(dataset_info)
+            logger.info(f"Training args prepared: project={train_args.get('project')}, epochs={train_args.get('epochs')}")
             
             # Train model
+            logger.info(f"Step 6: Starting model training for task {task_id}")
+            logger.info(f"About to call model.train() with args: {list(train_args.keys())}")
             self._train_model(train_args)
+            logger.info(f"Model training completed for task {task_id}")
             
             # Handle weights
+            logger.info(f"Step 7: Handling weights for task {task_id}")
             self._handle_weights()
             
             # Complete task
+            logger.info(f"Step 8: Completing task {task_id}")
             self._complete_task(dataset_info)
             
             logger.info(f"Training completed successfully for task {task_id}")
@@ -153,7 +171,36 @@ class YOLOTrainingTask(TrainingTask):
         if not model_path.exists():
             model_path = model_type
         
-        self.model = YOLO(str(model_path))
+        try:
+            # Check CUDA availability before loading model
+            import torch
+            logger.info(f"PyTorch version: {torch.__version__}")
+            logger.info(f"CUDA available: {torch.cuda.is_available()}")
+            if torch.cuda.is_available():
+                logger.info(f"CUDA device count: {torch.cuda.device_count()}")
+                logger.info(f"Current CUDA device: {torch.cuda.current_device()}")
+                logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
+            else:
+                logger.warning("CUDA is not available - training will use CPU (very slow)")
+            
+            logger.info(f"Instantiating YOLO with: {model_path}")
+            self.model = YOLO(str(model_path))
+            logger.info(f"Model loaded successfully: {type(self.model)}")
+            logger.info(f"Model has train method: {hasattr(self.model, 'train')}")
+            
+            # Test that the model object is valid
+            if self.model is None:
+                raise ValueError("Model object is None after loading")
+            
+            # Verify model.train is callable
+            if not callable(getattr(self.model, 'train', None)):
+                raise ValueError("Model.train is not callable")
+                
+            logger.info(f"Model validation passed - ready for training")
+                
+        except Exception as e:
+            logger.error(f"Failed to load YOLO model: {e}", exc_info=True)
+            raise
         
         # Add progress callback
         total_epochs = self.training_config.get('epochs', 100)
@@ -181,6 +228,8 @@ class YOLOTrainingTask(TrainingTask):
         
         project_path = self.output_base.resolve()
         logger.info(f"Setting YOLO project to: {project_path}")
+        logger.info(f"Dataset info keys: {list(dataset_info.keys())}")
+        logger.info(f"Dataset yaml_path: {dataset_info.get('yaml_path')}")
         
         train_args = build_yolo_training_args(
             dataset_info,
@@ -189,14 +238,31 @@ class YOLOTrainingTask(TrainingTask):
             self.task_id
         )
         
+        logger.info(f"Built training args with keys: {list(train_args.keys())}")
         logger.info(f"Starting training with args: {train_args}")
         logger.info(f"IMAGE SIZE EXPLICITLY SET TO: {train_args.get('imgsz', 'NOT SET')}")
+        
+        # Verify critical paths exist
+        data_path = Path(train_args.get('data', ''))
+        if not data_path.exists():
+            raise FileNotFoundError(f"Data YAML file does not exist: {data_path}")
+        logger.info(f"Verified data.yaml exists: {data_path}")
+        
+        project_dir = Path(train_args.get('project', ''))
+        if not project_dir.exists():
+            logger.warning(f"Project directory does not exist: {project_dir}, will be created by YOLO")
+        else:
+            logger.info(f"Project directory exists: {project_dir}")
         
         return train_args
     
     def _train_model(self, train_args: Dict[str, Any]):
         """Execute YOLO model training"""
-        logger.info(f"Starting YOLO training with project={train_args['project']}, name={train_args['name']}")
+        logger.info(f"=== _train_model() called ===")
+        logger.info(f"Starting YOLO training with project={train_args.get('project')}, name={train_args.get('name')}")
+        logger.info(f"Model object: {self.model}, type: {type(self.model)}")
+        logger.info(f"Train args keys: {list(train_args.keys())}")
+        logger.info(f"Train args: {train_args}")
         
         # Recursively ensure all directories in the path have correct permissions
         # This is critical because YOLO creates directories during training
@@ -223,11 +289,83 @@ class YOLOTrainingTask(TrainingTask):
             except Exception as e:
                 logger.warning(f"Could not ensure output_base permissions: {e}")
         
+        # Verify data.yaml exists before training (double check)
+        data_yaml_path = Path(train_args.get('data', ''))
+        if not data_yaml_path.exists():
+            raise FileNotFoundError(f"Data YAML file does not exist: {data_yaml_path}")
+        logger.info(f"Final verification: data.yaml exists: {data_yaml_path}")
+        
         # Set umask to 0 so files are created with 666 permissions
         old_umask = os.umask(0)
         try:
-            self.results = self.model.train(**train_args)
+            logger.info(f"=== About to call model.train() ===")
+            logger.info(f"Model: {self.model}, type: {type(self.model)}")
+            logger.info(f"Model has train method: {hasattr(self.model, 'train')}")
+            logger.info(f"Train args: {train_args}")
+            logger.info(f"Data YAML path: {train_args.get('data')} (exists: {Path(train_args.get('data', '')).exists()})")
+            logger.info(f"Project path: {train_args.get('project')} (exists: {Path(train_args.get('project', '')).exists()})")
+            
+            # Flush logs before training to ensure we see them
+            import sys
+            sys.stdout.flush()
+            sys.stderr.flush()
+            
+            logger.info(f"Calling: self.model.train(**train_args)")
+            logger.info(f"This may take a while - training is starting...")
+            
+            # Force log flush to ensure we see this message
+            import sys
+            for handler in logger.handlers:
+                handler.flush()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            
+            # Verify model is still valid before training
+            if self.model is None:
+                raise ValueError("Model is None - cannot train")
+            
+            if not hasattr(self.model, 'train'):
+                raise ValueError("Model does not have train method")
+            
+            # Actually call model.train() - this is the critical line
+            # Wrap in try-except to catch any silent failures
+            try:
+                logger.info(f"EXECUTING: model.train() NOW...")
+                logger.info(f"Model type before train: {type(self.model)}")
+                logger.info(f"Train args data path: {train_args.get('data')}")
+                logger.info(f"Train args project: {train_args.get('project')}")
+                
+                # Double-check data.yaml exists
+                data_path = Path(train_args.get('data', ''))
+                if not data_path.exists():
+                    raise FileNotFoundError(f"Data YAML does not exist at: {data_path}")
+                
+                # Read and log first few lines of data.yaml for debugging
+                try:
+                    with open(data_path, 'r') as f:
+                        yaml_content = f.read()
+                        logger.info(f"Data YAML content (first 500 chars): {yaml_content[:500]}")
+                except Exception as e:
+                    logger.warning(f"Could not read data.yaml: {e}")
+                
+                # Force another log flush
+                sys.stdout.flush()
+                sys.stderr.flush()
+                
+                # THE ACTUAL TRAINING CALL
+                logger.info(f"*** CALLING model.train() NOW - THIS SHOULD START TRAINING ***")
+                self.results = self.model.train(**train_args)
+                logger.info(f"*** model.train() RETURNED - TRAINING COMPLETED ***")
+                logger.info(f"SUCCESS: model.train() completed")
+            except Exception as train_error:
+                logger.error(f"ERROR in model.train(): {train_error}", exc_info=True)
+                logger.error(f"Error type: {type(train_error)}")
+                logger.error(f"Error args: {train_error.args}")
+                raise
+            
+            logger.info(f"=== model.train() returned ===")
             logger.info(f"Training completed. Results type: {type(self.results)}")
+            logger.info(f"Results: {self.results}")
             
             # After training, recursively fix permissions on weights directory and all files
             if self.weights_dir and self.weights_dir.exists():
@@ -323,5 +461,26 @@ def train_yolo_model(self, task_id: int, training_config: Dict[str, Any]):
     When bind=True, 'self' is the task instance (YOLOTrainingTask).
     Uses the original task name for backward compatibility.
     """
+    logger.info(f"=== train_yolo_model() called by Celery ===")
+    logger.info(f"Task ID: {task_id}, Training config keys: {list(training_config.keys())}")
+    logger.info(f"Self type: {type(self)}, has execute: {hasattr(self, 'execute')}")
+    
+    # Force log flush immediately
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    for handler in logger.handlers:
+        handler.flush()
+    
     # self is already an instance of YOLOTrainingTask
-    return self.execute(task_id, training_config)
+    try:
+        logger.info(f"About to call self.execute() for task {task_id}")
+        result = self.execute(task_id, training_config)
+        logger.info(f"=== train_yolo_model() completed successfully ===")
+        return result
+    except Exception as e:
+        logger.error(f"=== train_yolo_model() failed with exception ===")
+        logger.error(f"Exception: {e}", exc_info=True)
+        logger.error(f"Exception type: {type(e)}")
+        logger.error(f"Exception args: {e.args}")
+        raise

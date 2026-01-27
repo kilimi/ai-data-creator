@@ -265,8 +265,20 @@ def build_yolo_training_args(
     Returns:
         Dictionary of training arguments
     """
+    # Ensure data.yaml path is absolute
+    yaml_path = dataset_info['yaml_path']
+    if not Path(yaml_path).is_absolute():
+        yaml_path = str(Path(yaml_path).resolve())
+        logger.info(f"Converted relative data.yaml path to absolute: {yaml_path}")
+    
+    # Verify data.yaml exists
+    if not Path(yaml_path).exists():
+        raise FileNotFoundError(f"Data YAML file not found: {yaml_path}")
+    
+    logger.info(f"Using data.yaml path: {yaml_path} (exists: {Path(yaml_path).exists()})")
+    
     train_args = {
-        'data': dataset_info['yaml_path'],
+        'data': yaml_path,  # Use absolute path
         'epochs': training_config.get('epochs', 100),
         'batch': training_config.get('batch_size', 16),
         'imgsz': training_config.get('image_size', 640),

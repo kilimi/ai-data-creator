@@ -134,7 +134,8 @@ convert_scripts/*.json
 *.pt
 *.json
 backend/ai_models/
-
+backend/static/*
+backend/runs/*
 .sh
 
 backend/python_scripts/data/

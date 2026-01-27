@@ -13,7 +13,7 @@ celery_app = Celery(
     'ai_data_creator',
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks', 'app.tasks.export_tasks']
+    include=['app.tasks.training_tasks', 'app.tasks.yolo_training', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks', 'app.tasks.export_tasks']
 )
 
 # Celery configuration
@@ -65,7 +65,7 @@ from datetime import timedelta
 
 # Include backup tasks
 celery_app.conf.update(
-    include=['app.tasks.training_tasks', 'app.tasks.evaluation_tasks', 
+    include=['app.tasks.training_tasks', 'app.tasks.yolo_training', 'app.tasks.evaluation_tasks', 
              'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks',
              'app.tasks.export_tasks', 'app.tasks.backup_tasks']
 )

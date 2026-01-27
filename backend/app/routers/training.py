@@ -763,14 +763,19 @@ async def start_yolo_training(
             'weight_decay': request.weight_decay,
             'save_period': request.save_period,
             'augmentations': request.augmentations or {},
+            'remove_images_without_annotations': request.remove_images_without_annotations,
             'use_wandb': request.use_wandb,
             'wandb_project': request.wandb_project,
             'wandb_entity': request.wandb_entity,
         }
         
+        logger.info(f"Prepared training config for task {task.id}: keys={list(training_config.keys())}")
+        logger.info(f"Training config: model_type={training_config['model_type']}, epochs={training_config['epochs']}, remove_images={training_config.get('remove_images_without_annotations')}")
+        
         # Start background task
         if USE_CELERY:
             # Use Celery for proper task queuing
+            logger.info(f"Queuing Celery task for training task {task.id}")
             celery_task = celery_train_task.delay(task.id, training_config)
             logger.info(f"Queued training task {task.id} in Celery (task_id: {celery_task.id})")
             
