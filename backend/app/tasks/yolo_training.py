@@ -260,34 +260,26 @@ class YOLOTrainingTask(TrainingTask):
         """Execute YOLO model training"""
         logger.info(f"=== _train_model() called ===")
         logger.info(f"Starting YOLO training with project={train_args.get('project')}, name={train_args.get('name')}")
-        logger.info(f"Model object: {self.model}, type: {type(self.model)}")
+        logger.info(f"Model type: {type(self.model)}")
         logger.info(f"Train args keys: {list(train_args.keys())}")
-        logger.info(f"Train args: {train_args}")
+        train_args_filtered = {k: v for k, v in train_args.items() if k != 'model'}
+        logger.info(f"Train args (without full model): {train_args_filtered}")
         
-        # Recursively ensure all directories in the path have correct permissions
-        # This is critical because YOLO creates directories during training
-        from app.tasks.yolo_training_helpers import fix_path_permissions_recursive
-        
-        # Ensure weights directory and all parent directories have correct permissions
+        # Skip permission fixing for now - it might be causing hangs on large directories
+        # Just ensure directories exist
         if self.weights_dir:
             try:
-                # Create the directory structure
                 self.weights_dir.mkdir(parents=True, exist_ok=True)
-                # Fix permissions recursively on the entire path
-                fix_path_permissions_recursive(self.weights_dir)
-                logger.info(f"Ensured weights directory and all parents have permissions: {self.weights_dir}")
+                logger.info(f"Ensured weights directory exists: {self.weights_dir}")
             except Exception as e:
-                logger.warning(f"Could not ensure weights directory permissions: {e}")
+                logger.warning(f"Could not create weights directory: {e}")
         
-        # Also ensure the output_base and training directories have correct permissions
         if self.output_base:
             try:
-                fix_path_permissions_recursive(self.output_base)
-                training_dir = self.output_base / "training"
-                if training_dir.exists():
-                    fix_path_permissions_recursive(training_dir)
+                self.output_base.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Ensured output_base exists: {self.output_base}")
             except Exception as e:
-                logger.warning(f"Could not ensure output_base permissions: {e}")
+                logger.warning(f"Could not create output_base: {e}")
         
         # Verify data.yaml exists before training (double check)
         data_yaml_path = Path(train_args.get('data', ''))
