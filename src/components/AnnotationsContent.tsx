@@ -1765,6 +1765,35 @@ export function AnnotationsContent({
     );
     
     setAnnotationFiles(updatedFiles);
+
+    // Push updated annotations to parent immediately so grid thumbnails show/hide bboxes without delay
+    if (onShowAnnotationsChange) {
+      if (showAllAnnotationsOnGrid) {
+        const allAnnotations = updatedFiles.flatMap(f => {
+          const mapped = mapAnnotationImageIds(f.samples || [], f);
+          return mapped.map(s => ({
+            ...s,
+            annotationFileName: f.name,
+            isVisible: f.isVisible !== false,
+            showBboxes: f.showBboxes !== false
+          }));
+        });
+        onShowAnnotationsChange(allAnnotations.length > 0, allAnnotations, updatedFiles);
+      } else {
+        const visible = updatedFiles
+          .filter(f => visibleAnnotations.has(f.id) && f.samples?.length)
+          .flatMap(f => {
+            const mapped = mapAnnotationImageIds(f.samples || [], f);
+            return mapped.map(s => ({
+              ...s,
+              annotationFileName: f.name,
+              isVisible: true,
+              showBboxes: f.showBboxes !== false
+            }));
+          });
+        onShowAnnotationsChange(visible.length > 0, visible, updatedFiles);
+      }
+    }
     
     console.log(`Updated annotation files after bbox toggle. File ${file.name} showBboxes: ${newBboxVisibility}`);
     

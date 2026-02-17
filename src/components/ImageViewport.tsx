@@ -44,6 +44,31 @@ export const ImageViewport = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
 
+  // When showing full-size: start with thumbnail for instant display, then load original
+  const placeholderUrl = image?.thumbnailUrl || image?.url;
+  const fullUrl = image?.url;
+  const startWithPlaceholder = useFullSize && fullUrl && placeholderUrl && fullUrl !== placeholderUrl;
+  const expectingFullLoadRef = useRef(false);
+
+  useEffect(() => {
+    if (!startWithPlaceholder || !imageRef.current || !fullUrl) return;
+    expectingFullLoadRef.current = true;
+    imageRef.current.src = fullUrl;
+  }, [startWithPlaceholder, fullUrl, image?.id]);
+
+  const initialSrc = useFullSize
+    ? (startWithPlaceholder ? placeholderUrl : fullUrl)
+    : (placeholderUrl || fullUrl);
+
+  const handleLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    if (startWithPlaceholder && expectingFullLoadRef.current) {
+      expectingFullLoadRef.current = false;
+      onImageLoad(e);
+    } else if (!startWithPlaceholder) {
+      onImageLoad(e);
+    }
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -75,10 +100,10 @@ export const ImageViewport = ({
           <img
             ref={imageRef}
             key={image?.id}
-            src={useFullSize ? image.url : (image.thumbnailUrl || image.url)}
+            src={initialSrc}
             alt={image.fileName}
             className="max-h-full max-w-full object-contain"
-            onLoad={onImageLoad}
+            onLoad={handleLoad}
             draggable={false}
             style={{ 
               maxHeight: '60vh',

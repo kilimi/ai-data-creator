@@ -106,13 +106,6 @@ export function ImagesGrid({
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
   const [imageDimensions, setImageDimensions] = useState<{ [key: string]: { width: number; height: number } }>({});
 
-  // Debug: log the images structure
-  useEffect(() => {
-    console.log('ImagesGrid: Received images:', images);
-    if (images.length > 0) {
-      console.log('ImagesGrid: First image structure:', images[0]);
-    }
-  }, [images]);
 
   const handleDeleteClick = async (e: React.MouseEvent, imageId: string) => {
     e.stopPropagation();
@@ -128,11 +121,6 @@ export function ImagesGrid({
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>, imageId: string) => {
     const img = e.currentTarget;
-    console.log(`ImagesGrid: Image ${imageId} loaded with dimensions:`, {
-      natural: { width: img.naturalWidth, height: img.naturalHeight },
-      displayed: { width: img.clientWidth, height: img.clientHeight }
-    });
-    
     setImageDimensions(prev => ({
       ...prev,
       [imageId]: {
@@ -143,35 +131,8 @@ export function ImagesGrid({
     setLoadedImages(prev => new Set(prev).add(imageId));
   };
 
-  const getImageAnnotations = (imageId: string) => {
-    // Convert both to strings for comparison to handle type mismatches
-    const imageAnnotations = filteredAnnotations.filter(annotation => String(annotation.imageId) === String(imageId));
-    
-    if (imageAnnotations.length > 0) {
-      console.log(`ImagesGrid: Found ${imageAnnotations.length} annotations for image ${imageId} (type: ${typeof imageId}):`);
-      imageAnnotations.forEach((ann, idx) => {
-        console.log(`  ${idx + 1}. Class: ${ann.className}, File: ${ann.annotationFileName || 'NOT SET'}, Color: ${ann.color}`);
-        console.log(`      annotation.imageId: ${ann.imageId} (type: ${typeof ann.imageId}), matches: ${String(ann.imageId) === String(imageId)}`);
-        console.log(`      bbox: ${JSON.stringify(ann.bbox)}, showBboxes: ${ann.showBboxes}, isVisible: ${ann.isVisible}`);
-        
-        // Add debugging for bbox format
-        if (ann.bbox && ann.bbox.length === 4) {
-          const [x, y, w, h] = ann.bbox;
-          const seemsNormalized = x <= 1 && y <= 1 && w <= 1 && h <= 1;
-          console.log(`      bbox format: ${seemsNormalized ? 'NORMALIZED' : 'PIXEL'} coordinates`);
-        }
-        
-        // Add debugging for segmentation data
-        if (ann.segmentation && ann.segmentation.length > 0) {
-          console.log(`      has segmentation: ${ann.segmentation.length} segments`);
-        } else {
-          console.log(`      no segmentation data`);
-        }
-      });
-    }
-    
-    return imageAnnotations;
-  };
+  const getImageAnnotations = (imageId: string) =>
+    filteredAnnotations.filter(annotation => String(annotation.imageId) === String(imageId));
 
   if (images.length === 0) {
     return (
@@ -227,19 +188,24 @@ export function ImagesGrid({
                   onLoad={(e) => handleImageLoad(e, image.id)}
                 />
                 
-                {/* Annotation overlay - only render after image is loaded and we have dimensions */}
-                {imageIsLoaded && dimensions && imageAnnotations.length > 0 && (
-                  <div className="absolute inset-0">
-                    <AnnotationVisualizer
-                      annotations={imageAnnotations}
-                      imageWidth={dimensions.width}
-                      imageHeight={dimensions.height}
-                      className="w-full h-full"
-                      showFileName={false}
-                      globalShowMasks={true}
-                    />
-                  </div>
-                )}
+                {/* Annotation overlay: use original image dimensions so bbox/segmentation (in original space) align with thumbnail */}
+                {imageIsLoaded && imageAnnotations.length > 0 && (() => {
+                  const w = image.width && image.height ? image.width : dimensions?.width;
+                  const h = image.width && image.height ? image.height : dimensions?.height;
+                  if (!w || !h) return null;
+                  return (
+                    <div className="absolute inset-0">
+                      <AnnotationVisualizer
+                        annotations={imageAnnotations}
+                        imageWidth={w}
+                        imageHeight={h}
+                        className="w-full h-full"
+                        showFileName={false}
+                        globalShowMasks={true}
+                      />
+                    </div>
+                  );
+                })()}
                 
                 {/* Delete button */}
                 <Button
