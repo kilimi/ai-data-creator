@@ -195,6 +195,49 @@ def prepare_yolo_dataset(
             logger.warning(f"No images found for dataset {dataset_id}, skipping")
             continue
         
+        # Filter out images without VALID annotations BEFORE splitting (if flag is set)
+        if remove_images_without_annotations:
+            images_with_annotations = []
+            for img in images:
+                # Get annotations for this image
+                annotations = db.query(Annotation).filter(
+                    Annotation.image_id == img.id,
+                    Annotation.annotation_file_id == annotation_file_id
+                ).all()
+                
+                # Check if ANY annotation meets the requirements
+                has_valid_annotation = False
+                for annotation in annotations:
+                    # For segmentation models, annotation must have BOTH segmentation and bbox
+                    if is_segmentation_model:
+                        has_seg = annotation.segmentation and len(annotation.segmentation) > 0
+                        has_bbox = (annotation.bbox or 
+                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
+                        if has_seg and has_bbox:
+                            has_valid_annotation = True
+                            break
+                    else:
+                        # For detection models, just need bbox
+                        has_bbox = (annotation.bbox or 
+                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
+                        if has_bbox:
+                            has_valid_annotation = True
+                            break
+                
+                if has_valid_annotation:
+                    images_with_annotations.append(img)
+            
+            images_before = len(images)
+            images = images_with_annotations
+            images_after = len(images)
+            
+            if images_before != images_after:
+                logger.info(f"Filtered dataset {dataset_id}: {images_before} → {images_after} images (removed {images_before - images_after} without valid annotations)")
+            
+            if not images:
+                logger.warning(f"No images with annotations found for dataset {dataset_id} after filtering, skipping")
+                continue
+        
         # Calculate split indices
         total_count = len(images)
         train_count = int(total_count * split['train'] / 100)
@@ -249,10 +292,19 @@ def prepare_yolo_dataset(
                     Annotation.annotation_file_id == annotation_file_id
                 ).all()
                 
-                # Skip images without annotations if the flag is set
-                if remove_images_without_annotations and not annotations:
-                    logger.debug(f"Skipping image {image.id} ({image.file_name}) - no annotations found")
-                    continue
+                # At this point, images without annotations have already been filtered out
+                # during the pre-split filtering step if remove_images_without_annotations is True
+                if not annotations:
+                    if remove_images_without_annotations:
+                        # This shouldn't happen since we filtered before splitting
+                        logger.warning(f"Image {image.id} has no annotations but wasn't filtered - this is unexpected")
+                        continue
+                    else:
+                        # Create empty label file for images without annotations
+                        label_path = lbl_dir / (src_image_path.stem + '.txt')
+                        label_path.touch()
+                        total_images[split_name] += 1
+                        continue
                 
                 # Create YOLO format label file
                 label_lines = []
@@ -634,12 +686,12 @@ async def train_yolo_model_task(
         task.task_metadata = {
             **task.task_metadata,
             "stage": "completed",
-            "best_model": str(best_model_path) if best_model_path.exists() else None,
-            "last_model": str(last_model_path) if last_model_path.exists() else None,
+            "best_model": f"/app/{best_model_path}" if best_model_path.exists() else None,
+            "last_model": f"/app/{last_model_path}" if last_model_path.exists() else None,
             "class_names": dataset_info['class_names'],
             "class_count": dataset_info['class_count'],
             "image_counts": dataset_info['image_counts'],
-            "results_dir": str(output_base / "training")
+            "results_dir": f"/app/{output_base / 'training'}"
         }
         db.commit()
         

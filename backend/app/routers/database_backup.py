@@ -93,9 +93,18 @@ def get_all_table_data(db: Session, project_ids: List[int] = None, dataset_ids: 
                     elif table_name in ['images', 'image_collections', 'annotation_files', 'annotation_classes', 'annotations']:
                         query = query.filter(model_class.dataset_id.in_(dataset_ids))
                 
-                records = query.all()
-                data[table_name] = [serialize_model(record) for record in records]
-                logger.info(f"Exported {len(records)} records from {table_name}")
+                # Use yield_per() to fetch in batches instead of loading all at once
+                # This reduces memory usage dramatically for large tables
+                records = []
+                batch_count = 0
+                for record in query.yield_per(1000):
+                    records.append(serialize_model(record))
+                    batch_count += 1
+                    if batch_count % 1000 == 0:
+                        logger.info(f"  Processed {batch_count} records from {table_name}...")
+                
+                data[table_name] = records
+                logger.info(f"✓ Exported {len(records)} records from {table_name}")
             
         except Exception as e:
             logger.error(f"Error exporting table {table_name}: {str(e)}")
@@ -119,52 +128,107 @@ async def export_database(
         
         logger.info(f"Exporting with filters - projects: {project_id_list}, datasets: {dataset_id_list}")
         
-        # Get all table data with filters
-        data = get_all_table_data(db, project_id_list, dataset_id_list)
-        
-        # Add metadata
-        export_data = {
-            "metadata": {
-                "export_date": datetime.utcnow().isoformat(),
-                "version": "1.0",
-                "description": "AI Data Creator Database Backup"
-            },
-            "data": data
-        }
-        
-        # Use streaming JSON encoding for better memory efficiency
-        # Create a generator that yields JSON chunks
-        def generate_json():
-            """Generator function to stream JSON data in chunks"""
+        # TRUE STREAMING: Generate JSON incrementally without building entire structure in memory
+        def generate_json_stream():
+            """Generator that yields JSON chunks as they're created"""
             try:
-                # Use json.dumps but yield in chunks to avoid loading everything in memory at once
-                # For very large datasets, we'll still need to serialize, but we can yield chunks
-                json_str = json.dumps(export_data, indent=2, ensure_ascii=False, default=str)
-                json_bytes = json_str.encode('utf-8')
+                # Start JSON structure
+                yield b'{"metadata":{"export_date":"'
+                yield datetime.utcnow().isoformat().encode('utf-8')
+                yield b'","version":"1.0","description":"AI Data Creator Database Backup"},"data":{'
                 
-                # Yield in 64KB chunks for efficient streaming
-                chunk_size = 64 * 1024
-                for i in range(0, len(json_bytes), chunk_size):
-                    yield json_bytes[i:i + chunk_size]
+                # Export each table incrementally
+                table_order = [
+                    'projects', 'datasets', 'image_collections', 'images',
+                    'annotation_files', 'annotation_classes', 'annotations',
+                    'tasks', 'augmentations', 'dataset_groups'
+                ]
+                
+                first_table = True
+                for table_name in table_order:
+                    try:
+                        # Add comma between tables
+                        if not first_table:
+                            yield b','
+                        first_table = False
+                        
+                        # Start table array
+                        yield f'"{table_name}":['.encode('utf-8')
+                        
+                        # Get model class - use explicit mapping
+                        model_map = {
+                            'projects': models.Project,
+                            'datasets': models.Dataset,
+                            'image_collections': models.ImageCollection,
+                            'images': models.Image,
+                            'annotation_files': models.AnnotationFile,
+                            'annotation_classes': models.AnnotationClass,
+                            'annotations': models.Annotation,
+                            'tasks': models.Task,
+                            'augmentations': models.Augmentation,
+                            'dataset_groups': models.DatasetGroup
+                        }
+                        model_class = model_map.get(table_name)
+                        
+                        if model_class:
+                            query = db.query(model_class)
+                            
+                            # Apply filters based on table
+                            if project_id_list:
+                                if table_name == 'projects':
+                                    query = query.filter(model_class.id.in_(project_id_list))
+                                elif table_name in ['datasets', 'tasks', 'dataset_groups']:
+                                    query = query.filter(model_class.project_id.in_(project_id_list))
+                            
+                            if dataset_id_list:
+                                if table_name == 'datasets':
+                                    query = query.filter(model_class.id.in_(dataset_id_list))
+                                elif table_name in ['images', 'image_collections', 'annotation_files', 'annotation_classes', 'annotations']:
+                                    query = query.filter(model_class.dataset_id.in_(dataset_id_list))
+                            
+                            # Stream records in batches
+                            first_record = True
+                            record_count = 0
+                            for record in query.yield_per(500):
+                                if not first_record:
+                                    yield b','
+                                first_record = False
+                                
+                                # Serialize and yield record
+                                record_dict = serialize_model(record)
+                                yield json.dumps(record_dict, ensure_ascii=False, default=str).encode('utf-8')
+                                record_count += 1
+                                
+                                # Log progress every 1000 records
+                                if record_count % 1000 == 0:
+                                    logger.info(f"  Streamed {record_count} records from {table_name}...")
+                            
+                            logger.info(f"✓ Streamed {record_count} records from {table_name}")
+                        
+                        # Close table array
+                        yield b']'
+                        
+                    except Exception as e:
+                        logger.error(f"Error streaming table {table_name}: {str(e)}")
+                        yield b'[]'  # Empty array for failed table
+                
+                # Close JSON structure
+                yield b'}}'
+                logger.info("✓ Database export completed successfully")
+                
             except Exception as e:
-                logger.error(f"Error generating JSON stream: {str(e)}")
-                # Yield error as JSON
-                error_json = json.dumps({"error": f"Failed to generate export: {str(e)}"}).encode('utf-8')
-                yield error_json
+                logger.error(f"Error in JSON stream generation: {str(e)}", exc_info=True)
                 raise
         
         # Create filename
         filename = f"ai_data_creator_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
         
-        # Use StreamingResponse with chunked encoding (don't set Content-Length)
-        # This allows the browser to handle incomplete responses better
+        # Use StreamingResponse with chunked encoding
         return StreamingResponse(
-            generate_json(),
+            generate_json_stream(),
             media_type="application/json",
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
-                # Don't set Content-Length for streaming - let it be chunked
-                # This prevents ERR_CONTENT_LENGTH_MISMATCH errors
             }
         )
         
@@ -502,23 +566,31 @@ async def get_database_connection_info():
 
 @router.get("/database/info")
 async def get_database_info(db: Session = Depends(get_db)):
-    """Get database statistics"""
+    """Get database statistics using optimized single-query approach"""
     try:
+        # Use a single query with UNION ALL to get all counts at once
+        # This is MUCH faster than 10 separate COUNT queries
+        query = text("""
+            SELECT 'projects' as table_name, COUNT(*)::int as count FROM projects
+            UNION ALL SELECT 'datasets', COUNT(*)::int FROM datasets
+            UNION ALL SELECT 'images', COUNT(*)::int FROM images
+            UNION ALL SELECT 'annotations', COUNT(*)::int FROM annotations
+            UNION ALL SELECT 'annotation_files', COUNT(*)::int FROM annotation_files
+            UNION ALL SELECT 'annotation_classes', COUNT(*)::int FROM annotation_classes
+            UNION ALL SELECT 'image_collections', COUNT(*)::int FROM image_collections
+            UNION ALL SELECT 'tasks', COUNT(*)::int FROM tasks
+            UNION ALL SELECT 'augmentations', COUNT(*)::int FROM augmentations
+            UNION ALL SELECT 'dataset_groups', COUNT(*)::int FROM dataset_groups
+        """)
+        
+        result = db.execute(query)
+        
+        # Build info dictionary from results
         info = {}
+        for row in result:
+            info[row.table_name] = row.count
         
-        # Count records in each table
-        info['projects'] = db.query(models.Project).count()
-        info['datasets'] = db.query(models.Dataset).count()
-        info['images'] = db.query(models.Image).count()
-        info['annotations'] = db.query(models.Annotation).count()
-        info['annotation_files'] = db.query(models.AnnotationFile).count()
-        info['annotation_classes'] = db.query(models.AnnotationClass).count()
-        info['image_collections'] = db.query(models.ImageCollection).count()
-        info['tasks'] = db.query(models.Task).count()
-        info['augmentations'] = db.query(models.Augmentation).count()
-        info['dataset_groups'] = db.query(models.DatasetGroup).count()
-        
-        # Calculate total counts
+        # Calculate total
         info['total_records'] = sum(info.values())
         
         return {

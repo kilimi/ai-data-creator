@@ -409,6 +409,58 @@ class YOLOTrainingTask(TrainingTask):
         
         # Store weights info in task metadata
         self.task.task_metadata.update(weights_info)
+        
+        # Copy training results to Windows-accessible location
+        self._export_training_results(actual_save_dir)
+    
+    def _export_training_results(self, actual_save_dir: Path):
+        """Export training results (weights, plots, metrics) to backups directory for easy access"""
+        try:
+            # Create export directory in backups (Windows-accessible)
+            export_dir = Path("backups") / "training_exports" / f"task_{self.task_id}"
+            export_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Exporting training results to {export_dir}")
+            
+            # Copy weights
+            for weight_name in ["best.pt", "last.pt"]:
+                source = self.weights_dir / weight_name
+                if source.exists():
+                    shutil.copy2(source, export_dir / weight_name)
+                    logger.info(f"✓ Exported {weight_name}")
+            
+            # Copy results files (plots, metrics, CSV)
+            if actual_save_dir and actual_save_dir.exists():
+                for pattern in ["*.png", "*.csv", "results.json", "args.yaml"]:
+                    for file in actual_save_dir.glob(pattern):
+                        shutil.copy2(file, export_dir / file.name)
+                        logger.info(f"✓ Exported {file.name}")
+            
+            # Create README with task info
+            readme_path = export_dir / "README.txt"
+            with open(readme_path, 'w') as f:
+                f.write(f"Training Task #{self.task_id}\n")
+                f.write(f"{'='*50}\n\n")
+                f.write(f"Exported: {datetime.utcnow().isoformat()}\n")
+                f.write(f"Model: {self.training_config.get('model_type', 'unknown')}\n")
+                f.write(f"Epochs: {self.training_config.get('epochs', 'unknown')}\n")
+                f.write(f"\nFiles in this directory:\n")
+                f.write(f"  - best.pt: Best model weights (lowest validation loss)\n")
+                f.write(f"  - last.pt: Final epoch weights\n")
+                f.write(f"  - *.png: Training plots and visualizations\n")
+                f.write(f"  - results.csv: Training metrics per epoch\n")
+                f.write(f"\nOriginal location (Docker volume):\n")
+                f.write(f"  {self.output_base / 'training'}\n")
+            
+            logger.info(f"✓ Training results exported to: {export_dir}")
+            
+            # Update task metadata with export location
+            self.task.task_metadata["exported_to"] = str(export_dir)
+            self.db.commit()
+            
+        except Exception as e:
+            logger.warning(f"Could not export training results: {e}")
+            # Don't fail the task if export fails
     
     def _complete_task(self, dataset_info: Dict[str, Any]):
         """Mark task as completed and update metadata"""

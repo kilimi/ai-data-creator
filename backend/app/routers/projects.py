@@ -192,6 +192,47 @@ def read_projects(skip: int = 0, limit: int = 100, include_images: bool = True, 
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.get("/projects/names-only")
+def read_projects_names_only(db: Session = Depends(get_db)):
+    """
+    Ultra-lightweight endpoint for export dialog - returns ONLY IDs and names.
+    Perfect for selection lists where you don't need any metadata.
+    """
+    try:
+        from sqlalchemy.orm import selectinload, load_only
+        
+        # Only load ID and name fields - nothing else!
+        # Need to load project_id for the relationship to work
+        projects = db.query(models.Project).options(
+            load_only(models.Project.id, models.Project.name),
+            selectinload(models.Project.datasets).load_only(
+                models.Dataset.id,
+                models.Dataset.name,
+                models.Dataset.project_id
+            )
+        ).all()
+        
+        result = []
+        for p in projects:
+            datasets = []
+            if p.datasets:
+                for d in p.datasets:
+                    datasets.append({
+                        "id": d.id,
+                        "name": d.name
+                    })
+            
+            result.append({
+                "id": p.id,
+                "name": p.name,
+                "datasets": datasets
+            })
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.get("/projects/{project_id}/datasets/list")
 def list_project_datasets(project_id: int, include_thumbnails: bool = True, db: Session = Depends(get_db)):
     """

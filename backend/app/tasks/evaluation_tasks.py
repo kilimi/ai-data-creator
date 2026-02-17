@@ -317,8 +317,12 @@ def evaluate_model(
             # Grid-based or full-image inference
             if use_grid:
                 # Load image to get dimensions
-                pil_image = PILImage.open(img_path)
-                image_width, image_height = pil_image.size
+                try:
+                    pil_image = PILImage.open(img_path)
+                    image_width, image_height = pil_image.size
+                except Exception as e:
+                    logger.warning(f"Failed to load image {img_path}: {e}")
+                    continue
                 
                 # Create grid_images directory
                 grid_output_dir = Path("projects") / str(project_id) / "training" / f"task_{training_task_id}" / "grid_images"
@@ -341,13 +345,17 @@ def evaluate_model(
                     ))
                     
                     # Run prediction on tile
-                    results = model.predict(
-                        source=np.array(tile_image),
-                        conf=conf_threshold,
-                        iou=iou_threshold,
-                        verbose=False,
-                        save=False  # Don't save via ultralytics
-                    )
+                    try:
+                        results = model.predict(
+                            source=np.array(tile_image),
+                            conf=conf_threshold,
+                            iou=iou_threshold,
+                            verbose=False,
+                            save=False  # Don't save via ultralytics
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to run inference on tile {tile_idx} of {img_path}: {e}")
+                        continue
                     
                     if not results or len(results) == 0:
                         continue
@@ -471,12 +479,16 @@ def evaluate_model(
                 
             else:
                 # Full image inference (original behavior)
-                results = model.predict(
-                    source=str(img_path),
-                    conf=conf_threshold,
-                    iou=iou_threshold,
-                    verbose=False
-                )
+                try:
+                    results = model.predict(
+                        source=str(img_path),
+                        conf=conf_threshold,
+                        iou=iou_threshold,
+                        verbose=False
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to run inference on {img_path}: {e}")
+                    continue
                 
                 if not results or len(results) == 0:
                     continue

@@ -253,11 +253,18 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   };
 
   const canTrain = () => {
-    const basicRequirements = selectedDatasets.length > 0 && 
-           selectedDatasets.every(sel => sel.imageCollection && sel.annotation) &&
-           selectedModel;
+    // Check that we have at least one dataset selected
+    if (selectedDatasets.length === 0) return false;
     
-    if (!basicRequirements) return false;
+    // Check that all datasets have both image collection AND annotation selected
+    const allConfigured = selectedDatasets.every(sel => {
+      const hasImageCollection = sel.imageCollection && sel.imageCollection.trim() !== '';
+      const hasAnnotation = sel.annotation && sel.annotation.trim() !== '';
+      return hasImageCollection && hasAnnotation;
+    });
+    
+    // Check that a model type is selected
+    if (!selectedModel || !allConfigured) return false;
     
     // If wandb is enabled, check if settings are configured
     if (saveToWandb) {

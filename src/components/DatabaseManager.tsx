@@ -127,7 +127,8 @@ export function DatabaseManager({
     
     setIsLoadingProjects(true);
     try {
-      const response = await api.getProjects();
+      // Use ultra-lightweight endpoint that only returns IDs and names
+      const response = await api.getProjectsNamesOnly();
       if (response.success && response.data) {
         setProjects(response.data);
         // Start with nothing selected - user must explicitly choose

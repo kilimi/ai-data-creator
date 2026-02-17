@@ -1004,6 +1004,14 @@ export class ApiClient {
     return this.request('/database/info');
   }
 
+  async getProjectsNamesOnly(): Promise<ApiResponse<Array<{
+    id: number;
+    name: string;
+    datasets: Array<{ id: number; name: string }>;
+  }>>> {
+    return this.request('/projects/names-only');
+  }
+
   async exportDatabase(
     onProgress?: (progress: number) => void, 
     projectIds?: number[], 
@@ -1078,10 +1086,13 @@ export class ApiClient {
             lastProgressUpdate = progress;
           }
         } else if (onProgress && totalLength === 0) {
-          // If no content length, show indeterminate progress
-          // Show a pulsing progress between 10-90% to indicate activity
-          const estimatedProgress = Math.min(90, 10 + Math.floor((receivedLength / 10000) % 80));
-          onProgress(estimatedProgress);
+          // For streaming without content-length, show steady incremental progress
+          // Use logarithmic scale: grows fast initially, then slows down
+          const streamingProgress = Math.min(90, 10 + Math.floor(Math.log(receivedLength + 1) * 8));
+          if (streamingProgress > lastProgressUpdate) {
+            onProgress(streamingProgress);
+            lastProgressUpdate = streamingProgress;
+          }
         }
       }
 
@@ -1320,10 +1331,13 @@ export class ApiClient {
             lastProgressUpdate = progress;
           }
         } else if (onProgress && totalLength === 0) {
-          // If no content length, show indeterminate progress
-          // Show a pulsing progress between 10-90% to indicate activity
-          const estimatedProgress = Math.min(90, 10 + Math.floor((receivedLength / 10000) % 80));
-          onProgress(estimatedProgress);
+          // For streaming without content-length, show steady incremental progress
+          // Use logarithmic scale: grows fast initially, then slows down
+          const streamingProgress = Math.min(90, 10 + Math.floor(Math.log(receivedLength + 1) * 8));
+          if (streamingProgress > lastProgressUpdate) {
+            onProgress(streamingProgress);
+            lastProgressUpdate = streamingProgress;
+          }
         }
       }
 
