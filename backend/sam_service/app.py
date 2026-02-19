@@ -52,6 +52,12 @@ def _load_predictor():
     return SAM_PREDICTOR
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check for load balancers and frontend SAM availability."""
+    return jsonify({"status": "ok", "sam_available": SAM_AVAILABLE}), 200
+
+
 @app.route("/segment", methods=["POST"])
 def segment():
     data = request.get_json(force=True)

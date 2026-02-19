@@ -1111,8 +1111,8 @@ export function AnnotationsContent({
           return mappedSamples.map(sample => ({
             ...sample,
             annotationFileName: file.name,
-            // For showAllAnnotationsOnGrid, respect individual file settings
-            isVisible: file.isVisible !== false,
+            // Eye icon controls mask visibility; only show masks when file is in visibleAnnotations
+            isVisible: visibleAnnotations.has(file.id),
             showBboxes: file.showBboxes !== false
           }));
         });
@@ -1774,7 +1774,7 @@ export function AnnotationsContent({
           return mapped.map(s => ({
             ...s,
             annotationFileName: f.name,
-            isVisible: f.isVisible !== false,
+            isVisible: visibleAnnotations.has(f.id),
             showBboxes: f.showBboxes !== false
           }));
         });

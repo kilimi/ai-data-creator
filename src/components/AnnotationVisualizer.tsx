@@ -155,39 +155,32 @@ export const AnnotationVisualizer = ({
       
       // Draw segmentation mask if available and masks are enabled
       if (globalShowMasks && annotation.segmentation && annotation.segmentation.length > 0) {
-        console.log(`AnnotationVisualizer: Drawing segmentation for ${annotation.className} with ${annotation.segmentation.length} segments, isVisible: ${annotation.isVisible}, globalShowMasks: ${globalShowMasks}`);
         annotation.segmentation.forEach((segment, segIndex) => {
-          if (!Array.isArray(segment) || segment.length < 6) { 
-            console.log(`AnnotationVisualizer: Skipping invalid segment ${segIndex} - not array or too short:`, segment);
-            return; 
-          }
-          
-          console.log(`AnnotationVisualizer: Drawing segment ${segIndex} with ${segment.length} points`);
-          
+          if (!Array.isArray(segment) || segment.length < 6) return;
+
+          // Detect normalized coords (0-1) vs pixel coords; backend may store either
+          const maxVal = Math.max(...segment.map((v: number) => Math.abs(v)));
+          const isNormalized = maxVal <= 1.5;
+          const toPixelX = (v: number) => (isNormalized ? v * imageWidth : v);
+          const toPixelY = (v: number) => (isNormalized ? v * imageHeight : v);
+
           ctx.beginPath();
-          
-          // Set fill style with transparency for the mask
           const hexColor = color.startsWith('#') ? color : `#${color}`;
           const opacity = (annotation as any).opacity || 0.25;
-          
-          // Convert hex to rgba
           const r = parseInt(hexColor.slice(1, 3), 16);
           const g = parseInt(hexColor.slice(3, 5), 16);
           const b = parseInt(hexColor.slice(5, 7), 16);
-          
           ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${opacity})`;
           ctx.strokeStyle = hexColor;
           ctx.lineWidth = Math.max(1, scale * 2);
-          
-          // Draw polygon with correct scaling and offset
+
           let firstPoint = true;
           for (let i = 0; i < segment.length; i += 2) {
             if (i + 1 >= segment.length) break;
-            
-            // Transform image coordinates to canvas coordinates with zoom and pan
-            const x = offsetX + (segment[i] * scale);
-            const y = offsetY + (segment[i + 1] * scale);
-            
+            const pixelX = toPixelX(segment[i]);
+            const pixelY = toPixelY(segment[i + 1]);
+            const x = offsetX + pixelX * scale;
+            const y = offsetY + pixelY * scale;
             if (firstPoint) {
               ctx.moveTo(x, y);
               firstPoint = false;
@@ -195,7 +188,6 @@ export const AnnotationVisualizer = ({
               ctx.lineTo(x, y);
             }
           }
-          
           ctx.closePath();
           ctx.fill();
           ctx.stroke();

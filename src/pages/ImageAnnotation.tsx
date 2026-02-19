@@ -47,8 +47,6 @@ import { API_CONFIG } from '@/config/api';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { Image, ImageCollection } from '@/types';
-import { useSAM } from '@/hooks/use-sam';
-import { Point as SAMPoint } from '@/utils/sam/types';
 
 // Annotation types
 export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'auto-segment';
@@ -119,17 +117,6 @@ const ImageAnnotation = () => {
   const navigate = useNavigate();
   const { api } = useApi();
   const { toast } = useToast();
-
-  // Start loading SAM models immediately when component mounts
-  // This happens when user navigates to "Annotate -> Segmentation annotations"
-  // Models will load in the background while user is working
-  const [samModelsLoading, setSamModelsLoading] = useState(false);
-  
-  useEffect(() => {
-    // Trigger SAM model loading on mount
-    console.log('[SAM] ImageAnnotation component mounted - starting SAM model preload');
-    setSamModelsLoading(true);
-  }, []);
 
   // Get annotation ID from URL params if editing existing annotation
   const annotationId = searchParams.get('annotationId');
@@ -238,8 +225,6 @@ const ImageAnnotation = () => {
   const [editingClassName, setEditingClassName] = useState('');
   // Auto-segment preview state
   const [autoSegmentPreview, setAutoSegmentPreview] = useState<{ polygons: Point[][]; maskDataUrl?: string; imageName?: string } | null>(null);
-  // Allow editing label for auto-segmented annotations before accepting
-  const [autoSegmentLabel, setAutoSegmentLabel] = useState<string>('');
   const [autoSegmentClassId, setAutoSegmentClassId] = useState<string | null>(null);
   // SAM points for interactive segmentation (ref so second click sees latest points before re-render)
   const [samPoints, setSamPoints] = useState<Array<{ x: number; y: number; label: number }>>([]);
@@ -248,8 +233,7 @@ const ImageAnnotation = () => {
     samPointsRef.current = samPoints;
   }, [samPoints]);
   const [isSamProcessing, setIsSamProcessing] = useState(false);
-  const [showSamLoadingDialog, setShowSamLoadingDialog] = useState(false);
-  const [samInitCancelled, setSamInitCancelled] = useState(false);
+
 
   // Panel tab state
   const [activePanelTab, setActivePanelTab] = useState<string>('annotations');
@@ -280,39 +264,12 @@ const ImageAnnotation = () => {
     }
   };
 
-  // SAM integration - get image URL for SAM
-  // IMPORTANT: Only pass URL strings, not HTMLImageElement - Comlink cannot serialize DOM elements
-  const samImage = displayImage?.url || currentImage?.url || null;
-  const samImageId = displayImage?.fileName || currentImage?.fileName || 'current-image';
-  
-  // Enable SAM - start loading models immediately when component mounts
-  // This allows models to load in the background while user is working
-  // Image encoding will start once an image is available
-  const { encoding, decode, runFallbackSegment, isLoading: isSamModelLoading, isReady: isSamReady, isWorkerReady } = useSAM({
-    image: samImage,
-    imageId: samImageId,
-    enabled: !!samImage && !samInitCancelled, // Encode image when available and not cancelled
-    preloadModels: true, // Start loading encoder/decoder models immediately
-  });
-  
-  // Close SAM loading dialog when SAM becomes ready (if it was shown)
-  useEffect(() => {
-    if (isSamReady && showSamLoadingDialog) {
-      setShowSamLoadingDialog(false);
-      // Automatically activate SAM tool once ready
-      if (!samInitCancelled) {
-        setActiveTool('auto-segment');
-        setSamPoints([]);
-      }
-    }
-  }, [isSamReady, showSamLoadingDialog, samInitCancelled]);
-
-  // Start auto-segmentation: try backend first (fast), then browser SAM if backend fails.
+  // Start auto-segmentation via backend SAM only.
   // label: 1 = add to mask (left-click), 0 = remove from mask (right-click).
   const startAutoSegment = useCallback(async (imgPoint: Point, label: number = 1) => {
     if (!displayImage && !currentImage) return;
     const img = (displayImage || currentImage)!;
-    const samPoint: SAMPoint = { x: imgPoint.x, y: imgPoint.y, label };
+    const samPoint = { x: imgPoint.x, y: imgPoint.y, label };
     // Use ref so rapid second click includes first point (avoids stale closure)
     const previousPoints = samPointsRef.current;
     const newPoints = [...previousPoints, samPoint];
@@ -327,7 +284,6 @@ const ImageAnnotation = () => {
         ...(maskDataUrl && { maskDataUrl }),
         imageName: img.fileName,
       });
-      setAutoSegmentLabel(preferredClass ? preferredClass.name : '');
       setAutoSegmentClassId(preferredClass ? preferredClass.id : null);
     };
 
@@ -353,9 +309,8 @@ const ImageAnnotation = () => {
     };
 
     try {
-      const apiBase = API_CONFIG.baseUrl;
       const { imageB64, sendScale } = getImageB64AndScale();
-      // When sending resized imageB64, points must be in resized image coordinates
+      const apiBase = API_CONFIG.baseUrl;
       const scalePoint = (p: { x: number; y: number }) =>
         imageB64 ? { x: Math.round(p.x * sendScale), y: Math.round(p.y * sendScale) } : { x: p.x, y: p.y };
       const body: Record<string, unknown> = {
@@ -378,34 +333,16 @@ const ImageAnnotation = () => {
       clearTimeout(timeoutId);
       if (!res.ok) throw new Error(`Segmentation failed: ${res.status}`);
       const json = await res.json();
-      // Reject old SAM service rectangle fallback (single 4–5 point polygon = placeholder)
       const rawPolygons = json.polygons || [];
-      const isRectangleFallback =
+      const isRectanglePlaceholder =
         json.source !== 'sam2' &&
         rawPolygons.length === 1 &&
         rawPolygons[0].length >= 4 &&
         rawPolygons[0].length <= 5;
-      if (isRectangleFallback) {
-        if (isWorkerReady && imageB64 && runFallbackSegment) {
-          try {
-            const scaledPoints = newPoints.map(p => ({ ...p, x: p.x * sendScale, y: p.y * sendScale }));
-            const result = await runFallbackSegment(imageB64, scaledPoints);
-            if (result?.polygons?.length > 0 && result.polygons[0].length > 0) {
-              let fallbackPolygons: Point[][] = result.polygons.map(poly => poly.map((p: Point) => ({ x: p.x, y: p.y })));
-              if (sendScale !== 1) {
-                const scaleBack = 1 / sendScale;
-                fallbackPolygons = fallbackPolygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
-              }
-              setPreview(fallbackPolygons);
-              return;
-            }
-          } catch (e) {
-            console.warn('[SAM] Browser fallback failed:', e);
-          }
-        }
+      if (isRectanglePlaceholder) {
         toast({
           title: 'SAM service needs update',
-          description: isWorkerReady ? 'Using browser SAM. If you see this again, try another point.' : 'Segmentation returned a placeholder. Rebuild the SAM 2 service (backend/sam_service) or wait for browser model to load.',
+          description: 'Segmentation returned a placeholder. Ensure SAM 2 service (backend/sam_service) is running with a valid model.',
           variant: 'destructive',
         });
         return;
@@ -413,7 +350,6 @@ const ImageAnnotation = () => {
       let polygons: Point[][] = rawPolygons.map((poly: number[][]) =>
         poly.map((p: number[]) => ({ x: p[0], y: p[1] }))
       );
-      // Scale polygons back to natural image coords when we sent resized image
       if (imageB64 && sendScale !== 1 && polygons.length > 0) {
         const scaleBack = 1 / sendScale;
         polygons = polygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
@@ -427,36 +363,16 @@ const ImageAnnotation = () => {
           variant: 'destructive',
         });
       }
-    } catch (backendErr) {
-      if (isWorkerReady && runFallbackSegment) {
-        const { imageB64: fallbackB64, sendScale: fallbackScale } = getImageB64AndScale();
-        if (fallbackB64) {
-          try {
-            const scaledPoints = newPoints.map(p => ({ ...p, x: p.x * fallbackScale, y: p.y * fallbackScale }));
-            const result = await runFallbackSegment(fallbackB64, scaledPoints);
-            if (result?.polygons?.length > 0 && result.polygons[0].length > 0) {
-              let polygons: Point[][] = result.polygons.map(poly => poly.map((p: Point) => ({ x: p.x, y: p.y })));
-              if (fallbackScale !== 1) {
-                const scaleBack = 1 / fallbackScale;
-                polygons = polygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
-              }
-              setPreview(polygons);
-              return;
-            }
-          } catch (workerErr) {
-            console.warn('[SAM] Browser fallback failed:', workerErr);
-          }
-        }
-      }
+    } catch (err) {
       toast({
         title: 'Segmentation failed',
-        description: isWorkerReady ? 'Backend and browser SAM could not produce a mask. Try another point.' : 'Backend SAM failed and browser model is still loading. Try again in a moment.',
+        description: 'Backend SAM is unavailable or failed. Ensure the SAM service is running.',
         variant: 'destructive',
       });
     } finally {
       setIsSamProcessing(false);
     }
-  }, [displayImage, currentImage, classes, selectedClass, toast, isSamReady, isWorkerReady, encoding, decode, runFallbackSegment, samPoints]);
+  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints]);
 
   const acceptAutoSegment = () => {
     if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
@@ -4200,28 +4116,20 @@ const ImageAnnotation = () => {
                 onClick={() => {
                   setActiveTool('auto-segment');
                   setSamPoints([]);
-                  // Don't show loading dialog – segmentation uses backend first; no wait for browser encode
                 }}
-                disabled={isSamProcessing || samInitCancelled || classes.length === 0}
+                disabled={isSamProcessing || classes.length === 0}
                 title={
                   classes.length === 0
                     ? 'Add at least one class first'
-                    : samInitCancelled
-                    ? 'SAM initialization cancelled'
                     : isSamProcessing
                     ? 'Processing segmentation...'
-                    : 'Click on image to segment (backend first, then browser SAM)'
+                    : 'Click on image to segment (backend SAM)'
                 }
               >
                 {isSamProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                     Processing...
-                  </>
-                ) : samInitCancelled ? (
-                  <>
-                    <AlertCircle className="w-4 h-4 mr-1" />
-                    SAM
                   </>
                 ) : (
                   <>
@@ -5022,66 +4930,6 @@ const ImageAnnotation = () => {
         </DialogContent>
       </Dialog>
 
-      {/* SAM Loading Dialog */}
-      <Dialog open={showSamLoadingDialog} onOpenChange={(open) => {
-        if (!open && !isSamReady) {
-          // User cancelled - mark as cancelled
-          setSamInitCancelled(true);
-        }
-        setShowSamLoadingDialog(open);
-      }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Initializing SAM
-            </DialogTitle>
-            <DialogDescription>
-              Loading Segment Anything Model. This may take a moment...
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Loading encoder model...</span>
-                {!isSamModelLoading && <Check className="h-4 w-4 text-green-500" />}
-                {isSamModelLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Loading decoder model...</span>
-                {!isSamModelLoading && <Check className="h-4 w-4 text-green-500" />}
-                {isSamModelLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Encoding image...</span>
-                {isSamReady && encoding && <Check className="h-4 w-4 text-green-500" />}
-                {!isSamReady && !isSamModelLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                {isSamModelLoading && <span className="text-xs text-muted-foreground">Waiting...</span>}
-              </div>
-            </div>
-            
-            {samImage && (
-              <div className="text-xs text-muted-foreground">
-                Image: {samImageId}
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSamInitCancelled(true);
-                setShowSamLoadingDialog(false);
-              }}
-              disabled={isSamReady}
-            >
-              Cancel
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

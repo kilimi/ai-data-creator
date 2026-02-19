@@ -47,17 +47,32 @@ export class SAMEncoder {
     // Pass original dimensions if image was downsampled
     const preprocessed = await Promise.resolve(preprocessImage(imageData, originalWidth, originalHeight));
 
-    // Create input tensor
-    const inputTensor = new ort.Tensor(
-      'float32',
-      preprocessed.tensor,
-      [1, 3, preprocessed.processedHeight, preprocessed.processedWidth]
-    );
-
-    // Run encoder
-    // Check input name - MobileSAM uses 'images', some models use 'x'
+    // Acly MobileSAM encoder expects 'input_image' with rank 3 [H,W,C] (HWC); other encoders use 'images'/'x' with rank 4 [N,C,H,W] (NCHW)
     const inputNames = this.session.getInputNames();
-    const inputName = inputNames[0] || 'images'; // Default to 'images' for MobileSAM
+    const inputName = inputNames[0] || 'images';
+    const wantsHWC = inputName === 'input_image';
+
+    let inputTensor: ort.Tensor;
+    if (wantsHWC) {
+      const H = preprocessed.processedHeight;
+      const W = preprocessed.processedWidth;
+      const size = H * W;
+      const hwc = new Float32Array(H * W * 3);
+      const chw = preprocessed.tensor;
+      for (let i = 0; i < size; i++) {
+        hwc[i * 3] = chw[i];           // R
+        hwc[i * 3 + 1] = chw[size + i];   // G
+        hwc[i * 3 + 2] = chw[2 * size + i]; // B
+      }
+      inputTensor = new ort.Tensor('float32', hwc, [H, W, 3]);
+    } else {
+      inputTensor = new ort.Tensor(
+        'float32',
+        preprocessed.tensor,
+        [1, 3, preprocessed.processedHeight, preprocessed.processedWidth]
+      );
+    }
+
     const outputs = await this.session.run({ [inputName]: inputTensor });
 
     // Get output name dynamically (different models may use different names)

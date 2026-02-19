@@ -7,7 +7,8 @@ import { SAMResult, Point } from '../utils/sam/types';
 import SAMWorker from '../workers/sam.worker?worker';
 
 const ENCODER_MODEL_PATH = '/models/sam/mobile_sam.encoder.onnx';
-const DECODER_MODEL_PATH = '/models/sam/sam_vit_h_4b8939.decoder.onnx';
+// Use MobileSAM decoder (matches encoder). ViT-H decoder is incompatible and returns rectangles.
+const DECODER_MODEL_PATH = '/models/sam/sam_mask_decoder_single.onnx';
 
 interface UseSAMOptions {
   image: HTMLImageElement | string | ImageData | null;
@@ -59,19 +60,6 @@ export function useSAM({ image, imageId, enabled = true, preloadModels = false }
     gcTime: 3600 * 1000,
   });
 
-  const decode = useCallback(
-    async (points: Point[]): Promise<SAMResult | null> => {
-      if (!worker || !encoding || points.length === 0) return null;
-      try {
-        return await worker.decodeMask(encoding, { points, labels: points.map(p => p.label) });
-      } catch (error) {
-        console.error('[SAM] decode error:', error);
-        return null;
-      }
-    },
-    [worker, encoding]
-  );
-
   /** Run browser SAM on a data URL image (e.g. when backend fails or returns placeholder). Points must be in the image's pixel coords (same as the data URL image). */
   const runFallbackSegment = useCallback(
     async (imageDataUrl: string, points: Point[]): Promise<SAMResult | null> => {
@@ -88,8 +76,6 @@ export function useSAM({ image, imageId, enabled = true, preloadModels = false }
   );
 
   return {
-    encoding,
-    decode,
     runFallbackSegment,
     isLoading: isWorkerLoading || isInitializing || isEncoding,
     isReady: !!worker && !!encoding,

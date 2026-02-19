@@ -5,6 +5,29 @@ import os
 
 router = APIRouter()
 
+SAM_SERVICE_URL = "http://sam_service:8081"
+
+
+@router.get("/segment/ready")
+async def segment_ready():
+    """Return 200 if SAM service is reachable, 503 otherwise. Used by frontend to show/hide SAM button."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{SAM_SERVICE_URL}/health")
+            if r.status_code == 200:
+                return {"available": True}
+    except Exception:
+        pass
+    try:
+        import requests
+        r = requests.get(f"{SAM_SERVICE_URL}/health", timeout=3)
+        if r.status_code == 200:
+            return {"available": True}
+    except Exception:
+        pass
+    raise HTTPException(status_code=503, detail="SAM service not available")
+
 
 @router.post('/segment')
 async def proxy_segment(request: Request):
@@ -69,7 +92,7 @@ async def proxy_segment(request: Request):
             except Exception:
                 pass
 
-    sam_url = 'http://sam_service:8081/segment'
+    sam_url = f"{SAM_SERVICE_URL}/segment"
 
     # Try to use httpx if installed (async). If not, fall back to requests (sync) in a thread.
     try:
