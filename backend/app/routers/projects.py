@@ -358,10 +358,10 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
-    # Get annotation files with minimal data
+    # Get annotation files with minimal data, ordered by date (newest first)
     annotation_files = db.query(models.AnnotationFile).filter(
         models.AnnotationFile.dataset_id == dataset_id
-    ).all()
+    ).order_by(models.AnnotationFile.created_at.desc()).all()
     
     result = []
     for ann_file in annotation_files:

@@ -484,10 +484,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     });
     
     try {
-      // Use the actual API to import annotations
-      const { useApi } = await import('@/hooks/use-api');
-      const { api } = useApi();
-      
       if (!api) {
         throw new Error('API client not available');
       }
@@ -741,9 +737,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (!id) return;
     
     try {
-      const { useApi } = await import('@/hooks/use-api');
-      const { api } = useApi();
-      
       if (api) {
         const coverageRes = await api.getAnnotationFileCoverage(id, String(annotation.id));
         if (coverageRes?.success && coverageRes.data) {
@@ -978,10 +971,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     if (!selectedAnnotation || !id) return;
     
     try {
-      // Call backend API to delete the class
-      const { useApi } = await import('@/hooks/use-api');
-      const { api } = useApi();
-      
       if (api) {
         const response = await api.deleteClassAnnotations(
           id,

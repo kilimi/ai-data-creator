@@ -43,6 +43,7 @@ import {
   Loader2,
   AlertCircle
 } from 'lucide-react';
+import { API_CONFIG } from '@/config/api';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { Image, ImageCollection } from '@/types';
@@ -154,7 +155,7 @@ const ImageAnnotation = () => {
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
-  const [activeTool, setActiveTool] = useState<AnnotationTool>('polygon');
+  const [activeTool, setActiveTool] = useState<AnnotationTool>('auto-segment');
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
@@ -217,6 +218,8 @@ const ImageAnnotation = () => {
   const leftStartXRef = useRef(0);
   const leftStartWidthRef = useRef(0);
   const lastLoadedImageRef = useRef<string>(''); // Use ref instead of state to avoid re-renders
+  // COCO image dimensions (file_name -> { width, height }) so we can scale loaded coords to actual image space
+  const cocoImageDimensionsRef = useRef<Record<string, { width: number; height: number }>>({});
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -238,8 +241,12 @@ const ImageAnnotation = () => {
   // Allow editing label for auto-segmented annotations before accepting
   const [autoSegmentLabel, setAutoSegmentLabel] = useState<string>('');
   const [autoSegmentClassId, setAutoSegmentClassId] = useState<string | null>(null);
-  // SAM points for interactive segmentation
+  // SAM points for interactive segmentation (ref so second click sees latest points before re-render)
   const [samPoints, setSamPoints] = useState<Array<{ x: number; y: number; label: number }>>([]);
+  const samPointsRef = useRef<Array<{ x: number; y: number; label: number }>>([]);
+  useEffect(() => {
+    samPointsRef.current = samPoints;
+  }, [samPoints]);
   const [isSamProcessing, setIsSamProcessing] = useState(false);
   const [showSamLoadingDialog, setShowSamLoadingDialog] = useState(false);
   const [samInitCancelled, setSamInitCancelled] = useState(false);
@@ -281,24 +288,14 @@ const ImageAnnotation = () => {
   // Enable SAM - start loading models immediately when component mounts
   // This allows models to load in the background while user is working
   // Image encoding will start once an image is available
-  const { encoding, decode, isLoading: isSamModelLoading, isReady: isSamReady } = useSAM({
+  const { encoding, decode, runFallbackSegment, isLoading: isSamModelLoading, isReady: isSamReady, isWorkerReady } = useSAM({
     image: samImage,
     imageId: samImageId,
     enabled: !!samImage && !samInitCancelled, // Encode image when available and not cancelled
     preloadModels: true, // Start loading encoder/decoder models immediately
   });
   
-  console.log('[SAM] useSAM status:', {
-    hasImage: !!samImage,
-    imageId: samImageId,
-    isSamModelLoading,
-    isSamReady,
-    hasEncoding: !!encoding,
-    hasDecode: !!decode,
-    samInitCancelled,
-  });
-  
-  // Close SAM loading dialog when SAM becomes ready
+  // Close SAM loading dialog when SAM becomes ready (if it was shown)
   useEffect(() => {
     if (isSamReady && showSamLoadingDialog) {
       setShowSamLoadingDialog(false);
@@ -310,130 +307,156 @@ const ImageAnnotation = () => {
     }
   }, [isSamReady, showSamLoadingDialog, samInitCancelled]);
 
-  // Start auto-segmentation using browser-based SAM
-  const startAutoSegment = useCallback(async (imgPoint: Point) => {
+  // Start auto-segmentation: try backend first (fast), then browser SAM if backend fails.
+  // label: 1 = add to mask (left-click), 0 = remove from mask (right-click).
+  const startAutoSegment = useCallback(async (imgPoint: Point, label: number = 1) => {
     if (!displayImage && !currentImage) return;
     const img = (displayImage || currentImage)!;
+    const samPoint: SAMPoint = { x: imgPoint.x, y: imgPoint.y, label };
+    // Use ref so rapid second click includes first point (avoids stale closure)
+    const previousPoints = samPointsRef.current;
+    const newPoints = [...previousPoints, samPoint];
+    setSamPoints(newPoints);
+    samPointsRef.current = newPoints;
+    setIsSamProcessing(true);
 
-    console.log('[SAM] startAutoSegment called:', {
-      imgPoint,
-      isSamReady,
-      hasEncoding: !!encoding,
-      hasDecode: !!decode,
-      imageSize: imageRef.current ? `${imageRef.current.naturalWidth}x${imageRef.current.naturalHeight}` : 'unknown',
-    });
-
-    // Use SAM if ready, otherwise fallback to backend
-    // Wait for encoding to complete if it's still loading
-    if (isSamModelLoading) {
-      toast({
-        title: 'SAM model loading',
-        description: 'Please wait for the model to finish loading...',
+    const preferredClass = classes.find(c => c.id === selectedClass) || classes[0] || null;
+    const setPreview = (polygons: Point[][], maskDataUrl?: string) => {
+      setAutoSegmentPreview({
+        polygons,
+        ...(maskDataUrl && { maskDataUrl }),
+        imageName: img.fileName,
       });
-      return;
-    }
-    
-    if (isSamReady && encoding && decode) {
-      try {
-        setIsSamProcessing(true);
-        
-        // Add point for SAM
-        const samPoint: SAMPoint = {
-          x: imgPoint.x,
-          y: imgPoint.y,
-          label: 1, // Positive point
-        };
-        
-        const newPoints = [...samPoints, samPoint];
-        setSamPoints(newPoints);
-        
-        console.log('[SAM] Calling decode with points:', newPoints);
-        
-        // Decode with SAM
-        const result = await decode(newPoints);
-        
-        console.log('[SAM] Decode result:', result);
-        
-        if (result && result.polygons.length > 0 && result.polygons[0].length > 0) {
-          const polygons: Point[][] = result.polygons.map(poly => 
-            poly.map(p => ({ x: p.x, y: p.y }))
-          );
-          
-          // Initialize editable label/class for preview
-          const preferredClass = classes.find(c => c.id === selectedClass) || classes[0] || null;
-          setAutoSegmentPreview({ 
-            polygons, 
-            imageName: img.fileName 
-          });
-          setAutoSegmentLabel(preferredClass ? preferredClass.name : '');
-          setAutoSegmentClassId(preferredClass ? preferredClass.id : null);
-        } else {
-          toast({ 
-            title: 'No segmentation found', 
-            description: 'Try clicking on a different part of the image',
-            variant: 'destructive' 
-          });
-        }
-      } catch (err) {
-        console.error('SAM segmentation failed', err);
-        toast({ 
-          title: 'SAM segmentation failed', 
-          description: String(err), 
-          variant: 'destructive' 
-        });
-      } finally {
-        setIsSamProcessing(false);
+      setAutoSegmentLabel(preferredClass ? preferredClass.name : '');
+      setAutoSegmentClassId(preferredClass ? preferredClass.id : null);
+    };
+
+    const MAX_SIDE = 1024;
+    const getImageB64AndScale = (): { imageB64: string | null; sendScale: number } => {
+      if (!imageRef.current) return { imageB64: null, sendScale: 1 };
+      const el = imageRef.current;
+      let w = el.naturalWidth;
+      let h = el.naturalHeight;
+      let sendScale = 1;
+      if (Math.max(w, h) > MAX_SIDE) {
+        sendScale = MAX_SIDE / Math.max(w, h);
+        w = Math.round(w * sendScale);
+        h = Math.round(h * sendScale);
       }
-    } else {
-      // Fallback to backend if SAM not ready
-      try {
-        let dataUrl: string | null = null;
-        const hasImageUrl = Boolean(img.url);
-        
-        if (!hasImageUrl && imageRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return { imageB64: null, sendScale: 1 };
+      ctx.drawImage(el, 0, 0, w, h);
+      return { imageB64: canvas.toDataURL('image/png'), sendScale };
+    };
+
+    try {
+      const apiBase = API_CONFIG.baseUrl;
+      const { imageB64, sendScale } = getImageB64AndScale();
+      // When sending resized imageB64, points must be in resized image coordinates
+      const scalePoint = (p: { x: number; y: number }) =>
+        imageB64 ? { x: Math.round(p.x * sendScale), y: Math.round(p.y * sendScale) } : { x: p.x, y: p.y };
+      const body: Record<string, unknown> = {
+        point: scalePoint(imgPoint),
+        points: newPoints.map(p => ({ ...scalePoint(p), label: p.label })),
+      };
+      if (imageB64) {
+        body.imageB64 = imageB64;
+      } else if (img.url) {
+        body.imageUrl = img.url;
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 14000);
+      const res = await fetch(`${apiBase}/segment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) throw new Error(`Segmentation failed: ${res.status}`);
+      const json = await res.json();
+      // Reject old SAM service rectangle fallback (single 4–5 point polygon = placeholder)
+      const rawPolygons = json.polygons || [];
+      const isRectangleFallback =
+        json.source !== 'sam2' &&
+        rawPolygons.length === 1 &&
+        rawPolygons[0].length >= 4 &&
+        rawPolygons[0].length <= 5;
+      if (isRectangleFallback) {
+        if (isWorkerReady && imageB64 && runFallbackSegment) {
           try {
-            const tmp = document.createElement('canvas');
-            tmp.width = imageRef.current.naturalWidth;
-            tmp.height = imageRef.current.naturalHeight;
-            const ctx = tmp.getContext('2d');
-            if (ctx) ctx.drawImage(imageRef.current, 0, 0);
-            dataUrl = tmp.toDataURL('image/png');
+            const scaledPoints = newPoints.map(p => ({ ...p, x: p.x * sendScale, y: p.y * sendScale }));
+            const result = await runFallbackSegment(imageB64, scaledPoints);
+            if (result?.polygons?.length > 0 && result.polygons[0].length > 0) {
+              let fallbackPolygons: Point[][] = result.polygons.map(poly => poly.map((p: Point) => ({ x: p.x, y: p.y })));
+              if (sendScale !== 1) {
+                const scaleBack = 1 / sendScale;
+                fallbackPolygons = fallbackPolygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
+              }
+              setPreview(fallbackPolygons);
+              return;
+            }
           } catch (e) {
-            console.warn('Could not create data URL from canvas:', e);
+            console.warn('[SAM] Browser fallback failed:', e);
           }
         }
-
-        const body: any = {
-          imageUrl: img.url || undefined,
-          imageB64: dataUrl || undefined,
-          point: { x: imgPoint.x, y: imgPoint.y },
-          prompt: classes.find(c => c.id === selectedClass)?.name || undefined,
-          model: 'sam_v2'
-        };
-
-        const apiBase = (await import('@/config/api')).API_CONFIG.baseUrl;
-        const res = await fetch(`${apiBase}/segment`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+        toast({
+          title: 'SAM service needs update',
+          description: isWorkerReady ? 'Using browser SAM. If you see this again, try another point.' : 'Segmentation returned a placeholder. Rebuild the SAM 2 service (backend/sam_service) or wait for browser model to load.',
+          variant: 'destructive',
         });
-
-        if (!res.ok) throw new Error('Segmentation failed');
-        const json = await res.json();
-        const polygons: Point[][] = (json.polygons || []).map((poly: number[][]) => 
-          poly.map((p: number[]) => ({ x: p[0], y: p[1] }))
-        );
-
-        const preferredClass = classes.find(c => c.id === selectedClass) || classes[0] || null;
-        setAutoSegmentPreview({ polygons, maskDataUrl: json.maskBase64, imageName: img.fileName });
-        setAutoSegmentLabel(preferredClass ? preferredClass.name : '');
-        setAutoSegmentClassId(preferredClass ? preferredClass.id : null);
-      } catch (err) {
-        console.error('Backend segmentation failed', err);
-        toast({ title: 'Segmentation failed', description: String(err), variant: 'destructive' });
+        return;
       }
+      let polygons: Point[][] = rawPolygons.map((poly: number[][]) =>
+        poly.map((p: number[]) => ({ x: p[0], y: p[1] }))
+      );
+      // Scale polygons back to natural image coords when we sent resized image
+      if (imageB64 && sendScale !== 1 && polygons.length > 0) {
+        const scaleBack = 1 / sendScale;
+        polygons = polygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
+      }
+      if (polygons.length > 0 && polygons[0].length > 0) {
+        setPreview(polygons, json.maskBase64);
+      } else {
+        toast({
+          title: 'No segmentation found',
+          description: 'Try another point or add a second point on the object',
+          variant: 'destructive',
+        });
+      }
+    } catch (backendErr) {
+      if (isWorkerReady && runFallbackSegment) {
+        const { imageB64: fallbackB64, sendScale: fallbackScale } = getImageB64AndScale();
+        if (fallbackB64) {
+          try {
+            const scaledPoints = newPoints.map(p => ({ ...p, x: p.x * fallbackScale, y: p.y * fallbackScale }));
+            const result = await runFallbackSegment(fallbackB64, scaledPoints);
+            if (result?.polygons?.length > 0 && result.polygons[0].length > 0) {
+              let polygons: Point[][] = result.polygons.map(poly => poly.map((p: Point) => ({ x: p.x, y: p.y })));
+              if (fallbackScale !== 1) {
+                const scaleBack = 1 / fallbackScale;
+                polygons = polygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
+              }
+              setPreview(polygons);
+              return;
+            }
+          } catch (workerErr) {
+            console.warn('[SAM] Browser fallback failed:', workerErr);
+          }
+        }
+      }
+      toast({
+        title: 'Segmentation failed',
+        description: isWorkerReady ? 'Backend and browser SAM could not produce a mask. Try another point.' : 'Backend SAM failed and browser model is still loading. Try again in a moment.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSamProcessing(false);
     }
-  }, [displayImage, currentImage, classes, selectedClass, toast, isSamReady, encoding, decode, samPoints]);
+  }, [displayImage, currentImage, classes, selectedClass, toast, isSamReady, isWorkerReady, encoding, decode, runFallbackSegment, samPoints]);
 
   const acceptAutoSegment = () => {
     if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
@@ -475,7 +498,9 @@ const ImageAnnotation = () => {
     });
 
     setAutoSegmentPreview(null);
+    setSamPoints([]); // Clear points so next click starts fresh for a new object
     toast({ title: 'Auto-segment accepted', description: `Created ${newAnns.length} annotations` });
+    computeGlobalStatsDebounced();
   };
 
   const cancelAutoSegment = () => {
@@ -1046,10 +1071,8 @@ const ImageAnnotation = () => {
                 if (imageAnnotations.length > 0) {
                   setAnnotations(imageAnnotations);
                   
-                  // Start from existing classes (from state or localStorage) and add any missing ones
-                  // This ensures classes persist across image navigation
-                  const existingFromStorage = (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [];
-                  // Use current classes state if available, otherwise use localStorage or existingClasses
+                  // When editing existing file (annotationId) use localStorage; new session only uses current state/loaded data
+                  const existingFromStorage = annotationId ? (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [] : [];
                   const baseClasses = classes.length > 0 ? classes : (existingClasses.length > 0 ? existingClasses : existingFromStorage);
                   const classNames = new Set(baseClasses.map(c => c.name));
                   const newClasses = [...baseClasses];
@@ -1100,11 +1123,8 @@ const ImageAnnotation = () => {
           countsByName[a.label] = (countsByName[a.label] || 0) + 1;
         });
 
-        // Start from existing classes (from state or localStorage) and add any missing ones
-        // This ensures classes persist across image navigation
-        const existingFromStorage = (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [];
-        // Use current classes state if available, otherwise use localStorage
-        // This ensures classes added on previous images are preserved
+        // When editing an existing file (annotationId), merge with localStorage classes; new session stays class-scoped to current annotations
+        const existingFromStorage = annotationId ? (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [] : [];
         const existing = classes.length > 0 ? classes : existingFromStorage;
         const merged: AnnotationClass[] = [...existing];
         Object.keys(countsByName).forEach(name => {
@@ -1131,10 +1151,8 @@ const ImageAnnotation = () => {
       } else {
         // No saved annotations for this image, clear current ones
         setAnnotations([]);
-        // DON'T clear classes - they should persist across all images
-        // Load global classes if they exist, or keep existing classes
-        loadGlobalClasses();
-        // Only clear selection if there are no annotations
+        // Only load global classes when editing an existing annotation file; new session stays empty
+        if (annotationId) loadGlobalClasses();
         setSelectedAnnotation(null);
       }
       
@@ -1143,9 +1161,7 @@ const ImageAnnotation = () => {
     } catch (error) {
       console.error('Error loading annotations:', error);
       setAnnotations([]);
-      // DON'T clear classes on error - they should persist across all images
-      // Load global classes if they exist, or keep existing classes
-      loadGlobalClasses();
+      if (annotationId) loadGlobalClasses();
       setSelectedAnnotation(null);
     }
   };
@@ -1203,11 +1219,17 @@ const ImageAnnotation = () => {
               }
             });
             
-            // Build image ID to dimensions map
+            // Build image ID to dimensions map and image file_name -> image_id
             const imageDimensions: { [id: string]: { width: number, height: number } } = {};
+            const imageFileNameToId: { [name: string]: number } = {};
             cocoData.images?.forEach((img: any) => {
               imageDimensions[img.id.toString()] = { width: img.width || 1, height: img.height || 1 };
+              if (img.file_name != null) imageFileNameToId[img.file_name] = img.id;
             });
+            
+            // Per-image COCO counts/areas so we can replace with localStorage when present
+            const cocoCountsByImage: { [imageId: string]: { [className: string]: number } } = {};
+            const cocoAreasByImage: { [imageId: string]: { [className: string]: number } } = {};
             
             // Count all annotations from COCO data - only count valid ones
             let totalAnnotations = 0;
@@ -1258,9 +1280,14 @@ const ImageAnnotation = () => {
                     // Only count annotation if it has at least 3 valid points
                     if (points.length >= 3) {
                       validAnnotations++;
+                      const imgIdStr = annotation.image_id.toString();
                       counts[className] = (counts[className] || 0) + 1;
+                      if (!cocoCountsByImage[imgIdStr]) cocoCountsByImage[imgIdStr] = {};
+                      cocoCountsByImage[imgIdStr][className] = (cocoCountsByImage[imgIdStr][className] || 0) + 1;
                       const area = calculatePolygonArea(points);
                       totalAreas[className] = (totalAreas[className] || 0) + area;
+                      if (!cocoAreasByImage[imgIdStr]) cocoAreasByImage[imgIdStr] = {};
+                      cocoAreasByImage[imgIdStr][className] = (cocoAreasByImage[imgIdStr][className] || 0) + area;
                     } else {
                       isValid = false;
                     }
@@ -1271,12 +1298,50 @@ const ImageAnnotation = () => {
                   // No segmentation, but has bbox - count it
                   validAnnotations++;
                   counts[className] = (counts[className] || 0) + 1;
+                  const imgIdStr = annotation.image_id.toString();
+                  if (!cocoCountsByImage[imgIdStr]) cocoCountsByImage[imgIdStr] = {};
+                  cocoCountsByImage[imgIdStr][className] = (cocoCountsByImage[imgIdStr][className] || 0) + 1;
                 }
               }
             });
             
-            console.log(`Statistics: ${validAnnotations}/${totalAnnotations} valid annotations counted`);
+            // Overlay localStorage for any image that has been edited (so new/removed annotations are reflected)
+            const prefix = `annotations_${id}_`;
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (!key || !key.startsWith(prefix)) continue;
+              const imageName = key.substring(prefix.length);
+              if (!imageName) continue;
+              const imageId = imageFileNameToId[imageName];
+              if (imageId == null) continue;
+              const imgIdStr = imageId.toString();
+              const cocoImgCounts = cocoCountsByImage[imgIdStr] || {};
+              const cocoImgAreas = cocoAreasByImage[imgIdStr] || {};
+              Object.keys(cocoImgCounts).forEach(cn => {
+                counts[cn] = (counts[cn] || 0) - cocoImgCounts[cn];
+                if (counts[cn] <= 0) delete counts[cn];
+              });
+              Object.keys(cocoImgAreas).forEach(cn => {
+                totalAreas[cn] = (totalAreas[cn] || 0) - cocoImgAreas[cn];
+                if (totalAreas[cn] <= 0) delete totalAreas[cn];
+              });
+              const saved = localStorage.getItem(key);
+              if (!saved) continue;
+              try {
+                const parsed = JSON.parse(saved) as AnnotationShape[];
+                parsed.forEach(a => {
+                  counts[a.label] = (counts[a.label] || 0) + 1;
+                  if (a.type === 'polygon' && a.points && a.points.length >= 3) {
+                    const area = calculatePolygonArea(a.points);
+                    totalAreas[a.label] = (totalAreas[a.label] || 0) + area;
+                  }
+                });
+              } catch (err) {
+                // ignore parse errors
+              }
+            }
             
+            console.log(`Statistics: ${validAnnotations}/${totalAnnotations} valid annotations counted`);
             console.log('Computed global stats from sessionStorage:', counts);
           }
         } catch (e) {
@@ -1339,6 +1404,21 @@ const ImageAnnotation = () => {
       setGlobalAvgAreas({});
     }
   }, [allImageNames, id, annotationId, api]);
+
+  // Debounced recompute for user actions (add/delete/edit) so rapid changes trigger one run
+  const computeGlobalStatsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const computeGlobalStatsDebounced = useCallback(() => {
+    if (computeGlobalStatsTimeoutRef.current) clearTimeout(computeGlobalStatsTimeoutRef.current);
+    computeGlobalStatsTimeoutRef.current = setTimeout(() => {
+      computeGlobalStatsTimeoutRef.current = null;
+      computeGlobalStats();
+    }, 150);
+  }, [computeGlobalStats]);
+  useEffect(() => {
+    return () => {
+      if (computeGlobalStatsTimeoutRef.current) clearTimeout(computeGlobalStatsTimeoutRef.current);
+    };
+  }, []);
 
   // Recompute global stats whenever we have changes to class list, image list or storage updates
   useEffect(() => {
@@ -1519,6 +1599,16 @@ const ImageAnnotation = () => {
         // Then store new data
         sessionStorage.setItem(sessionKey, JSON.stringify(annotationFileRef));
         console.log(`Stored fresh COCO data in sessionStorage (${cocoData.images?.length} images, ${cocoData.annotations?.length} annotations)`);
+        // Store COCO image dimensions so we can scale loaded coordinates to actual image dimensions when drawing
+        cocoImageDimensionsRef.current = {};
+        cocoData.images?.forEach((img: any) => {
+          if (img.file_name != null) {
+            cocoImageDimensionsRef.current[img.file_name] = {
+              width: img.width || 1,
+              height: img.height || 1
+            };
+          }
+        });
       } catch (e) {
         console.warn('Could not save annotation file reference to sessionStorage:', e);
         return false;
@@ -1686,14 +1776,16 @@ const ImageAnnotation = () => {
       }
       keysToRemove.forEach(key => localStorage.removeItem(key));
       
-      // Also clear sessionStorage annotation file reference
+      // Also clear sessionStorage annotation file reference and COCO dimensions
       sessionStorage.removeItem(`annotation_file_${id}`);
+      cocoImageDimensionsRef.current = {};
       
-      // Clear annotations state for fresh start
+      // Clear annotations state and classes for fresh start
       setAnnotations([]);
-      // DON'T clear classes - they should persist across all images
-      // Only clear classes if explicitly starting a completely new annotation session
-      // (which is handled elsewhere when needed)
+      setClasses([]);
+      localStorage.removeItem(`classes_${id}`);
+      setGlobalStats({});
+      setGlobalAvgAreas({});
       
       console.log(`Cleared ${keysToRemove.length} cached entries for new annotation session`);
     }
@@ -1849,20 +1941,30 @@ const ImageAnnotation = () => {
     return inside;
   }, []);
 
-  // Find annotation at given point
+  // Find annotation at given point (x,y are in natural image space)
   const findAnnotationAtPoint = useCallback((x: number, y: number): AnnotationShape | null => {
+    // Convert to annotation space when loaded from COCO with different dimensions
+    let qx = x, qy = y;
+    if (currentImage?.fileName && imageRef.current) {
+      const cocoDims = cocoImageDimensionsRef.current[currentImage.fileName];
+      const nw = imageRef.current.naturalWidth;
+      const nh = imageRef.current.naturalHeight;
+      if (cocoDims && nw > 0 && nh > 0 && (cocoDims.width !== nw || cocoDims.height !== nh)) {
+        qx = x * (cocoDims.width / nw);
+        qy = y * (cocoDims.height / nh);
+      }
+    }
     for (const annotation of annotations) {
       if (!annotation.visible) continue;
 
       if (annotation.type === 'polygon') {
-        // Point-in-polygon algorithm
-        if (isPointInPolygon({ x, y }, annotation.points)) {
+        if (isPointInPolygon({ x: qx, y: qy }, annotation.points)) {
           return annotation;
         }
       }
     }
     return null;
-  }, [annotations, isPointInPolygon]);
+  }, [annotations, isPointInPolygon, currentImage]);
 
   // Create new annotation
   const createAnnotation = useCallback((type: 'rectangle' | 'circle' | 'polygon', points: Point[]) => {
@@ -1906,7 +2008,8 @@ const ImageAnnotation = () => {
       title: 'Annotation created',
       description: `${type} annotation added for class "${classObj.name}"`,
     });
-  }, [selectedClass, classes, toast, currentImage, id]);
+    computeGlobalStatsDebounced();
+  }, [selectedClass, classes, toast, currentImage, id, computeGlobalStatsDebounced]);
 
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
@@ -1926,9 +2029,23 @@ const ImageAnnotation = () => {
 
     // If Auto tool is active, trigger backend segmentation for the clicked image point
     if (activeTool === 'auto-segment') {
+      if (classes.length === 0) {
+        toast({
+          title: 'No classes',
+          description: 'Add at least one class before using SAM.',
+          variant: 'destructive',
+        });
+        return;
+      }
       // don't start auto-seg while drawing or while panning
       if (!isDrawing && !isPanningRef.current) {
-        startAutoSegment(imageCoords);
+        // Left-click = positive point (1), right-click = negative point (0 = remove from mask)
+        const label = e.button === 2 ? 0 : 1;
+        if (e.button === 2) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        startAutoSegment(imageCoords, label);
       }
       return;
     }
@@ -1965,7 +2082,7 @@ const ImageAnnotation = () => {
         setCurrentPath(prev => [...prev, imageCoords]);
       }
     }
-  }, [activeTool, selectedClass, isDrawing, screenToImageCoords, findAnnotationAtPoint]);
+  }, [activeTool, selectedClass, classes.length, isDrawing, screenToImageCoords, findAnnotationAtPoint, startAutoSegment, toast]);
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
@@ -1990,8 +2107,18 @@ const ImageAnnotation = () => {
       setDragStart({ x: e.clientX, y: e.clientY });
     } else if (isMovingAnnotation && selectedAnnotation) {
       const imageCoords = screenToImageCoords(e.clientX, e.clientY);
-      const deltaX = imageCoords.x - moveOffset.x;
-      const deltaY = imageCoords.y - moveOffset.y;
+      let deltaX = imageCoords.x - moveOffset.x;
+      let deltaY = imageCoords.y - moveOffset.y;
+      // When annotation points are in COCO space, scale delta to COCO space
+      if (currentImage?.fileName && imageRef.current) {
+        const cocoDims = cocoImageDimensionsRef.current[currentImage.fileName];
+        const nw = imageRef.current.naturalWidth;
+        const nh = imageRef.current.naturalHeight;
+        if (cocoDims && nw > 0 && nh > 0 && (cocoDims.width !== nw || cocoDims.height !== nh)) {
+          deltaX *= cocoDims.width / nw;
+          deltaY *= cocoDims.height / nh;
+        }
+      }
       
       setAnnotations(prev => prev.map(ann => {
         if (ann.id === selectedAnnotation) {
@@ -2006,7 +2133,9 @@ const ImageAnnotation = () => {
         return ann;
       }));
       
-      // Auto-save after moving
+      // Auto-save after moving (use same scaled delta when reading from localStorage)
+      const deltaXFinal = deltaX;
+      const deltaYFinal = deltaY;
       setTimeout(() => {
         if (currentImageName) {
           const storageKey = `annotations_${id}_${currentImageName}`;
@@ -2016,8 +2145,8 @@ const ImageAnnotation = () => {
               return {
                 ...ann,
                 points: ann.points.map((point: Point) => ({
-                  x: point.x + deltaX,
-                  y: point.y + deltaY
+                  x: point.x + deltaXFinal,
+                  y: point.y + deltaYFinal
                 }))
               };
             }
@@ -2030,7 +2159,7 @@ const ImageAnnotation = () => {
       
       setMoveOffset(imageCoords);
     }
-  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords]);
+  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (isPanningRef.current) {
@@ -2065,7 +2194,13 @@ const ImageAnnotation = () => {
       return;
     }
 
-    e.preventDefault(); // Prevent context menu for normal right-click handling
+    // Right-click for SAM is handled in handleCanvasMouseDown (e.button === 2); prevent context menu when SAM is active
+    if (activeTool === 'auto-segment') {
+      e.preventDefault();
+      return;
+    }
+
+    e.preventDefault(); // Prevent context menu for polygon complete below
     if (isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
       // Complete polygon on right-click
       createAnnotation('polygon', currentPath);
@@ -2113,6 +2248,9 @@ const ImageAnnotation = () => {
   }, [toast]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    const isInputFocused = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+
     if (e.key === 'Escape' && isDrawing) {
       // Cancel current drawing
       setIsDrawing(false);
@@ -2121,18 +2259,23 @@ const ImageAnnotation = () => {
         title: 'Drawing cancelled',
         description: 'Polygon drawing has been cancelled',
       });
-    } else if (e.key === 'Enter' && isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
-      // Complete polygon on Enter key
-      createAnnotation('polygon', currentPath);
-      setIsDrawing(false);
-      setCurrentPath([]);
+    } else if (e.key === 'Enter' && !isInputFocused) {
+      if (autoSegmentPreview && autoSegmentPreview.polygons?.length > 0) {
+        // Accept SAM mask on Enter
+        acceptAutoSegment();
+      } else if (isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
+        // Complete polygon on Enter key
+        createAnnotation('polygon', currentPath);
+        setIsDrawing(false);
+        setCurrentPath([]);
+      }
     } else if (e.key === 'r' || e.key === 'R') {
       // Reset zoom and pan to default view
       if (!isDrawing) { // Only allow reset when not drawing
         resetZoomAndPan();
       }
     }
-  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan]);
+  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -2172,28 +2315,20 @@ const ImageAnnotation = () => {
       );
     }
 
-    console.log('Drawing annotations:', annotations.length, 'imageScale:', imageScale, 'imageOffset:', imageOffset);
-    console.log('Image natural dimensions:', imageRef.current?.naturalWidth, 'x', imageRef.current?.naturalHeight);
+    // Scale annotation coords from COCO image dimensions to actual image dimensions when they differ
+    const naturalW = imageRef.current?.naturalWidth ?? 0;
+    const naturalH = imageRef.current?.naturalHeight ?? 0;
+    const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
+    const needScale = cocoDims && naturalW > 0 && naturalH > 0 && cocoDims.width > 0 && cocoDims.height > 0 &&
+      (cocoDims.width !== naturalW || cocoDims.height !== naturalH);
+    const scaleX = needScale ? naturalW / cocoDims!.width : 1;
+    const scaleY = needScale ? naturalH / cocoDims!.height : 1;
+    const annotationToScreen = (px: number, py: number) =>
+      imageToScreenCoords(px * scaleX, py * scaleY);
 
     // Draw annotations
     annotations.forEach((annotation, idx) => {
       if (!annotation.visible) return;
-
-      if (idx === 0) {
-        // Log first annotation for debugging
-        console.log('First annotation:', {
-          type: annotation.type,
-          points: annotation.points.slice(0, 3),
-          label: annotation.label,
-          color: annotation.color
-        });
-        
-        // Log screen coordinates for first point
-        if (annotation.points.length > 0) {
-          const screenPoint = imageToScreenCoords(annotation.points[0].x, annotation.points[0].y);
-          console.log('First point image coords:', annotation.points[0], 'screen coords:', screenPoint);
-        }
-      }
 
       ctx.strokeStyle = annotation.color;
       ctx.fillStyle = annotation.color + '30'; // Semi-transparent fill
@@ -2202,13 +2337,11 @@ const ImageAnnotation = () => {
       if (annotation.type === 'polygon' && annotation.points.length > 2) {
         ctx.beginPath();
         
-        // Convert first point to screen coordinates
-        const firstPoint = imageToScreenCoords(annotation.points[0].x, annotation.points[0].y);
+        const firstPoint = annotationToScreen(annotation.points[0].x, annotation.points[0].y);
         ctx.moveTo(firstPoint.x, firstPoint.y);
         
-        // Convert and draw remaining points
         for (let i = 1; i < annotation.points.length; i++) {
-          const point = imageToScreenCoords(annotation.points[i].x, annotation.points[i].y);
+          const point = annotationToScreen(annotation.points[i].x, annotation.points[i].y);
           ctx.lineTo(point.x, point.y);
         }
         
@@ -2221,7 +2354,7 @@ const ImageAnnotation = () => {
         ctx.font = '12px Arial';
         const centerX = annotation.points.reduce((sum, p) => sum + p.x, 0) / annotation.points.length;
         const centerY = annotation.points.reduce((sum, p) => sum + p.y, 0) / annotation.points.length;
-        const centerScreen = imageToScreenCoords(centerX, centerY);
+        const centerScreen = annotationToScreen(centerX, centerY);
         ctx.fillText(annotation.label, centerScreen.x, centerScreen.y);
       }
 
@@ -2232,10 +2365,10 @@ const ImageAnnotation = () => {
         
         if (annotation.type === 'polygon') {
           ctx.beginPath();
-          const firstPoint = imageToScreenCoords(annotation.points[0].x, annotation.points[0].y);
+          const firstPoint = annotationToScreen(annotation.points[0].x, annotation.points[0].y);
           ctx.moveTo(firstPoint.x, firstPoint.y);
           for (let i = 1; i < annotation.points.length; i++) {
-            const point = imageToScreenCoords(annotation.points[i].x, annotation.points[i].y);
+            const point = annotationToScreen(annotation.points[i].x, annotation.points[i].y);
             ctx.lineTo(point.x, point.y);
           }
           ctx.closePath();
@@ -2283,14 +2416,28 @@ const ImageAnnotation = () => {
       }
     }
 
+    // SAM points (positive = green, negative = red) when auto-segment tool is active
+    if (activeTool === 'auto-segment' && samPoints.length > 0) {
+      samPoints.forEach((p) => {
+        const screenPoint = imageToScreenCoords(p.x, p.y);
+        ctx.beginPath();
+        ctx.arc(screenPoint.x, screenPoint.y, 6, 0, 2 * Math.PI);
+        ctx.fillStyle = p.label === 1 ? 'rgba(0, 255, 100, 0.9)' : 'rgba(255, 80, 80, 0.9)';
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, isLayerSwitching]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, isLayerSwitching]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
     redrawCanvas();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, imageScale, imageOffset, displayImage, currentImage, isLayerSwitching]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, samPoints, activeTool, imageScale, imageOffset, displayImage, currentImage, isLayerSwitching, redrawCanvas]);
 
   // Redraw canvas for image scaling and offset changes
   useEffect(() => {
@@ -2371,6 +2518,7 @@ const ImageAnnotation = () => {
       title: 'Class deleted',
       description: `Class "${classToDelete.name}" has been removed`,
     });
+    computeGlobalStatsDebounced();
   };
 
   const startEditingClass = (classId: string, currentName: string) => {
@@ -2436,6 +2584,7 @@ const ImageAnnotation = () => {
       title: 'Class renamed',
       description: `"${oldName}" has been renamed to "${newName}"`,
     });
+    computeGlobalStatsDebounced();
   };
 
   const cancelEditingClass = () => {
@@ -2471,6 +2620,7 @@ const ImageAnnotation = () => {
         return updated;
       });
     }
+    computeGlobalStatsDebounced();
 
     if (selectedAnnotation === annotationId) {
       setSelectedAnnotation(null);
@@ -2592,7 +2742,14 @@ const ImageAnnotation = () => {
     if (!currentImage || annotations.length === 0) return;
 
     try {
-      // Create COCO format export
+      const naturalW = imageRef.current?.naturalWidth || 1920;
+      const naturalH = imageRef.current?.naturalHeight || 1080;
+      const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
+      const toNatural = cocoDims && (cocoDims.width !== naturalW || cocoDims.height !== naturalH) && cocoDims.width > 0 && cocoDims.height > 0
+        ? (p: Point) => ({ x: p.x * (naturalW / cocoDims!.width), y: p.y * (naturalH / cocoDims!.height) })
+        : (p: Point) => p;
+
+      // Create COCO format export (always in natural image pixel coordinates)
       const cocoData = {
         info: {
           description: `Annotations for ${currentImage.fileName}`,
@@ -2604,8 +2761,8 @@ const ImageAnnotation = () => {
         images: [{
           id: 1,
           file_name: currentImage.fileName,
-          width: imageRef.current?.naturalWidth || 1920,
-          height: imageRef.current?.naturalHeight || 1080
+          width: naturalW,
+          height: naturalH
         }],
         categories: classes.map((cls, index) => ({
           id: index + 1,
@@ -2616,19 +2773,15 @@ const ImageAnnotation = () => {
           const categoryId = classes.findIndex(c => c.name === ann.label) + 1;
           
           if (ann.type === 'polygon') {
-            // Convert points to COCO polygon format [x1,y1,x2,y2,...]
-            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-            
-            // Calculate bounding box
-            const xs = ann.points.map(p => p.x);
-            const ys = ann.points.map(p => p.y);
+            const pointsNatural = ann.points.map(toNatural);
+            const segmentation = pointsNatural.flatMap(p => [p.x, p.y]);
+            const xs = pointsNatural.map(p => p.x);
+            const ys = pointsNatural.map(p => p.y);
             const minX = Math.min(...xs);
             const minY = Math.min(...ys);
             const maxX = Math.max(...xs);
             const maxY = Math.max(...ys);
-            
-            // Calculate actual polygon area using the same method as altitude script
-            const polygonArea = calculatePolygonArea(ann.points);
+            const polygonArea = calculatePolygonArea(pointsNatural);
             
             return {
               id: index + 1,
@@ -2705,6 +2858,7 @@ const ImageAnnotation = () => {
       saveGlobalClasses(updated);
       return updated;
     });
+    computeGlobalStatsDebounced();
   };
 
   // Download annotations as COCO JSON file
@@ -3528,9 +3682,8 @@ const ImageAnnotation = () => {
     const newImageName = imageList[newIndex];
     setCurrentImageName(newImageName);
     
-    // Load global classes when navigating to ensure they persist
-    // This ensures classes added on previous images are still available
-    loadGlobalClasses();
+    // Load global classes when editing an existing annotation file (not when starting new segmentation)
+    if (annotationId) loadGlobalClasses();
     
     // Update the currentImage object as well
     updateCurrentImages(newImageName, displayLayer, imageCollections);
@@ -4045,27 +4198,19 @@ const ImageAnnotation = () => {
                 variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => {
-                  // If SAM is not ready, show loading dialog
-                  if (!isSamReady && !samInitCancelled) {
-                    setShowSamLoadingDialog(true);
-                    return;
-                  }
-                  
-                  // If SAM is ready, activate the tool
-                  if (isSamReady) {
-                    setActiveTool('auto-segment');
-                    setSamPoints([]); // Reset SAM points when switching to tool
-                  }
+                  setActiveTool('auto-segment');
+                  setSamPoints([]);
+                  // Don't show loading dialog – segmentation uses backend first; no wait for browser encode
                 }}
-                disabled={isSamProcessing || samInitCancelled}
+                disabled={isSamProcessing || samInitCancelled || classes.length === 0}
                 title={
-                  samInitCancelled
+                  classes.length === 0
+                    ? 'Add at least one class first'
+                    : samInitCancelled
                     ? 'SAM initialization cancelled'
-                    : isSamProcessing 
-                    ? 'Processing segmentation...' 
-                    : isSamReady
-                    ? 'SAM - Segment Anything Model'
-                    : 'Click to initialize SAM'
+                    : isSamProcessing
+                    ? 'Processing segmentation...'
+                    : 'Click on image to segment (backend first, then browser SAM)'
                 }
               >
                 {isSamProcessing ? (
@@ -4371,6 +4516,9 @@ const ImageAnnotation = () => {
 
                 {/* Controls - accept/cancel */}
                 <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex flex-col gap-2 w-64 bg-black/60 p-3 rounded">
+                  <p className="text-xs text-gray-300">
+                    Left-click: add to mask. Right-click: remove from mask. Add more points to refine. Press Enter to accept.
+                  </p>
                   <div className="flex gap-2">
                     <Select value={autoSegmentClassId || ''} onValueChange={(v) => {
                       const idVal = v || null;

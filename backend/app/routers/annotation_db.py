@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from typing import List, Optional, Dict, Any
@@ -433,7 +433,6 @@ async def process_coco_annotation_file(
 @router.post("/datasets/{dataset_id}/annotations/upload-coco")
 async def upload_coco_annotation_file(
     dataset_id: int,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -472,19 +471,15 @@ async def upload_coco_annotation_file(
     
     db.add(annotation_file)
     db.commit()
-    
-    # Process the file in the background
-    background_tasks.add_task(
-        process_coco_annotation_file,
-        annotation_file_id,
-        coco_data,
-        db
-    )
-    
+    db.close()  # Release so background task can use its own session
+
+    # Process synchronously so annotations are in DB before we return (edit mode will then load them)
+    await process_coco_annotation_file(annotation_file_id, coco_data)
+
     return {
         "success": True,
         "annotation_file_id": annotation_file_id,
-        "message": "File uploaded and processing started"
+        "message": "Annotation file saved"
     }
 
 

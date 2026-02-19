@@ -1,117 +1,157 @@
+"""
+SAM service: Segment Anything Model 2 (SAM 2) for point-prompt segmentation.
+Uses official facebookresearch/sam2 with SAM2ImagePredictor.
+"""
 import os
+import hashlib
 from flask import Flask, request, jsonify
-from PIL import Image, ImageDraw
+from PIL import Image
 import numpy as np
 import requests
 import io
 
 from utils import decode_base64_image, encode_image_to_dataurl, mask_to_polygons
 
-# Try to import segment-anything (SAM) and prepare a predictor
+# SAM 2
 SAM_AVAILABLE = False
 SAM_PREDICTOR = None
-SAM_DEVICE = 'cpu'
+SAM_LAST_IMAGE_HASH = None
 
 try:
-    from segment_anything import sam_model_registry, SamPredictor
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
     import torch
     SAM_AVAILABLE = True
-    SAM_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # Load model at runtime when first request arrives to avoid heavy startup during build
-except Exception:
+except Exception as e:
+    print("SAM 2 import failed:", e)
     SAM_AVAILABLE = False
 
 app = Flask(__name__)
 
-# Try to import a SAM implementation if available
-try:
-    # from segment_anything import SamPredictor, sam_model_registry
-    SAM_AVAILABLE = False
-except Exception:
-    SAM_AVAILABLE = False
+# Max side length for inference (smaller = faster)
+MAX_INFER_SIZE = int(os.environ.get("SAM_MAX_SIZE", "1024"))
+# HuggingFace model id for SAM 2.1 small (or set SAM2_MODEL_ID env)
+DEFAULT_MODEL_ID = os.environ.get("SAM2_MODEL_ID", "facebook/sam2.1-hiera-small")
 
 
-@app.route('/segment', methods=['POST'])
+def _get_device():
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
+def _load_predictor():
+    """Load SAM 2 predictor from HuggingFace (downloads on first call)."""
+    global SAM_PREDICTOR
+    if SAM_PREDICTOR is not None:
+        return SAM_PREDICTOR
+    device = _get_device()
+    print(f"[SAM] Loading model {DEFAULT_MODEL_ID} on {device}...")
+    SAM_PREDICTOR = SAM2ImagePredictor.from_pretrained(DEFAULT_MODEL_ID)
+    SAM_PREDICTOR.model.to(device)
+    print("[SAM] Model loaded.")
+    return SAM_PREDICTOR
+
+
+@app.route("/segment", methods=["POST"])
 def segment():
     data = request.get_json(force=True)
-    image_url = data.get('imageUrl')
-    image_b64 = data.get('imageB64')
-    point = data.get('point') or {}
+    image_url = data.get("imageUrl")
+    image_b64 = data.get("imageB64")
+    point = data.get("point") or {}
+    points = data.get("points")
 
     if image_url:
         try:
             r = requests.get(image_url, timeout=10)
             r.raise_for_status()
-            img = Image.open(io.BytesIO(r.content)).convert('RGBA')
+            img = Image.open(io.BytesIO(r.content)).convert("RGBA")
         except Exception as e:
-            return jsonify({'error': f'Failed to fetch image: {e}'}), 400
+            return jsonify({"error": f"Failed to fetch image: {e}"}), 400
     elif image_b64:
         try:
             img = decode_base64_image(image_b64)
         except Exception as e:
-            return jsonify({'error': f'Failed to decode image: {e}'}), 400
+            return jsonify({"error": f"Failed to decode image: {e}"}), 400
     else:
-        return jsonify({'error': 'No image provided'}), 400
+        return jsonify({"error": "No image provided"}), 400
 
-    # If SAM is available, ensure model is loaded and run prediction around the point
+    orig_w, orig_h = img.size
+    img_rgb = img.convert("RGB")
+    img_np = np.array(img_rgb)
+
     if SAM_AVAILABLE:
         try:
-            model_path = os.environ.get('SAM_WEIGHTS', '/models/sam2.1_hiera_small.pt')
-            global SAM_PREDICTOR
-            if SAM_PREDICTOR is None:
-                # instantiate model
-                # choose model type that matches the checkpoint (use "default" registry if uncertain)
-                sam = sam_model_registry.get('default', model_path)
-                sam.to(SAM_DEVICE)
-                SAM_PREDICTOR = SamPredictor(sam)
+            predictor = _load_predictor()
+            device = predictor.model.device
 
-            # Prepare image for predictor (expects numpy HxWx3 RGB)
-            img_rgb = img.convert('RGB')
-            img_np = np.array(img_rgb)
-            SAM_PREDICTOR.set_image(img_np)
+            # Use same image hash to avoid re-encoding when image unchanged
+            global SAM_LAST_IMAGE_HASH
+            current_hash = hashlib.sha256(img_np.tobytes()).hexdigest()
+            if current_hash != SAM_LAST_IMAGE_HASH:
+                predictor.set_image(img_np)
+                SAM_LAST_IMAGE_HASH = current_hash
 
-            # Build input point in XY order expected by predictor: (x, y)
-            input_point = np.array([[int(point.get('x', img.width//2)), int(point.get('y', img.height//2))]])
-            input_label = np.array([1])
+            # Build point coords and labels (pixel coordinates; predictor normalizes internally)
+            if points and len(points) > 0:
+                point_coords = np.array(
+                    [[float(p.get("x", 0)), float(p.get("y", 0))] for p in points],
+                    dtype=np.float32,
+                )
+                point_labels = np.array(
+                    [int(p.get("label", 1)) for p in points], dtype=np.int32
+                )
+            else:
+                px = float(point.get("x", orig_w // 2))
+                py = float(point.get("y", orig_h // 2))
+                point_coords = np.array([[px, py]], dtype=np.float32)
+                point_labels = np.array([1], dtype=np.int32)
 
-            # Run prediction (use default values)
-            masks, scores, logits = SAM_PREDICTOR.predict(point_coords=input_point, point_labels=input_label, multimask_output=False)
+            with torch.inference_mode():
+                masks_np, iou_preds, _ = predictor.predict(
+                    point_coords=point_coords,
+                    point_labels=point_labels,
+                    multimask_output=False,
+                    normalize_coords=True,
+                )
 
-            # masks is boolean HxW array (or array of masks). Convert first mask to polygons
-            mask_np = (masks[0].astype('uint8') * 255) if masks is not None and len(masks) > 0 else np.zeros((img.height, img.width), dtype='uint8')
-            polygons = mask_to_polygons(mask_np)
-            mask_img = Image.fromarray(mask_np).convert('RGBA')
-            mask_dataurl = encode_image_to_dataurl(mask_img)
+            # masks_np: (num_masks, H, W), values in [0, 1] or logits
+            if masks_np is None or masks_np.size == 0:
+                return jsonify({"error": "No mask produced"}), 500
+            mask = (masks_np[0] > 0.0).astype(np.uint8) * 255
+            polygons = mask_to_polygons(mask)
+            polys_out = [[[int(x), int(y)] for (x, y) in poly] for poly in polygons]
 
-            polys_out = [[[int(x), int(y)] for (x,y) in poly] for poly in polygons]
-            return jsonify({'polygons': polys_out, 'maskBase64': mask_dataurl})
+            mask_pil = Image.fromarray(mask).convert("RGBA")
+            mask_dataurl = encode_image_to_dataurl(mask_pil)
+            return jsonify({
+                "polygons": polys_out,
+                "maskBase64": mask_dataurl,
+                "source": "sam2",  # so frontend can distinguish from old rectangle fallback
+            })
         except Exception as e:
-            # Fallback to heuristic if SAM inference fails
-            print('SAM inference error:', e)
+            print("SAM 2 inference error:", e)
+            import traceback
+            traceback.print_exc()
+            return (
+                jsonify(
+                    {
+                        "error": "Segmentation failed",
+                        "detail": str(e),
+                    }
+                ),
+                500,
+            )
 
-    # If SAM is not available or inference failed, return a simple heuristic: a centered rectangle or a circle around point
-    w, h = img.size
-    cx = int(point.get('x', w//2))
-    cy = int(point.get('y', h//2))
-    box_w = int(min(w, h) * 0.3)
-    box_h = int(min(w, h) * 0.3)
-
-    left = max(0, cx - box_w//2)
-    top = max(0, cy - box_h//2)
-    right = min(w, cx + box_w//2)
-    bottom = min(h, cy + box_h//2)
-
-    mask = Image.new('L', (w, h), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.rectangle([left, top, right, bottom], fill=255)
-
-    mask_np = np.array(mask)
-    polygons = mask_to_polygons(mask_np)
-    mask_dataurl = encode_image_to_dataurl(mask.convert('RGBA'))
-
-    polys_out = [[[int(x), int(y)] for (x,y) in poly] for poly in polygons]
-    return jsonify({'polygons': polys_out, 'maskBase64': mask_dataurl})
+    return (
+        jsonify(
+            {
+                "error": "SAM not available",
+                "detail": "Segment Anything Model 2 could not be loaded.",
+            }
+        ),
+        503,
+    )
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8081)))
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8081)))

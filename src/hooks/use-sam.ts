@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { wrap, Remote } from 'comlink';
-import { useCallback, useRef, useState, useEffect } from 'react';
-import { EncodingOutput, SAMPrompt, SAMResult, Point } from '../utils/sam/types';
+import { useCallback, useRef, useState } from 'react';
+import { SAMResult, Point } from '../utils/sam/types';
 
 // Import worker with Vite's worker syntax
 import SAMWorker from '../workers/sam.worker?worker';
@@ -24,37 +24,19 @@ export function useSAM({ image, imageId, enabled = true, preloadModels = false }
   // Otherwise, wait for image to be available (backward compatibility)
   // When preloadModels is true, start loading immediately regardless of image availability
   const shouldInitWorker = preloadModels || (enabled && !!image);
-  
-  console.log('[SAM] useSAM hook called:', {
-    preloadModels,
-    enabled,
-    hasImage: !!image,
-    imageId,
-    shouldInitWorker,
-    hasWorker: !!workerRef.current,
-  });
-  
+
   const { data: worker, isLoading: isWorkerLoading } = useQuery({
     queryKey: ['sam-worker'],
     queryFn: async () => {
-      if (workerRef.current) {
-        console.log('[SAM] Worker already exists, reusing');
-        return workerRef.current;
-      }
-
+      if (workerRef.current) return workerRef.current;
       setIsInitializing(true);
       try {
-        console.log('[SAM] ===== Starting SAM model initialization =====');
-        console.log('[SAM] Creating worker...');
         const w = wrap<any>(new SAMWorker());
-        console.log('[SAM] Worker created, loading encoder model:', ENCODER_MODEL_PATH);
-        console.log('[SAM] Worker created, loading decoder model:', DECODER_MODEL_PATH);
         await w.init(ENCODER_MODEL_PATH, DECODER_MODEL_PATH);
-        console.log('[SAM] ===== Models loaded successfully =====');
         workerRef.current = w;
         return w;
       } catch (error) {
-        console.error('[SAM] ===== Error initializing worker =====', error);
+        console.error('[SAM] Worker init failed:', error);
         throw error;
       } finally {
         setIsInitializing(false);
@@ -64,67 +46,24 @@ export function useSAM({ image, imageId, enabled = true, preloadModels = false }
     enabled: shouldInitWorker && !workerRef.current, // Only start if we should init and don't have a worker yet
   });
   
-  // Log when worker loading state changes
-  useEffect(() => {
-    if (isWorkerLoading) {
-      console.log('[SAM] Worker is loading...');
-    } else if (worker) {
-      console.log('[SAM] Worker is ready');
-    }
-  }, [isWorkerLoading, worker]);
-
-  // Encode image (cached per image)
+  // Encode image only when not a URL (URL = backend is used; encoding large URLs hangs)
+  const isImageUrl = typeof image === 'string';
   const { data: encoding, isLoading: isEncoding, error: encodingError } = useQuery({
     queryKey: ['sam-encoding', imageId],
     queryFn: async () => {
-      console.log('[SAM] Starting image encoding:', { imageId, hasWorker: !!worker, hasImage: !!image });
-      if (!worker || !image) {
-        throw new Error('Worker or image not available');
-      }
-      const result = await worker.encodeImage(image, imageId);
-      console.log('[SAM] Image encoding complete:', {
-        imageId,
-        originalSize: `${result.originalWidth}x${result.originalHeight}`,
-        processedSize: `${result.processedWidth}x${result.processedHeight}`,
-        scale: result.scale,
-      });
-      return result;
+      if (!worker || !image) throw new Error('Worker or image not available');
+      return worker.encodeImage(image, imageId);
     },
-    enabled: enabled && !!worker && !!image && !!imageId,
+    enabled: enabled && !!worker && !!image && !!imageId && !isImageUrl,
     staleTime: Infinity,
-    gcTime: 3600 * 1000, // 1 hour cache
+    gcTime: 3600 * 1000,
   });
 
-  // Decode function
   const decode = useCallback(
     async (points: Point[]): Promise<SAMResult | null> => {
-      console.log('[SAM] decode called:', {
-        hasWorker: !!worker,
-        hasEncoding: !!encoding,
-        numPoints: points.length,
-        points: points.slice(0, 2),
-        encoding: encoding ? {
-          originalSize: `${encoding.originalWidth}x${encoding.originalHeight}`,
-          processedSize: `${encoding.processedWidth}x${encoding.processedHeight}`,
-          scale: encoding.scale,
-        } : null,
-      });
-
-      if (!worker || !encoding || points.length === 0) {
-        console.warn('[SAM] decode early return:', { hasWorker: !!worker, hasEncoding: !!encoding, pointsLength: points.length });
-        return null;
-      }
-
-      const prompt: SAMPrompt = {
-        points,
-        labels: points.map(p => p.label),
-      };
-
+      if (!worker || !encoding || points.length === 0) return null;
       try {
-        console.log('[SAM] Calling worker.decodeMask with prompt:', prompt);
-        const result = await worker.decodeMask(encoding, prompt);
-        console.log('[SAM] worker.decodeMask result:', result);
-        return result;
+        return await worker.decodeMask(encoding, { points, labels: points.map(p => p.label) });
       } catch (error) {
         console.error('[SAM] decode error:', error);
         return null;
@@ -133,11 +72,28 @@ export function useSAM({ image, imageId, enabled = true, preloadModels = false }
     [worker, encoding]
   );
 
+  /** Run browser SAM on a data URL image (e.g. when backend fails or returns placeholder). Points must be in the image's pixel coords (same as the data URL image). */
+  const runFallbackSegment = useCallback(
+    async (imageDataUrl: string, points: Point[]): Promise<SAMResult | null> => {
+      if (!worker || !imageDataUrl || points.length === 0) return null;
+      try {
+        const encoding = await worker.encodeImage(imageDataUrl, `fallback-${imageId}-${Date.now()}`);
+        return await worker.decodeMask(encoding, { points, labels: points.map(p => p.label) });
+      } catch (error) {
+        console.error('[SAM] fallback segment error:', error);
+        return null;
+      }
+    },
+    [worker, imageId]
+  );
+
   return {
     encoding,
     decode,
+    runFallbackSegment,
     isLoading: isWorkerLoading || isInitializing || isEncoding,
     isReady: !!worker && !!encoding,
+    isWorkerReady: !!worker,
     error: encodingError,
   };
 }

@@ -3261,59 +3261,30 @@ export function AnnotationsContent({
 
       if (annotationsResponse && annotationsResponse.success && annotationsResponse.data) {
         const filesData = annotationsResponse.data;
-        console.log(`🔍 ANNOTATIONS: Found ${filesData.length} annotation files from backend`);
-        console.log('🔍 ANNOTATIONS: Raw backend data:', filesData);
-        
-        // Log each file's annotation_count specifically
-        filesData.forEach((file: any, index: number) => {
-          console.log(`🔍 ANNOTATIONS: File ${index} - ID: ${file.id}, Name: ${file.name}, annotation_count: ${file.annotation_count}`);
-        });
-
-        // Create lightweight annotation file objects from backend-provided list
+        // Create lightweight annotation file objects from backend-provided list (no full content fetch - use backend type for fast load)
         const lightweightFiles: AnnotationFile[] = await Promise.all(filesData.map(async (fileSummary: any) => {
-          // Always detect annotation type by loading content
+          const backendType = fileSummary.type || fileSummary.format || null;
+          const hasBackendType = typeof backendType === 'string' && backendType.length > 0;
           let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
-          
-          try {
-            console.log(`Detecting annotation type for ${fileSummary.name}...`);
-            const contentResponse = await api.getAnnotationContent(id, fileSummary.id);
-            if (contentResponse && contentResponse.success && contentResponse.data.content) {
-              // Detect annotation type from content first
-              detectedType = detectAnnotationTypeFromContent(contentResponse.data.content, fileSummary.name);
-              console.log(`Auto-detected type for ${fileSummary.name}: ${detectedType}`);
+          if (hasBackendType) {
+            detectedType = backendType as typeof detectedType;
+          } else {
+            const nameLower = (fileSummary.name || '').toLowerCase();
+            if (nameLower.includes('classification') || nameLower.includes('class')) {
+              detectedType = 'Classification';
+            } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
+              detectedType = 'Segmentation (mask+bbox)';
             } else {
-                // Fallback to filename-based detection
-                const nameLower = (fileSummary.name || '').toLowerCase();
-                if (nameLower.includes('classification') || nameLower.includes('class')) {
-                  detectedType = 'Classification';
-                } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
-                  detectedType = 'Segmentation (mask+bbox)';
-                } else {
-                  detectedType = 'Segmentation (bbox)'; // Default for COCO files
-                }
-                console.log(`Fallback filename-based detection for ${fileSummary.name}: ${detectedType}`);
+              detectedType = 'Segmentation (bbox)';
             }
-          } catch (error) {
-            console.warn(`Failed to load content for type detection of ${fileSummary.name}:`, error);
-            // Try to guess from filename as fallback
-              const nameLower = (fileSummary.name || '').toLowerCase();
-              if (nameLower.includes('classification') || nameLower.includes('class')) {
-                detectedType = 'Classification';
-              } else if (nameLower.includes('segmentation') || nameLower.includes('seg') || nameLower.includes('mask')) {
-                detectedType = 'Segmentation (mask+bbox)';
-              } else {
-                detectedType = 'Segmentation (bbox)'; // Default for COCO files
-              }
-              console.log(`Error fallback type detection for ${fileSummary.name}: ${detectedType}`);
           }
-          
-          // Load class statistics without full content for faster display
+
+          // Load class statistics (lightweight; coverage comes from list response)
           let classStats: Array<{ className: string; count: number; color: string; opacity: number }> = [];
           try {
             const classesResponse = await api.getAnnotationClasses(id, fileSummary.id);
             if (classesResponse && classesResponse.success && classesResponse.data) {
               classStats = classesResponse.data.classes || [];
-              console.log(`Loaded ${classStats.length} classes for ${fileSummary.name}:`, classStats);
             }
           } catch (error) {
             console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
@@ -3333,11 +3304,9 @@ export function AnnotationsContent({
               presentCount: fileSummary.image_coverage.present,
               missingCount: fileSummary.image_coverage.missing
             };
-            console.log(`Coverage from backend for ${fileSummary.name}: ${coverageData.presentCount}/${coverageData.totalReferencedImages} (${coverageData.missingCount} missing)`);
           } else {
             // Fallback to separate API call for older backends
             try {
-              console.log(`Loading coverage data for ${fileSummary.name}...`);
               const coverageResponse = await api.getAnnotationFileCoverage(id, fileSummary.id);
               if (coverageResponse && coverageResponse.success && coverageResponse.data) {
                 const coverage = coverageResponse.data;
@@ -3346,25 +3315,17 @@ export function AnnotationsContent({
                   presentCount: coverage.present_count,
                   missingCount: coverage.missing_count
                 };
-                console.log(`Coverage loaded for ${fileSummary.name}: ${coverage.present_count}/${coverage.total_referenced_images} (${coverage.missing_count} missing)`);
               }
             } catch (error) {
               console.warn(`Failed to load coverage for ${fileSummary.name}:`, error);
             }
           }
           
-          // Prefer backend-provided `type` when present; otherwise use detectedType
-          const backendType = fileSummary.type || fileSummary.format || null;
-
-          console.log(`🔍 LIGHTWEIGHT: Processing ${fileSummary.name} - annotation_count: ${fileSummary.annotation_count}, actual_count: ${fileSummary.actual_count}, stored_count: ${fileSummary.stored_count}`);
-          
           // First, generate unique colors for all classes
           const uniqueClassColors = classStats.reduce((acc, stat) => {
-            // Always assign unique colors, even if backend provides colors
             const usedColors = new Set(Object.values(acc));
             const assignedColor = getOrAssignClassColor(stat.className, acc, usedColors);
             acc[stat.className] = assignedColor;
-            console.log(`Color assignment for ${stat.className}: ${assignedColor} (original: ${stat.color})`);
             return acc;
           }, {} as Record<string, string>);
           
@@ -3377,9 +3338,9 @@ export function AnnotationsContent({
           const annotationFile: AnnotationFile = {
             id: fileSummary.id,
             name: fileSummary.name,
-            date: new Date().toISOString().split('T')[0], // We don't have creation date in summary
+            date: fileSummary.created_at || new Date().toISOString().split('T')[0], // Use backend created_at for correct sort order
             format: 'COCO', // Default format
-            type: (typeof backendType === 'string' && backendType.length > 0) ? (backendType as any) : detectedType,
+            type: detectedType,
             classCount: classStats.length,
             imageCount: fileSummary.image_count || 0, // Use image_count from summary
             matchedImageCount: 0, // Will be calculated when needed

@@ -8,7 +8,7 @@ import { ImageUploadDialog } from "@/components/ImageUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
-import { AnnotationSample } from "@/utils/annotations";
+import { AnnotationSample, processCOCOAnnotations } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
@@ -810,7 +810,6 @@ export default function Dataset() {
           
           // Process the COCO file to get annotation data for local display only
           // The AnnotationsContent component handles the backend import
-          const { processCOCOAnnotations } = await import('@/utils/annotations');
           const result = await processCOCOAnnotations(file, id);
           
           // Add to local state for immediate display

@@ -3,72 +3,40 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import fs from 'fs';
 
-// Plugin to ensure WASM files are served with correct MIME type
+// Serve onnxruntime-web WASM and .mjs/.js from node_modules so workers can load them
+const ONNX_DIST = path.join(process.cwd(), 'node_modules', 'onnxruntime-web', 'dist');
 const wasmPlugin = () => ({
   name: 'wasm-mime-type',
   configureServer(server: any) {
-    // Run FIRST in the middleware chain to catch WASM requests
-    // Must run before Vite's static file middleware
     server.middlewares.use((req: any, res: any, next: any) => {
-      // Log all requests for debugging
-      if (req.url?.includes('.wasm')) {
-        console.log('[WASM Plugin] Request detected:', req.url, 'Method:', req.method);
+      const urlPath = req.url?.split('?')[0] || '';
+      if (!urlPath.startsWith('/wasm/')) {
+        next();
+        return;
       }
-      
-      // Check for .wasm files in the URL
-      if (req.url?.endsWith('.wasm') || req.url?.includes('.wasm')) {
-        console.log('[WASM Plugin] Intercepting WASM request:', req.url, req.method);
-        
-        // Normalize the URL - remove query params if any
-        const urlPath = req.url.split('?')[0];
-        console.log('[WASM Plugin] Normalized path:', urlPath);
-        
-        // Try multiple possible paths
-        const possiblePaths = [
-          path.join(process.cwd(), 'public', urlPath), // /wasm/file.wasm -> public/wasm/file.wasm
-          path.join(process.cwd(), 'public', 'wasm', path.basename(urlPath)), // Just the filename
-          path.join(process.cwd(), 'node_modules', 'onnxruntime-web', 'dist', path.basename(urlPath)), // From node_modules
-        ];
-        
-        console.log('[WASM Plugin] Trying paths:', possiblePaths);
-        
-        let wasmPath: string | null = null;
-        for (const testPath of possiblePaths) {
-          if (fs.existsSync(testPath)) {
-            wasmPath = testPath;
-            console.log('[WASM Plugin] Found file at:', wasmPath);
-            break;
-          }
-        }
-        
-        if (wasmPath) {
-          console.log('[WASM Plugin] Serving WASM file from:', wasmPath);
-          try {
-            const fileContent = fs.readFileSync(wasmPath);
-            console.log('[WASM Plugin] File size:', fileContent.length, 'bytes');
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'application/wasm');
-            res.setHeader('Content-Length', fileContent.length.toString());
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-            res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
-            res.end(fileContent);
-            console.log('[WASM Plugin] File served successfully');
-            return; // Don't call next() - we've handled the request
-          } catch (error) {
-            console.error('[WASM Plugin] Error reading WASM file:', error);
-          }
-        } else {
-          console.warn('[WASM Plugin] WASM file not found. Tried paths:', possiblePaths);
-        }
+      const name = path.basename(urlPath);
+      const filePath = path.join(ONNX_DIST, name);
+      if (!fs.existsSync(filePath)) {
+        next();
+        return;
       }
-      next();
+      try {
+        const ext = path.extname(name).toLowerCase();
+        const mime = ext === '.wasm' ? 'application/wasm' : 'application/javascript';
+        const body = fs.readFileSync(filePath);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Content-Length', String(body.length));
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+        res.end(body);
+        return;
+      } catch (e) {
+        next();
+      }
     });
   },
-  // Also handle WASM files in the build
-  buildStart() {
-    console.log('[WASM Plugin] Build started - ensuring WASM files are included');
-  },
+  buildStart() {},
 });
 
 // https://vitejs.dev/config/
@@ -102,12 +70,14 @@ export default defineConfig(async ({ mode }) => {
       },
     },
     build: {
-      chunkSizeWarningLimit: 1000,
+      chunkSizeWarningLimit: 1700,
       rollupOptions: {
         output: {
-          manualChunks: {
-            'vendor': ['react', 'react-dom', 'react-router-dom'],
-            'ui': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu', '@radix-ui/react-slot'],
+          manualChunks: (id) => {
+            if (id.includes('node_modules/onnxruntime-web')) return 'onnx';
+            if (id.includes('node_modules/jszip')) return 'jszip';
+            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router')) return 'vendor';
+            if (id.includes('@radix-ui')) return 'ui';
           },
           // Ensure WASM files are treated as assets
           assetFileNames: (assetInfo: any) => {
