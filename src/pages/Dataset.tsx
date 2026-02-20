@@ -906,9 +906,9 @@ export default function Dataset() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       <Navbar />
-      <main className="flex-1 flex flex-col pt-16">
+      <main className="flex-1 flex flex-col pt-16 min-h-0">
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
@@ -941,7 +941,7 @@ export default function Dataset() {
                 />
               </div>
             </div>
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden">
               <ResizableDatasetLayout
                 layout={settings.layout}
                 id={id || ''}

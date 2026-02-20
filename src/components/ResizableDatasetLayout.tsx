@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ImagesTabContent } from '@/components/ImagesTabContent';
 import { TabbedImagesContent } from '@/components/TabbedImagesContent';
@@ -73,7 +73,14 @@ export function ResizableDatasetLayout({
   // Memoize images to prevent new array reference on every render
   const imagesMemo = useMemo(() => images, [JSON.stringify(images)]);
   const [annotationFiles, setAnnotationFiles] = useState<any[]>([]);
-  
+  // Counter to force re-mount of vertical ResizablePanelGroup when switching layouts
+  const verticalMountKey = useRef(0);
+  const prevLayout = useRef(layout);
+  if (layout === 'vertical' && prevLayout.current !== 'vertical') {
+    verticalMountKey.current += 1;
+  }
+  prevLayout.current = layout;
+
 
   // Handle annotation changes and store annotation files
   const handleShowAnnotationsChange = (show: boolean, annots: AnnotationSample[], files?: any[]) => {
@@ -168,13 +175,26 @@ export function ResizableDatasetLayout({
 
   if (layout === 'vertical') {
     return (
-      <div className="w-full h-full flex flex-col">
-        <div className="flex-1 min-h-0 border-b border-border">
-          {renderImagesSection()}
-        </div>
-        <div className="flex-1 min-h-0">
-          {renderAnnotationsSection()}
-        </div>
+      <div className="w-full h-full">
+        <ResizablePanelGroup 
+          key={`vertical-layout-${verticalMountKey.current}`}
+          direction="vertical" 
+          className="w-full h-full"
+        >
+          <ResizablePanel defaultSize={50} minSize={15} maxSize={85}>
+            <div className="bg-card h-full w-full">
+              {renderImagesSection()}
+            </div>
+          </ResizablePanel>
+          
+          <ResizableHandle withHandle />
+          
+          <ResizablePanel defaultSize={50} minSize={15} maxSize={85}>
+            <div className="bg-card h-full w-full">
+              {renderAnnotationsSection()}
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     );
   }
