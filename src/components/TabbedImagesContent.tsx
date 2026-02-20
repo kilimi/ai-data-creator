@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
-import { Pencil, Upload, Plus, X, FolderOpen } from "lucide-react";
+import { Pencil, Upload, Plus, X, FolderOpen, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Image, ImageCollection } from "@/types";
@@ -12,7 +13,7 @@ import { ImageDetailModal } from "@/components/ImageDetailModal";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AddImageTabDialog } from "@/components/AddImageTabDialog";
 import { ChunkedImageCollectionUploadDialog } from "@/components/ChunkedImageCollectionUploadDialog";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 interface TabbedImagesContentProps {
   id: string;
@@ -61,7 +62,7 @@ export function TabbedImagesContent({
 }: TabbedImagesContentProps) {
   const [activeTab, setActiveTab] = useState(imageCollections.length > 0 ? imageCollections[0].id : "");
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedClickedImage, setSelectedClickedImage] = useState<Image | null>(null); // Store the actual clicked image
+  const [selectedClickedImage, setSelectedClickedImage] = useState<Image | null>(null);
   const [isAnnotationChoiceModalOpen, setIsAnnotationChoiceModalOpen] = useState(false);
   const [isAddTabDialogOpen, setIsAddTabDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -72,6 +73,7 @@ export function TabbedImagesContent({
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [imageSearchQuery, setImageSearchQuery] = useState("");
 
   // Update active tab if collections change
   useEffect(() => {
@@ -83,26 +85,19 @@ export function TabbedImagesContent({
   const activeCollection = imageCollections.find(c => c.id === activeTab);
   const allImages = imageCollections.flatMap(c => c.images);
 
-  // Debug: log the structure of imageCollections
-  useEffect(() => {
-    console.log('TabbedImagesContent: imageCollections:', imageCollections);
-    if (imageCollections.length > 0) {
-      console.log('TabbedImagesContent: First collection images:', imageCollections[0].images);
-      if (imageCollections[0].images.length > 0) {
-        console.log('TabbedImagesContent: First image structure:', imageCollections[0].images[0]);
-      }
-    }
-  }, [imageCollections]);
+  // Filter paginated images by search query
+  const getFilteredPaginatedImages = (collection: ImageCollection) => {
+    if (!imageSearchQuery.trim()) return collection.paginatedImages;
+    const q = imageSearchQuery.toLowerCase();
+    return collection.paginatedImages.filter(img => img.fileName?.toLowerCase().includes(q));
+  };
 
-  // Open modal at clicked image index (based on all images across tabs)
+  // Open modal at clicked image index
   const handleImageClick = (image: Image) => {
-    console.log('TabbedImagesContent: Clicked image:', image);
-    console.log('TabbedImagesContent: All images:', allImages);
     const idx = allImages.findIndex((img) => img.id === image.id);
-    console.log('TabbedImagesContent: Found index:', idx, 'Selected image will be:', allImages[idx]);
     if (idx !== -1) {
       setSelectedImageIndex(idx);
-      setSelectedClickedImage(image); // Store the actual clicked image with all properties
+      setSelectedClickedImage(image);
       setIsModalOpen(true);
     }
   };
@@ -110,7 +105,7 @@ export function TabbedImagesContent({
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedImageIndex(null);
-    setSelectedClickedImage(null); // Clear the clicked image
+    setSelectedClickedImage(null);
   };
 
   const handleDeleteFromModal = async (imageId: string) => {
@@ -120,12 +115,10 @@ export function TabbedImagesContent({
     }
   };
 
-  const handleAddTab = (tabName: string) => {
-    onAddTab(tabName);
-  };
+  const handleAddTab = (tabName: string) => onAddTab(tabName);
 
   const handleRemoveTab = (tabId: string) => {
-    if (imageCollections.length <= 1) return; // Don't allow removing the last tab
+    if (imageCollections.length <= 1) return;
     onRemoveTab(tabId);
   };
 
@@ -137,9 +130,7 @@ export function TabbedImagesContent({
   };
 
   const handleFilesSelected = async (files: File[]) => {
-    if (uploadingTabId) {
-      await onUploadImages(uploadingTabId, files);
-    }
+    if (uploadingTabId) await onUploadImages(uploadingTabId, files);
     setIsUploadDialogOpen(false);
     setUploadingTabId("");
     setUploadingTabName("");
@@ -147,46 +138,26 @@ export function TabbedImagesContent({
 
   const handleChunkedUpload = async (files: File[]) => {
     if (!uploadingTabId) return;
-    
-    // Show progress overlay
     setIsUploading(true);
     setUploadProgress(0);
     setCurrentChunk(0);
     setUploadedCount(0);
-    
     const CHUNK_SIZE = 1000;
     const totalFiles = files.length;
-    const totalChunks = Math.ceil(totalFiles / CHUNK_SIZE);
-    setTotalChunks(totalChunks);
-    
+    const chunks = Math.ceil(totalFiles / CHUNK_SIZE);
+    setTotalChunks(chunks);
     try {
       let totalUploaded = 0;
-      
-      // Process files in chunks with progress tracking
-      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-        const startIndex = chunkIndex * CHUNK_SIZE;
-        const endIndex = Math.min(startIndex + CHUNK_SIZE, totalFiles);
-        const chunk = files.slice(startIndex, endIndex);
-        
-        setCurrentChunk(chunkIndex + 1);
-        
-        // Upload the chunk
+      for (let i = 0; i < chunks; i++) {
+        const chunk = files.slice(i * CHUNK_SIZE, Math.min((i + 1) * CHUNK_SIZE, totalFiles));
+        setCurrentChunk(i + 1);
         await onUploadImages(uploadingTabId, chunk);
-        
         totalUploaded += chunk.length;
         setUploadedCount(totalUploaded);
-        
-        // Update progress
-        const progress = ((chunkIndex + 1) / totalChunks) * 100;
-        setUploadProgress(Math.round(progress));
-        
-        // Small delay between chunks
-        if (chunkIndex < totalChunks - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+        setUploadProgress(Math.round(((i + 1) / chunks) * 100));
+        if (i < chunks - 1) await new Promise(r => setTimeout(r, 1000));
       }
     } finally {
-      // Hide progress overlay
       setIsUploading(false);
       setUploadProgress(0);
       setCurrentChunk(0);
@@ -195,41 +166,33 @@ export function TabbedImagesContent({
     }
   };
 
-  // Navigation handlers (work across all images, not just current tab)
+  // Navigation handlers
   const hasPrev = selectedImageIndex !== null && selectedImageIndex > 0;
   const hasNext = selectedImageIndex !== null && selectedImageIndex < allImages.length - 1;
-  
   const handlePrev = () => {
     if (hasPrev && selectedImageIndex !== null) {
-      const newIndex = selectedImageIndex - 1;
-      setSelectedImageIndex(newIndex);
-      setSelectedClickedImage(allImages[newIndex]); // Update clicked image state too
+      const n = selectedImageIndex - 1;
+      setSelectedImageIndex(n);
+      setSelectedClickedImage(allImages[n]);
     }
   };
-  
   const handleNext = () => {
     if (hasNext && selectedImageIndex !== null) {
-      const newIndex = selectedImageIndex + 1;
-      setSelectedImageIndex(newIndex);
-      setSelectedClickedImage(allImages[newIndex]); // Update clicked image state too
+      const n = selectedImageIndex + 1;
+      setSelectedImageIndex(n);
+      setSelectedClickedImage(allImages[n]);
     }
   };
 
-  // Get current image and annotations (based on all images)
   const selectedImage = selectedClickedImage || (selectedImageIndex !== null ? allImages[selectedImageIndex] : null);
   const selectedImageAnnotations = selectedImage
-    ? annotations.filter((anno) => {
-        const matches = String(anno.imageId) === String(selectedImage.id);
-        return matches;
-      })
+    ? annotations.filter((anno) => String(anno.imageId) === String(selectedImage.id))
     : [];
 
-  // Attach annotationFileName to each annotation for grid and popup
   const annotationsWithFileName = annotations.map((ann) => ({
     ...ann,
     annotationFileName: getAnnotationFileName(ann, annotationFiles),
   }));
-
   const selectedImageAnnotationsWithFile = selectedImageAnnotations.map((ann) => ({
     ...ann,
     annotationFileName: getAnnotationFileName(ann, annotationFiles),
@@ -239,59 +202,42 @@ export function TabbedImagesContent({
 
   return (
     <div className="h-full flex flex-col min-h-0">
-      {/* Header with cleaner design */}
-      <div className="flex-shrink-0 mb-6">
+      {/* Header */}
+      <div className="flex-shrink-0 mb-4">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Image Collections</h2>
-          </div>
+          <h2 className="text-2xl font-bold">Image Collections</h2>
         </div>
       </div>
 
-      {/* Modern Tab Design */}
-      <div className="flex-shrink-0 mb-6">
+      {/* Tabs */}
+      <div className="flex-shrink-0 mb-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="flex items-center gap-3 mb-6">
-            {/* Tab List with modern styling */}
-            <TabsList className="bg-gray-900/50 rounded-lg p-1 border border-gray-700/50 h-auto">
+          <div className="flex items-center gap-3 mb-4">
+            <TabsList className="bg-muted/50 rounded-lg p-1 border border-border/50 h-auto">
               {imageCollections.map((collection) => (
                 <div key={collection.id} className="relative group">
                   <TabsTrigger 
                     value={collection.id}
                     className="
-                      relative px-6 py-3 rounded-md text-sm font-medium transition-all duration-200
-                      data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-lg
-                      data-[state=inactive]:text-gray-400 data-[state=inactive]:hover:text-white
-                      data-[state=inactive]:hover:bg-gray-800/50
+                      relative px-5 py-2.5 rounded-md text-sm font-medium transition-all duration-200
+                      data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg
+                      data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground
+                      data-[state=inactive]:hover:bg-accent/50
                       flex items-center gap-2 min-w-0
                     "
                   >
                     <FolderOpen className="w-4 h-4 flex-shrink-0" />
                     <span className="truncate">{collection.name}</span>
-                    <span className="
-                      text-xs px-2 py-0.5 rounded-full flex-shrink-0
-                      data-[state=active]:bg-blue-500/30 data-[state=active]:text-blue-100
-                      data-[state=inactive]:bg-gray-700 data-[state=inactive]:text-gray-300
-                    ">
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-background/20">
                       {collection.images.length}
                     </span>
                   </TabsTrigger>
-                  
-                  {/* Remove button with better positioning */}
                   {imageCollections.length > 1 && (
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="
-                        absolute -top-1 -right-1 h-5 w-5 rounded-full
-                        bg-red-500/80 hover:bg-red-500 text-white
-                        opacity-0 group-hover:opacity-100 transition-opacity duration-200
-                        border border-red-400/50
-                      "
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemoveTab(collection.id);
-                      }}
+                      className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive/80 hover:bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                      onClick={(e) => { e.stopPropagation(); handleRemoveTab(collection.id); }}
                       title={`Remove ${collection.name} collection`}
                     >
                       <X className="w-3 h-3" />
@@ -300,17 +246,10 @@ export function TabbedImagesContent({
                 </div>
               ))}
             </TabsList>
-            
-            {/* Add new tab button with modern styling */}
             <Button
               variant="outline"
               onClick={() => setIsAddTabDialogOpen(true)}
-              className="
-                px-4 py-3 rounded-lg border-dashed border-2 border-gray-600
-                hover:border-blue-500 hover:bg-blue-500/10 hover:text-blue-400
-                text-gray-400 transition-all duration-200
-                flex items-center gap-2
-              "
+              className="px-4 py-2.5 rounded-lg border-dashed border-2 border-muted-foreground/30 hover:border-primary hover:bg-primary/10 hover:text-primary text-muted-foreground transition-all duration-200 flex items-center gap-2"
               title="Add new image collection"
             >
               <Plus className="w-4 h-4" />
@@ -318,76 +257,105 @@ export function TabbedImagesContent({
             </Button>
           </div>
 
-          {imageCollections.map((collection) => (
-            <TabsContent key={collection.id} value={collection.id} className="mt-0 space-y-6">
-              {/* Collection Header with modern card design */}
-              <div className="bg-gradient-to-r from-gray-800/40 via-gray-700/20 to-gray-800/40 rounded-xl p-5 border border-gray-600/30 shadow-sm">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-3 h-3 bg-gradient-to-br from-blue-400 to-blue-600 rounded-full shadow-sm"></div>
-                      <h3 className="text-xl font-bold text-white tracking-tight">{collection.name}</h3>
-                    </div>
-                    <div className="px-3 py-1.5 bg-gray-700/60 rounded-full border border-gray-600/40">
-                      <span className="text-sm text-gray-200 font-medium">
+          {imageCollections.map((collection) => {
+            const filteredImages = getFilteredPaginatedImages(collection);
+            const totalFiltered = imageSearchQuery.trim()
+              ? collection.images.filter(img => img.fileName?.toLowerCase().includes(imageSearchQuery.toLowerCase())).length
+              : collection.images.length;
+
+            return (
+              <TabsContent key={collection.id} value={collection.id} className="mt-0 space-y-4">
+                {/* Collection Header */}
+                <div className="bg-card/60 rounded-xl p-4 border border-border/40">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 bg-primary rounded-full"></div>
+                        <h3 className="text-lg font-bold">{collection.name}</h3>
+                      </div>
+                      <span className="text-sm text-muted-foreground px-2.5 py-1 bg-muted/50 rounded-full border border-border/40">
                         {collection.images.length} {collection.images.length === 1 ? 'image' : 'images'}
                       </span>
                     </div>
+                    <Button 
+                      onClick={() => handleUploadClick(collection.id)}
+                      className="gap-2"
+                    >
+                      <Upload className="w-4 h-4" />
+                      Upload Images
+                    </Button>
                   </div>
-                  <Button 
-                    onClick={() => handleUploadClick(collection.id)}
-                    className="
-                      bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800
-                      text-white px-5 py-2.5 rounded-lg transition-all duration-200
-                      hover:shadow-lg hover:shadow-blue-500/30
-                      flex items-center gap-2 font-medium border border-blue-500/20
-                    "
-                  >
-                    <Upload className="w-4 h-4" />
-                    <span>Upload Images</span>
-                  </Button>
                 </div>
-              </div>
 
-              {/* Controls with cleaner spacing */}
-              <div className="flex-shrink-0">
-                <ImageDisplayControls
-                  imagesPerPage={imagesPerPage}
-                  onImagesPerPageChange={onImagesPerPageChange}
-                  imageSize={imageSize}
-                  onImageSizeChange={onImageSizeChange}
-                />
-              </div>
-
-              {/* Images Grid with better container */}
-              <div className="flex-1 min-h-0">
-                <div className="bg-gray-900/20 rounded-lg border border-gray-700/30 min-h-[400px]">
-                  <ScrollArea className="h-[calc(100vh-400px)]">
-                    <div className="p-4">
-                      <ImagesGrid
-                        images={collection.paginatedImages}
-                        imageSize={imageSize}
-                        onOpenUploadDialog={() => handleUploadClick(collection.id)}
-                        onDeleteImage={(imageId) => onDeleteImage(collection.id, imageId)}
-                        onImageClick={handleImageClick}
-                        annotations={annotationsWithFileName}
-                        annotationFiles={annotationFiles}
-                      />
-                    </div>
-                  </ScrollArea>
+                {/* Search + Controls */}
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="relative flex-1 min-w-[200px] max-w-sm">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search images by name..."
+                      value={imageSearchQuery}
+                      onChange={(e) => setImageSearchQuery(e.target.value)}
+                      className="pl-9 h-8 text-sm"
+                    />
+                    {imageSearchQuery && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0"
+                        onClick={() => setImageSearchQuery("")}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                  <ImageDisplayControls
+                    imagesPerPage={imagesPerPage}
+                    onImagesPerPageChange={onImagesPerPageChange}
+                    imageSize={imageSize}
+                    onImageSizeChange={onImageSizeChange}
+                  />
                 </div>
-              </div>
 
-              {/* Pagination - fixed at bottom */}
-              <div className="flex-shrink-0">
-                <PaginationControls
-                  currentPage={collection.currentPage}
-                  totalPages={collection.totalPages}
-                  onPageChange={(page) => onPageChange(collection.id, page)}
-                />
-              </div>
-            </TabsContent>
-          ))}
+                {/* Sticky stats mini-bar */}
+                <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-sm border-b border-border/40 py-1.5 px-3 rounded-md text-xs text-muted-foreground flex items-center gap-3">
+                  <span>
+                    Showing {filteredImages.length} of {totalFiltered} images
+                    {imageSearchQuery.trim() && ` matching "${imageSearchQuery}"`}
+                  </span>
+                  <span>•</span>
+                  <span>Page {collection.currentPage} of {collection.totalPages}</span>
+                </div>
+
+                {/* Images Grid */}
+                <div className="flex-1 min-h-0">
+                  <div className="bg-card/20 rounded-lg border border-border/30 min-h-[400px]">
+                    <ScrollArea className="h-[calc(100vh-400px)]">
+                      <div className="p-4">
+                        <ImagesGrid
+                          images={filteredImages}
+                          imageSize={imageSize}
+                          onOpenUploadDialog={() => handleUploadClick(collection.id)}
+                          onDeleteImage={(imageId) => onDeleteImage(collection.id, imageId)}
+                          onImageClick={handleImageClick}
+                          annotations={annotationsWithFileName}
+                          annotationFiles={annotationFiles}
+                        />
+                      </div>
+                    </ScrollArea>
+                  </div>
+                </div>
+
+                {/* Pagination */}
+                <div className="flex-shrink-0">
+                  <PaginationControls
+                    currentPage={collection.currentPage}
+                    totalPages={collection.totalPages}
+                    onPageChange={(page) => onPageChange(collection.id, page)}
+                  />
+                </div>
+              </TabsContent>
+            );
+          })}
         </Tabs>
       </div>
 
@@ -407,7 +375,6 @@ export function TabbedImagesContent({
         imageCount={allImages.length}
       />
 
-      {/* Annotation Choice Modal */}
       <AnnotationChoiceModal
         isOpen={isAnnotationChoiceModalOpen}
         onOpenChange={setIsAnnotationChoiceModalOpen}
@@ -415,7 +382,6 @@ export function TabbedImagesContent({
         projectId={projectId}
       />
 
-      {/* Add Tab Dialog */}
       <AddImageTabDialog
         open={isAddTabDialogOpen}
         onOpenChange={setIsAddTabDialogOpen}
@@ -423,13 +389,10 @@ export function TabbedImagesContent({
         existingTabNames={existingTabNames}
       />
 
-      {/* Upload Dialog */}
       <ChunkedImageCollectionUploadDialog
         open={isUploadDialogOpen}
         onOpenChange={setIsUploadDialogOpen}
-        onFilesUploaded={(count) => {
-          // Optional: Add success feedback here
-        }}
+        onFilesUploaded={() => {}}
         onUploadChunk={handleChunkedUpload}
         chunkSize={1000}
         collectionName={uploadingTabName}
@@ -437,8 +400,8 @@ export function TabbedImagesContent({
       
       {/* Upload Progress Overlay */}
       {isUploading && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-          <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border">
+        <div className="fixed inset-0 bg-background/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-card p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border border-border">
             <div className="text-center space-y-4">
               <div className="text-lg font-semibold">Uploading Images to {uploadingTabName}</div>
               {totalChunks > 1 && (
@@ -455,11 +418,7 @@ export function TabbedImagesContent({
                 </div>
                 <div className="text-sm text-muted-foreground">
                   {uploadProgress}% complete
-                  {uploadedCount > 0 && (
-                    <span className="ml-2">
-                      ({uploadedCount} files)
-                    </span>
-                  )}
+                  {uploadedCount > 0 && <span className="ml-2">({uploadedCount} files)</span>}
                 </div>
               </div>
               <div className="text-xs text-muted-foreground">
