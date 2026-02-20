@@ -937,6 +937,7 @@ export default function Dataset() {
                   onDeleteDataset={handleDeleteDataset}
                   onDuplicateDataset={handleDuplicateDataset}
                   projectId={effectiveProjectId}
+                  imageCount={images.length}
                 />
               </div>
             </div>
