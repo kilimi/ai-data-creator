@@ -4157,29 +4157,6 @@ export function AnnotationsContent({
       <div className="flex-shrink-0 flex justify-between items-center mb-4">
         <div>
           <h2 className="text-xl font-semibold mb-1">Annotations</h2>
-          <p className="text-sm text-muted-foreground">
-            {filteredAnnotationFiles.length === annotationFiles.length 
-              ? `${annotationFiles.length} annotation files` 
-              : `${filteredAnnotationFiles.length} of ${annotationFiles.length} annotation files`
-            } • {visibleAnnotations.size} visible on images
-            {annotationFiles.length > 0 && (
-              <>
-                {' • '}
-                {annotationFiles.reduce((sum, file) => {
-                  console.log(`🔍 DISPLAY: File ${file.name} - totalSampleCount: ${file.totalSampleCount}`);
-                  return sum + (file.totalSampleCount || 0);
-                }, 0)} total annotations
-                {' • '}
-                {new Set(annotationFiles.flatMap(file => file.classStats?.map(stat => stat.className) || [])).size} unique classes
-                {images && images.length > 0 && (
-                  <>
-                    {' • '}
-                    {images.length} images in dataset
-                  </>
-                )}
-              </>
-            )}
-          </p>
         </div>
         <div className="flex gap-2">
           <Button 

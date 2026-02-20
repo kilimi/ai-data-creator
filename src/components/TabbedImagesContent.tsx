@@ -244,9 +244,6 @@ export function TabbedImagesContent({
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold text-white">Image Collections</h2>
-            <p className="text-sm text-gray-400 mt-1">
-              {allImages.length} total images across {imageCollections.length} collection{imageCollections.length !== 1 ? 's' : ''}
-            </p>
           </div>
         </div>
       </div>
