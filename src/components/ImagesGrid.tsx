@@ -174,7 +174,7 @@ export function ImagesGrid({
         return (
           <Card 
             key={image.id} 
-            className="group cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all duration-200"
+            className="group cursor-pointer hover:ring-2 hover:ring-primary transition-all duration-200"
             onClick={() => onImageClick?.(image)}
           >
             <CardContent className="p-0 relative">
@@ -183,8 +183,8 @@ export function ImagesGrid({
                 style={{ height: `${imageSize}px` }}
               >
                 {!imageIsLoaded && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-100 dark:bg-gray-800">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                  <div className="absolute inset-0 flex items-center justify-center bg-muted">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                   </div>
                 )}
                 <img
@@ -257,11 +257,11 @@ export function ImagesGrid({
                   {image.fileName}
                 </p>
                 <div className="flex justify-between items-center mt-1">
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     {dimensions ? `${dimensions.width} × ${dimensions.height}` : `${image.width || 0} × ${image.height || 0}`}
                   </p>
                   {image.fileSize && (
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       {(image.fileSize / 1024 / 1024).toFixed(1)} MB
                     </p>
                   )}

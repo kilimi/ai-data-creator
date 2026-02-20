@@ -1,13 +1,15 @@
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Settings, Sparkles } from "lucide-react";
+import { Settings, Sparkles, Sun, Moon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TasksPopover } from "./TasksPopover";
+import { useTheme } from "./ThemeProvider";
 
 export function Navbar() {
   const location = useLocation();
   const [scrolled, setScrolled] = useState(false);
+  const { theme, toggleTheme } = useTheme();
   
   useEffect(() => {
     const handleScroll = () => {
@@ -41,8 +43,18 @@ export function Navbar() {
           </Link>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           <TasksPopover />
+          
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9"
+            onClick={toggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
           
           <Button
             variant="outline"
