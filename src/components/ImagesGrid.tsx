@@ -136,15 +136,22 @@ export function ImagesGrid({
 
   if (images.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-32 h-32 mx-auto mb-4 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center">
-            <Upload className="w-12 h-12 text-gray-400" />
+      <div className="flex-1 flex items-center justify-center py-16">
+        <div className="text-center max-w-md mx-auto">
+          <div className="w-40 h-40 mx-auto mb-6 rounded-2xl border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center bg-muted/30 hover:bg-muted/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
+            onClick={onOpenUploadDialog}
+          >
+            <Upload className="w-10 h-10 text-muted-foreground/50 group-hover:text-primary transition-colors mb-2" />
+            <span className="text-xs text-muted-foreground/50 group-hover:text-primary transition-colors">
+              Drop images here
+            </span>
           </div>
-          <h3 className="text-lg font-medium mb-2">No images yet</h3>
-          <p className="text-gray-500 mb-4">Upload your first images to get started</p>
-          <Button onClick={onOpenUploadDialog}>
-            <Upload className="w-4 h-4 mr-2" />
+          <h3 className="text-lg font-semibold mb-2">No images in this collection</h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            Upload images to start annotating. Supports JPG, PNG, TIFF, and WebP formats.
+          </p>
+          <Button onClick={onOpenUploadDialog} size="lg" className="gap-2">
+            <Upload className="w-4 h-4" />
             Upload Images
           </Button>
         </div>
