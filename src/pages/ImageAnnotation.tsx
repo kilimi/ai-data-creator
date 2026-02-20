@@ -4696,8 +4696,6 @@ const ImageAnnotation = () => {
                     <Select value={autoSegmentClassId || ''} onValueChange={(v) => {
                       const idVal = v || null;
                       setAutoSegmentClassId(idVal);
-                      const c = classes.find(x => x.id === idVal);
-                      if (c) setAutoSegmentLabel(c.name);
                     }}>
                       <SelectTrigger className="w-36"><SelectValue placeholder="Class" /></SelectTrigger>
                       <SelectContent>

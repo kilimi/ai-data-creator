@@ -1,5 +1,5 @@
 import { Dataset } from "@/types";
-import { FileImage, Layers, Tag, Files, Calendar } from "lucide-react";
+import { FileImage, Tag, Files } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -35,7 +35,6 @@ function StatItem({ icon, label, value, tooltip }: { icon: React.ReactNode; labe
 
 export function DatasetInfoBar({ dataset, imageCount, annotationFileCount, totalAnnotationCount, uniqueClassCount }: DatasetInfoBarProps) {
   const fileCount = annotationFileCount ?? dataset.annotation_file_count ?? 0;
-  const annoCount = totalAnnotationCount ?? dataset.annotation_count ?? 0;
 
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -49,12 +48,6 @@ export function DatasetInfoBar({ dataset, imageCount, annotationFileCount, total
         label="Annotation Files"
         value={fileCount}
         tooltip={`${fileCount} annotation file(s) in this dataset`}
-      />
-      <StatItem
-        icon={<Layers className="h-3.5 w-3.5" />}
-        label="Annotations"
-        value={annoCount.toLocaleString()}
-        tooltip="Total annotations across all annotation files"
       />
       {uniqueClassCount !== undefined && uniqueClassCount > 0 && (
         <StatItem

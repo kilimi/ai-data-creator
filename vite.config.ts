@@ -73,7 +73,7 @@ export default defineConfig(async ({ mode }) => {
       chunkSizeWarningLimit: 1700,
       rollupOptions: {
         output: {
-          manualChunks: (id) => {
+          manualChunks: (id: string) => {
             if (id.includes('node_modules/onnxruntime-web')) return 'onnx';
             if (id.includes('node_modules/jszip')) return 'jszip';
             if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router')) return 'vendor';
