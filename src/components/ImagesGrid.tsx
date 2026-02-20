@@ -188,17 +188,22 @@ export function ImagesGrid({
                   onLoad={(e) => handleImageLoad(e, image.id)}
                 />
                 
-                {/* Annotation overlay: use original image dimensions so bbox/segmentation (in original space) align with thumbnail */}
-                {imageIsLoaded && imageAnnotations.length > 0 && (() => {
-                  const w = image.width && image.height ? image.width : dimensions?.width;
-                  const h = image.width && image.height ? image.height : dimensions?.height;
-                  if (!w || !h) return null;
+                {/* Annotation overlay: only use thumbnail dimensions for display so overlay matches visible image; require dimensions (onLoad) to avoid wrong scale on some images */}
+                {imageIsLoaded && imageAnnotations.length > 0 && dimensions?.width && dimensions?.height && (() => {
+                  const first = imageAnnotations[0];
+                  const displayW = dimensions.width;
+                  const displayH = dimensions.height;
+                  const refW = first.referenceImageWidth ?? image.width;
+                  const refH = first.referenceImageHeight ?? image.height;
+                  if (!refW || !refH) return null;
                   return (
                     <div className="absolute inset-0">
                       <AnnotationVisualizer
                         annotations={imageAnnotations}
-                        imageWidth={w}
-                        imageHeight={h}
+                        imageWidth={displayW}
+                        imageHeight={displayH}
+                        referenceImageWidth={refW}
+                        referenceImageHeight={refH}
                         className="w-full h-full"
                         showFileName={false}
                         globalShowMasks={true}

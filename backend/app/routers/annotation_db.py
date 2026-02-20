@@ -473,8 +473,11 @@ async def upload_coco_annotation_file(
     db.commit()
     db.close()  # Release so background task can use its own session
 
-    # Process synchronously so annotations are in DB before we return (edit mode will then load them)
-    await process_coco_annotation_file(annotation_file_id, coco_data)
+    try:
+        # Process synchronously so annotations are in DB before we return (edit mode will then load them)
+        await process_coco_annotation_file(annotation_file_id, coco_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"COCO processing failed: {str(e)}")
 
     return {
         "success": True,

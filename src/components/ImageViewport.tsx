@@ -83,7 +83,7 @@ export const ImageViewport = ({
       onMouseUp={onMouseUp}
       onDoubleClick={onDoubleClick}
     >
-      {/* Image and annotations container */}
+      {/* Image and annotations in the same transformed wrapper so overlay and image always align (same zoom/pan) */}
       <div
         className="relative flex items-center justify-center"
         style={{
@@ -112,21 +112,25 @@ export const ImageViewport = ({
             }}
           />
         </div>
+        {/* Overlay inside same transformed div so it shares the same coordinate system as the image */}
+        {imageLoaded && annotations && annotations.length > 0 && (() => {
+          const first = annotations[0];
+          return (
+            <AnnotationVisualizer
+              key={`${image?.id}-${annotationKey}`}
+              annotations={annotations}
+              imageWidth={imageDimensions.width}
+              imageHeight={imageDimensions.height}
+              referenceImageWidth={first.referenceImageWidth}
+              referenceImageHeight={first.referenceImageHeight}
+              className="absolute inset-0 pointer-events-none"
+              showFileName={false}
+              zoom={1}
+              pan={{ x: 0, y: 0 }}
+            />
+          );
+        })()}
       </div>
-      
-      {/* Annotations overlay - positioned absolutely to cover the entire container */}
-      {imageLoaded && annotations && annotations.length > 0 && (
-        <AnnotationVisualizer
-          key={`${image?.id}-${annotationKey}`}
-          annotations={annotations}
-          imageWidth={imageDimensions.width}
-          imageHeight={imageDimensions.height}
-          className="absolute inset-0 pointer-events-none"
-          showFileName={false}
-          zoom={zoom}
-          pan={pan}
-        />
-      )}
     </div>
   );
 };

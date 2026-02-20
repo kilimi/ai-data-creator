@@ -129,20 +129,24 @@ services:
       - mongodb_data:/data/db
     restart: unless-stopped
 
+  # Single SAM service: SAM 2 + SAM 3. Put sam3.pt in sam_service/models/ for local SAM 3.
   sam_service:
     build:
       context: ./sam_service
     environment:
-      - SAM_WEIGHTS=/models/sam_v2.pth
       - PYTHONUNBUFFERED=1
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SAM3_CHECKPOINT_PATH=/models/sam3/sam3.pt
+    volumes:
+      - ./sam_service/models:/models/sam3:ro
     ports:
       - "8081:8081"
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: "2.0"
+          memory: 8G
+          cpus: "4.0"
         reservations:
           devices:
             - driver: nvidia

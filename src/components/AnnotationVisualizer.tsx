@@ -7,6 +7,9 @@ interface AnnotationVisualizerProps {
   annotations: (AnnotationSample & { annotationFileName?: string })[];
   imageWidth: number;
   imageHeight: number;
+  /** When annotation coords are in a different space (e.g. full image), scale them to imageWidth x imageHeight for correct overlay alignment */
+  referenceImageWidth?: number;
+  referenceImageHeight?: number;
   className?: string;
   showFileName?: boolean;
   zoom?: number;
@@ -18,12 +21,22 @@ export const AnnotationVisualizer = ({
   annotations, 
   imageWidth, 
   imageHeight,
+  referenceImageWidth,
+  referenceImageHeight,
   className,
   showFileName = true,
   zoom = 1,
   pan = { x: 0, y: 0 },
   globalShowMasks = true
 }: AnnotationVisualizerProps) => {
+  // Scale from reference coord space to display (imageWidth x imageHeight) when they differ
+  const useRefScale = referenceImageWidth != null && referenceImageHeight != null &&
+    referenceImageWidth > 0 && referenceImageHeight > 0 &&
+    (referenceImageWidth !== imageWidth || referenceImageHeight !== imageHeight);
+  const scaleFromRefX = useRefScale ? imageWidth / referenceImageWidth! : 1;
+  const scaleFromRefY = useRefScale ? imageHeight / referenceImageHeight! : 1;
+  const toDisplayX = (x: number) => x * scaleFromRefX;
+  const toDisplayY = (y: number) => y * scaleFromRefY;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
@@ -161,8 +174,8 @@ export const AnnotationVisualizer = ({
           // Detect normalized coords (0-1) vs pixel coords; backend may store either
           const maxVal = Math.max(...segment.map((v: number) => Math.abs(v)));
           const isNormalized = maxVal <= 1.5;
-          const toPixelX = (v: number) => (isNormalized ? v * imageWidth : v);
-          const toPixelY = (v: number) => (isNormalized ? v * imageHeight : v);
+          const toPixelX = (v: number) => (isNormalized ? v * imageWidth : toDisplayX(v));
+          const toPixelY = (v: number) => (isNormalized ? v * imageHeight : toDisplayY(v));
 
           ctx.beginPath();
           const hexColor = color.startsWith('#') ? color : `#${color}`;
@@ -210,18 +223,18 @@ export const AnnotationVisualizer = ({
         let pixelX, pixelY, pixelWidth, pixelHeight;
         
         if (x <= 1 && y <= 1 && width <= 1 && height <= 1) {
-          // Coordinates are normalized (0-1), convert to pixels
+          // Coordinates are normalized (0-1), convert to pixels in display space
           pixelX = x * imageWidth;
           pixelY = y * imageHeight;
           pixelWidth = width * imageWidth;
           pixelHeight = height * imageHeight;
           console.log('Bbox coordinates appear normalized, converting to pixels');
         } else {
-          // Coordinates are already in pixels
-          pixelX = x;
-          pixelY = y;
-          pixelWidth = width;
-          pixelHeight = height;
+          // Coordinates are already in pixels (reference space); scale to display if needed
+          pixelX = toDisplayX(x);
+          pixelY = toDisplayY(y);
+          pixelWidth = toDisplayX(width);
+          pixelHeight = toDisplayY(height);
           console.log('Bbox coordinates appear to be in pixels already');
         }
         
@@ -276,10 +289,16 @@ export const AnnotationVisualizer = ({
         });
       }
     });
-  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks]);
+  }, [visibleAnnotations, containerDimensions, imageWidth, imageHeight, zoom, pan, globalShowMasks, scaleFromRefX, scaleFromRefY]);
 
   return (
-    <div ref={containerRef} className={cn("relative w-full h-full", className)}>
+    <div
+      ref={containerRef}
+      className={cn("relative w-full h-full", className)}
+      data-testid="annotation-overlay"
+      data-image-width={imageWidth}
+      data-image-height={imageHeight}
+    >
       <canvas ref={canvasRef} className="absolute top-0 left-0 pointer-events-none" />
       {/* Show annotation file names as a badge in the top-left corner if present */}
       {showFileName && visibleAnnotations.length > 0 && (

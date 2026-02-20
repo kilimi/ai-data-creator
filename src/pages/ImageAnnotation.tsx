@@ -43,6 +43,7 @@ import {
   Loader2,
   AlertCircle
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
@@ -233,7 +234,23 @@ const ImageAnnotation = () => {
     samPointsRef.current = samPoints;
   }, [samPoints]);
   const [isSamProcessing, setIsSamProcessing] = useState(false);
+  const [segmentModel, setSegmentModel] = useState<'sam2' | 'sam3'>('sam2');
+  const [segmentTextPrompt, setSegmentTextPrompt] = useState('');
 
+  const { data: sam3Available = false } = useQuery({
+    queryKey: ['sam3-available'],
+    queryFn: async () => {
+      const r = await fetch(`${API_CONFIG.baseUrl}/segment/ready/sam3`);
+      return r.ok;
+    },
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+
+  // When SAM 3 becomes unavailable, fall back to SAM 2
+  useEffect(() => {
+    if (!sam3Available && segmentModel === 'sam3') setSegmentModel('sam2');
+  }, [sam3Available, segmentModel]);
 
   // Panel tab state
   const [activePanelTab, setActivePanelTab] = useState<string>('annotations');
@@ -316,11 +333,15 @@ const ImageAnnotation = () => {
       const body: Record<string, unknown> = {
         point: scalePoint(imgPoint),
         points: newPoints.map(p => ({ ...scalePoint(p), label: p.label })),
+        model: segmentModel,
       };
       if (imageB64) {
         body.imageB64 = imageB64;
       } else if (img.url) {
         body.imageUrl = img.url;
+      }
+      if (segmentModel === 'sam3' && segmentTextPrompt.trim()) {
+        body.text = segmentTextPrompt.trim();
       }
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 14000);
@@ -335,14 +356,14 @@ const ImageAnnotation = () => {
       const json = await res.json();
       const rawPolygons = json.polygons || [];
       const isRectanglePlaceholder =
-        json.source !== 'sam2' &&
+        (json.source !== 'sam2' && json.source !== 'sam3') &&
         rawPolygons.length === 1 &&
         rawPolygons[0].length >= 4 &&
         rawPolygons[0].length <= 5;
       if (isRectanglePlaceholder) {
         toast({
           title: 'SAM service needs update',
-          description: 'Segmentation returned a placeholder. Ensure SAM 2 service (backend/sam_service) is running with a valid model.',
+          description: 'Segmentation returned a placeholder. Ensure the SAM service (backend) is running with a valid model.',
           variant: 'destructive',
         });
         return;
@@ -372,7 +393,7 @@ const ImageAnnotation = () => {
     } finally {
       setIsSamProcessing(false);
     }
-  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints]);
+  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints, segmentModel, segmentTextPrompt]);
 
   const acceptAutoSegment = () => {
     if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
@@ -423,6 +444,11 @@ const ImageAnnotation = () => {
     setAutoSegmentPreview(null);
     setSamPoints([]); // Clear SAM points when canceling
   };
+
+  const [isApplyingAllImages, setIsApplyingAllImages] = useState(false);
+  const [applyAllProgress, setApplyAllProgress] = useState<{ current: number; total: number } | null>(null);
+  const applyAllCancelledRef = useRef(false);
+
   // Inline editing for individual annotation labels in right sidebar
   const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
   const [editingAnnotationLabel, setEditingAnnotationLabel] = useState('');
@@ -855,11 +881,21 @@ const ImageAnnotation = () => {
       const storageKey = `annotations_${id}_${imageName}`;
       let savedAnnotations = localStorage.getItem(storageKey);
       
-      // If found in localStorage, validate the coordinates aren't corrupted
+      // If found in localStorage, validate the coordinates aren't corrupted and restore reference dimensions
       if (savedAnnotations) {
         try {
           const parsedAnnotations = JSON.parse(savedAnnotations);
-          
+          // Restore reference dimensions so drawing scales correctly when current image size differs (e.g. different image in dataset)
+          const dimsKey = `annotations_${id}_${imageName}_dims`;
+          const savedDims = localStorage.getItem(dimsKey);
+          if (savedDims) {
+            try {
+              const dims = JSON.parse(savedDims) as { width: number; height: number };
+              if (dims.width > 0 && dims.height > 0) {
+                cocoImageDimensionsRef.current[imageName] = { width: dims.width, height: dims.height };
+              }
+            } catch (_) { /* ignore */ }
+          }
           // Check if coordinates are abnormally large (corrupted data)
           let hasCorruptedData = false;
           if (parsedAnnotations.length > 0 && parsedAnnotations[0].points && parsedAnnotations[0].points.length > 0) {
@@ -1335,6 +1371,150 @@ const ImageAnnotation = () => {
       if (computeGlobalStatsTimeoutRef.current) clearTimeout(computeGlobalStatsTimeoutRef.current);
     };
   }, []);
+
+  const applySam3OnAllImages = useCallback(async () => {
+    if (!sam3Available || segmentModel !== 'sam3' || !segmentTextPrompt.trim()) {
+      toast({ title: 'SAM 3 required', description: 'Select SAM 3 and enter a text prompt', variant: 'destructive' });
+      return;
+    }
+    if (!selectedClass) {
+      toast({ title: 'Select a class', description: 'Choose a class for the applied annotations', variant: 'destructive' });
+      return;
+    }
+    const mainColl = imageCollections.find((c) => c.id === mainLayer);
+    if (!mainColl || mainColl.images.length === 0) {
+      toast({ title: 'No images', description: 'No images in the current layer', variant: 'destructive' });
+      return;
+    }
+    const classObj = classes.find((c) => c.id === selectedClass);
+    if (!classObj) return;
+
+    const apiBase = API_CONFIG.baseUrl;
+    const total = mainColl.images.length;
+    applyAllCancelledRef.current = false;
+    setIsApplyingAllImages(true);
+    setApplyAllProgress({ current: 0, total });
+
+    let addedCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < mainColl.images.length; i++) {
+      if (applyAllCancelledRef.current) break;
+      setApplyAllProgress({ current: i + 1, total });
+      const img = mainColl.images[i];
+      const imageUrl = img.url;
+      if (!imageUrl) {
+        failCount++;
+        continue;
+      }
+      try {
+        const res = await fetch(`${apiBase}/segment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'sam3',
+            text: segmentTextPrompt.trim(),
+            imageUrl,
+            point: {},
+            points: [],
+          }),
+        });
+        if (!res.ok) {
+          failCount++;
+          continue;
+        }
+        const json = await res.json();
+        const rawPolygons = json.polygons || [];
+        if (rawPolygons.length === 0) continue;
+
+        // Use only the first polygon per image so we create one annotation per image (toast count matches saved count)
+        const firstPoly = rawPolygons[0];
+        const points: Point[] = firstPoly.map((p: number[]) => ({ x: p[0], y: p[1] }));
+        if (points.length < 3) continue;
+
+        const imageName = img.fileName;
+        const newAnn: AnnotationShape = {
+          id: `annotation_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+          type: 'polygon',
+          points,
+          label: classObj.name,
+          color: classObj.color,
+          visible: true,
+        };
+
+        const storageKey = `annotations_${id}_${imageName}`;
+        const raw = localStorage.getItem(storageKey);
+        const existing: AnnotationShape[] = raw ? JSON.parse(raw) : [];
+        safeLocalStorageSet(storageKey, JSON.stringify([...existing, newAnn]));
+        addedCount += 1;
+      } catch {
+        failCount++;
+      }
+    }
+
+    const wasCancelled = applyAllCancelledRef.current;
+    setIsApplyingAllImages(false);
+    setApplyAllProgress(null);
+
+    if (wasCancelled) {
+      if (addedCount > 0) {
+        setHasUnsavedChanges(true);
+        setClasses((prev) =>
+          prev.map((c) => (c.id === classObj.id ? { ...c, count: c.count + addedCount } : c))
+        );
+        saveGlobalClasses(
+          classes.map((c) => (c.id === classObj.id ? { ...c, count: c.count + addedCount } : c))
+        );
+        computeGlobalStatsDebounced();
+        if (currentImageName && mainColl.images.some((img) => img.fileName === currentImageName)) {
+          loadAnnotationsForImage(currentImageName);
+        }
+        toast({ title: 'Cancelled', description: `Applied ${addedCount} annotation(s) before cancel.` });
+      } else {
+        toast({ title: 'Cancelled', description: 'Apply on all images was cancelled.' });
+      }
+      return;
+    }
+
+    setHasUnsavedChanges(true);
+
+    if (currentImageName && mainColl.images.some((img) => img.fileName === currentImageName)) {
+      loadAnnotationsForImage(currentImageName);
+    }
+    setClasses((prev) =>
+      prev.map((c) => (c.id === classObj.id ? { ...c, count: c.count + addedCount } : c))
+    );
+    saveGlobalClasses(
+      classes.map((c) => (c.id === classObj.id ? { ...c, count: c.count + addedCount } : c))
+    );
+    computeGlobalStatsDebounced();
+
+    if (failCount > 0) {
+      toast({
+        title: 'Apply on all images',
+        description: `Added ${addedCount} annotations across images. ${failCount} image(s) failed.`,
+        variant: 'destructive',
+      });
+    } else {
+      toast({
+        title: 'Apply on all images',
+        description: `Added ${addedCount} annotation(s) across ${total} image(s).`,
+      });
+    }
+  }, [
+    sam3Available,
+    segmentModel,
+    segmentTextPrompt,
+    selectedClass,
+    mainLayer,
+    imageCollections,
+    classes,
+    id,
+    currentImageName,
+    toast,
+    loadAnnotationsForImage,
+    computeGlobalStatsDebounced,
+  ]);
 
   // Recompute global stats whenever we have changes to class list, image list or storage updates
   useEffect(() => {
@@ -1900,9 +2080,14 @@ const ImageAnnotation = () => {
 
     setAnnotations(prev => {
       const updated = [...prev, newAnnotation];
-      // Auto-save to localStorage using image name
+      // Auto-save to localStorage using image name (and reference dimensions for correct scale on edit)
       const storageKey = `annotations_${id}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(updated));
+      const nw = imageRef.current?.naturalWidth;
+      const nh = imageRef.current?.naturalHeight;
+      if (nw && nh) {
+        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify({ width: nw, height: nh }));
+      }
       return updated;
     });
     
@@ -2713,9 +2898,11 @@ const ImageAnnotation = () => {
         }).filter(Boolean)
       };
 
-      // Save to localStorage using image name
+      // Save to localStorage using image name (and reference dimensions so edit uses correct scale when image size differs)
       const storageKey = `annotations_${id}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(annotations));
+      const dimsKey = `annotations_${id}_${currentImageName}_dims`;
+      safeLocalStorageSet(dimsKey, JSON.stringify({ width: naturalW, height: naturalH }));
       
       // Export as downloadable file
       const dataStr = JSON.stringify(cocoData, null, 2);
@@ -2755,9 +2942,14 @@ const ImageAnnotation = () => {
     // Update annotation label
     setAnnotations(prev => {
   const updated = prev.map(a => a.id === annotationId ? { ...a, label: targetClass!.name, color: targetClass!.color } : a);
-      // persist
+      // persist (and keep reference dimensions in sync)
       const storageKey = `annotations_${id}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(updated));
+      const nw = imageRef.current?.naturalWidth;
+      const nh = imageRef.current?.naturalHeight;
+      if (nw && nh) {
+        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify({ width: nw, height: nh }));
+      }
       return updated;
     });
 
@@ -4138,7 +4330,80 @@ const ImageAnnotation = () => {
                   </>
                 )}
               </Button>
+              {activeTool === 'auto-segment' && samPoints.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-white"
+                  onClick={() => setSamPoints([])}
+                  title="Clear SAM points"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
             </div>
+            <div className="mt-2">
+              <Label className="text-xs text-muted-foreground">Segment with</Label>
+              <Select
+                value={segmentModel}
+                onValueChange={(v: 'sam2' | 'sam3') => setSegmentModel(v)}
+              >
+                <SelectTrigger className="h-8 text-xs bg-gray-750 border-gray-600 mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sam2">SAM 2 (point)</SelectItem>
+                  <SelectItem
+                    value="sam3"
+                    disabled={!sam3Available}
+                    title={!sam3Available ? 'SAM 3 not loaded: add backend/sam_service/models/sam3.pt or HF_TOKEN' : undefined}
+                  >
+                    SAM 3 (point / text){!sam3Available ? ' — not available' : ''}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {segmentModel === 'sam3' && (
+              <>
+                <div className="mt-2">
+                  <Label className="text-xs text-muted-foreground">Text prompt (optional)</Label>
+                  <Input
+                    className="h-8 text-xs bg-gray-750 border-gray-600 mt-1 text-white placeholder:text-gray-400 focus-visible:ring-gray-500"
+                    placeholder="e.g. dog, person, red car"
+                    value={segmentTextPrompt}
+                    onChange={(e) => setSegmentTextPrompt(e.target.value)}
+                    title="Describe what to segment. Leave empty to use point/box only (segment under click)."
+                  />
+                </div>
+                <div className="mt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full h-8 text-xs"
+                    disabled={
+                      isApplyingAllImages ||
+                      !segmentTextPrompt.trim() ||
+                      !selectedClass ||
+                      imageCollections.find((c) => c.id === mainLayer)?.images.length === 0
+                    }
+                    onClick={applySam3OnAllImages}
+                    title="Run SAM 3 text segmentation on every image in the current layer and add annotations for the selected class"
+                  >
+                    {isApplyingAllImages && applyAllProgress ? (
+                      <>
+                        <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                        Applying {applyAllProgress.current}/{applyAllProgress.total}
+                      </>
+                    ) : (
+                      <>
+                        <Layers className="w-3 h-3 mr-1.5" />
+                        Apply on all images
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Left: tools and classes only (Image Layers moved to bottom) */}
@@ -4867,6 +5132,35 @@ const ImageAnnotation = () => {
           </div>
         )}
       </div>
+
+      {/* Apply on all images: full-screen overlay so user cannot click elsewhere; cancel stays active */}
+      {isApplyingAllImages && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60"
+          aria-modal="true"
+          role="dialog"
+          aria-label="Apply SAM 3 on all images in progress"
+        >
+          <div className="bg-gray-800 border border-gray-600 rounded-lg shadow-xl px-6 py-4 flex flex-col items-center gap-4 min-w-[280px]">
+            <Loader2 className="w-8 h-8 animate-spin text-white" />
+            {applyAllProgress && (
+              <p className="text-sm text-white">
+                Applying {applyAllProgress.current} / {applyAllProgress.total} images
+              </p>
+            )}
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                applyAllCancelledRef.current = true;
+              }}
+            >
+              <X className="w-4 h-4 mr-2" />
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Save Annotation File Dialog */}
       <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>

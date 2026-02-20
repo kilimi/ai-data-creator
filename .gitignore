@@ -54,6 +54,7 @@ pytest_cache/
 # Backend specific
 backend/data/
 backend/projects/
+backend/sam_service/models/*.pt
 backend/migrations/__pycache__/
 backend/app/__pycache__/
 backend/app/routers/__pycache__/

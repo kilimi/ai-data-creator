@@ -12,6 +12,9 @@ export interface AnnotationSample {
   isVisible?: boolean;        // Optional visibility for toggling in UI (for segmentation masks)
   showBboxes?: boolean;       // Optional individual bbox visibility control
   annotationFileName?: string; // Optional annotation file name for grouping
+  /** Dimensions of the image that annotation coords (segmentation/bbox) are in; used for correct overlay in grid/modal when images differ */
+  referenceImageWidth?: number;
+  referenceImageHeight?: number;
 }
 
 export interface AnnotationFile {
@@ -30,6 +33,7 @@ export interface AnnotationFile {
   showBboxes?: boolean; // Add individual bbox visibility control for the annotation file
   classColors?: { [className: string]: string }; // Add class color mapping
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
+  cocoImages?: { id: number; file_name: string; width: number; height: number }[]; // COCO images array for scaling segmentation to dataset image space
   tags?: string[]; // Add tags for categorization and search
   processing_status?: string; // Backend processing status
   error_message?: string; // Error message if processing failed

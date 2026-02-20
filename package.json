@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "AI-powered data annotation and dataset management platform",
+  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,7 +12,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:watch": "vitest watch",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "update-browserslist": "npm update caniuse-lite browserslist"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -77,6 +79,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/typography": "^0.5.15",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.2",
@@ -86,6 +89,8 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react-swc": "^3.5.0",
     "autoprefixer": "^10.4.20",
+    "browserslist": "^4.28.1",
+    "caniuse-lite": "^1.0.30001770",
     "eslint": "^9.9.0",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.9",

@@ -462,7 +462,9 @@ export function AnnotationsContent({
               color: color,
               isVisible: true, // This controls mask visibility
               showBboxes: bboxState !== false, // Use the passed bbox state
-              annotationFileName: file.name
+              annotationFileName: file.name,
+              referenceImageWidth: imageWidth,
+              referenceImageHeight: imageHeight,
             };
             
             currentPageAnnotations.push(annotationSample);
@@ -480,11 +482,13 @@ export function AnnotationsContent({
         }
       });
       
-      // Update the annotation file with new colors and re-detect type
+      // Update the annotation file with loaded samples (reference dims set) and COCO images for correct mask scaling
       setAnnotationFiles(prev => prev.map(f => 
         f.id === fileId 
           ? { 
               ...f, 
+              samples: currentPageAnnotations,
+              cocoImages: cocoData.images || f.cocoImages,
               classColors: updatedClassColors,
               // Re-detect type now that we have samples loaded
               type: currentPageAnnotations.length > 0 ? (() => {
@@ -1007,6 +1011,10 @@ export function AnnotationsContent({
     
     let mappedCount = 0;
     const mappedAnnotations = annotations.map(annotation => {
+      // Annotation may already have dataset image id (e.g. from content load with reference set); pass through unchanged
+      if (imagesMemo.some(img => String(img.id) === String(annotation.imageId))) {
+        return annotation;
+      }
       // Get the filename from the COCO image ID using the stored mapping
       const filename = annotationFile.imageMapping![annotation.imageId];
       if (filename && filenameToImageId[filename]) {
@@ -1014,7 +1022,7 @@ export function AnnotationsContent({
         
         // NEW: Re-scale annotations based on actual image dimensions
         const image = imagesMemo.find(img => img.fileName === filename);
-        const cocoImage = (annotationFile as any).cocoImages?.find((img: any) => img.id.toString() === annotation.imageId.toString());
+        const cocoImage = annotationFile.cocoImages?.find((img: { id: number }) => img.id.toString() === annotation.imageId.toString());
 
         if (image && cocoImage && (annotation.bbox || annotation.segmentation)) {
           const scaleX = image.width / cocoImage.width;
@@ -1040,13 +1048,18 @@ export function AnnotationsContent({
           return {
             ...scaledAnnotation,
             imageId: filenameToImageId[filename],
+            referenceImageWidth: image.width,
+            referenceImageHeight: image.height,
           };
         }
 
-        // Fallback to original behavior if scaling info is not available
+        // Fallback: keep annotation as-is but use dataset image dimensions as reference if we have them (image already declared above)
         return {
           ...annotation,
-          imageId: filenameToImageId[filename]
+          imageId: filenameToImageId[filename],
+          ...(image?.width && image?.height && !annotation.referenceImageWidth && !annotation.referenceImageHeight
+            ? { referenceImageWidth: image.width, referenceImageHeight: image.height }
+            : {}),
         };
       }
       return annotation;
