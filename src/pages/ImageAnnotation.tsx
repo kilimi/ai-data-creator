@@ -1,4 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -261,11 +271,15 @@ const ImageAnnotation = () => {
   // Panel tab state
   const [activePanelTab, setActivePanelTab] = useState<string>('annotations');
 
-  // Auto-save state
+   // Auto-save state
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveTimeRef = useRef<number>(Date.now());
+
+  // Leave confirmation dialog state
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
+  const pendingNavigationRef = useRef<string | null>(null);
 
   // Save annotation file dialog state
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -3819,7 +3833,24 @@ const ImageAnnotation = () => {
     const backUrl = projectId 
       ? `/projects/${projectId}/datasets/${id}` 
       : `/datasets/${id}`;
-    navigate(backUrl);
+    if (hasUnsavedChanges) {
+      pendingNavigationRef.current = backUrl;
+      setShowLeaveDialog(true);
+    } else {
+      navigate(backUrl);
+    }
+  };
+
+  const handleLeaveConfirm = async (shouldSave: boolean) => {
+    if (shouldSave && annotationId) {
+      await saveCurrentImageToDatabase();
+      setHasUnsavedChanges(false);
+    }
+    setShowLeaveDialog(false);
+    if (pendingNavigationRef.current) {
+      navigate(pendingNavigationRef.current);
+      pendingNavigationRef.current = null;
+    }
   };
 
   const navigateImage = useCallback(async (direction: 'prev' | 'next') => {
@@ -3916,6 +3947,18 @@ const ImageAnnotation = () => {
 
     return () => clearInterval(interval);
   }, [annotationId, autoSaveToDatabase]);
+
+  // Notify user when there are unsaved changes
+  const prevHasUnsavedRef = useRef(false);
+  useEffect(() => {
+    if (hasUnsavedChanges && !prevHasUnsavedRef.current && annotationId) {
+      toast({
+        title: 'Unsaved changes',
+        description: 'You have unsaved annotation changes. Click "Save Changes" to persist them.',
+      });
+    }
+    prevHasUnsavedRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges, annotationId]);
 
   // Auto-save before navigating away from the page
   useEffect(() => {
@@ -5328,6 +5371,33 @@ const ImageAnnotation = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Leave confirmation dialog */}
+      <AlertDialog open={showLeaveDialog} onOpenChange={setShowLeaveDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have unsaved annotation changes. Would you like to save before leaving?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setShowLeaveDialog(false);
+              pendingNavigationRef.current = null;
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <Button variant="destructive" onClick={() => handleLeaveConfirm(false)}>
+              Discard
+            </Button>
+            <AlertDialogAction onClick={() => handleLeaveConfirm(true)}>
+              <Save className="w-4 h-4 mr-2" />
+              Save & Leave
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );
