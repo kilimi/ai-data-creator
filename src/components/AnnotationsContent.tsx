@@ -4203,12 +4203,11 @@ export function AnnotationsContent({
     <div className={`h-full flex flex-col min-h-0 ${className}`}>
       <div className="flex-shrink-0 flex justify-between items-center mb-4">
         <div>
-          <h2 className="text-xl font-semibold mb-1">Annotations</h2>
+          <h2 className="text-2xl font-bold">Annotations</h2>
         </div>
         <div className="flex gap-2">
           <Button 
             variant="outline" 
-            className="border-gray-700 bg-gray-800 hover:bg-gray-700"
             onClick={handleImportClick}
             disabled={isLoading}
           >
@@ -4216,7 +4215,6 @@ export function AnnotationsContent({
             {isLoading ? "Importing..." : "Import Annotations"}
           </Button>
           <Button 
-            className="bg-blue-600 hover:bg-blue-700 text-white"
             onClick={() => setShowAnnotationChoiceModal(true)}
           >
             <Brush className="w-4 h-4 mr-2" />
@@ -4227,7 +4225,6 @@ export function AnnotationsContent({
           {!mergeMode ? (
             <Button 
               variant="outline"
-              className="border-orange-600 bg-orange-900 hover:bg-orange-800 text-orange-100"
               onClick={() => setMergeMode(true)}
               disabled={filteredAnnotationFiles.length < 2}
             >
@@ -4237,7 +4234,6 @@ export function AnnotationsContent({
           ) : (
             <div className="flex gap-2">
               <Button 
-                className="bg-green-600 hover:bg-green-700 text-white"
                 onClick={handleMergeAnnotations}
                 disabled={selectedForMerge.size < 2}
               >
@@ -4246,7 +4242,6 @@ export function AnnotationsContent({
               </Button>
               <Button 
                 variant="outline"
-                className="border-gray-600 hover:bg-gray-700"
                 onClick={() => {
                   setMergeMode(false);
                   setSelectedForMerge(new Set());
@@ -4272,20 +4267,20 @@ export function AnnotationsContent({
         <div className="space-y-2">
         {/* Initial loading indicator */}
         {isLoading && annotationFiles.length === 0 && (
-          <div className="mb-4 p-4 bg-gray-800/50 border border-gray-700 rounded-lg text-center">
+          <div className="mb-4 p-4 bg-muted/50 border border-border rounded-lg text-center">
             <div className="flex items-center justify-center gap-2 text-sm">
-              <Loader className="h-4 w-4 animate-spin text-blue-400" />
-              <span className="text-gray-300">Loading annotations...</span>
+              <Loader className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-muted-foreground">Loading annotations...</span>
             </div>
           </div>
         )}
         
         {/* Import/Processing status indicators */}
         {(importingFiles.size > 0 || processingFiles.size > 0 || activeTasks.size > 0) && (
-          <div className="mb-4 p-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+          <div className="mb-4 p-3 bg-muted/50 border border-border rounded-lg">
             <div className="flex items-center gap-2 text-sm">
-              <Loader className="h-4 w-4 animate-spin text-blue-400" />
-              <span className="text-gray-300">
+              <Loader className="h-4 w-4 animate-spin text-primary" />
+              <span className="text-muted-foreground">
                 {importingFiles.size > 0 && `Importing ${importingFiles.size} file${importingFiles.size > 1 ? 's' : ''}...`}
                 {importingFiles.size > 0 && (processingFiles.size > 0 || activeTasks.size > 0) && ' • '}
                 {processingFiles.size > 0 && `Processing ${processingFiles.size} file${processingFiles.size > 1 ? 's' : ''}...`}
@@ -4297,7 +4292,7 @@ export function AnnotationsContent({
             {activeTasks.size > 0 && (
               <div className="mt-2 space-y-1">
                 {Array.from(activeTasks.values()).map(task => (
-                  <div key={task.id} className="flex items-center justify-between text-xs text-gray-400">
+                  <div key={task.id} className="flex items-center justify-between text-xs text-muted-foreground">
                     <span className="truncate mr-2">{task.fileName || task.name}</span>
                     <div className="flex items-center gap-2">
                       <span className="capitalize">{task.status}</span>
@@ -4329,16 +4324,16 @@ export function AnnotationsContent({
           })
           .map((file, index) => {
             return (
-              <div key={file.id} className="border border-gray-700 rounded-lg overflow-hidden">
+              <div key={file.id} className="border border-border/60 rounded-lg overflow-hidden">
                 {/* Main annotation row */}
                 <div 
-                  className={`cursor-pointer p-4 hover:bg-gray-800/50 transition-colors ${selectedAnnotation === file.id ? 'bg-gray-800' : ''}`}
+                  className={`cursor-pointer p-4 hover:bg-accent/50 transition-colors ${selectedAnnotation === file.id ? 'bg-accent' : ''}`}
                   onClick={() => handleAnnotationClick(file.id)}
                 >
                    <div className="flex items-center justify-between">
                       {/* Number indicator */}
                       <div className="flex items-center mr-3 min-w-[24px]">
-                        <span className="text-xs text-muted-foreground font-mono bg-gray-800 px-2 py-1 rounded">
+                        <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">
                           #{index + 1}
                         </span>
                       </div>
@@ -4359,45 +4354,45 @@ export function AnnotationsContent({
                               }
                               setSelectedForMerge(newSelected);
                             }}
-                            className="w-4 h-4 text-orange-600 bg-gray-700 border-gray-600 rounded focus:ring-orange-500 focus:ring-2"
+                            className="w-4 h-4 rounded focus:ring-2 focus:ring-primary"
                           />
                         </div>
                      )}
                      <div className="flex-1">
                        <div className="flex items-center gap-2 group">
                          {editingName?.annotationId === file.id ? (
-                           <div className="flex items-center gap-2 flex-1">
-                             <Input
-                               value={editingName.newName}
-                               onChange={(e) => setEditingName({ ...editingName, newName: e.target.value })}
-                               onKeyDown={handleNameKeyDown}
-                               onBlur={handleSaveEditName}
-                               className="font-medium bg-gray-800 border-gray-600 text-white h-6 px-2 text-sm"
-                               autoFocus
-                               onClick={(e) => e.stopPropagation()}
-                             />
-                             <Button
-                               variant="ghost"
-                               size="sm"
-                               className="h-6 w-6 p-0 text-green-400 hover:text-green-300"
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 handleSaveEditName();
-                               }}
-                             >
-                               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                               </svg>
-                             </Button>
-                             <Button
-                               variant="ghost"
-                               size="sm"
-                               className="h-6 w-6 p-0 text-gray-400 hover:text-gray-300"
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 handleCancelEditName();
-                               }}
-                             >
+                            <div className="flex items-center gap-2 flex-1">
+                              <Input
+                                value={editingName.newName}
+                                onChange={(e) => setEditingName({ ...editingName, newName: e.target.value })}
+                                onKeyDown={handleNameKeyDown}
+                                onBlur={handleSaveEditName}
+                                className="font-medium h-6 px-2 text-sm"
+                                autoFocus
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-primary hover:text-primary/80"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSaveEditName();
+                                }}
+                              >
+                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCancelEditName();
+                                }}
+                              >
                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                </svg>
@@ -4407,40 +4402,40 @@ export function AnnotationsContent({
                            <>
                              <div className="flex items-center gap-2">
                                <div className="font-medium">{file.name}</div>
-                               {importingFiles.has(file.name) && (
-                                 <Badge
-                                   variant="secondary"
-                                   className="text-xs bg-blue-500/20 text-blue-300 border-blue-500 flex items-center gap-1"
-                                   title="Importing file..."
-                                 >
-                                   <Loader className="h-3 w-3 animate-spin" />
-                                   Importing
-                                 </Badge>
-                               )}
-                               {processingFiles.has(file.id) && (
-                                 <Badge
-                                   variant="secondary"
-                                   className="text-xs bg-yellow-500/20 text-yellow-300 border-yellow-500 flex items-center gap-1"
-                                   title="Processing annotations..."
-                                 >
-                                   <Loader className="h-3 w-3 animate-spin" />
-                                   Processing
-                                 </Badge>
-                               )}
-                               {(file as any).emergencyMode && (
-                                 <Badge
-                                   variant="secondary"
-                                   className="text-xs bg-red-500/20 text-red-300 border-red-500"
-                                   title="Emergency mode: Minimal data only"
-                                 >
-                                   Limited
-                                 </Badge>
-                               )}
+                                {importingFiles.has(file.name) && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs bg-primary/20 text-primary border-primary flex items-center gap-1"
+                                    title="Importing file..."
+                                  >
+                                    <Loader className="h-3 w-3 animate-spin" />
+                                    Importing
+                                  </Badge>
+                                )}
+                                {processingFiles.has(file.id) && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border-yellow-500 flex items-center gap-1"
+                                    title="Processing annotations..."
+                                  >
+                                    <Loader className="h-3 w-3 animate-spin" />
+                                    Processing
+                                  </Badge>
+                                )}
+                                {(file as any).emergencyMode && (
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs bg-destructive/20 text-destructive border-destructive"
+                                    title="Emergency mode: Minimal data only"
+                                  >
+                                    Limited
+                                  </Badge>
+                                )}
                              </div>
                              <Button
                                variant="ghost"
                                size="sm"
-                               className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-300"
+                               className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
                                onClick={(e) => handleStartEditName(file.id, file.name, e)}
                                title="Edit annotation name"
                              >
@@ -4457,10 +4452,10 @@ export function AnnotationsContent({
                             variant="secondary" 
                             className={`text-xs capitalize ${
                               detectAnnotationType(file) === 'Classification'
-                                ? 'cursor-pointer hover:bg-blue-600 hover:text-white transition-colors bg-blue-500/20 text-blue-300 border-blue-500' 
+                                ? 'cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors bg-primary/20 text-primary border-primary/50' 
                                 : detectAnnotationType(file).startsWith('Segmentation')
-                                ? 'cursor-pointer hover:bg-green-600 hover:text-white transition-colors bg-green-500/20 text-green-300 border-green-500'
-                                : 'bg-gray-500/20 text-gray-300 border-gray-500' // Other
+                                ? 'cursor-pointer hover:bg-accent-foreground hover:text-accent transition-colors bg-accent text-accent-foreground border-accent'
+                                : 'bg-muted text-muted-foreground border-border' // Other
                             }`}
                             onClick={(e) => {
                               if (detectAnnotationType(file) === 'Classification') {
@@ -4522,7 +4517,7 @@ export function AnnotationsContent({
                           {file.processing_status === 'processing' && (
                             <Badge
                               variant="secondary"
-                              className="text-xs bg-yellow-500/20 text-yellow-300 border-yellow-500 flex items-center gap-1"
+                              className="text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border-yellow-500 flex items-center gap-1"
                               title="File is being processed"
                             >
                               <Loader className="h-3 w-3 animate-spin" />
@@ -4532,7 +4527,7 @@ export function AnnotationsContent({
                           {file.processing_status === 'failed' && (
                             <Badge
                               variant="secondary"
-                              className="text-xs bg-red-500/20 text-red-300 border-red-500"
+                              className="text-xs bg-destructive/20 text-destructive border-destructive"
                               title={file.error_message || "Processing failed"}
                             >
                               Failed
@@ -4546,7 +4541,7 @@ export function AnnotationsContent({
                               <Badge
                                 key={tag}
                                 variant="secondary"
-                                className="text-xs bg-blue-600/20 text-blue-300 border-blue-600/30"
+                                className="text-xs bg-primary/20 text-primary border-primary/30"
                               >
                                 <Tag className="h-3 w-3 mr-1" />
                                 {tag}
@@ -4555,7 +4550,7 @@ export function AnnotationsContent({
                             {file.tags.length > 3 && (
                               <Badge
                                 variant="secondary"
-                                className="text-xs bg-gray-600/20 text-gray-400 border-gray-600/30"
+                                className="text-xs bg-muted text-muted-foreground border-border"
                               >
                                 +{file.tags.length - 3} more
                               </Badge>
@@ -4574,17 +4569,17 @@ export function AnnotationsContent({
                             
                             return (
                               <button
-                                className="hover:bg-gray-700 px-2 py-1 rounded transition-colors cursor-pointer text-xs"
+                                className="hover:bg-accent px-2 py-1 rounded transition-colors cursor-pointer text-xs"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleShowImageBreakdown(file);
                                 }}
                                 title="Click to see image details"
                               >
-                                <span className="text-green-400">{presentCount}</span>
-                                <span className="text-gray-500">/</span>
-                                <span className="text-red-400">{missingCount}</span>
-                                <span className="text-gray-500 ml-1">({totalCount} total)</span>
+                                <span className="text-green-600 dark:text-green-400">{presentCount}</span>
+                                <span className="text-muted-foreground">/</span>
+                                <span className="text-destructive">{missingCount}</span>
+                                <span className="text-muted-foreground ml-1">({totalCount} total)</span>
                               </button>
                             );
                           } else {
@@ -4593,7 +4588,7 @@ export function AnnotationsContent({
                             
                             return (
                               <button
-                                className="hover:underline cursor-pointer text-blue-300 hover:text-blue-200"
+                                className="hover:underline cursor-pointer text-primary hover:text-primary/80"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleShowImageBreakdown(file);
@@ -4612,7 +4607,7 @@ export function AnnotationsContent({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-blue-400' : 'text-gray-500'}`}
+                          className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-primary' : 'text-muted-foreground'}`}
                           onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
                           title={visibleAnnotations.has(file.id) ? "Hide segmentation masks" : "Show segmentation masks"}
                           disabled={loadingAnnotations.has(file.id)}
@@ -4628,7 +4623,7 @@ export function AnnotationsContent({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className={`h-8 w-8 ${file.showBboxes ? 'text-blue-400' : 'text-gray-500'}`}
+                          className={`h-8 w-8 ${file.showBboxes ? 'text-primary' : 'text-muted-foreground'}`}
                           onClick={(e) => handleToggleAnnotationBboxes(file.id, e)}
                           title={file.showBboxes ? "Hide bounding boxes" : "Show bounding boxes"}
                           disabled={loadingAnnotations.has(file.id)}
@@ -4648,7 +4643,7 @@ export function AnnotationsContent({
                              <Button 
                                variant="ghost" 
                                size="icon" 
-                               className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                               className="h-8 w-8 text-muted-foreground hover:text-primary"
                                onClick={(e) => {
                                  e.stopPropagation();
                                  if (currentPageImageIds.length > 0) {
@@ -4676,7 +4671,7 @@ export function AnnotationsContent({
                          <Button 
                            variant="ghost" 
                            size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                           className="h-8 w-8 text-muted-foreground hover:text-primary"
                            onClick={(e) => handleTagsClick(file.id, e)}
                            title="Manage tags"
                          >
@@ -4686,7 +4681,7 @@ export function AnnotationsContent({
                            <Button 
                              variant="ghost" 
                              size="icon" 
-                             className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                             className="h-8 w-8 text-muted-foreground hover:text-primary"
                              onClick={(e) => handleEditClassificationAnnotation(file.id, e)}
                              title="Edit classification annotations"
                            >
@@ -4696,7 +4691,7 @@ export function AnnotationsContent({
                            <Button 
                              variant="ghost" 
                              size="icon" 
-                             className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                             className="h-8 w-8 text-muted-foreground hover:text-primary"
                              onClick={(e) => handleEditSegmentationAnnotation(file.id, e)}
                              title="Edit segmentation annotations"
                            >
@@ -4716,7 +4711,7 @@ export function AnnotationsContent({
                          <Button
                            variant="ghost"
                            size="icon"
-                           className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                           className="h-8 w-8 text-muted-foreground hover:text-primary"
                            onClick={(e) => handleDuplicateAnnotation(file.id, e)}
                            title="Duplicate annotation file"
                          >
@@ -4735,7 +4730,7 @@ export function AnnotationsContent({
                          <Button 
                            variant="ghost" 
                            size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-blue-400"
+                           className="h-8 w-8 text-muted-foreground hover:text-primary"
                            onClick={(e) => handleDownloadImagesClick(file.id, e)}
                            title="Download images by class"
                          >
@@ -4744,7 +4739,7 @@ export function AnnotationsContent({
                          <Button 
                            variant="ghost" 
                            size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-green-400"
+                           className="h-8 w-8 text-muted-foreground hover:text-primary"
                            onClick={(e) => handleDownloadAnnotation(file.id, e)}
                            title="Download annotation file"
                          >
@@ -4757,7 +4752,7 @@ export function AnnotationsContent({
                 
                 {/* Expandable statistics section */}
                 {selectedAnnotation === file.id && (
-                  <div className="border-t border-gray-700 bg-gray-800/30">
+                  <div className="border-t border-border bg-muted/30">
                     <div className="p-4">
                       <div className="flex items-center justify-between mb-4">
                         <h4 className="text-sm font-medium">
@@ -4773,11 +4768,11 @@ export function AnnotationsContent({
                       {/* Statistics section - now shown for all annotation types including classification */}
                       <div className="mb-6">
                         <div className="flex items-center justify-between mb-2">
-                          <h5 className="text-xs font-medium mb-3 text-gray-400">Class Statistics</h5>
+                          <h5 className="text-xs font-medium mb-3 text-muted-foreground">Class Statistics</h5>
                           <Button
                             size="sm"
                             variant="secondary"
-                            className="text-xs ml-2 bg-yellow-400 text-black hover:bg-yellow-300 border-yellow-400"
+                            className="text-xs ml-2"
                             onClick={() => setMergeDialogOpen(true)}
                           >
                             Merge Classes
@@ -4796,7 +4791,7 @@ export function AnnotationsContent({
                           Click a class color icon in the statistics above to customize its appearance
                         </p>
                         {selectedClass && file.classStats && (
-                            <div className="mt-4 pt-4 border-t border-gray-700">
+                            <div className="mt-4 pt-4 border-t border-border">
                               <ClassColorOpacityPicker
                                 annotationId={file.id}
                                 className={selectedClass}
@@ -4856,8 +4851,8 @@ export function AnnotationsContent({
         
         {annotationFiles.length === 0 && (
           <div className="flex flex-col items-center justify-center text-center p-8">
-            <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-              <Tag className="h-6 w-6 text-blue-400" />
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+              <Tag className="h-6 w-6 text-primary" />
             </div>
             <h3 className="text-lg font-medium mb-2">No annotation files</h3>
             <p className="text-sm text-muted-foreground max-w-xs">
@@ -4867,8 +4862,8 @@ export function AnnotationsContent({
         )}
         {annotationFiles.length > 0 && filteredAnnotationFiles.length === 0 && (
           <div className="flex flex-col items-center justify-center text-center p-8">
-            <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-              <Tag className="h-6 w-6 text-gray-400" />
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
+              <Tag className="h-6 w-6 text-muted-foreground" />
             </div>
             <h3 className="text-lg font-medium mb-2">No matching annotations</h3>
             <p className="text-sm text-muted-foreground max-w-xs">
@@ -4884,29 +4879,27 @@ export function AnnotationsContent({
         onOpenChange={setShowUploadDialog}
         onFilesSelected={handleFilesSelected}
       />      <Dialog open={imageStatusDialog.isOpen} onOpenChange={(open) => setImageStatusDialog(prev => ({ ...prev, isOpen: open }))}>
-        <DialogContent className="max-w-2xl bg-gray-900 text-white border-gray-700">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {imageStatusDialog.type === 'breakdown' ? 'Image Coverage' :
                imageStatusDialog.type === 'present' ? 'Present Images' : 'Missing Images'} 
               {imageStatusDialog.type !== 'breakdown' && ` (${imageStatusDialog.files.length})`}
             </DialogTitle>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-muted-foreground">
               From annotation file: {imageStatusDialog.annotationFileName}
             </p>
           </DialogHeader>
           <div className="max-h-96 overflow-y-auto">
             {imageStatusDialog.isLoading ? (
-              // Loading state
               <div className="flex items-center justify-center py-8">
                 <div className="flex items-center gap-3">
-                  <Loader className="h-5 w-5 animate-spin text-blue-400" />
-                  <span className="text-gray-300">Calculating image breakdown...</span>
+                  <Loader className="h-5 w-5 animate-spin text-primary" />
+                  <span className="text-muted-foreground">Calculating image breakdown...</span>
                 </div>
               </div>
             ) : imageStatusDialog.type === 'breakdown' ? (
               <div className="space-y-4">
-                {/* Breakdown summary */}
                 <div className="space-y-1">
                   {imageStatusDialog.files.map((line, index) => (
                     <div key={index} className="text-sm">
@@ -4915,11 +4908,10 @@ export function AnnotationsContent({
                   ))}
                 </div>
                 
-                {/* Action buttons */}
-                <div className="flex gap-3 pt-4 border-t border-gray-700">
+                <div className="flex gap-3 pt-4 border-t border-border">
                   <Button
                     variant="outline"
-                    className="flex-1 bg-blue-900 hover:bg-blue-800 border-blue-700"
+                    className="flex-1"
                     onClick={() => {
                       setImageStatusDialog({
                         isOpen: true,
@@ -4934,7 +4926,7 @@ export function AnnotationsContent({
                   </Button>
                   <Button
                     variant="outline"
-                    className="flex-1 bg-orange-900 hover:bg-orange-800 border-orange-700"
+                    className="flex-1"
                     onClick={() => {
                       setImageStatusDialog({
                         isOpen: true,
@@ -4950,21 +4942,20 @@ export function AnnotationsContent({
                 </div>
               </div>
             ) : (
-              // Original present/missing file list
               <>
                 {imageStatusDialog.files.length > 0 ? (
                   <div className="space-y-1">
                     {imageStatusDialog.files.map((fileName, index) => (
                       <div 
                         key={index} 
-                        className="text-sm p-2 bg-gray-800 rounded border border-gray-700"
+                        className="text-sm p-2 bg-muted rounded border border-border"
                       >
                         {fileName}
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-gray-400 text-sm">
+                  <p className="text-muted-foreground text-sm">
                     No {imageStatusDialog.type} images found.
                   </p>
                 )}
@@ -4975,23 +4966,22 @@ export function AnnotationsContent({
       </Dialog>
 
       <Dialog open={editDialog.isOpen} onOpenChange={(open) => !open && handleCancelEdit()}>
-        <DialogContent className="max-w-md bg-gray-900 text-white border-gray-700">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Annotation File</DialogTitle>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-muted-foreground">
               Change the name of the annotation file
             </p>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label htmlFor="annotation-name" className="text-sm font-medium text-gray-300 block mb-2">
+              <label htmlFor="annotation-name" className="text-sm font-medium block mb-2">
                 Annotation Name
               </label>
               <Input
                 id="annotation-name"
                 value={editDialog.newName}
                 onChange={(e) => setEditDialog(prev => ({ ...prev, newName: e.target.value }))}
-                className="bg-gray-800 border-gray-600 text-white"
                 placeholder="Enter annotation name..."
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -5007,13 +4997,11 @@ export function AnnotationsContent({
               <Button
                 variant="outline"
                 onClick={handleCancelEdit}
-                className="border-gray-600 text-gray-300 hover:bg-gray-800"
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleSaveAnnotationName}
-                className="bg-blue-600 hover:bg-blue-700"
                 disabled={!editDialog.newName.trim() || editDialog.newName.trim() === editDialog.currentName}
               >
                 Save
