@@ -1263,6 +1263,19 @@ export function AnnotationsContent({
   };
 
   const handleAnnotationClick = (annotationId: string) => {
+    if (mergeMode) {
+      // In merge mode, toggle merge selection instead of expanding statistics
+      setSelectedForMerge(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(annotationId)) {
+          newSet.delete(annotationId);
+        } else {
+          newSet.add(annotationId);
+        }
+        return newSet;
+      });
+      return;
+    }
     const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
     setSelectedAnnotation(newSelectedAnnotation);
   };  // Helper function to safely save annotation files to localStorage with smart pagination
