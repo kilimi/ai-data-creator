@@ -30,7 +30,11 @@ def validate_and_normalize_segmentation(
         normalize: If True, normalize coordinates to 0-1 range. If False, keep as pixel coordinates (integers)
     
     Returns:
-        Validated segmentation with integer coordinates (or normalized if normalize=True), or None if invalid
+        Validated segmentation with integer pixel coordinates (or normalized if normalize=True), or None if invalid
+        
+    Note:
+        For consistency, segmentation coordinates are stored as pixel coordinates (normalize=False).
+        This avoids coordinate transformation issues when images have different dimensions.
     """
     if not segmentation:
         return None
@@ -337,24 +341,24 @@ async def process_coco_annotation_file(
                         bbox_width = bbox[2] / img_width
                         bbox_height = bbox[3] / img_height
 
-                # Normalize segmentation coordinates to relative (0..1) if present and polygon format
-                segmentation_normalized = None
+                # Keep segmentation coordinates as pixel values (not normalized)
+                segmentation_pixels = None
                 if 'segmentation' in coco_ann and coco_ann['segmentation']:
                     seg = coco_ann['segmentation']
                     img_width = image_info.get('width', 1) or 1
                     img_height = image_info.get('height', 1) or 1
                     
-                    # Validate and normalize segmentation (normalize to 0-1 range)
-                    segmentation_normalized = validate_and_normalize_segmentation(
+                    # Validate segmentation but keep as pixel coordinates (integers)
+                    segmentation_pixels = validate_and_normalize_segmentation(
                         seg,
                         image_width=img_width,
                         image_height=img_height,
-                        normalize=True
+                        normalize=False  # Keep as pixel coordinates
                     )
                     
                     # Fallback to storing raw segmentation if validation fails
-                    if segmentation_normalized is None:
-                        segmentation_normalized = coco_ann.get('segmentation')
+                    if segmentation_pixels is None:
+                        segmentation_pixels = coco_ann.get('segmentation')
 
                 # Create annotation record (explicitly let database auto-generate ID)
                 annotation_data = {
@@ -370,7 +374,7 @@ async def process_coco_annotation_file(
                     'bbox_width': bbox_width,
                     'bbox_height': bbox_height,
                     'bbox': coco_ann.get('bbox'),  # Keep original for backward compatibility
-                    'segmentation': segmentation_normalized,
+                    'segmentation': segmentation_pixels,
                     'area': coco_ann.get('area'),
                     'confidence': 1.0
                 }
@@ -489,6 +493,223 @@ async def upload_coco_annotation_file(
         "annotation_file_id": annotation_file_id,
         "message": "Annotation file saved"
     }
+
+
+@router.post("/datasets/{dataset_id}/annotations/save-direct")
+async def save_annotations_direct(
+    dataset_id: int,
+    data: Dict[str, Any],
+    db: Session = Depends(get_db)
+):
+    """Save annotations directly without COCO file building (more efficient)"""
+    
+    # Verify dataset exists
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Extract data
+    name = data.get('name')
+    if not name or not name.strip():
+        raise HTTPException(status_code=400, detail="Annotation file name is required")
+    
+    categories = data.get('categories', [])
+    images = data.get('images', [])
+    annotations = data.get('annotations', [])
+    
+    if not categories:
+        raise HTTPException(status_code=400, detail="At least one category is required")
+    
+    # Create annotation file record
+    annotation_file_id = str(uuid.uuid4())
+    
+    annotation_file = AnnotationFile(
+        id=annotation_file_id,
+        dataset_id=dataset_id,
+        name=name if name.endswith('.json') else f"{name}.json",
+        format="COCO",
+        type="Segmentation (mask+bbox)",
+        is_processed=False,
+        processing_status="processing"
+    )
+    
+    db.add(annotation_file)
+    db.commit()
+    
+    try:
+        # Create image name to ID mapping
+        image_mapping = {}
+        dataset_images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        for img in dataset_images:
+            image_mapping[img.file_name] = img
+            base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
+            image_mapping[base_name] = img
+        
+        # Process categories
+        category_mapping = {}
+        class_counts = {}
+        for cat in categories:
+            cat_id = cat.get('id')
+            cat_name = cat.get('name')
+            if cat_id and cat_name:
+                category_mapping[cat_id] = cat_name
+                class_counts[cat_name] = 0
+        
+        # Process images and create mapping
+        coco_image_mapping = {}
+        for img_data in images:
+            coco_image_id = img_data.get('id')
+            file_name = img_data.get('file_name')
+            img_width = img_data.get('width', 1) or 1
+            img_height = img_data.get('height', 1) or 1
+            
+            if not file_name:
+                continue
+            
+            # Find matching dataset image
+            dataset_image = image_mapping.get(file_name)
+            if not dataset_image:
+                base_name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
+                dataset_image = image_mapping.get(base_name)
+            
+            if dataset_image:
+                coco_image_mapping[coco_image_id] = {
+                    'dataset_image_id': dataset_image.id,
+                    'width': img_width,
+                    'height': img_height,
+                    'file_name': file_name
+                }
+                
+                # Create AnnotationFileImage entry
+                try:
+                    afi = AnnotationFileImage(
+                        annotation_file_id=annotation_file_id,
+                        coco_image_id=coco_image_id,
+                        file_name=file_name,
+                        dataset_image_id=dataset_image.id,
+                        width=img_width,
+                        height=img_height
+                    )
+                    db.add(afi)
+                except Exception:
+                    pass
+        
+        # Process annotations
+        annotation_count = 0
+        for ann_data in annotations:
+            coco_image_id = ann_data.get('image_id')
+            category_id = ann_data.get('category_id')
+            
+            if coco_image_id not in coco_image_mapping:
+                continue
+            
+            image_info = coco_image_mapping[coco_image_id]
+            class_name = category_mapping.get(category_id, f"category_{category_id}")
+            
+            # Process bbox
+            bbox = ann_data.get('bbox')
+            bbox_x = bbox_y = bbox_width = bbox_height = None
+            
+            if bbox and len(bbox) >= 4:
+                img_width = image_info['width']
+                img_height = image_info['height']
+                
+                # Check if already normalized
+                if all(0 <= v <= 1 for v in bbox):
+                    bbox_x, bbox_y, bbox_width, bbox_height = bbox
+                else:
+                    # Normalize
+                    bbox_x = bbox[0] / img_width
+                    bbox_y = bbox[1] / img_height
+                    bbox_width = bbox[2] / img_width
+                    bbox_height = bbox[3] / img_height
+            
+            # Process segmentation - keep as pixel coordinates
+            segmentation_pixels = None
+            if ann_data.get('segmentation'):
+                seg = ann_data['segmentation']
+                img_width = image_info.get('width', 1) or 1
+                img_height = image_info.get('height', 1) or 1
+                
+                segmentation_pixels = validate_and_normalize_segmentation(
+                    seg,
+                    image_width=img_width,
+                    image_height=img_height,
+                    normalize=False
+                )
+                
+                if segmentation_pixels is None:
+                    segmentation_pixels = seg
+            
+            # Create annotation
+            annotation = Annotation(
+                annotation_file_id=annotation_file_id,
+                image_id=image_info['dataset_image_id'],
+                dataset_id=dataset_id,
+                coco_image_id=coco_image_id,
+                coco_annotation_id=ann_data.get('id'),
+                category_id=category_id,
+                category=class_name,
+                bbox_x=bbox_x,
+                bbox_y=bbox_y,
+                bbox_width=bbox_width,
+                bbox_height=bbox_height,
+                bbox=bbox,
+                segmentation=segmentation_pixels,
+                area=ann_data.get('area'),
+                confidence=1.0
+            )
+            
+            db.add(annotation)
+            annotation_count += 1
+            class_counts[class_name] = class_counts.get(class_name, 0) + 1
+        
+        # Create annotation classes
+        for class_name, count in class_counts.items():
+            cat_id = None
+            for c_id, c_name in category_mapping.items():
+                if c_name == class_name:
+                    cat_id = c_id
+                    break
+            
+            annotation_class = AnnotationClass(
+                annotation_file_id=annotation_file_id,
+                class_name=class_name,
+                category_id=cat_id,
+                count=count,
+                color='#ea384c',
+                opacity=0.25
+            )
+            db.add(annotation_class)
+        
+        # Update annotation file
+        annotation_file.is_processed = True
+        annotation_file.processing_status = "completed"
+        annotation_file.annotation_count = annotation_count
+        annotation_file.category_count = len(class_counts)
+        annotation_file.image_count = len(coco_image_mapping)
+        
+        # Update dataset annotation count
+        update_dataset_annotation_count(db, dataset_id)
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "annotation_file_id": annotation_file_id,
+            "message": f"Saved {annotation_count} annotations from {len(coco_image_mapping)} images"
+        }
+        
+    except Exception as e:
+        db.rollback()
+        # Update error status
+        try:
+            annotation_file.processing_status = "failed"
+            annotation_file.error_message = str(e)
+            db.commit()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to save annotations: {str(e)}")
 
 
 @router.get("/datasets/{dataset_id}/annotations/{annotation_file_id}/data")
@@ -947,7 +1168,7 @@ def process_coco_annotation_file_task(
                     'confidence': 1.0
                 }
                 
-                # Validate segmentation coordinates before saving
+                # Validate segmentation coordinates before saving (keep as pixel coordinates)
                 if annotation_data['segmentation']:
                     img_width = image_info.get('width', 1) or 1
                     img_height = image_info.get('height', 1) or 1

@@ -2425,14 +2425,20 @@ const ImageAnnotation = () => {
       );
     }
 
-    // Scale annotation coords from COCO image dimensions to actual image dimensions when they differ
+    // When drawing, annotations.points are in COCO image space (the space they were annotated in)
+    // We need to scale to natural image space if dimensions differ
     const naturalW = imageRef.current?.naturalWidth ?? 0;
     const naturalH = imageRef.current?.naturalHeight ?? 0;
     const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
+    
+    // Only scale if we have COCO dimensions AND they differ from natural dimensions
     const needScale = cocoDims && naturalW > 0 && naturalH > 0 && cocoDims.width > 0 && cocoDims.height > 0 &&
       (cocoDims.width !== naturalW || cocoDims.height !== naturalH);
     const scaleX = needScale ? naturalW / cocoDims!.width : 1;
     const scaleY = needScale ? naturalH / cocoDims!.height : 1;
+    
+    // Helper to convert annotation coordinates to screen coordinates
+    // annotation.points are in COCO space, scale to natural, then to screen
     const annotationToScreen = (px: number, py: number) =>
       imageToScreenCoords(px * scaleX, py * scaleY);
 
@@ -3008,9 +3014,32 @@ const ImageAnnotation = () => {
       for (const name of allImageNames) {
         const storageKey = `annotations_${id}_${name}`;
         const saved = localStorage.getItem(storageKey);
+        
+        // Get stored dimensions for this specific image (not current image!)
+        const dimsKey = `annotations_${id}_${name}_dims`;
+        const savedDims = localStorage.getItem(dimsKey);
+        let imgWidth = 0;
+        let imgHeight = 0;
+        
+        if (savedDims) {
+          try {
+            const dims = JSON.parse(savedDims) as { width: number; height: number };
+            imgWidth = dims.width || 0;
+            imgHeight = dims.height || 0;
+          } catch (e) {
+            console.warn(`Failed to parse dimensions for ${name}, using fallback`);
+            imgWidth = imageRef.current?.naturalWidth || 0;
+            imgHeight = imageRef.current?.naturalHeight || 0;
+          }
+        } else {
+          // Fallback to current image dimensions (may be incorrect if different image)
+          imgWidth = imageRef.current?.naturalWidth || 0;
+          imgHeight = imageRef.current?.naturalHeight || 0;
+        }
+        
         if (!saved) {
           // still add image entry to keep indexing consistent
-          imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+          imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
           imageId++;
           continue;
         }
@@ -3018,7 +3047,7 @@ const ImageAnnotation = () => {
         let parsed: AnnotationShape[] = [];
         try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
 
-        imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+        imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
 
         parsed.forEach((ann) => {
           if (ann.type === 'polygon') {
@@ -3105,7 +3134,7 @@ const ImageAnnotation = () => {
     try {
       setIsSavingAnnotation(true);
 
-      // Build COCO format with all annotations
+      // Build minimal annotation data (no full COCO building)
       const imagesArr: any[] = [];
       const annotationsArr: any[] = [];
       const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name, supercategory: 'object' }));
@@ -3117,14 +3146,32 @@ const ImageAnnotation = () => {
         const storageKey = `annotations_${id}_${imageName}`;
         const saved = localStorage.getItem(storageKey);
         
+        // Get stored dimensions for this specific image
+        const dimsKey = `annotations_${id}_${imageName}_dims`;
+        const savedDims = localStorage.getItem(dimsKey);
+        let imgWidth = 0;
+        let imgHeight = 0;
+        
+        if (savedDims) {
+          try {
+            const dims = JSON.parse(savedDims) as { width: number; height: number };
+            imgWidth = dims.width || 0;
+            imgHeight = dims.height || 0;
+          } catch (e) {
+            console.warn(`Failed to parse dimensions for ${imageName}`);
+          }
+        }
+        
         if (!saved) {
-          // Add image entry even if no annotations
-          imagesArr.push({ 
-            id: imageId, 
-            file_name: imageName, 
-            width: imageRef.current?.naturalWidth || 0, 
-            height: imageRef.current?.naturalHeight || 0 
-          });
+          // Add image entry even if no annotations (if we have dimensions)
+          if (imgWidth > 0 && imgHeight > 0) {
+            imagesArr.push({ 
+              id: imageId, 
+              file_name: imageName, 
+              width: imgWidth, 
+              height: imgHeight 
+            });
+          }
           imageId++;
           continue;
         }
@@ -3136,12 +3183,19 @@ const ImageAnnotation = () => {
           parsed = []; 
         }
 
-        imagesArr.push({ 
-          id: imageId, 
-          file_name: imageName, 
-          width: imageRef.current?.naturalWidth || 0, 
-          height: imageRef.current?.naturalHeight || 0 
-        });
+        // Only add image if we have dimensions
+        if (imgWidth > 0 && imgHeight > 0) {
+          imagesArr.push({ 
+            id: imageId, 
+            file_name: imageName, 
+            width: imgWidth, 
+            height: imgHeight 
+          });
+        } else {
+          // Skip this image if no dimensions
+          imageId++;
+          continue;
+        }
 
         parsed.forEach((ann) => {
           if (ann.type === 'polygon') {
@@ -3170,40 +3224,34 @@ const ImageAnnotation = () => {
         imageId++;
       }
 
-      const coco = {
-        info: {
-          description: `Segmentation annotations for dataset ${id}`,
-          version: '1.0',
-          year: new Date().getFullYear(),
-          contributor: 'AI Data Creator',
-          date_created: new Date().toISOString()
-        },
-        images: imagesArr,
-        categories: categoryMap,
-        annotations: annotationsArr
-      };
-
-      // Create JSON file
-      const dataStr = JSON.stringify(coco, null, 2);
-      const fileName = name.endsWith('.json') ? name : `${name}.json`;
-      const file = new File([dataStr], fileName, { type: 'application/json' });
-
-      // Upload to backend
-      const response = await api.uploadCocoAnnotationFile(parseInt(id), file);
+      // Save directly to backend without building full COCO file
+      const response = await fetch(`${API_CONFIG.baseUrl}/datasets/${id}/annotations/save-direct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          categories: categoryMap,
+          images: imagesArr,
+          annotations: annotationsArr
+        })
+      });
       
-      if (response.success) {
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(error.detail || 'Failed to save annotations');
+      }
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        const fileName = name.endsWith('.json') ? name : `${name}.json`;
         toast({ 
           title: 'Saved successfully', 
           description: `Annotation file "${fileName}" has been created with ${annotationsArr.length} annotations from ${imagesArr.length} images` 
         });
         return true;
       } else {
-        toast({ 
-          title: 'Save failed', 
-          description: response.error || 'Failed to save annotation file',
-          variant: 'destructive'
-        });
-        return false;
+        throw new Error(result.message || 'Failed to save annotation file');
       }
     } catch (error) {
       console.error('Error saving annotation file:', error);
@@ -3515,9 +3563,32 @@ const ImageAnnotation = () => {
       for (const name of allImageNames) {
         const storageKey = `annotations_${id}_${name}`;
         const saved = localStorage.getItem(storageKey);
+        
+        // Get stored dimensions for this specific image (not current image!)
+        const dimsKey = `annotations_${id}_${name}_dims`;
+        const savedDims = localStorage.getItem(dimsKey);
+        let imgWidth = 0;
+        let imgHeight = 0;
+        
+        if (savedDims) {
+          try {
+            const dims = JSON.parse(savedDims) as { width: number; height: number };
+            imgWidth = dims.width || 0;
+            imgHeight = dims.height || 0;
+          } catch (e) {
+            console.warn(`Failed to parse dimensions for ${name}, using fallback`);
+            imgWidth = imageRef.current?.naturalWidth || 0;
+            imgHeight = imageRef.current?.naturalHeight || 0;
+          }
+        } else {
+          // Fallback to current image dimensions (may be incorrect if different image)
+          imgWidth = imageRef.current?.naturalWidth || 0;
+          imgHeight = imageRef.current?.naturalHeight || 0;
+        }
+        
         if (!saved) {
           // still add image entry to keep indexing consistent
-          imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+          imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
           imageId++;
           continue;
         }
@@ -3525,7 +3596,7 @@ const ImageAnnotation = () => {
         let parsed: AnnotationShape[] = [];
         try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
 
-        imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
+        imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
 
         parsed.forEach((ann) => {
           if (ann.type === 'polygon') {

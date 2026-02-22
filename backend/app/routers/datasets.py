@@ -1697,39 +1697,14 @@ async def get_dataset_annotation_content(
                         "category_id": category_id_map.get(ann["className"], 1)
                     }
 
-                    # Handle segmentation first so masks are never dropped (even if bbox missing)
+                    # Handle segmentation - coordinates are already stored as pixels
                     if ann.get("segmentation") and isinstance(ann["segmentation"], list):
-                        segmentation = ann["segmentation"]
-                        pixel_segmentation = []
-                        for polygon in segmentation:
-                            if isinstance(polygon, list) and len(polygon) > 0:
-                                is_already_pixel = any(abs(val) > 2 for val in polygon)
-                                if is_already_pixel:
-                                    pixel_segmentation.append(polygon)
-                                else:
-                                    pixel_polygon = []
-                                    for i in range(0, len(polygon), 2):
-                                        if i + 1 < len(polygon):
-                                            pixel_polygon.append(polygon[i] * img_width)
-                                            pixel_polygon.append(polygon[i + 1] * img_height)
-                                    if pixel_polygon:
-                                        pixel_segmentation.append(pixel_polygon)
-                        if pixel_segmentation:
-                            coco_ann["segmentation"] = pixel_segmentation
+                        # Segmentation is already in pixel coordinates, use directly
+                        coco_ann["segmentation"] = ann["segmentation"]
 
-                    # Handle bbox - may be pixel or normalized
+                    # Handle bbox - coordinates are stored as pixels, use directly
                     if ann.get("bbox") and len(ann["bbox"]) == 4:
-                        bbox = ann["bbox"]
-                        is_already_pixel = any(abs(val) > 2 for val in bbox)
-                        if is_already_pixel:
-                            coco_ann["bbox"] = bbox
-                        else:
-                            coco_ann["bbox"] = [
-                                bbox[0] * img_width,
-                                bbox[1] * img_height,
-                                bbox[2] * img_width,
-                                bbox[3] * img_height
-                            ]
+                        coco_ann["bbox"] = ann["bbox"]
                         coco_ann["area"] = ann.get("area") if ann.get("area") is not None else (coco_ann["bbox"][2] * coco_ann["bbox"][3])
                         coco_ann["iscrowd"] = 0
                     elif coco_ann.get("segmentation"):

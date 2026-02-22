@@ -265,7 +265,10 @@ def _segment_sam3(data):
         mask = masks_np[0] if isinstance(masks_np, (list, tuple)) else masks_np
         if hasattr(mask, "cpu"):
             mask = mask.cpu().numpy()
-        # SAM 3 can return (1, 1, H*W) or (1, H, W) etc.; ensure 2D (H, W)
+        mask = np.asarray(mask)
+        # SAM 3 can return (1, 1, H*W) or (1, H, W) or (0, H, W) when no mask; ensure we have data
+        if mask.size == 0 or (mask.ndim >= 1 and mask.shape[0] == 0):
+            return jsonify({"error": "No mask produced"}), 500
         mask = np.squeeze(mask)
         if mask.size == 0 or (mask.ndim >= 1 and mask.shape[0] == 0):
             return jsonify({"error": "No mask produced"}), 500
