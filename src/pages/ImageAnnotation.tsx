@@ -1107,7 +1107,15 @@ const ImageAnnotation = () => {
       
       if (savedAnnotations) {
         const parsedAnnotations = JSON.parse(savedAnnotations);
-        setAnnotations(parsedAnnotations);
+        
+        // Sync annotation colors with current in-memory class colors
+        // (user may have changed class colors since these were saved)
+        const classColorMap: { [name: string]: string } = {};
+        classes.forEach(c => { classColorMap[c.name] = c.color; });
+        const colorSyncedAnnotations = parsedAnnotations.map((a: any) => 
+          classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a
+        );
+        setAnnotations(colorSyncedAnnotations);
 
         // Recompute class counts from loaded annotations so the left classes
         // reflect the actual annotations currently loaded in the image.
@@ -4685,9 +4693,11 @@ const ImageAnnotation = () => {
                                     style={{ backgroundColor: color }}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      // Update class color
-                                      setClasses(prev => prev.map(c => c.id === classObj.id ? { ...c, color } : c));
-                                      // Update existing annotations of this class
+                                      setClasses(prev => {
+                                        const updated = prev.map(c => c.id === classObj.id ? { ...c, color } : c);
+                                        saveGlobalClasses(updated);
+                                        return updated;
+                                      });
                                       setAnnotations(prev => prev.map(a => a.label === classObj.name ? { ...a, color } : a));
                                       setHasUnsavedChanges(true);
                                     }}
@@ -4702,7 +4712,11 @@ const ImageAnnotation = () => {
                                   value={classObj.color}
                                   onChange={(e) => {
                                     const color = e.target.value;
-                                    setClasses(prev => prev.map(c => c.id === classObj.id ? { ...c, color } : c));
+                                    setClasses(prev => {
+                                      const updated = prev.map(c => c.id === classObj.id ? { ...c, color } : c);
+                                      saveGlobalClasses(updated);
+                                      return updated;
+                                    });
                                     setAnnotations(prev => prev.map(a => a.label === classObj.name ? { ...a, color } : a));
                                     setHasUnsavedChanges(true);
                                   }}
