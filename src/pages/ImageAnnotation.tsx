@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Dialog,
   DialogContent,
@@ -4603,10 +4604,53 @@ const ImageAnnotation = () => {
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <div 
-                            className="w-4 h-4 rounded flex-shrink-0"
-                            style={{ backgroundColor: classObj.color }}
-                          />
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                className="w-4 h-4 rounded flex-shrink-0 ring-offset-background transition-all hover:ring-2 hover:ring-ring hover:ring-offset-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                style={{ backgroundColor: classObj.color }}
+                                onClick={(e) => e.stopPropagation()}
+                                title="Change class color"
+                              />
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-3" align="start" side="right">
+                              <div className="grid grid-cols-5 gap-1.5">
+                                {DEFAULT_COLORS.map((color) => (
+                                  <button
+                                    key={color}
+                                    className={`w-6 h-6 rounded-md border-2 transition-all hover:scale-110 ${
+                                      classObj.color === color ? 'border-foreground ring-1 ring-ring' : 'border-transparent'
+                                    }`}
+                                    style={{ backgroundColor: color }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // Update class color
+                                      setClasses(prev => prev.map(c => c.id === classObj.id ? { ...c, color } : c));
+                                      // Update existing annotations of this class
+                                      setAnnotations(prev => prev.map(a => a.label === classObj.name ? { ...a, color } : a));
+                                      setHasUnsavedChanges(true);
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                              <Separator className="my-2" />
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-muted-foreground">Custom:</label>
+                                <input
+                                  type="color"
+                                  value={classObj.color}
+                                  onChange={(e) => {
+                                    const color = e.target.value;
+                                    setClasses(prev => prev.map(c => c.id === classObj.id ? { ...c, color } : c));
+                                    setAnnotations(prev => prev.map(a => a.label === classObj.name ? { ...a, color } : a));
+                                    setHasUnsavedChanges(true);
+                                  }}
+                                  className="w-6 h-6 rounded cursor-pointer border-0 p-0"
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </div>
+                            </PopoverContent>
+                          </Popover>
                           {editingClassId === classObj.id ? (
                             <div className="flex items-center gap-1 flex-1">
                               <Input
