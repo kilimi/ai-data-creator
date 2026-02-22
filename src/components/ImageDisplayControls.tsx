@@ -37,7 +37,7 @@ export function ImageDisplayControls({
       </div>
 
       {/* Size slider */}
-      <div className="flex items-center gap-3 flex-1 max-w-[200px]">
+      <div className="flex items-center gap-3 flex-1 min-w-[150px] max-w-[300px]">
         <Label htmlFor="imageSize" className="text-xs text-muted-foreground whitespace-nowrap">Size</Label>
         <Slider
           id="imageSize"
