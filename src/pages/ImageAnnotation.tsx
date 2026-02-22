@@ -4323,23 +4323,26 @@ const ImageAnnotation = () => {
                 <Save className="w-4 h-4 mr-2" />
                 Save Changes
               </Button>
-              
+               
               {isAutoSaving && (
-                <span className="text-sm text-muted-foreground animate-pulse">
-                  Auto-saving...
-                </span>
+                <Badge variant="outline" className="gap-1.5 border-muted-foreground/30 text-muted-foreground animate-pulse">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Saving…
+                </Badge>
               )}
               
               {!isAutoSaving && hasUnsavedChanges && (
-                <span className="text-sm text-yellow-600 dark:text-yellow-400">
-                  Unsaved changes
-                </span>
+                <Badge variant="outline" className="gap-1.5 border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+                  <AlertCircle className="w-3 h-3" />
+                  Unsaved
+                </Badge>
               )}
               
               {!isAutoSaving && !hasUnsavedChanges && annotationId && (
-                <span className="text-sm text-green-600 dark:text-green-400">
-                  All saved
-                </span>
+                <Badge variant="outline" className="gap-1.5 border-green-500/40 bg-green-500/10 text-green-600 dark:text-green-400">
+                  <Check className="w-3 h-3" />
+                  Saved
+                </Badge>
               )}
             </>
           )}
