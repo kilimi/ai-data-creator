@@ -4766,31 +4766,33 @@ export function AnnotationsContent({
                 {/* Expandable statistics section */}
                 {selectedAnnotation === file.id && (
                   <div className="border-t border-border bg-muted/30">
-                    <div className="p-4">
-                      <div className="flex items-center justify-between mb-4">
+                    <div className="p-3">
+                      <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-medium">
-                          Statistics & Configuration
+                          Classes & Statistics
                         </h4>
-                        {dirtyAnnotationIds.has(file.id) && (
-                          <Button size="sm" className="ml-2" onClick={() => handleSaveAnnotationFile(file.id)}>
-                            Save Changes
-                          </Button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {(file.classStats?.length || 0) > 1 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs h-7"
+                              onClick={() => setMergeDialogOpen(true)}
+                            >
+                              <Merge className="h-3 w-3 mr-1" />
+                              Merge
+                            </Button>
+                          )}
+                          {dirtyAnnotationIds.has(file.id) && (
+                            <Button size="sm" className="h-7" onClick={() => handleSaveAnnotationFile(file.id)}>
+                              Save Changes
+                            </Button>
+                          )}
+                        </div>
                       </div>
                       
-                      {/* Statistics section - now shown for all annotation types including classification */}
-                      <div className="mb-6">
-                        <div className="flex items-center justify-between mb-2">
-                          <h5 className="text-xs font-medium mb-3 text-muted-foreground">Class Statistics</h5>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="text-xs ml-2"
-                            onClick={() => setMergeDialogOpen(true)}
-                          >
-                            Merge Classes
-                          </Button>
-                        </div>
+                      {/* Combined statistics & config section */}
+                      <div className="mb-3">
                         <ClassStatistics
                           statistics={file.classStats || []}
                           selectedClass={selectedClass}
@@ -4798,11 +4800,8 @@ export function AnnotationsContent({
                         />
                       </div>
                       
-                      {/* Class Configuration section - now available for all annotation types */}
+                      {/* Class Configuration - inline when selected */}
                       <div>
-                        <p className="text-xs text-muted-foreground mb-4">
-                          Click a class color icon in the statistics above to customize its appearance
-                        </p>
                         {selectedClass && file.classStats && (
                             <div className="mt-4 pt-4 border-t border-border">
                               <ClassColorOpacityPicker
