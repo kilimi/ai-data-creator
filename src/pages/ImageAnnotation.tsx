@@ -5292,9 +5292,24 @@ const ImageAnnotation = () => {
               <TabsContent value="statistics" className="flex-1 overflow-hidden m-0 p-0">
                 <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
                   {(() => {
-                    const total = Object.values(globalStats).reduce((s, v) => s + v, 0);
-                    const sortedClasses = [...classes].sort((a, b) => (globalStats[b.name] || 0) - (globalStats[a.name] || 0));
-                    const maxCount = sortedClasses.length > 0 ? (globalStats[sortedClasses[0]?.name] || 0) : 0;
+                    // Merge saved globalStats with unsaved current-image annotations
+                    const mergedStats: { [name: string]: number } = { ...globalStats };
+                    const unsavedCounts: { [name: string]: number } = {};
+                    if (hasUnsavedChanges && annotations.length > 0) {
+                      annotations.forEach(a => {
+                        if (a.label) {
+                          unsavedCounts[a.label] = (unsavedCounts[a.label] || 0) + 1;
+                        }
+                      });
+                      // Add unsaved counts on top of saved stats
+                      Object.entries(unsavedCounts).forEach(([name, count]) => {
+                        mergedStats[name] = (mergedStats[name] || 0) + count;
+                      });
+                    }
+
+                    const total = Object.values(mergedStats).reduce((s, v) => s + v, 0);
+                    const sortedClasses = [...classes].sort((a, b) => (mergedStats[b.name] || 0) - (mergedStats[a.name] || 0));
+                    const maxCount = sortedClasses.length > 0 ? (mergedStats[sortedClasses[0]?.name] || 0) : 0;
 
                     if (classes.length === 0) {
                       return (
@@ -5321,10 +5336,18 @@ const ImageAnnotation = () => {
                           </div>
                         </div>
 
+                        {/* Unsaved indicator */}
+                        {hasUnsavedChanges && annotations.length > 0 && (
+                          <div className="flex items-center gap-1.5 text-[11px] text-amber-500 bg-amber-500/10 px-2 py-1 rounded">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Includes {annotations.length} unsaved annotation{annotations.length !== 1 ? 's' : ''} from current image
+                          </div>
+                        )}
+
                         {/* Distribution bar */}
                         <div className="h-2.5 w-full flex rounded-full overflow-hidden bg-muted/50">
                           {sortedClasses.map((c) => {
-                            const count = globalStats[c.name] || 0;
+                            const count = mergedStats[c.name] || 0;
                             const pct = total > 0 ? (count / total) * 100 : 0;
                             return (
                               <div
@@ -5344,10 +5367,11 @@ const ImageAnnotation = () => {
                         {/* Class rows */}
                         <div className="space-y-1">
                           {sortedClasses.map((c) => {
-                            const count = globalStats[c.name] || 0;
+                            const count = mergedStats[c.name] || 0;
                             const pct = total > 0 ? (count / total) * 100 : 0;
                             const barWidth = maxCount > 0 ? (count / maxCount) * 100 : 0;
                             const avgArea = globalAvgAreas[c.name] || 0;
+                            const hasUnsaved = (unsavedCounts[c.name] || 0) > 0;
 
                             return (
                               <div
@@ -5369,6 +5393,9 @@ const ImageAnnotation = () => {
                                     <div className="flex items-center gap-1.5 flex-shrink-0">
                                       <span className="text-[11px] tabular-nums text-muted-foreground">
                                         {count.toLocaleString()}
+                                        {hasUnsaved && (
+                                          <span className="text-amber-500 ml-0.5" title={`+${unsavedCounts[c.name]} unsaved`}>*</span>
+                                        )}
                                       </span>
                                       <span className="text-[10px] tabular-nums text-muted-foreground/70 w-8 text-right">
                                         {Math.round(pct)}%
