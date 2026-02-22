@@ -162,7 +162,7 @@ const ImageAnnotation = () => {
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
-  const [activeTool, setActiveTool] = useState<AnnotationTool>('auto-segment');
+  const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
@@ -4525,8 +4525,8 @@ const ImageAnnotation = () => {
                   </>
                 ) : (
                   <>
-                    <Download className="w-4 h-4 mr-1" />
-                    SAM
+                    <Hexagon className="w-4 h-4 mr-1" />
+                    AI Segment
                   </>
                 )}
               </Button>
