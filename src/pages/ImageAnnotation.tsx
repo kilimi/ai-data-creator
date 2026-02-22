@@ -2900,7 +2900,8 @@ const ImageAnnotation = () => {
         // small timeout to let layout settle after panel resize/collapse
         const t = setTimeout(() => {
           handleImageResize();
-        }, 10);
+          redrawCanvas();
+        }, 50);
         return () => clearTimeout(t);
       }
       return undefined;
@@ -4449,7 +4450,7 @@ const ImageAnnotation = () => {
   <div className="flex flex-1 overflow-hidden relative">
         {/* Left Sidebar - Tools and Classes (collapsible & resizable) */}
         <div
-           className="bg-card border-r border-border flex flex-col overflow-hidden transition-all"
+           className="bg-card border-r border-border flex flex-col overflow-hidden"
           style={{ width: leftCollapsed ? 0 : leftWidth, minWidth: leftCollapsed ? 0 : undefined }}
         >
           <div className="p-2 border-b border-border flex items-center justify-between">
@@ -5030,7 +5031,7 @@ const ImageAnnotation = () => {
 
   {/* Right Sidebar - Annotations Panel (redesigned container) */}
         <div
-           className="bg-card border-l border-border flex flex-col overflow-hidden transition-all"
+           className="bg-card border-l border-border flex flex-col overflow-hidden"
           style={{ width: rightCollapsed ? 0 : rightWidth, minWidth: rightCollapsed ? 0 : undefined }}
         >
           {/* Panel Header */}
