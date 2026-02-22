@@ -168,6 +168,8 @@ const ImageAnnotation = () => {
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [annotationName, setAnnotationName] = useState<string>("");
+  const [datasetName, setDatasetName] = useState<string>("");
+  const [projectName, setProjectName] = useState<string>("");
 
   // When an annotation is selected (e.g., by clicking on canvas), scroll only the right list container
   useEffect(() => {
@@ -712,6 +714,20 @@ const ImageAnnotation = () => {
       try {
         setIsLoading(true);
         
+        // Fetch dataset and project names
+        api.getDataset(id).then(res => {
+          if (res.success && res.data) {
+            setDatasetName(res.data.name);
+          }
+        });
+        if (projectId) {
+          api.getProject(projectId).then(res => {
+            if (res.success && res.data) {
+              setProjectName(res.data.name);
+            }
+          });
+        }
+
         // Only load global classes if loading an existing annotation file
         // Otherwise start with clean slate (no classes)
         if (annotationId) {
@@ -3113,9 +3129,10 @@ const ImageAnnotation = () => {
 
       const coco = {
         info: {
-          description: `All annotations for dataset ${id}`,
+          description: `${projectName ? `Project: ${projectName} | ` : ''}Dataset: ${datasetName || id}${annotationName ? ` | Annotation: ${annotationName}` : ''}`,
           version: '1.0',
           year: new Date().getFullYear(),
+          contributor: 'LAI',
           date_created: new Date().toISOString()
         },
         images: imagesArr,
@@ -3662,9 +3679,10 @@ const ImageAnnotation = () => {
 
       const coco = {
         info: {
-          description: `All annotations for dataset ${id}`,
+          description: `${projectName ? `Project: ${projectName} | ` : ''}Dataset: ${datasetName || id}${annotationName ? ` | Annotation: ${annotationName}` : ''}`,
           version: '1.0',
           year: new Date().getFullYear(),
+          contributor: 'LAI',
           date_created: new Date().toISOString()
         },
         images: imagesArr,
