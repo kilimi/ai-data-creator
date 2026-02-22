@@ -24,15 +24,15 @@ function NavItem({ to, icon, label, count, isActive }: NavItemProps) {
       to={to}
       className={cn(
         "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
-        "hover:bg-gray-800/50 group",
+        "hover:bg-accent/50 group",
         isActive 
           ? "bg-primary/10 border-l-4 border-primary text-primary" 
-          : "text-gray-400 hover:text-white border-l-4 border-transparent"
+          : "text-muted-foreground hover:text-foreground border-l-4 border-transparent"
       )}
     >
       <span className={cn(
         "transition-colors",
-        isActive ? "text-primary" : "text-gray-500 group-hover:text-gray-300"
+        isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"
       )}>
         {icon}
       </span>
@@ -42,7 +42,7 @@ function NavItem({ to, icon, label, count, isActive }: NavItemProps) {
           "ml-auto text-xs px-2 py-0.5 rounded-full",
           isActive 
             ? "bg-primary/20 text-primary" 
-            : "bg-gray-700 text-gray-400"
+            : "bg-muted text-muted-foreground"
         )}>
           {count}
         </span>
@@ -135,7 +135,7 @@ export function ProjectLayout() {
         
         <div className="pt-16 flex">
           {/* Sidebar Navigation */}
-          <aside className="w-64 min-h-[calc(100vh-4rem)] border-r border-gray-800 bg-gray-950/50 fixed left-0 top-16">
+          <aside className="w-64 min-h-[calc(100vh-4rem)] border-r border-border bg-card/50 fixed left-0 top-16">
             <div className="p-4">
               {/* Project Header */}
               <div className="mb-6">
@@ -150,9 +150,9 @@ export function ProjectLayout() {
                       <ArrowLeft className="h-4 w-4" />
                     </Link>
                   </Button>
-                  <span className="text-xs text-gray-500 uppercase tracking-wider">Project</span>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Project</span>
                 </div>
-                <h2 className="text-lg font-semibold text-white truncate px-2">
+                <h2 className="text-lg font-semibold text-foreground truncate px-2">
                   {loading ? (
                     <span className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
