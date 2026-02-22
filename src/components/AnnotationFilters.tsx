@@ -107,18 +107,18 @@ export function AnnotationFilters({
       {/* Search and filter controls */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search annotations..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 bg-gray-800 border-gray-700 text-white placeholder:text-gray-400"
+            className="pl-9 h-8 text-sm"
           />
           {searchQuery && (
             <Button
               variant="ghost"
               size="sm"
-              className="absolute right-1 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0 hover:bg-gray-700"
+              className="absolute right-1 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
               onClick={() => setSearchQuery("")}
             >
               <X className="h-3 w-3" />
@@ -131,25 +131,23 @@ export function AnnotationFilters({
             <Button
               variant="outline"
               size="sm"
-              className={`border-gray-700 bg-gray-800 hover:bg-gray-700 text-white ${
-                hasActiveFilters ? "border-blue-600 bg-blue-900/20" : ""
-              }`}
+              className={hasActiveFilters ? "border-primary bg-primary/10" : ""}
             >
               <Filter className="h-4 w-4 mr-2" />
               Filters
               {activeFilterCount > 0 && (
-                <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs bg-blue-600 text-white">
+                <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-xs bg-primary text-primary-foreground">
                   {activeFilterCount}
                 </Badge>
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-80 p-0 bg-gray-900 border-gray-700" align="end">
+          <PopoverContent className="w-80 p-0" align="end">
             <div className="p-4 space-y-4">
               {/* Tags Filter */}
               {allTags.length > 0 && (
                 <div>
-                  <h4 className="font-medium text-sm text-white mb-2 flex items-center gap-2">
+                  <h4 className="font-medium text-sm mb-2 flex items-center gap-2">
                     <Tag className="h-4 w-4" />
                     Tags
                   </h4>
@@ -160,11 +158,10 @@ export function AnnotationFilters({
                           id={`tag-${tag}`}
                           checked={selectedTags.includes(tag)}
                           onCheckedChange={() => handleTagToggle(tag)}
-                          className="border-gray-600 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                         />
                         <Label 
                           htmlFor={`tag-${tag}`} 
-                          className="text-sm text-gray-300 cursor-pointer"
+                          className="text-sm text-muted-foreground cursor-pointer"
                         >
                           {tag}
                         </Label>
@@ -177,7 +174,7 @@ export function AnnotationFilters({
               {/* Type Filter */}
               {allTypes.length > 0 && (
                 <div>
-                  <h4 className="font-medium text-sm text-white mb-2">Type/Format</h4>
+                  <h4 className="font-medium text-sm mb-2">Type/Format</h4>
                   <div className="space-y-2">
                     {allTypes.map((type) => (
                       <div key={type} className="flex items-center space-x-2">
@@ -185,11 +182,10 @@ export function AnnotationFilters({
                           id={`type-${type}`}
                           checked={selectedTypes.includes(type)}
                           onCheckedChange={() => handleTypeToggle(type)}
-                          className="border-gray-600 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                         />
                         <Label 
                           htmlFor={`type-${type}`} 
-                          className="text-sm text-gray-300 cursor-pointer"
+                          className="text-sm text-muted-foreground cursor-pointer"
                         >
                           {type}
                         </Label>
@@ -201,12 +197,12 @@ export function AnnotationFilters({
 
               {/* Clear filters */}
               {hasActiveFilters && (
-                <div className="pt-2 border-t border-gray-700">
+                <div className="pt-2 border-t border-border">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={clearAllFilters}
-                    className="text-gray-400 hover:text-white"
+                    className="text-muted-foreground hover:text-foreground"
                   >
                     <X className="h-4 w-4 mr-2" />
                     Clear all filters
@@ -222,7 +218,7 @@ export function AnnotationFilters({
             variant="ghost"
             size="sm"
             onClick={clearAllFilters}
-            className="text-gray-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -236,7 +232,7 @@ export function AnnotationFilters({
             <Badge
               key={`tag-${tag}`}
               variant="secondary"
-              className="bg-blue-600/20 text-blue-300 border-blue-600/30"
+              className="bg-primary/20 text-primary border-primary/30"
             >
               <Tag className="h-3 w-3 mr-1" />
               {tag}
@@ -254,7 +250,7 @@ export function AnnotationFilters({
             <Badge
               key={`type-${type}`}
               variant="secondary"
-              className="bg-green-600/20 text-green-300 border-green-600/30"
+              className="bg-accent text-accent-foreground border-accent"
             >
               {type}
               <Button
