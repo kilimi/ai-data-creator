@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
   ArrowLeft, 
   Save, 
@@ -41,8 +42,11 @@ import {
   ChevronRight,
   BarChart,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Hexagon
 } from 'lucide-react';
+import { AnnotationMinimap } from '@/components/AnnotationMinimap';
+import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
 import { useApi } from '@/hooks/use-api';
@@ -214,6 +218,8 @@ const ImageAnnotation = () => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isMovingAnnotation, setIsMovingAnnotation] = useState(false);
   const [moveOffset, setMoveOffset] = useState({ x: 0, y: 0 });
+  // Cursor position in image coordinates for status bar
+  const [cursorImagePosition, setCursorImagePosition] = useState<{ x: number; y: number } | null>(null);
   
   // Image scaling
   const [imageScale, setImageScale] = useState(1);
@@ -2196,6 +2202,11 @@ const ImageAnnotation = () => {
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
+
+    // Track cursor position in image coordinates for status bar
+    const imageCoords = screenToImageCoords(e.clientX, e.clientY);
+    setCursorImagePosition(imageCoords);
+
     // Handle panning (middle button or space+drag)
     if (isPanningRef.current) {
       const deltaX = e.clientX - panStartRef.current.x;
@@ -2362,7 +2373,6 @@ const ImageAnnotation = () => {
     const isInputFocused = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
 
     if (e.key === 'Escape' && isDrawing) {
-      // Cancel current drawing
       setIsDrawing(false);
       setCurrentPath([]);
       toast({
@@ -2371,17 +2381,21 @@ const ImageAnnotation = () => {
       });
     } else if (e.key === 'Enter' && !isInputFocused) {
       if (autoSegmentPreview && autoSegmentPreview.polygons?.length > 0) {
-        // Accept SAM mask on Enter
         acceptAutoSegment();
       } else if (isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
-        // Complete polygon on Enter key
         createAnnotation('polygon', currentPath);
         setIsDrawing(false);
         setCurrentPath([]);
       }
-    } else if (e.key === 'r' || e.key === 'R') {
-      // Reset zoom and pan to default view
-      if (!isDrawing) { // Only allow reset when not drawing
+    } else if (!isInputFocused) {
+      // Tool shortcuts
+      if (e.key === 'v' || e.key === 'V') {
+        setActiveTool('select');
+      } else if (e.key === 'p' || e.key === 'P') {
+        if (!isDrawing) setActiveTool('polygon');
+      } else if (e.key === 'a' || e.key === 'A') {
+        setActiveTool('auto-segment');
+      } else if ((e.key === 'r' || e.key === 'R') && !isDrawing) {
         resetZoomAndPan();
       }
     }
@@ -4139,10 +4153,10 @@ const ImageAnnotation = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading images...</p>
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading images...</p>
         </div>
       </div>
     );
@@ -4150,9 +4164,9 @@ const ImageAnnotation = () => {
 
   if (!currentImage && !displayImage) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
-          <p className="text-gray-600">No images found in this dataset</p>
+          <p className="text-muted-foreground">No images found in this dataset</p>
           <Button onClick={handleBack} className="mt-4">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Dataset
@@ -4163,9 +4177,9 @@ const ImageAnnotation = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 text-white">
+    <div className="h-screen flex flex-col bg-background text-foreground">
       {/* Header */}
-      <header className="flex items-center justify-between p-4 bg-gray-800 border-b border-gray-700">
+      <header className="flex items-center justify-between p-4 bg-card border-b border-border">
         <div className="flex items-center gap-4">
           <Button variant="ghost" onClick={handleBack}>
             <ArrowLeft className="w-4 h-4 mr-2" />
@@ -4175,12 +4189,12 @@ const ImageAnnotation = () => {
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-semibold">Segmentation Annotation</h1>
               {annotationId && annotationName && (
-                <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/40 text-xs">
+                <Badge variant="outline" className="text-xs border-primary/40 text-primary">
                   Editing {annotationName}
                 </Badge>
               )}
             </div>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-muted-foreground">
               Image {currentImageIndex + 1} of {allImageNames.length}: {currentImage?.fileName || currentImageName}
             </p>
           </div>
@@ -4214,7 +4228,7 @@ const ImageAnnotation = () => {
                 return saved && saved !== '[]';
               })}
               title="Save annotations as new annotation file"
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-primary hover:bg-primary/90"
             >
               {isSavingAnnotation ? (
                 <>
@@ -4274,13 +4288,13 @@ const ImageAnnotation = () => {
               )}
               
               {!isAutoSaving && hasUnsavedChanges && (
-                <span className="text-sm text-yellow-600">
+                <span className="text-sm text-yellow-600 dark:text-yellow-400">
                   Unsaved changes
                 </span>
               )}
               
               {!isAutoSaving && !hasUnsavedChanges && annotationId && (
-                <span className="text-sm text-green-600">
+                <span className="text-sm text-green-600 dark:text-green-400">
                   All saved
                 </span>
               )}
@@ -4320,15 +4334,16 @@ const ImageAnnotation = () => {
 
           {showHelp && (
             <div className="absolute right-0 top-full mt-2 z-50 w-[280px]">
-              <Card>
+              <Card className="bg-card border-border">
                 <CardHeader>
                   <CardTitle className="text-sm">Zoom & Pan</CardTitle>
                 </CardHeader>
-                <CardContent className="text-xs text-gray-200">
-                  <div className="mb-1"><strong>Zoom</strong>: Hold <kbd className="px-1 bg-black/20 rounded">Ctrl</kbd> (or <kbd className="px-1 bg-black/20 rounded">⌘</kbd>) + scroll</div>
-                  <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-black/20 rounded">Space</kbd> + drag, <strong>Ctrl</strong> + left/right drag, or <strong>Right + Left</strong> click drag</div>
-                  <div className="mb-1"><strong>Reset View</strong>: Press <kbd className="px-1 bg-black/20 rounded">R</kbd> or click the reset button</div>
-                  <div className="text-xs text-gray-400 mt-1">Tip: scroll over area you want to zoom into</div>
+                <CardContent className="text-xs text-muted-foreground">
+                  <div className="mb-1"><strong>Zoom</strong>: Hold <kbd className="px-1 bg-muted rounded">Ctrl</kbd> (or <kbd className="px-1 bg-muted rounded">⌘</kbd>) + scroll</div>
+                  <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-muted rounded">Space</kbd> + drag, <strong>Ctrl</strong> + left/right drag, or <strong>Right + Left</strong> click drag</div>
+                  <div className="mb-1"><strong>Reset View</strong>: Press <kbd className="px-1 bg-muted rounded">R</kbd> or click the reset button</div>
+                  <div className="mb-1"><strong>Select</strong>: Press <kbd className="px-1 bg-muted rounded">V</kbd> | <strong>Polygon</strong>: <kbd className="px-1 bg-muted rounded">P</kbd> | <strong>SAM</strong>: <kbd className="px-1 bg-muted rounded">A</kbd></div>
+                  <div className="text-xs text-muted-foreground/70 mt-1">Tip: scroll over area you want to zoom into</div>
                 </CardContent>
               </Card>
             </div>
@@ -4339,10 +4354,10 @@ const ImageAnnotation = () => {
   <div className="flex flex-1 overflow-hidden relative">
         {/* Left Sidebar - Tools and Classes (collapsible & resizable) */}
         <div
-          className="bg-gray-800 border-r border-gray-700 flex flex-col"
+           className="bg-card border-r border-border flex flex-col"
           style={{ width: leftCollapsed ? 0 : leftWidth }}
         >
-          <div className="p-2 border-b border-gray-700 flex items-center justify-between">
+          <div className="p-2 border-b border-border flex items-center justify-between">
             <div className="text-sm font-medium">Tools</div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="ghost" onClick={() => setLeftCollapsed(v => !v)}>
@@ -4352,7 +4367,7 @@ const ImageAnnotation = () => {
           </div>
           {/* Tools section moved inside content below */}
           {/* Tools */}
-          <div className="p-4 border-b border-gray-700">
+          <div className="p-4 border-b border-border">
             <h3 className="text-sm font-medium mb-3">Tools</h3>
             <div className="grid grid-cols-2 gap-2">
               <Button
@@ -4417,7 +4432,7 @@ const ImageAnnotation = () => {
                 value={segmentModel}
                 onValueChange={(v: 'sam2' | 'sam3') => setSegmentModel(v)}
               >
-                <SelectTrigger className="h-8 text-xs bg-gray-750 border-gray-600 mt-1">
+                <SelectTrigger className="h-8 text-xs bg-muted border-border mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -4437,7 +4452,7 @@ const ImageAnnotation = () => {
                 <div className="mt-2">
                   <Label className="text-xs text-muted-foreground">Text prompt (optional)</Label>
                   <Input
-                    className="h-8 text-xs bg-gray-750 border-gray-600 mt-1 text-white placeholder:text-gray-400 focus-visible:ring-gray-500"
+                    className="h-8 text-xs bg-muted border-border mt-1 placeholder:text-muted-foreground focus-visible:ring-ring"
                     placeholder="e.g. dog, person, red car"
                     value={segmentTextPrompt}
                     onChange={(e) => setSegmentTextPrompt(e.target.value)}
@@ -4479,7 +4494,7 @@ const ImageAnnotation = () => {
 
           {/* Classes */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="p-4 border-b border-gray-700">
+            <div className="p-4 border-b border-border">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium">Classes</h3>
                 <Button 
@@ -4531,8 +4546,8 @@ const ImageAnnotation = () => {
                       key={classObj.id}
                       className={`p-2 rounded border cursor-pointer transition-colors ${
                         selectedClass === classObj.id 
-                          ? 'border-blue-500 bg-blue-500/20' 
-                          : 'border-gray-600 hover:border-gray-500'
+                          ? 'border-primary bg-primary/20' 
+                          : 'border-border hover:border-muted-foreground/50'
                       }`}
                       onClick={() => {
                         if (editingClassId !== classObj.id) {
@@ -4592,19 +4607,19 @@ const ImageAnnotation = () => {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-6 w-6 p-0 hover:bg-gray-700"
+                               className="h-6 w-6 p-0 hover:bg-muted"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 startEditingClass(classObj.id, classObj.name);
                               }}
                               title="Rename class"
                             >
-                              <Edit className="w-3 h-3 text-blue-400" />
+                              <Edit className="w-3 h-3 text-primary" />
                             </Button>
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-6 w-6 p-0 hover:bg-gray-700"
+                              className="h-6 w-6 p-0 hover:bg-muted"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 deleteClass(classObj.id);
@@ -4614,7 +4629,7 @@ const ImageAnnotation = () => {
                               <Trash2 className="w-3 h-3 text-red-400" />
                             </Button>
                             {/* Shortcut hint */}
-                            <div className="text-xs text-gray-400 px-1.5 py-0.5 rounded border border-gray-700 ml-1">
+                            <div className="text-xs text-muted-foreground px-1.5 py-0.5 rounded border border-border ml-1">
                               {idx + 1}
                             </div>
                           </div>
@@ -4645,7 +4660,7 @@ const ImageAnnotation = () => {
                 setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
               }}
               aria-label="Expand left panel"
-              className="bg-blue-600 text-white hover:bg-blue-700 shadow-lg rounded-full p-1"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg rounded-full p-1"
             >
               <ChevronRight className="w-4 h-4" />
             </Button>
@@ -4656,7 +4671,7 @@ const ImageAnnotation = () => {
         <div className="flex-1 flex flex-col">
           <div 
             ref={containerRef}
-            className="flex-1 relative overflow-hidden bg-gray-900"
+            className="flex-1 relative overflow-hidden bg-muted/30"
           >
             {(displayImage || currentImage) && !isLayerSwitching ? (
               <>
@@ -4684,14 +4699,14 @@ const ImageAnnotation = () => {
               </>
             ) : isLayerSwitching ? (
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center text-gray-400">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                <div className="text-center text-muted-foreground">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
                   <div className="text-sm">Switching layer...</div>
                 </div>
               </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center text-gray-400">
+                <div className="text-center text-muted-foreground">
                   <div className="text-2xl mb-2">📷</div>
                   {noCorrespondingImage && displayLayer ? (
                     <>
@@ -4699,7 +4714,7 @@ const ImageAnnotation = () => {
                       <div className="text-sm">
                         Image "{currentImageName}" not found in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
                       </div>
-                      <div className="text-xs mt-2 text-gray-500">Switch to a different layer or choose another image</div>
+                      <div className="text-xs mt-2 text-muted-foreground/70">Switch to a different layer or choose another image</div>
                     </>
                   ) : (
                     <>
@@ -4707,7 +4722,7 @@ const ImageAnnotation = () => {
                       <div className="text-sm">
                         Image "{currentImageName}" does not exist in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
                       </div>
-                      <div className="text-xs mt-2 text-gray-500">Switch to a different layer or navigate to another image</div>
+                      <div className="text-xs mt-2 text-muted-foreground/70">Switch to a different layer or navigate to another image</div>
                     </>
                   )}
                 </div>
@@ -4716,10 +4731,10 @@ const ImageAnnotation = () => {
 
             {/* Drawing Instructions */}
             {isDrawing && activeTool === 'polygon' && (
-              <div className="absolute top-4 left-4 bg-black/80 text-white px-4 py-2 rounded-lg text-sm z-10">
+              <div className="absolute top-4 left-4 bg-background/90 backdrop-blur-sm border border-border text-foreground px-4 py-2 rounded-lg text-sm z-10">
                 <div className="flex flex-col gap-1">
                   <div className="font-semibold">Drawing Polygon ({currentPath.length} points)</div>
-                  <div className="text-xs text-gray-300">
+                  <div className="text-xs text-muted-foreground">
                     • Click to add points
                     • <strong>Double-click</strong> to finish
                     • <strong>Right-click</strong> to finish  
@@ -4727,7 +4742,7 @@ const ImageAnnotation = () => {
                     • <strong>Esc</strong> to cancel
                   </div>
                   {currentPath.length < 3 && (
-                    <div className="text-xs text-yellow-400">
+                    <div className="text-xs text-yellow-500">
                       Need at least 3 points to finish
                     </div>
                   )}
@@ -4757,8 +4772,8 @@ const ImageAnnotation = () => {
                 </svg>
 
                 {/* Controls - accept/cancel */}
-                <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex flex-col gap-2 w-64 bg-black/60 p-3 rounded">
-                  <p className="text-xs text-gray-300">
+                <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex flex-col gap-2 w-64 bg-card/90 backdrop-blur-sm border border-border p-3 rounded-lg">
+                  <p className="text-xs text-muted-foreground">
                     Left-click: add to mask. Right-click: remove from mask. Add more points to refine. Press Enter to accept.
                   </p>
                   <div className="flex gap-2">
@@ -4782,10 +4797,19 @@ const ImageAnnotation = () => {
                 </div>
               </div>
             )}
+
+            {/* Minimap */}
+            <AnnotationMinimap
+              imageRef={imageRef}
+              containerRef={containerRef}
+              imageScale={imageScale}
+              imageOffset={imageOffset}
+              onNavigate={(offset) => setImageOffset(offset)}
+            />
           </div>
 
           {/* Image Navigation */}
-          <div className="p-4 bg-gray-800 border-t border-gray-700">
+          <div className="p-3 bg-card border-t border-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <Button
@@ -4798,16 +4822,16 @@ const ImageAnnotation = () => {
                 </Button>
                 
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-400">
+                  <span className="text-sm text-muted-foreground">
                     {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
                   </span>
                   {currentLayerImageNames.length > 0 && (
-                    <span className="text-xs text-blue-400">
+                    <span className="text-xs text-primary">
                       ({imageCollections.find(c => c.id === displayLayer)?.name || 'layer'})
                     </span>
                   )}
                   {currentImageName && (
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-muted-foreground/70">
                       {currentImageName}
                     </span>
                   )}
@@ -4826,7 +4850,7 @@ const ImageAnnotation = () => {
               {/* Display Layer Selector */}
               {imageCollections.length > 1 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-400">Layer:</span>
+                  <span className="text-sm text-muted-foreground">Layer:</span>
                   <Select value={displayLayer} onValueChange={handleLayerChange}>
                     <SelectTrigger className="w-48">
                       <SelectValue />
@@ -4842,7 +4866,7 @@ const ImageAnnotation = () => {
 
                   {/* Warning for missing image */}
                   {!displayImage && currentImageName && displayLayer && (
-                    <span className="text-xs text-yellow-400">
+                    <span className="text-xs text-yellow-500">
                       Image "{currentImageName}" not available in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
                     </span>
                   )}
@@ -4850,19 +4874,33 @@ const ImageAnnotation = () => {
               )}
             </div>
           </div>
+
+          {/* Status Bar */}
+          <AnnotationStatusBar
+            cursorPosition={cursorImagePosition}
+            zoom={imageScale}
+            imageWidth={imageRef.current?.naturalWidth || 0}
+            imageHeight={imageRef.current?.naturalHeight || 0}
+            annotationCount={annotations.length}
+            currentImageIndex={currentImageIndex}
+            totalImages={currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
+            hasUnsavedChanges={hasUnsavedChanges}
+            isAutoSaving={isAutoSaving}
+            activeTool={activeTool}
+          />
         </div>
 
   {/* Right Sidebar - Annotations Panel (redesigned container) */}
         <div
-          className="bg-gray-900 border-l border-gray-700 flex flex-col transition-all"
+           className="bg-card border-l border-border flex flex-col transition-all"
           style={{ width: rightCollapsed ? 0 : rightWidth }}
         >
           {/* Panel Header */}
-          <div className="bg-gray-800 border-b border-gray-600 p-3">
+          <div className="bg-card border-b border-border p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <h2 className="text-sm font-semibold text-gray-100">Annotations Panel</h2>
+                <div className="w-2 h-2 bg-primary rounded-full"></div>
+                <h2 className="text-sm font-semibold">Annotations Panel</h2>
               </div>
               <Button size="sm" variant="ghost" onClick={() => setRightCollapsed(v => !v)}>
                 {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
@@ -4871,9 +4909,9 @@ const ImageAnnotation = () => {
             
             {/* Navigation Layer Selector */}
             {imageCollections.length > 1 && !rightCollapsed && (
-              <div className="mt-3 p-2 bg-gray-750 rounded border border-gray-600">
+              <div className="mt-3 p-2 bg-muted rounded border border-border">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs text-gray-400">Navigation Layer:</span>
+                  <span className="text-xs text-muted-foreground">Navigation Layer:</span>
                 </div>
                 <Select value={mainLayer} onValueChange={handleMainLayerChange}>
                   <SelectTrigger className="w-full h-8 text-xs">
@@ -4887,7 +4925,7 @@ const ImageAnnotation = () => {
                     ))}
                   </SelectContent>
                 </Select>
-                <div className="text-xs text-blue-400 mt-1">
+                <div className="text-xs text-primary mt-1">
                   Controls which images are available for browsing
                 </div>
               </div>
@@ -4895,20 +4933,20 @@ const ImageAnnotation = () => {
           </div>
 
           {/* Panel Content */}
-          <div className="flex-1 flex flex-col min-h-0 bg-gray-900">
+          <div className="flex-1 flex flex-col min-h-0 bg-card">
             <Tabs value={activePanelTab} onValueChange={setActivePanelTab} className="h-full flex flex-col">
               {/* Tab Navigation */}
-              <div className="border-b border-gray-700 bg-gray-850">
+              <div className="border-b border-border">
                 <TabsList className="grid grid-cols-2 w-full bg-transparent border-0 p-1">
                   <TabsTrigger 
                     value="annotations" 
-                    className="data-[state=active]:bg-gray-700 data-[state=active]:text-white text-gray-400 text-xs"
+                    className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground text-xs"
                   >
                     Annotations ({annotations.length})
                   </TabsTrigger>
                   <TabsTrigger 
                     value="statistics" 
-                    className="data-[state=active]:bg-gray-700 data-[state=active]:text-white text-gray-400 text-xs"
+                    className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground text-xs"
                   >
                     Statistics
                   </TabsTrigger>
@@ -4917,11 +4955,11 @@ const ImageAnnotation = () => {
 
               {/* Annotations Tab */}
               <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
-                <div className="p-3 border-b border-gray-700 bg-gray-850">
+                <div className="p-3 border-b border-border">
                   <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>Current Image Annotations</span>
-                      <span className="bg-gray-700 px-2 py-1 rounded text-gray-300">{annotations.length}</span>
+                      <span className="bg-muted px-2 py-1 rounded">{annotations.length}</span>
                     </div>
                     {annotations.length > 0 && (
                       <Button
@@ -4941,11 +4979,11 @@ const ImageAnnotation = () => {
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 scrollbar-thin" style={{ scrollbarWidth: 'thin' }}>
                   {annotations.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-32 text-center">
-                      <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-3">
-                        <Square className="w-6 h-6 text-gray-500" />
+                      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                        <Square className="w-6 h-6 text-muted-foreground" />
                       </div>
-                      <p className="text-sm text-gray-500 mb-1">No annotations yet</p>
-                      <p className="text-xs text-gray-600">Select a class and start drawing!</p>
+                      <p className="text-sm text-muted-foreground mb-1">No annotations yet</p>
+                      <p className="text-xs text-muted-foreground/70">Select a class and start drawing!</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -4956,8 +4994,8 @@ const ImageAnnotation = () => {
                           data-annotation-id={annotation.id}
                           className={`group border rounded-lg p-3 cursor-pointer transition-all duration-200 ${
                             selectedAnnotation === annotation.id 
-                              ? 'border-blue-500 bg-blue-500/10 shadow-lg shadow-blue-500/20' 
-                              : 'border-gray-700 bg-gray-800/50 hover:border-gray-600 hover:bg-gray-800'
+                              ? 'border-primary bg-primary/10 shadow-lg shadow-primary/20' 
+                              : 'border-border bg-muted/50 hover:border-muted-foreground/30 hover:bg-muted'
                           }`}
                           onClick={() => {
                             console.log('Card clicked, setting selectedAnnotation to:', annotation.id);
@@ -4968,14 +5006,14 @@ const ImageAnnotation = () => {
                             {/* Left side - Color indicator and content */}
                             <div className="flex items-start gap-3 flex-1 min-w-0">
                               <div 
-                                className="w-4 h-4 rounded-md border border-gray-600 flex-shrink-0 mt-0.5"
+                                className="w-4 h-4 rounded-md border border-border flex-shrink-0 mt-0.5"
                                 style={{ backgroundColor: annotation.color }}
                               />
                               <div className="flex-1 min-w-0">
                                 {editingAnnotationId === annotation.id ? (
                                   <div className="space-y-2">
                                     <Select value={editingAnnotationLabel || ''} onValueChange={(v) => setEditingAnnotationLabel(v)}>
-                                      <SelectTrigger className="w-full h-8 text-sm bg-gray-700 border-gray-600">
+                                      <SelectTrigger className="w-full h-8 text-sm bg-muted border-border">
                                         <SelectValue placeholder="Select class" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -5008,7 +5046,7 @@ const ImageAnnotation = () => {
                                 ) : (
                                   <div>
                                     <p 
-                                      className="text-sm font-medium text-gray-200 cursor-pointer hover:text-white transition-colors truncate"
+                                      className="text-sm font-medium cursor-pointer hover:text-foreground transition-colors truncate"
                                       onClick={(e) => { 
                                         e.stopPropagation(); 
                                         setEditingAnnotationId(annotation.id); 
@@ -5020,7 +5058,7 @@ const ImageAnnotation = () => {
                                     </p>
                                     <div className="flex items-center gap-2 mt-1">
                                       {annotation.type === 'polygon' && annotation.points && annotation.points.length >= 3 && (
-                                        <span className="text-xs text-blue-400" title="Area in image coordinates">
+                                        <span className="text-xs text-primary" title="Area in image coordinates">
                                           Area: {formatArea(calculatePolygonArea(annotation.points))}
                                         </span>
                                       )}
@@ -5035,7 +5073,7 @@ const ImageAnnotation = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="w-7 h-7 p-0 hover:bg-gray-700"
+                                className="w-7 h-7 p-0 hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setAnnotations(prev => prev.map(a => 
@@ -5052,7 +5090,7 @@ const ImageAnnotation = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="w-7 h-7 p-0 hover:bg-gray-700"
+                                className="w-7 h-7 p-0 hover:bg-muted"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setEditingAnnotationId(annotation.id);
@@ -5087,10 +5125,10 @@ const ImageAnnotation = () => {
 
               {/* Statistics Tab */}
               <TabsContent value="statistics" className="flex-1 overflow-hidden m-0 p-0">
-                <div className="p-3 border-b border-gray-700 bg-gray-850">
-                  <div className="flex items-center justify-between text-xs text-gray-400">
+                <div className="p-3 border-b border-border">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>Global Statistics</span>
-                    <span className="bg-gray-700 px-2 py-1 rounded text-gray-300">All Images</span>
+                    <span className="bg-muted px-2 py-1 rounded">All Images</span>
                   </div>
                 </div>
                 
@@ -5101,10 +5139,10 @@ const ImageAnnotation = () => {
                       if (classes.length === 0) {
                         return (
                           <div className="flex flex-col items-center justify-center h-32 text-center">
-                            <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-3">
-                              <BarChart className="w-6 h-6 text-gray-500" />
+                            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                              <BarChart className="w-6 h-6 text-muted-foreground" />
                             </div>
-                            <p className="text-sm text-gray-500">No classes defined yet</p>
+                            <p className="text-sm text-muted-foreground">No classes defined yet</p>
                           </div>
                         );
                       }
@@ -5112,44 +5150,44 @@ const ImageAnnotation = () => {
                       return (
                         <>
                           {/* Summary Card */}
-                          <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                          <div className="bg-muted border border-border rounded-lg p-3">
                             <div className="text-center">
-                              <div className="text-2xl font-bold text-blue-400">{total}</div>
-                              <div className="text-xs text-gray-400">Total Annotations</div>
-                              <div className="text-xs text-gray-500 mt-1">Across all images</div>
+                              <div className="text-2xl font-bold text-primary">{total}</div>
+                              <div className="text-xs text-muted-foreground">Total Annotations</div>
+                              <div className="text-xs text-muted-foreground/70 mt-1">Across all images</div>
                             </div>
                           </div>
 
                           {/* Class Breakdown */}
                           <div className="space-y-2">
-                            <h5 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Class Breakdown</h5>
+                            <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Class Breakdown</h5>
                             {classes.map(c => {
                               const count = globalStats[c.name] || 0;
                               const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
                               const avgArea = globalAvgAreas[c.name] || 0;
                               return (
-                                <div key={c.id} className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+                                <div key={c.id} className="bg-muted border border-border rounded-lg p-3">
                                   <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
                                       <div 
-                                        className="w-3 h-3 rounded border border-gray-600" 
+                                        className="w-3 h-3 rounded border border-border" 
                                         style={{ backgroundColor: c.color }} 
                                       />
-                                      <span className="text-sm font-medium text-gray-200">{c.name}</span>
+                                      <span className="text-sm font-medium">{c.name}</span>
                                     </div>
-                                    <div className="text-sm text-gray-300 font-medium">{count}</div>
+                                    <div className="text-sm font-medium">{count}</div>
                                   </div>
                                   <div className="flex items-center justify-between text-xs mb-1">
-                                    <span className="text-gray-500">{c.visible ? 'Visible' : 'Hidden'}</span>
-                                    <span className="text-gray-500">{pct}% of total</span>
+                                    <span className="text-muted-foreground">{c.visible ? 'Visible' : 'Hidden'}</span>
+                                    <span className="text-muted-foreground">{pct}% of total</span>
                                   </div>
                                   {avgArea > 0 && (
-                                    <div className="text-xs text-blue-400 mb-1" title="Average area of annotations">
+                                    <div className="text-xs text-primary mb-1" title="Average area of annotations">
                                       Avg area: {formatArea(avgArea)}
                                     </div>
                                   )}
                                   {/* Progress bar */}
-                                  <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                                  <div className="mt-2 h-1 bg-muted-foreground/20 rounded-full overflow-hidden">
                                     <div 
                                       className="h-full transition-all duration-300" 
                                       style={{ 
@@ -5192,7 +5230,7 @@ const ImageAnnotation = () => {
                   setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
                 }}
                 aria-label="Expand right panel"
-                className="bg-blue-600 text-white hover:bg-blue-700 shadow-lg rounded-full p-1"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg rounded-full p-1"
               >
                 <ChevronLeft className="w-4 h-4 rotate-180" />
               </Button>
