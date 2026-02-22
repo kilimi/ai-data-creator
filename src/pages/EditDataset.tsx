@@ -368,6 +368,33 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     fetchData();
   }, [id, toast]);
 
+  // Load class statistics from same API as Dataset Annotations view so numbers match
+  const selectedAnnotationId = selectedAnnotation?.id;
+  useEffect(() => {
+    if (!selectedAnnotationId || !api || !id) return;
+    if (selectedAnnotation?.classStats && selectedAnnotation.classStats.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAnnotationClasses(id, String(selectedAnnotationId));
+        if (cancelled || !res?.success || !res.data?.classes) return;
+        const classStats = res.data.classes.map((c: { className: string; count: number; color?: string; opacity?: number }) => ({
+          className: c.className,
+          count: c.count ?? 0,
+          color: c.color ?? "#ea384c",
+          opacity: c.opacity ?? 0.25,
+        }));
+        setSelectedAnnotation(prev => prev && prev.id === selectedAnnotationId ? { ...prev, classStats } : null);
+        setAnnotations(prev =>
+          prev.map(anno => anno.id === selectedAnnotationId ? { ...anno, classStats } : anno)
+        );
+      } catch (e) {
+        if (!cancelled) console.warn("Failed to load annotation classes:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedAnnotationId, selectedAnnotation?.classStats?.length, api, id]);
+
   const handleChunkedImageUpload = async (files: File[]) => {
     if (!api || !id) return;
 
@@ -939,32 +966,52 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   };
 
   // Class management handlers
-  const handleRenameClass = (oldClassName: string, newClassName: string) => {
-    if (!selectedAnnotation) return;
-    
-    const updatedAnnotation = {
-      ...selectedAnnotation,
-      classStats: selectedAnnotation.classStats?.map(stat => 
-        stat.className === oldClassName 
-          ? { ...stat, className: newClassName }
-          : stat
-      ),
-      samples: selectedAnnotation.samples?.map(sample =>
-        sample.className === oldClassName
-          ? { ...sample, className: newClassName }
-          : sample
-      )
-    };
-    
-    setSelectedAnnotation(updatedAnnotation);
-    setAnnotations(prev => 
-      prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
-    );
-    
-    toast({
-      title: "Class renamed",
-      description: `"${oldClassName}" has been renamed to "${newClassName}"`
-    });
+  const handleRenameClass = async (oldClassName: string, newClassName: string) => {
+    if (!selectedAnnotation || !id) return;
+    try {
+      let serverClasses: Array<{ className: string; count: number; color: string; opacity?: number }> | undefined;
+      if (api) {
+        const response = await api.renameAnnotationClass(
+          id,
+          String(selectedAnnotation.id),
+          oldClassName,
+          newClassName
+        );
+        if (!response.success) throw new Error(response.error || "Failed to rename class on server");
+        serverClasses = response.data?.classes;
+      }
+      const updatedClassStats = serverClasses?.length
+        ? serverClasses.map(c => ({
+            className: c.className,
+            count: c.count ?? 0,
+            color: c.color ?? "#ea384c",
+            opacity: c.opacity ?? 0.25,
+          }))
+        : selectedAnnotation.classStats?.map(stat =>
+            stat.className === oldClassName
+              ? { ...stat, className: newClassName, count: stat.count ?? 0 }
+              : { ...stat, count: stat.count ?? 0 }
+          );
+      const updatedAnnotation = {
+        ...selectedAnnotation,
+        classStats: updatedClassStats,
+        samples: selectedAnnotation.samples?.map(sample =>
+          sample.className === oldClassName ? { ...sample, className: newClassName } : sample
+        ),
+      };
+      setSelectedAnnotation(updatedAnnotation);
+      setAnnotations(prev =>
+        prev.map(anno => anno.id === selectedAnnotation.id ? updatedAnnotation : anno)
+      );
+      toast({ title: "Class renamed", description: `"${oldClassName}" renamed to "${newClassName}".` });
+    } catch (error) {
+      console.error("Error renaming class:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to rename class",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleDeleteClass = async (className: string) => {

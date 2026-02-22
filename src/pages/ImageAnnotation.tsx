@@ -1124,25 +1124,17 @@ const ImageAnnotation = () => {
 
   const computeGlobalStats = useCallback(async () => {
     try {
-      // If we have an annotation file loaded, try to fetch statistics from the database
+      // Use same source as Dataset Annotations view (GET /classes) so numbers match
       if (annotationId && api) {
         try {
-          const response = await api.getAnnotation(parseInt(id), annotationId);
-          if (response.success && response.data?.statistics) {
-            console.log('Loaded statistics from database:', response.data.statistics);
-            
-            // Convert database statistics format to our format
+          const response = await api.getAnnotationClasses(id, annotationId);
+          if (response.success && response.data?.classes?.length) {
             const counts: { [name: string]: number } = {};
-            const avgAreas: { [name: string]: number } = {};
-            
-            Object.keys(response.data.statistics).forEach(className => {
-              const stats = response.data.statistics[className];
-              counts[className] = stats.count;
-              avgAreas[className] = stats.avgArea;
+            response.data.classes.forEach((c: { className: string; count?: number }) => {
+              counts[c.className] = c.count ?? 0;
             });
-            
             setGlobalStats(counts);
-            setGlobalAvgAreas(avgAreas);
+            setGlobalAvgAreas({});
             return;
           }
         } catch (dbError) {
@@ -1654,6 +1646,23 @@ const ImageAnnotation = () => {
       if (!cocoData.annotations || !Array.isArray(cocoData.annotations)) {
         throw new Error('Missing or invalid annotations in COCO data');
       }
+
+      // If COCO has no categories (e.g. after rename/save race), load from backend so classes are not lost
+      if (cocoData.categories.length === 0 && api && fileId) {
+        try {
+          const res = await api.getAnnotationClasses(id, fileId);
+          if (res?.success && res.data?.classes?.length) {
+            cocoData.categories = res.data.classes.map((c: { className: string; categoryId?: number }, idx: number) => ({
+              id: c.categoryId ?? idx + 1,
+              name: c.className,
+              supercategory: ''
+            }));
+            console.log('Populated categories from backend:', cocoData.categories.length);
+          }
+        } catch (e) {
+          console.warn('Could not load classes from backend for empty COCO:', e);
+        }
+      }
       
       // Reset the last loaded image ref so annotations can be loaded fresh
       lastLoadedImageRef.current = null;
@@ -1846,7 +1855,7 @@ const ImageAnnotation = () => {
       });
       return false;
     }
-  }, [id, currentImageName, computeGlobalStats, toast]);
+  }, [id, api, currentImageName, computeGlobalStats, toast]);
 
   // Load from annotation file if annotationId is provided
   useEffect(() => {
@@ -2627,7 +2636,7 @@ const ImageAnnotation = () => {
     setEditingClassName(currentName);
   };
 
-  const saveEditingClass = () => {
+  const saveEditingClass = async () => {
     if (!editingClassId || !editingClassName.trim()) {
       setEditingClassId(null);
       setEditingClassName('');
@@ -2656,7 +2665,23 @@ const ImageAnnotation = () => {
       return;
     }
 
-    // Update class name
+    // Persist rename to backend so Annotations view shows correct counts
+    if (api && annotationId) {
+      try {
+        const res = await api.renameAnnotationClass(id, annotationId, oldName, newName);
+        if (!res.success) throw new Error(res.error || 'Failed to rename class');
+      } catch (e) {
+        console.error('Rename class on server:', e);
+        toast({
+          variant: 'destructive',
+          title: 'Could not rename on server',
+          description: e instanceof Error ? e.message : 'Statistics in Annotations view may be stale until you save.',
+        });
+        return;
+      }
+    }
+
+    // Update class name locally
     setClasses(prev => {
       const updated = prev.map(c => 
         c.id === editingClassId ? { ...c, name: newName } : c
@@ -3202,127 +3227,100 @@ const ImageAnnotation = () => {
     }
   };
 
-  // Update database with current annotations
+  // Update database with current annotations: sync each image via PATCH (no full COCO replace).
+  // This avoids ever running process_coco_annotation_file from here, so classes are never wiped.
   const updateDatabaseAnnotations = async () => {
     if (!annotationId || !api) {
-      toast({ 
-        title: 'Cannot update', 
+      toast({
+        title: 'Cannot update',
         description: 'No annotation selected for editing or API not available',
         variant: 'destructive'
       });
       return;
     }
 
+    const apiBase = API_CONFIG?.baseUrl ?? '';
+    let totalAnnotations = 0;
+    let imagesUpdated = 0;
+    let lastError: string | null = null;
+
     try {
-      // Build the same COCO structure as download function
-      const imagesArr: any[] = [];
-      const annotationsArr: any[] = [];
-      const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
-
-      // Calculate statistics per class
-      const classCounts: { [className: string]: number } = {};
-      const classAreas: { [className: string]: number } = {};
-
-      let annId = 1;
-      let imageId = 1;
-
-      for (const name of allImageNames) {
-        const storageKey = `annotations_${id}_${name}`;
+      for (const imageName of allImageNames) {
+        const storageKey = `annotations_${id}_${imageName}`;
         const saved = localStorage.getItem(storageKey);
-        if (!saved) {
-          imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
-          imageId++;
+        if (!saved) continue;
+
+        let parsed: AnnotationShape[] = [];
+        try {
+          parsed = JSON.parse(saved);
+        } catch {
           continue;
         }
 
-        let parsed: AnnotationShape[] = [];
-        try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
-
-        imagesArr.push({ id: imageId, file_name: name, width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 });
-
-        parsed.forEach((ann) => {
-          if (ann.type === 'polygon') {
-            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-            const xs = ann.points.map(p => p.x);
-            const ys = ann.points.map(p => p.y);
+        const annotationsData = parsed
+          .filter((ann): ann is AnnotationShape & { type: 'polygon'; points: Point[] } => ann.type === 'polygon' && !!ann.points?.length)
+          .map((ann) => {
+            const segmentation = ann.points.flatMap((p: Point) => [p.x, p.y]);
+            const xs = ann.points.map((p: Point) => p.x);
+            const ys = ann.points.map((p: Point) => p.y);
             const minX = Math.min(...xs);
             const minY = Math.min(...ys);
             const maxX = Math.max(...xs);
             const maxY = Math.max(...ys);
-            const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
-
-            // Calculate actual polygon area using the same method as altitude script
             const polygonArea = calculatePolygonArea(ann.points);
-            
-            // Update statistics
-            classCounts[ann.label] = (classCounts[ann.label] || 0) + 1;
-            classAreas[ann.label] = (classAreas[ann.label] || 0) + polygonArea;
-
-            annotationsArr.push({
-              id: annId++,
-              image_id: imageId,
-              category_id: categoryId,
+            return {
+              category_name: ann.label,
               segmentation: [segmentation],
-              area: polygonArea,
               bbox: [minX, minY, maxX - minX, maxY - minY],
-              iscrowd: 0
-            });
-          }
-        });
+              area: polygonArea
+            };
+          });
 
-        imageId++;
+        const url = `${apiBase}/datasets/${id}/annotations/${annotationId}/image/${encodeURIComponent(imageName)}`;
+        const response = await fetch(url, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            annotations: annotationsData,
+            image_width: 0,
+            image_height: 0
+          })
+        });
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          imagesUpdated += 1;
+          totalAnnotations += annotationsData.length;
+        } else {
+          lastError = data.detail || data.error || response.statusText;
+        }
       }
-      
-      // Calculate average areas per class
-      const statistics: { [className: string]: { count: number, avgArea: number } } = {};
-      Object.keys(classCounts).forEach(className => {
-        statistics[className] = {
-          count: classCounts[className],
-          avgArea: classAreas[className] / classCounts[className]
-        };
-      });
 
-      const coco = {
-        info: {
-          description: `All annotations for dataset ${id}`,
-          version: '1.0',
-          year: new Date().getFullYear(),
-          date_created: new Date().toISOString()
-        },
-        images: imagesArr,
-        categories: categoryMap,
-        annotations: annotationsArr,
-        statistics: statistics  // Add statistics to COCO data
-      };
-
-      const dataStr = JSON.stringify(coco, null, 2);
-      const fileName = annotationName || `annotations_all_${id}.json`;
-      const file = new File([dataStr], fileName, { type: 'application/json' });
-      
-      const response = await api.updateAnnotationContent(parseInt(id), annotationId, file);
-      
-      console.log('Update database response:', response);
-      
-      if (response.success) {
-        toast({ 
-          title: 'Database Updated', 
-          description: `Updated database annotation "${annotationName}" with ${annotationsArr.length} annotations from ${imagesArr.length} images` 
+      if (imagesUpdated > 0) {
+        toast({
+          title: 'Database updated',
+          description: `Synced ${totalAnnotations} annotations from ${imagesUpdated} images (incremental update, no full replace).`
         });
-        
-        // Refresh statistics from database
         computeGlobalStats();
-      } else {
-        toast({ 
-          title: 'Update failed', 
-          description: `Failed to update database: ${response.error || 'Unknown error'}`,
+      }
+      if (lastError && imagesUpdated === 0) {
+        toast({
+          title: 'Update failed',
+          description: lastError,
+          variant: 'destructive'
+        });
+      } else if (lastError && imagesUpdated < allImageNames.length) {
+        toast({
+          title: 'Partially updated',
+          description: `Updated ${imagesUpdated} images. Some failed: ${lastError}`,
           variant: 'destructive'
         });
       }
-    } catch (updateError) {
-      console.error('Error updating annotation in database:', updateError);
-      toast({ 
-        title: 'Update failed', 
-        description: updateError instanceof Error ? updateError.message : 'Cannot connect to API backend or failed to update database annotation',
+    } catch (err) {
+      console.error('Error updating annotation in database:', err);
+      toast({
+        title: 'Update failed',
+        description: err instanceof Error ? err.message : 'Could not sync annotations',
         variant: 'destructive'
       });
     }

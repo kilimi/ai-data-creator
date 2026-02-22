@@ -197,9 +197,10 @@ async def process_coco_annotation_file(
         annotation_file.processing_status = "processing"
         db.commit()
         
-        # Clear existing annotations and classes for this file
+        # Clear existing annotations, classes, and file-image mapping for this file
         db.query(Annotation).filter(Annotation.annotation_file_id == annotation_file_id).delete()
         db.query(AnnotationClass).filter(AnnotationClass.annotation_file_id == annotation_file_id).delete()
+        db.query(AnnotationFileImage).filter(AnnotationFileImage.annotation_file_id == annotation_file_id).delete()
         
         # Reset sequence to prevent ID conflicts (important for merged files)
         try:
@@ -320,13 +321,17 @@ async def process_coco_annotation_file(
                 image_info = coco_image_mapping[coco_image_id]
                 class_name = category_mapping.get(category_id, f"category_{category_id}")
                 
-                # Normalize bbox coordinates
+                # Normalize bbox coordinates (guard against zero width/height to avoid division by zero)
                 bbox_x = bbox_y = bbox_width = bbox_height = None
                 if 'bbox' in coco_ann and coco_ann['bbox']:
                     bbox = coco_ann['bbox']
                     if len(bbox) >= 4:
-                        img_width = image_info['width']
-                        img_height = image_info['height']
+                        img_width = image_info.get('width') or 1
+                        img_height = image_info.get('height') or 1
+                        if img_width <= 0:
+                            img_width = 1
+                        if img_height <= 0:
+                            img_height = 1
                         bbox_x = bbox[0] / img_width
                         bbox_y = bbox[1] / img_height
                         bbox_width = bbox[2] / img_width
@@ -573,7 +578,7 @@ async def get_annotation_classes(
     if not annotation_file:
         raise HTTPException(status_code=404, detail="Annotation file not found")
     
-    # Get classes
+    # Get classes from AnnotationClass table
     classes = db.query(AnnotationClass).filter(
         AnnotationClass.annotation_file_id == annotation_file_id
     ).all()
@@ -582,11 +587,32 @@ async def get_annotation_classes(
     for cls in classes:
         class_data.append({
             "className": cls.class_name,
-            "count": cls.count,
-            "color": cls.color,
-            "opacity": cls.opacity,
+            "count": cls.count if cls.count is not None else 0,
+            "color": cls.color or "#ea384c",
+            "opacity": cls.opacity if cls.opacity is not None else 0.25,
             "categoryId": cls.category_id
         })
+    
+    # If no class rows but file has annotations, derive from Annotation.category so UI is not empty
+    if not class_data and annotation_file.annotation_count and annotation_file.annotation_count > 0:
+        category_counts = (
+            db.query(Annotation.category, func.count(Annotation.id))
+            .filter(
+                Annotation.annotation_file_id == annotation_file_id,
+                Annotation.category.isnot(None),
+                Annotation.category != ""
+            )
+            .group_by(Annotation.category)
+            .all()
+        )
+        for category_name, count in category_counts:
+            class_data.append({
+                "className": category_name,
+                "count": count or 0,
+                "color": "#ea384c",
+                "opacity": 0.25,
+                "categoryId": None
+            })
     
     return {
         "success": True,

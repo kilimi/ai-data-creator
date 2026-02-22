@@ -554,58 +554,40 @@ export function AnnotationsContent({
 
   const handleRenameClass = async (annotationId: string, oldClassName: string, newClassName: string) => {
     try {
-      const updatedFiles = annotationFiles.map(file => {
-        if (file.id === annotationId) {
-          // Update classStats
-          const updatedClassStats = file.classStats?.map(stat =>
-            stat.className === oldClassName ? { ...stat, className: newClassName } : stat
-          );
-          // Update samples
-          const updatedSamples = file.samples?.map(sample =>
-            sample.className === oldClassName ? { ...sample, className: newClassName } : sample
-          );
-          // Update classColors
-          const updatedClassColors = { ...file.classColors };
-          if (updatedClassColors[oldClassName]) {
-            updatedClassColors[newClassName] = updatedClassColors[oldClassName];
-            delete updatedClassColors[oldClassName];
-          }
-          return {
-            ...file,
-            classStats: updatedClassStats,
-            samples: updatedSamples,
-            classColors: updatedClassColors,
-          };
-        }
-        return file;
-      });
-      // Mark as dirty
-      markDirty(annotationId);
-      let success = true;
+      let serverClasses: Array<{ className: string; count: number; color: string; opacity?: number }> | undefined;
       if (api) {
-        const fileToUpdate = updatedFiles.find(file => file.id === annotationId);
-        if (fileToUpdate) {
-          const jsonContent = JSON.stringify(toCOCOFormat(fileToUpdate), null, 2);
-          const updatedFile = new File([jsonContent], fileToUpdate.name, { type: 'application/json' });
-          const response = await api.updateAnnotationContent(id, annotationId, updatedFile);
-          if (!response.success) {
-            success = false;
-            throw new Error(response.error || "Failed to update annotation file on server");
-          }
-        }
-      } else {
-        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+        const response = await api.renameAnnotationClass(id, annotationId, oldClassName, newClassName);
+        if (!response.success) throw new Error(response.error || "Failed to rename class on server");
+        serverClasses = response.data?.classes;
       }
-      if (success) {
-        setAnnotationFiles(updatedFiles);
-        if (selectedClass === oldClassName) {
-          setSelectedClass(newClassName);
+      const updatedFiles = annotationFiles.map(file => {
+        if (file.id !== annotationId) return file;
+        const updatedClassColors = { ...file.classColors };
+        if (updatedClassColors[oldClassName]) {
+          updatedClassColors[newClassName] = updatedClassColors[oldClassName];
+          delete updatedClassColors[oldClassName];
         }
-        toast({
-          title: "Class renamed",
-          description: `Class \"${oldClassName}\" renamed to \"${newClassName}\".`,
-        });
-      }
+        const updatedSamples = file.samples?.map(sample =>
+          sample.className === oldClassName ? { ...sample, className: newClassName } : sample
+        );
+        const updatedClassStats = serverClasses?.length
+          ? serverClasses.map(c => ({
+              className: c.className,
+              count: c.count ?? 0,
+              color: updatedClassColors[c.className] ?? c.color ?? "#ea384c",
+              opacity: c.opacity ?? 0.25,
+            }))
+          : file.classStats?.map(stat =>
+              stat.className === oldClassName
+                ? { ...stat, className: newClassName, count: stat.count ?? 0 }
+                : { ...stat, count: stat.count ?? 0 }
+            );
+        return { ...file, classStats: updatedClassStats, samples: updatedSamples, classColors: updatedClassColors };
+      });
+      if (!api) localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      setAnnotationFiles(updatedFiles);
+      if (selectedClass === oldClassName) setSelectedClass(newClassName);
+      toast({ title: "Class renamed", description: `"${oldClassName}" renamed to "${newClassName}".` });
     } catch (error) {
       console.error('Error renaming class:', error);
       toast({
@@ -3296,8 +3278,14 @@ export function AnnotationsContent({
           let classStats: Array<{ className: string; count: number; color: string; opacity: number }> = [];
           try {
             const classesResponse = await api.getAnnotationClasses(id, fileSummary.id);
-            if (classesResponse && classesResponse.success && classesResponse.data) {
-              classStats = classesResponse.data.classes || [];
+            if (classesResponse?.success && classesResponse.data) {
+              const raw = (classesResponse.data as any).classes ?? (classesResponse.data as any).data?.classes ?? [];
+              classStats = (Array.isArray(raw) ? raw : []).map((c: Record<string, unknown>) => ({
+                className: String(c.className ?? c.class_name ?? ''),
+                count: Number(c.count ?? 0),
+                color: String(c.color ?? '#ea384c'),
+                opacity: Number(c.opacity ?? 0.25),
+              })).filter((s) => s.className.length > 0);
             }
           } catch (error) {
             console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
@@ -3475,6 +3463,22 @@ export function AnnotationsContent({
 
           // Load full content and statistics immediately
           try {
+            // Use same statistics source as Edit segmentation view (getAnnotationClasses)
+            let classStats: Array<{ className: string; count: number; color: string; opacity?: number }> = [];
+            try {
+              const classesResponse = await api.getAnnotationClasses(id, file.id);
+              if (classesResponse?.success && classesResponse.data?.classes?.length) {
+                classStats = classesResponse.data.classes.map((c: { className: string; count?: number; color?: string; opacity?: number }) => ({
+                  className: c.className,
+                  count: c.count ?? 0,
+                  color: c.color ?? '#ea384c',
+                  opacity: c.opacity ?? 0.25,
+                }));
+              }
+            } catch (e) {
+              console.warn(`Failed to load classes for ${file.name}, will use from content:`, e);
+            }
+
             console.log(`Loading content and detecting type for ${file.name}...`);
             const contentResponse = await api.getAnnotationContent(id, file.id);
             if (contentResponse && contentResponse.success && contentResponse.data.content) {
@@ -3482,28 +3486,31 @@ export function AnnotationsContent({
               detectedType = detectAnnotationTypeFromContent(contentResponse.data.content, file.name);
               console.log(`Auto-detected type for ${file.name}: ${detectedType}`);
               
-              // Process the full COCO content to get samples and statistics
+              // Process the full COCO content for samples/colors/mapping (stats already from getAnnotationClasses)
               const mockFile = new File([contentResponse.data.content], file.name, { type: 'application/json' });
               const result = await processCOCOAnnotations(mockFile, id);
               
-              // Update annotation file with full processed data
+              // Update annotation file with full processed data; keep classStats from backend (same as Edit segmentation)
               annotationFile.type = detectedType;
-              annotationFile.classCount = result.stats.length;
-              annotationFile.classStats = result.stats;
-              annotationFile.classColors = result.classColors;
+              if (classStats.length > 0) {
+                annotationFile.classStats = classStats;
+                annotationFile.classCount = classStats.length;
+                annotationFile.classColors = classStats.reduce((acc, s) => ({ ...acc, [s.className]: s.color }), {} as Record<string, string>);
+              } else {
+                annotationFile.classStats = result.stats;
+                annotationFile.classCount = result.stats.length;
+                annotationFile.classColors = result.classColors;
+              }
               annotationFile.imageMapping = result.imageMapping;
               annotationFile.samples = result.samples.map(sample => ({
                 ...sample,
                 isVisible: false,
                 showBboxes: false,
                 annotationFileName: file.name,
-                color: result.classColors[sample.className] || sample.color || generateRandomColor() // Ensure colors are assigned
+                color: (annotationFile.classColors as Record<string, string>)[sample.className] || sample.color || generateRandomColor()
               }));
               
-              // Keep the total sample count from database (don't override with samples array length)
-              // annotationFile.totalSampleCount should remain file.annotation_count from database
-              
-              console.log(`Full backend loading for ${file.name} - Colors:`, result.classColors);
+              console.log(`Full backend loading for ${file.name} - Stats from backend: ${classStats.length} classes`);
             } else {
               // Fallback to filename-based detection
               const isClassification = file.name && (file.name.toLowerCase().includes('classification') || file.name.toLowerCase().includes('class'));
@@ -3948,6 +3955,46 @@ export function AnnotationsContent({
       window.removeEventListener('focus', handleFocus);
     };
   }, [api, id]);
+
+  // Refresh statistics when expanding a card (same source as Edit segmentation view: getAnnotationClasses)
+  useEffect(() => {
+    if (!selectedAnnotation || !api || !id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.getAnnotationClasses(id, selectedAnnotation);
+        if (cancelled || !res?.success) return;
+        // Support both res.data.classes and res.data as the payload (backend may wrap differently)
+        const rawClasses = Array.isArray(res.data?.classes)
+          ? res.data.classes
+          : Array.isArray((res.data as any)?.data?.classes)
+            ? (res.data as any).data.classes
+            : [];
+        const classStats = rawClasses.map((c: Record<string, unknown>) => ({
+          className: String(c.className ?? c.class_name ?? ''),
+          count: Number(c.count ?? 0),
+          color: String(c.color ?? '#ea384c'),
+          opacity: Number(c.opacity ?? 0.25),
+        })).filter((s) => s.className.length > 0);
+        // Don't overwrite with empty when we have no classes from API (keeps existing or leaves as-is)
+        setAnnotationFiles(prev =>
+          prev.map(f => {
+            if (f.id !== selectedAnnotation) return f;
+            const nextStats = classStats.length > 0 ? classStats : (f.classStats ?? []);
+            return {
+              ...f,
+              classStats: nextStats,
+              classCount: nextStats.length,
+              classColors: { ...(f.classColors || {}), ...nextStats.reduce((acc, s) => ({ ...acc, [s.className]: s.color }), {} as Record<string, string>) },
+            };
+          })
+        );
+      } catch (e) {
+        if (!cancelled) console.warn('Failed to refresh annotation classes:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedAnnotation, api, id]);
 
   // Periodically check for new saved classifications (only when no API)
   useEffect(() => {

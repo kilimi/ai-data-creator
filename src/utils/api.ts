@@ -933,6 +933,20 @@ export class ApiClient {
     });
   }
 
+  /** Rename a class in an annotation file (same backend as Dataset annotations + Edit Dataset statistics). */
+  async renameAnnotationClass(
+    datasetId: string | number,
+    annotationId: string,
+    oldClassName: string,
+    newClassName: string
+  ): Promise<ApiResponse<{ annotations_updated?: number; classes?: Array<{ className: string; count: number; color: string; opacity?: number; categoryId?: number }> }>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationId}/class/rename`, {
+      method: 'PUT',
+      body: JSON.stringify({ old_class_name: oldClassName, new_class_name: newClassName }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   async deleteAnnotationClass(datasetId: string | number, annotationId: string, className: string): Promise<ApiResponse<{
     deleted_count: number;
     remaining_annotations: number;

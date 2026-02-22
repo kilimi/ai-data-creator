@@ -14,14 +14,14 @@ interface ClassStatisticsProps {
 }
 
 export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics, selectedClass, onClassIconClick }) => {
-  // Calculate total instances for percentage calculation
+  // Calculate total instances for percentage calculation (guard against null/undefined count)
   const totalInstances = statistics.reduce(
-    (total, stat) => total + stat.count,
+    (total, stat) => total + (stat.count ?? 0),
     0
   );
 
   // Sort by count (descending)
-  const sortedStats = [...statistics].sort((a, b) => b.count - a.count);
+  const sortedStats = [...statistics].sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
 
   return (
     <div className="space-y-4">
@@ -37,6 +37,7 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics, se
               }`}
               style={{ backgroundColor: stat.color }}
               title={`Edit color/opacity for ${stat.className}`}
+              data-testid={`class-color-${stat.className.replace(/\s+/g, '-')}`}
               onClick={onClassIconClick ? () => onClassIconClick(stat.className) : undefined}
             >
               <span className="sr-only">{stat.className}</span>
@@ -45,7 +46,7 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics, se
               <span className="truncate">{stat.className}</span>
             </div>
             <div className="text-xs text-muted-foreground">
-              {stat.count} ({Math.round((stat.count / totalInstances) * 100)}%)
+              {stat.count ?? 0} ({totalInstances > 0 ? Math.round(((stat.count ?? 0) / totalInstances) * 100) : 0}%)
             </div>
           </div>
         ))}
@@ -58,7 +59,7 @@ export const ClassStatistics: React.FC<ClassStatisticsProps> = ({ statistics, se
               key={stat.className}
               style={{
                 backgroundColor: stat.color,
-                width: `${(stat.count / totalInstances) * 100}%`,
+                width: `${totalInstances > 0 ? ((stat.count ?? 0) / totalInstances) * 100 : 0}%`,
               }}
             />
           ))}
