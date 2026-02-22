@@ -45,7 +45,7 @@ export function ClassColorOpacityPicker({
   };
 
   return (
-    <Card className="p-4 bg-gray-800 border-gray-700">
+    <Card className="p-4 bg-card border-border">
       <div className="space-y-4">
         <div className="flex items-center gap-2 mb-2">
           <Label className="text-sm font-medium">
@@ -53,7 +53,7 @@ export function ClassColorOpacityPicker({
           </Label>
           {onRenameClass && (
             <button
-              className="text-blue-400 hover:text-blue-300 p-1 rounded"
+              className="text-primary hover:text-primary/80 p-1 rounded"
               title="Rename class"
               onClick={() => onRenameClass(className)}
               style={{ lineHeight: 0, display: 'inline-flex', alignItems: 'center' }}
@@ -63,7 +63,7 @@ export function ClassColorOpacityPicker({
           )}
           {onDeleteClass && (
             <button
-              className="text-red-400 hover:text-red-300 p-1 rounded"
+              className="text-destructive hover:text-destructive/80 p-1 rounded"
               title="Delete class"
               onClick={() => onDeleteClass(className)}
               style={{ lineHeight: 0, display: 'inline-flex', alignItems: 'center' }}
@@ -104,7 +104,7 @@ export function ClassColorOpacityPicker({
               <button
                 key={presetColor}
                 className={`w-8 h-8 rounded border-2 ${
-                  tempColor === presetColor ? 'border-white' : 'border-gray-600'
+                  tempColor === presetColor ? 'border-foreground' : 'border-border'
                 }`}
                 style={{ backgroundColor: presetColor }}
                 onClick={() => {
