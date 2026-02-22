@@ -54,10 +54,13 @@ import {
   BarChart,
   Loader2,
   AlertCircle,
-  Hexagon
+  Hexagon,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
+import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
 import { useApi } from '@/hooks/use-api';
@@ -133,6 +136,7 @@ const ImageAnnotation = () => {
   const navigate = useNavigate();
   const { api } = useApi();
   const { toast } = useToast();
+  const { theme, toggleTheme } = useTheme();
 
   // Get annotation ID from URL params if editing existing annotation
   const annotationId = searchParams.get('annotationId');
@@ -4245,6 +4249,15 @@ const ImageAnnotation = () => {
         </div>
 
         <div className="flex items-center gap-2 relative">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            onClick={toggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
           {!annotationId && (
             <Button 
               onClick={() => {
