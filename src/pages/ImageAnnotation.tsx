@@ -4258,10 +4258,10 @@ const ImageAnnotation = () => {
           >
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
-          {!annotationId && (
+          {/* Save button - unified for both new and edit modes */}
+          {!annotationId ? (
             <Button 
               onClick={() => {
-                // Check if there are any annotations to save
                 const hasAnnotations = allImageNames.some(imageName => {
                   const storageKey = `annotations_${id}_${imageName}`;
                   const saved = localStorage.getItem(storageKey);
@@ -4285,7 +4285,6 @@ const ImageAnnotation = () => {
                 return saved && saved !== '[]';
               })}
               title="Save annotations as new annotation file"
-              className="bg-primary hover:bg-primary/90"
             >
               {isSavingAnnotation ? (
                 <>
@@ -4299,73 +4298,70 @@ const ImageAnnotation = () => {
                 </>
               )}
             </Button>
+          ) : (
+            <Button 
+              onClick={async () => {
+                const success = await saveCurrentImageToDatabase();
+                if (success) {
+                  setHasUnsavedChanges(false);
+                  lastSaveTimeRef.current = Date.now();
+                  toast({ 
+                    title: 'Saved', 
+                    description: `Changes for "${currentImageName}" saved to database` 
+                  });
+                } else {
+                  toast({ 
+                    title: 'Save failed', 
+                    description: 'Failed to save changes to database',
+                    variant: 'destructive'
+                  });
+                }
+              }}
+              disabled={!currentImageName || annotations.length === 0}
+              title="Save current image annotations to database"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Save Changes
+            </Button>
+          )}
+
+          {/* Status badges - shown in both modes */}
+          {isAutoSaving && (
+            <Badge variant="outline" className="gap-1.5 border-muted-foreground/30 text-muted-foreground animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Saving…
+            </Badge>
           )}
           
+          {!isAutoSaving && hasUnsavedChanges && (
+            <Badge variant="outline" className="gap-1.5 border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
+              <AlertCircle className="w-3 h-3" />
+              Unsaved
+            </Badge>
+          )}
+          
+          {!isAutoSaving && !hasUnsavedChanges && (annotations.length > 0 || annotationId) && (
+            <Badge variant="outline" className="gap-1.5 border-green-500/40 bg-green-500/10 text-green-600 dark:text-green-400">
+              <Check className="w-3 h-3" />
+              Saved
+            </Badge>
+          )}
+
           <Button 
             onClick={downloadAnnotationsJSON} 
             disabled={!hasAnyAnnotationsStored}
             title="Download COCO JSON file with all annotations"
+            variant="outline"
           >
             <Download className="w-4 h-4 mr-2" />
             Download JSON
           </Button>
-          
-          {annotationId && (
-            <>
-              <Button 
-                onClick={async () => {
-                  const success = await saveCurrentImageToDatabase();
-                  if (success) {
-                    setHasUnsavedChanges(false);
-                    lastSaveTimeRef.current = Date.now();
-                    toast({ 
-                      title: 'Saved', 
-                      description: `Changes for "${currentImageName}" saved to database` 
-                    });
-                  } else {
-                    toast({ 
-                      title: 'Save failed', 
-                      description: 'Failed to save changes to database',
-                      variant: 'destructive'
-                    });
-                  }
-                }}
-                disabled={!currentImageName || annotations.length === 0}
-                title="Save current image annotations to database"
-                variant="secondary"
-              >
-                <Save className="w-4 h-4 mr-2" />
-                Save Changes
-              </Button>
-               
-              {isAutoSaving && (
-                <Badge variant="outline" className="gap-1.5 border-muted-foreground/30 text-muted-foreground animate-pulse">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Saving…
-                </Badge>
-              )}
-              
-              {!isAutoSaving && hasUnsavedChanges && (
-                <Badge variant="outline" className="gap-1.5 border-yellow-500/40 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400">
-                  <AlertCircle className="w-3 h-3" />
-                  Unsaved
-                </Badge>
-              )}
-              
-              {!isAutoSaving && !hasUnsavedChanges && annotationId && (
-                <Badge variant="outline" className="gap-1.5 border-green-500/40 bg-green-500/10 text-green-600 dark:text-green-400">
-                  <Check className="w-3 h-3" />
-                  Saved
-                </Badge>
-              )}
-            </>
-          )}
-          
+
           <Button
             variant="destructive"
+            size="sm"
             onClick={clearAllAnnotations}
             disabled={!hasAnyAnnotationsStored}
-            className="ml-2"
             title="Delete all saved annotations from localStorage"
           >
             <Trash2 className="w-4 h-4 mr-2" />
