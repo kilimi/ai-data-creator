@@ -18,7 +18,7 @@ const TOOL_LABELS: Record<string, string> = {
   'select': 'Select (V)',
   'rectangle': 'Rectangle',
   'polygon': 'Polygon (P)',
-  'auto-segment': 'SAM Auto-Segment (A)',
+  'auto-segment': 'AI Segment (A)',
 };
 
 export const AnnotationStatusBar = ({
