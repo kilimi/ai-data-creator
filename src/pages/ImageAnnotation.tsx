@@ -3322,6 +3322,7 @@ const ImageAnnotation = () => {
   const handleSaveAnnotationFile = async () => {
     const success = await saveNewAnnotationFile(saveAnnotationName);
     if (success) {
+      setHasUnsavedChanges(false);
       setShowSaveDialog(false);
       setSaveAnnotationName('');
       // Navigate away if this save was triggered by "Save & Leave"
