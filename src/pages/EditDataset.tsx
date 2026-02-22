@@ -1642,10 +1642,10 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         open={!!selectedAnnotation && !isRenaming} 
         onOpenChange={(open) => !open && setSelectedAnnotation(null)}
       >
-        <DialogContent className="max-w-2xl bg-gray-900 text-white border-gray-700">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{selectedAnnotation?.fileName}</DialogTitle>
-            <DialogDescription className="text-gray-400">
+            <DialogDescription>
               {(selectedAnnotation?.fileSize ? (selectedAnnotation.fileSize / 1024).toFixed(1) : 0)} KB • Uploaded {selectedAnnotation?.uploadedAt && new Date(selectedAnnotation.uploadedAt).toLocaleDateString()}
             </DialogDescription>
           </DialogHeader>
