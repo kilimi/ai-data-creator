@@ -3865,7 +3865,18 @@ const ImageAnnotation = () => {
     const backUrl = projectId 
       ? `/projects/${projectId}/datasets/${id}` 
       : `/datasets/${id}`;
-    if (hasUnsavedChanges) {
+    
+    // For new annotations (no annotationId), check if any annotations exist in localStorage
+    // that haven't been saved to the database as an annotation file
+    const hasUnsavedWork = annotationId 
+      ? hasUnsavedChanges 
+      : (hasUnsavedChanges || allImageNames.some(imageName => {
+          const storageKey = `annotations_${id}_${imageName}`;
+          const saved = localStorage.getItem(storageKey);
+          return saved && saved !== '[]';
+        }));
+
+    if (hasUnsavedWork) {
       pendingNavigationRef.current = backUrl;
       setShowLeaveDialog(true);
     } else {
