@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
-import { AnnotationSample, processCOCOAnnotations, AnnotationFile } from "@/utils/annotations";
+import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
 import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { ClassColorPicker } from "@/components/ClassColorPicker";
@@ -3481,10 +3481,12 @@ export function AnnotationsContent({
             try {
               const classesResponse = await api.getAnnotationClasses(id, file.id);
               if (classesResponse?.success && classesResponse.data?.classes?.length) {
+                const classNames = classesResponse.data.classes.map((c: any) => c.className);
+                const randomColors = generateClassColors(classNames);
                 classStats = classesResponse.data.classes.map((c: { className: string; count?: number; color?: string; opacity?: number }) => ({
                   className: c.className,
                   count: c.count ?? 0,
-                  color: c.color ?? '#ea384c',
+                  color: c.color && c.color !== '#ea384c' ? c.color : randomColors[c.className] ?? '#ea384c',
                   opacity: c.opacity ?? 0.25,
                 }));
               }
