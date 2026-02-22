@@ -5290,86 +5290,114 @@ const ImageAnnotation = () => {
 
               {/* Statistics Tab */}
               <TabsContent value="statistics" className="flex-1 overflow-hidden m-0 p-0">
-                <div className="p-3 border-b border-border">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>Global Statistics</span>
-                    <span className="bg-muted px-2 py-1 rounded">All Images</span>
-                  </div>
-                </div>
-                
                 <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
-                  <div className="space-y-3">
-                    {(() => {
-                      const total = Object.values(globalStats).reduce((s, v) => s + v, 0);
-                      if (classes.length === 0) {
-                        return (
-                          <div className="flex flex-col items-center justify-center h-32 text-center">
-                            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
-                              <BarChart className="w-6 h-6 text-muted-foreground" />
-                            </div>
-                            <p className="text-sm text-muted-foreground">No classes defined yet</p>
-                          </div>
-                        );
-                      }
+                  {(() => {
+                    const total = Object.values(globalStats).reduce((s, v) => s + v, 0);
+                    const sortedClasses = [...classes].sort((a, b) => (globalStats[b.name] || 0) - (globalStats[a.name] || 0));
+                    const maxCount = sortedClasses.length > 0 ? (globalStats[sortedClasses[0]?.name] || 0) : 0;
 
+                    if (classes.length === 0) {
                       return (
-                        <>
-                          {/* Summary Card */}
-                          <div className="bg-muted border border-border rounded-lg p-3">
-                            <div className="text-center">
-                              <div className="text-2xl font-bold text-primary">{total}</div>
-                              <div className="text-xs text-muted-foreground">Total Annotations</div>
-                              <div className="text-xs text-muted-foreground/70 mt-1">Across all images</div>
-                            </div>
+                        <div className="flex flex-col items-center justify-center h-32 text-center">
+                          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                            <BarChart className="w-6 h-6 text-muted-foreground" />
                           </div>
+                          <p className="text-sm text-muted-foreground">No classes defined yet</p>
+                        </div>
+                      );
+                    }
 
-                          {/* Class Breakdown */}
-                          <div className="space-y-2">
-                            <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Class Breakdown</h5>
-                            {classes.map(c => {
-                              const count = globalStats[c.name] || 0;
-                              const pct = total > 0 ? Math.round((count / total) * 1000) / 10 : 0;
-                              const avgArea = globalAvgAreas[c.name] || 0;
-                              return (
-                                <div key={c.id} className="bg-muted border border-border rounded-lg p-3">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <div className="flex items-center gap-2">
-                                      <div 
-                                        className="w-3 h-3 rounded border border-border" 
-                                        style={{ backgroundColor: c.color }} 
-                                      />
-                                      <span className="text-sm font-medium">{c.name}</span>
+                    return (
+                      <div className="space-y-3">
+                        {/* Summary row */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <BarChart className="h-3.5 w-3.5" />
+                            <span>{sortedClasses.length} {sortedClasses.length === 1 ? 'class' : 'classes'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-bold text-foreground">{total.toLocaleString()}</span>
+                            <span className="text-xs text-muted-foreground">annotations</span>
+                          </div>
+                        </div>
+
+                        {/* Distribution bar */}
+                        <div className="h-2.5 w-full flex rounded-full overflow-hidden bg-muted/50">
+                          {sortedClasses.map((c) => {
+                            const count = globalStats[c.name] || 0;
+                            const pct = total > 0 ? (count / total) * 100 : 0;
+                            return (
+                              <div
+                                key={c.id}
+                                className="transition-all duration-300 hover:opacity-80 first:rounded-l-full last:rounded-r-full"
+                                style={{
+                                  backgroundColor: c.color,
+                                  width: `${pct}%`,
+                                  minWidth: pct > 0 ? '3px' : '0',
+                                }}
+                                title={`${c.name}: ${count} (${Math.round(pct)}%)`}
+                              />
+                            );
+                          })}
+                        </div>
+
+                        {/* Class rows */}
+                        <div className="space-y-1">
+                          {sortedClasses.map((c) => {
+                            const count = globalStats[c.name] || 0;
+                            const pct = total > 0 ? (count / total) * 100 : 0;
+                            const barWidth = maxCount > 0 ? (count / maxCount) * 100 : 0;
+                            const avgArea = globalAvgAreas[c.name] || 0;
+
+                            return (
+                              <div
+                                key={c.id}
+                                className="group flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/40 transition-all duration-150"
+                              >
+                                {/* Color dot */}
+                                <span
+                                  className="w-3 h-3 rounded-sm flex-shrink-0 ring-1 ring-black/10"
+                                  style={{ backgroundColor: c.color }}
+                                />
+
+                                {/* Name + bar */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-0.5">
+                                    <span className="text-xs font-medium text-foreground truncate pr-2">
+                                      {c.name}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                                      <span className="text-[11px] tabular-nums text-muted-foreground">
+                                        {count.toLocaleString()}
+                                      </span>
+                                      <span className="text-[10px] tabular-nums text-muted-foreground/70 w-8 text-right">
+                                        {Math.round(pct)}%
+                                      </span>
                                     </div>
-                                    <div className="text-sm font-medium">{count}</div>
                                   </div>
-                                  <div className="flex items-center justify-between text-xs mb-1">
-                                    <span className="text-muted-foreground">{c.visible ? 'Visible' : 'Hidden'}</span>
-                                    <span className="text-muted-foreground">{pct}% of total</span>
+                                  <div className="h-1 w-full rounded-full bg-muted/50 overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full transition-all duration-500"
+                                      style={{
+                                        backgroundColor: c.color,
+                                        width: `${barWidth}%`,
+                                        opacity: 0.8,
+                                      }}
+                                    />
                                   </div>
                                   {avgArea > 0 && (
-                                    <div className="text-xs text-primary mb-1" title="Average area of annotations">
+                                    <div className="text-[10px] text-muted-foreground mt-0.5">
                                       Avg area: {formatArea(avgArea)}
                                     </div>
                                   )}
-                                  {/* Progress bar */}
-                                  <div className="mt-2 h-1 bg-muted-foreground/20 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full transition-all duration-300" 
-                                      style={{ 
-                                        width: `${pct}%`, 
-                                        backgroundColor: c.color,
-                                        opacity: 0.8
-                                      }} 
-                                    />
-                                  </div>
                                 </div>
-                              );
-                            })}
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </TabsContent>
             </Tabs>
