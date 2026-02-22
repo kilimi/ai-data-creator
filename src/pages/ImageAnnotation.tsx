@@ -292,6 +292,7 @@ const ImageAnnotation = () => {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveAnnotationName, setSaveAnnotationName] = useState('');
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
+  const navigateAfterSaveRef = useRef(false);
 
   // Helper function to safely save to localStorage with quota handling
   const safeLocalStorageSet = (key: string, value: string) => {
@@ -3322,6 +3323,12 @@ const ImageAnnotation = () => {
     if (success) {
       setShowSaveDialog(false);
       setSaveAnnotationName('');
+      // Navigate away if this save was triggered by "Save & Leave"
+      if (navigateAfterSaveRef.current && pendingNavigationRef.current) {
+        navigateAfterSaveRef.current = false;
+        navigate(pendingNavigationRef.current);
+        pendingNavigationRef.current = null;
+      }
     }
   };
 
@@ -3865,14 +3872,28 @@ const ImageAnnotation = () => {
   };
 
   const handleLeaveConfirm = async (shouldSave: boolean) => {
-    if (shouldSave && annotationId) {
-      await saveCurrentImageToDatabase();
-      setHasUnsavedChanges(false);
-    }
-    setShowLeaveDialog(false);
-    if (pendingNavigationRef.current) {
-      navigate(pendingNavigationRef.current);
-      pendingNavigationRef.current = null;
+    if (shouldSave) {
+      if (annotationId) {
+        // Edit mode: save directly to database
+        await saveCurrentImageToDatabase();
+        setHasUnsavedChanges(false);
+        setShowLeaveDialog(false);
+        if (pendingNavigationRef.current) {
+          navigate(pendingNavigationRef.current);
+          pendingNavigationRef.current = null;
+        }
+      } else {
+        // New mode: need to ask for annotation file name first
+        setShowLeaveDialog(false);
+        navigateAfterSaveRef.current = true;
+        setShowSaveDialog(true);
+      }
+    } else {
+      setShowLeaveDialog(false);
+      if (pendingNavigationRef.current) {
+        navigate(pendingNavigationRef.current);
+        pendingNavigationRef.current = null;
+      }
     }
   };
 
@@ -5421,6 +5442,8 @@ const ImageAnnotation = () => {
               onClick={() => {
                 setShowSaveDialog(false);
                 setSaveAnnotationName('');
+                navigateAfterSaveRef.current = false;
+                pendingNavigationRef.current = null;
               }}
               disabled={isSavingAnnotation}
             >
