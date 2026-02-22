@@ -3293,12 +3293,19 @@ export function AnnotationsContent({
             const classesResponse = await api.getAnnotationClasses(id, fileSummary.id);
             if (classesResponse?.success && classesResponse.data) {
               const raw = (classesResponse.data as any).classes ?? (classesResponse.data as any).data?.classes ?? [];
-              classStats = (Array.isArray(raw) ? raw : []).map((c: Record<string, unknown>) => ({
+              const rawStats = (Array.isArray(raw) ? raw : []).map((c: Record<string, unknown>) => ({
                 className: String(c.className ?? c.class_name ?? ''),
                 count: Number(c.count ?? 0),
-                color: String(c.color ?? '#ea384c'),
+                color: String(c.color ?? ''),
                 opacity: Number(c.opacity ?? 0.25),
               })).filter((s) => s.className.length > 0);
+              // Assign random colors to classes that have no color or the default fallback
+              const classNames = rawStats.map(s => s.className);
+              const randomColors = generateClassColors(classNames);
+              classStats = rawStats.map(s => ({
+                ...s,
+                color: s.color && s.color !== '#ea384c' ? s.color : randomColors[s.className] ?? '#ea384c',
+              }));
             }
           } catch (error) {
             console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
@@ -3985,12 +3992,18 @@ export function AnnotationsContent({
           : Array.isArray((res.data as any)?.data?.classes)
             ? (res.data as any).data.classes
             : [];
-        const classStats = rawClasses.map((c: Record<string, unknown>) => ({
+        const rawStats = rawClasses.map((c: Record<string, unknown>) => ({
           className: String(c.className ?? c.class_name ?? ''),
           count: Number(c.count ?? 0),
-          color: String(c.color ?? '#ea384c'),
+          color: String(c.color ?? ''),
           opacity: Number(c.opacity ?? 0.25),
         })).filter((s) => s.className.length > 0);
+        const classNames = rawStats.map(s => s.className);
+        const randomColors = generateClassColors(classNames);
+        const classStats = rawStats.map(s => ({
+          ...s,
+          color: s.color && s.color !== '#ea384c' ? s.color : randomColors[s.className] ?? '#ea384c',
+        }));
         // Don't overwrite with empty when we have no classes from API (keeps existing or leaves as-is)
         setAnnotationFiles(prev =>
           prev.map(f => {
