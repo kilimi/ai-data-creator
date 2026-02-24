@@ -1,8 +1,12 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { Bot, Crosshair, Layers, ChevronRight } from "lucide-react";
+import { Bot, Crosshair, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 
 interface AutoAnnotateModalProps {
@@ -58,6 +62,9 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
   const [selectedYoloArch, setSelectedYoloArch] = React.useState("yolo11");
   const [selectedSize, setSelectedSize] = React.useState("n");
+  const [saveAsNew, setSaveAsNew] = React.useState(false);
+  const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
+  const [newDatasetName, setNewDatasetName] = React.useState("");
 
   const selectedModel = selectedFamily === "yolo"
     ? `${selectedYoloArch}${selectedSize}`
@@ -67,13 +74,22 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
 
   const handleSubmit = async () => {
     try {
+      const body: Record<string, any> = {
+        model_name: selectedModel,
+        dataset_id: datasetId,
+      };
+
+      if (selectedFamily === "depth_anything" && saveAsNew) {
+        body.save_as = saveTarget;
+        if (saveTarget === "dataset") {
+          body.new_dataset_name = newDatasetName || `${datasetName} - Depth`;
+        }
+      }
+
       await fetch("http://localhost:9999/preannotate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model_name: selectedModel,
-          dataset_id: datasetId,
-        }),
+        body: JSON.stringify(body),
       });
       toast({
         title: "Auto-annotation started",
@@ -115,6 +131,8 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                   setSelectedFamily(key);
                   if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); }
                   else { setSelectedSize("small"); }
+                  setSaveAsNew(false);
+                  setNewDatasetName("");
                 }}
                 className={cn(
                   "flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
@@ -188,28 +206,82 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
             </>
           )}
 
-          {/* Depth Anything V2: size */}
+          {/* Depth Anything V2: size + save options */}
           {selectedFamily === "depth_anything" && (
-            <div className="space-y-2">
-              <span className="block font-medium text-sm">Model size</span>
-              <div className="flex gap-1.5">
-                {DEPTH_SIZES.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setSelectedSize(value)}
-                    className={cn(
-                      "rounded-md border px-3 py-1.5 text-sm font-medium transition-all",
-                      selectedSize === value
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border hover:bg-muted/40"
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
+            <>
+              <div className="space-y-2">
+                <span className="block font-medium text-sm">Model size</span>
+                <div className="flex gap-1.5">
+                  {DEPTH_SIZES.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSelectedSize(value)}
+                      className={cn(
+                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-all",
+                        selectedSize === value
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border hover:bg-muted/40"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+
+              {/* Save output options */}
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="save-as-new"
+                    checked={saveAsNew}
+                    onCheckedChange={(checked) => setSaveAsNew(checked === true)}
+                  />
+                  <Label htmlFor="save-as-new" className="text-sm font-medium cursor-pointer">
+                    Save output as new resource
+                  </Label>
+                </div>
+
+                {saveAsNew && (
+                  <div className="space-y-3 pl-6">
+                    <RadioGroup
+                      value={saveTarget}
+                      onValueChange={(v) => setSaveTarget(v as "dataset" | "collection")}
+                      className="space-y-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <RadioGroupItem value="dataset" id="target-dataset" />
+                        <Label htmlFor="target-dataset" className="text-sm cursor-pointer">
+                          New Dataset
+                        </Label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <RadioGroupItem value="collection" id="target-collection" />
+                        <Label htmlFor="target-collection" className="text-sm cursor-pointer">
+                          New Image Collection
+                        </Label>
+                      </div>
+                    </RadioGroup>
+
+                    {saveTarget === "dataset" && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="new-dataset-name" className="text-xs text-muted-foreground">
+                          Dataset name
+                        </Label>
+                        <Input
+                          id="new-dataset-name"
+                          placeholder={`${datasetName} - Depth`}
+                          value={newDatasetName}
+                          onChange={(e) => setNewDatasetName(e.target.value)}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           <DialogFooter className="mt-2">
