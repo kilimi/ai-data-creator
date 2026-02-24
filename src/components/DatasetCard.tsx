@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Pencil, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink, Copy } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink, Copy } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useImageLoad } from "@/utils/animations";
@@ -181,8 +181,8 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                     className="flex items-center w-full"
                     onClick={() => setIsAnnotateModalOpen(true)}
                   >
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Annotate using AI foundation models
+                    <Bot className="h-4 w-4 mr-2 text-primary" />
+                    Auto-Annotate (AI)
                   </button>
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setIsEditDialogOpen(true)}>
@@ -268,70 +268,88 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
         onDatasetUpdated={handleDatasetUpdated}
       />
 
-      {/* Annotate Modal */}
+      {/* Auto-Annotate Modal */}
       <Dialog open={isAnnotateModalOpen} onOpenChange={setIsAnnotateModalOpen}>
-      {/* Annotate Modal - Modern UI */}
-      <Dialog open={isAnnotateModalOpen} onOpenChange={setIsAnnotateModalOpen}>
-        <DialogContent className="max-w-md mx-auto">
+        <DialogContent className="max-w-lg mx-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
               <Bot className="h-5 w-5 text-primary" />
-              Annotate with AI Model
+              Auto-Annotate with AI
             </DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">Select a foundation model to annotate your dataset images.</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Automatically generate annotations for <span className="font-medium text-foreground">{dataset.name}</span> using a pre-trained model.
+            </p>
           </DialogHeader>
-          <div className="flex flex-col gap-6 mt-4">
-            <div>
-              <span className="block mb-2 font-medium text-sm">Model</span>
-              <ToggleGroup
-                type="single"
-                value={selectedModel}
-                onValueChange={setSelectedModel}
-                className="flex gap-3"
-              >
-                <ToggleGroupItem value="SAM" aria-label="SAM" className="flex flex-col items-center px-4 py-2 rounded-lg border data-[state=on]:bg-primary data-[state=on]:text-white transition-colors">
-                  <ScanEye className="h-5 w-5 mb-1" />
-                  <span className="text-xs">SAM</span>
-                </ToggleGroupItem>
-                <ToggleGroupItem value="YOLOv11n" aria-label="YOLOv11n" className="flex flex-col items-center px-4 py-2 rounded-lg border data-[state=on]:bg-primary data-[state=on]:text-white transition-colors">
-                  <Eye className="h-5 w-5 mb-1" />
-                  <span className="text-xs">YOLOv11n</span>
-                </ToggleGroupItem>
-                <ToggleGroupItem value="YOLOv11s" aria-label="YOLOv11s" className="flex flex-col items-center px-4 py-2 rounded-lg border data-[state=on]:bg-primary data-[state=on]:text-white transition-colors">
-                  <SquareStack className="h-5 w-5 mb-1" />
-                  <span className="text-xs">YOLOv11s</span>
-                </ToggleGroupItem>
-              </ToggleGroup>
+          <div className="flex flex-col gap-4 mt-2">
+            <span className="block font-medium text-sm">Choose a model</span>
+            <div className="grid gap-2">
+              {[
+                { value: "SAM", icon: ScanEye, label: "SAM", desc: "Segment Anything — best for instance segmentation masks" },
+                { value: "YOLOv11n", icon: Eye, label: "YOLOv11n", desc: "Nano — fast detection, lower accuracy" },
+                { value: "YOLOv11s", icon: SquareStack, label: "YOLOv11s", desc: "Small — balanced speed and accuracy" },
+              ].map(({ value, icon: Icon, label, desc }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setSelectedModel(value)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
+                    selectedModel === value
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                      : "border-border hover:border-muted-foreground/30 hover:bg-muted/40"
+                  )}
+                >
+                  <div className={cn(
+                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
+                    selectedModel === value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                  )}>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{label}</div>
+                    <div className="text-xs text-muted-foreground">{desc}</div>
+                  </div>
+                </button>
+              ))}
             </div>
-            <DialogFooter>
+            <DialogFooter className="mt-2">
               <Button
-                className="w-full"
-                size="lg"
+                variant="outline"
+                onClick={() => setIsAnnotateModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
                 onClick={async () => {
                   try {
                     await fetch("/api/preannotate", {
                       method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                      },
+                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         model_name: selectedModel,
                         dataset_id: dataset.id,
                       }),
                     });
+                    toast({
+                      title: "Auto-annotation started",
+                      description: `Running ${selectedModel} on ${dataset.name}. Check tasks for progress.`,
+                    });
                   } catch (err) {
-                    // Optionally handle error
+                    toast({
+                      title: "Error",
+                      description: "Failed to start auto-annotation",
+                      variant: "destructive",
+                    });
                   }
                   setIsAnnotateModalOpen(false);
                 }}
               >
-                <Pencil className="h-4 w-4 mr-2" />
-                Annotate
+                <Bot className="h-4 w-4 mr-2" />
+                Start Annotation
               </Button>
             </DialogFooter>
           </div>
         </DialogContent>
-      </Dialog>
       </Dialog>
     </Card>
   );
