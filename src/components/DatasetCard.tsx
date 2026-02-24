@@ -32,7 +32,9 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
   const [selectedFamily, setSelectedFamily] = React.useState<"yolo" | "depth_anything" | null>(null);
-  const [selectedModel, setSelectedModel] = React.useState<string>("yolo11n");
+  const [selectedYoloArch, setSelectedYoloArch] = React.useState<string>("yolo11");
+  const [selectedSize, setSelectedSize] = React.useState<string>("n");
+  const selectedModel = selectedFamily === "yolo" ? `${selectedYoloArch}${selectedSize}` : selectedFamily === "depth_anything" ? `depth_anything_v2_${selectedSize}` : "";
   const { api } = useApi();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -293,8 +295,8 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                   type="button"
                   onClick={() => {
                     setSelectedFamily(key);
-                    if (key === "yolo") setSelectedModel("yolo11n");
-                    else setSelectedModel("depth_anything_v2_small");
+                    if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); }
+                    else { setSelectedSize("small"); }
                   }}
                   className={cn(
                     "flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
@@ -317,69 +319,104 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
               ))}
             </div>
 
-            {/* YOLO variant selector */}
+            {/* YOLO architecture + size selectors */}
             {selectedFamily === "yolo" && (
-              <div className="space-y-2">
-                <span className="block font-medium text-sm">Select YOLO variant</span>
-                <div className="grid gap-1.5 max-h-48 overflow-y-auto pr-1">
-                  {[
-                    { value: "yolo11n", label: "YOLO11 Nano", desc: "Fastest, lowest accuracy" },
-                    { value: "yolo11s", label: "YOLO11 Small", desc: "Fast, good accuracy" },
-                    { value: "yolo11m", label: "YOLO11 Medium", desc: "Balanced speed & accuracy" },
-                    { value: "yolo11l", label: "YOLO11 Large", desc: "High accuracy, slower" },
-                    { value: "yolo11x", label: "YOLO11 XLarge", desc: "Best accuracy, slowest" },
-                    { value: "yolov8n", label: "YOLOv8 Nano", desc: "Legacy fast model" },
-                    { value: "yolov8s", label: "YOLOv8 Small", desc: "Legacy balanced model" },
-                    { value: "yolov8m", label: "YOLOv8 Medium", desc: "Legacy medium model" },
-                  ].map(({ value, label, desc }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setSelectedModel(value)}
-                      className={cn(
-                        "flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-all",
-                        selectedModel === value
-                          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                          : "border-border hover:bg-muted/40"
-                      )}
-                    >
-                      <div>
+              <>
+                <div className="space-y-2">
+                  <span className="block font-medium text-sm">Architecture</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { value: "yolo11", label: "YOLO11", desc: "Latest generation" },
+                      { value: "yolo26", label: "YOLO26", desc: "Newest release" },
+                      { value: "yolo_nas", label: "YOLO-NAS", desc: "Neural architecture search" },
+                      { value: "rtdetr", label: "RT-DETR", desc: "Transformer-based" },
+                    ].map(({ value, label, desc }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => {
+                          setSelectedYoloArch(value);
+                          // RT-DETR uses different size keys
+                          if (value === "rtdetr") setSelectedSize("l");
+                          else if (value === "yolo_nas") setSelectedSize("s");
+                          else setSelectedSize("n");
+                        }}
+                        className={cn(
+                          "flex flex-col rounded-md border px-3 py-2 text-left text-sm transition-all",
+                          selectedYoloArch === value
+                            ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                            : "border-border hover:bg-muted/40"
+                        )}
+                      >
                         <span className="font-medium">{label}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">{desc}</span>
-                      </div>
-                      {selectedModel === value && <ChevronRight className="h-3.5 w-3.5 text-primary shrink-0" />}
-                    </button>
-                  ))}
+                        <span className="text-xs text-muted-foreground">{desc}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+                <div className="space-y-2">
+                  <span className="block font-medium text-sm">Model size</span>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {(selectedYoloArch === "rtdetr"
+                      ? [
+                          { value: "l", label: "Large" },
+                          { value: "x", label: "X-Large" },
+                        ]
+                      : selectedYoloArch === "yolo_nas"
+                      ? [
+                          { value: "s", label: "Small" },
+                          { value: "m", label: "Medium" },
+                          { value: "l", label: "Large" },
+                        ]
+                      : [
+                          { value: "n", label: "Nano" },
+                          { value: "s", label: "Small" },
+                          { value: "m", label: "Medium" },
+                          { value: "l", label: "Large" },
+                          { value: "x", label: "X-Large" },
+                        ]
+                    ).map(({ value, label }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setSelectedSize(value)}
+                        className={cn(
+                          "rounded-md border px-3 py-1.5 text-sm font-medium transition-all",
+                          selectedSize === value
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border hover:bg-muted/40"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
             )}
 
             {/* Depth Anything V2 variant selector */}
             {selectedFamily === "depth_anything" && (
               <div className="space-y-2">
-                <span className="block font-medium text-sm">Select model size</span>
-                <div className="grid gap-1.5">
+                <span className="block font-medium text-sm">Model size</span>
+                <div className="flex gap-1.5">
                   {[
-                    { value: "depth_anything_v2_small", label: "Small (ViT-S)", desc: "Fast, lightweight" },
-                    { value: "depth_anything_v2_base", label: "Base (ViT-B)", desc: "Balanced performance" },
-                    { value: "depth_anything_v2_large", label: "Large (ViT-L)", desc: "Best quality" },
-                  ].map(({ value, label, desc }) => (
+                    { value: "small", label: "Small (ViT-S)" },
+                    { value: "base", label: "Base (ViT-B)" },
+                    { value: "large", label: "Large (ViT-L)" },
+                  ].map(({ value, label }) => (
                     <button
                       key={value}
                       type="button"
-                      onClick={() => setSelectedModel(value)}
+                      onClick={() => setSelectedSize(value)}
                       className={cn(
-                        "flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-all",
-                        selectedModel === value
-                          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-all",
+                        selectedSize === value
+                          ? "border-primary bg-primary text-primary-foreground"
                           : "border-border hover:bg-muted/40"
                       )}
                     >
-                      <div>
-                        <span className="font-medium">{label}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">{desc}</span>
-                      </div>
-                      {selectedModel === value && <ChevronRight className="h-3.5 w-3.5 text-primary shrink-0" />}
+                      {label}
                     </button>
                   ))}
                 </div>
