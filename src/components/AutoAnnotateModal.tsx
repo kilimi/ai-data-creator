@@ -75,6 +75,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
   const [selectedYoloArch, setSelectedYoloArch] = React.useState("yolo11");
   const [selectedSize, setSelectedSize] = React.useState("n");
+  const [annotationFileName, setAnnotationFileName] = React.useState("");
   const [saveAsNew, setSaveAsNew] = React.useState(false);
   const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
   const [newDatasetName, setNewDatasetName] = React.useState("");
@@ -93,23 +94,36 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
         dataset_id: datasetId,
       };
 
-      if (selectedFamily === "depth_anything") {
+      if (selectedFamily === "yolo") {
+        body.annotation_file_name = annotationFileName || `Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`;
+      } else if (selectedFamily === "depth_anything") {
         body.save_as = saveAsNew ? "dataset" : "collection";
         if (saveAsNew) {
           body.new_dataset_name = newDatasetName || `${datasetName} - Depth`;
         }
       }
 
-      await fetch("http://localhost:9999/preannotate", {
+      console.log('Starting auto-annotation with:', body);
+      
+      const response = await fetch("http://localhost:9999/preannotate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      console.log('Auto-annotation response:', result);
+      
       toast({
         title: "Auto-annotation started",
         description: `Running ${selectedModel} on ${datasetName}. Check tasks for progress.`,
       });
-    } catch {
+    } catch (error) {
+      console.error('Auto-annotation error:', error);
       toast({
         title: "Error",
         description: "Failed to start auto-annotation",
@@ -242,6 +256,23 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Annotation file name */}
+              <div className="space-y-2">
+                <Label htmlFor="annotation-file-name" className="text-sm font-medium">
+                  Annotation File Name
+                </Label>
+                <Input
+                  id="annotation-file-name"
+                  placeholder={`Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`}
+                  value={annotationFileName}
+                  onChange={(e) => setAnnotationFileName(e.target.value)}
+                  className="text-sm"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Results will be saved as a new annotation file in this dataset
+                </p>
               </div>
             </>
           )}

@@ -53,6 +53,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return <Copy className="w-4 h-4 text-cyan-500" />;
       case 'evaluation':
         return <Layers className="w-4 h-4 text-orange-500" />;
+      case 'preannotate':
+        return <Brain className="w-4 h-4 text-green-500" />;
       default:
         return <ListTodo className="w-4 h-4 text-gray-500" />;
     }
@@ -68,6 +70,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return 'Duplication';
       case 'evaluation':
         return 'Evaluation';
+      case 'preannotate':
+        return 'Auto-Annotate';
       default:
         return taskType;
     }
@@ -117,6 +121,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return 'bg-cyan-100 text-cyan-800 border-cyan-200';
       case 'evaluation':
         return 'bg-orange-100 text-orange-800 border-orange-200';
+      case 'preannotate':
+        return 'bg-green-100 text-green-800 border-green-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }

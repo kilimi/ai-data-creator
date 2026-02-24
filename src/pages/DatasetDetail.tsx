@@ -19,7 +19,8 @@ import { TrainModelModal } from '@/components/TrainModelModal';
 import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain, RotateCw, GitMerge } from "lucide-react";
+import { AutoAnnotateModal } from '@/components/AutoAnnotateModal';
+import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, Brain, RotateCw, GitMerge, Wand2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Dataset, Project, DatasetGroup } from '@/types';
@@ -72,6 +73,7 @@ const DatasetDetail = ({ projectMode = false }: DatasetDetailProps) => {
   const [modelsSearchQuery, setModelsSearchQuery] = useState("");
   const [modelsSortOrder, setModelsSortOrder] = useState<"newest" | "oldest" | "name" | "accuracy" | "performance">("newest");
   const [showTrainModelModal, setShowTrainModelModal] = useState(false);
+  const [showAutoAnnotateModal, setShowAutoAnnotateModal] = useState(false);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [showAddGroupModal, setShowAddGroupModal] = useState(false);
@@ -1166,6 +1168,16 @@ curl http://localhost:9999/tasks/${task.id}`;
                   <Brain className="w-4 h-4 mr-2" />
                   Train Model
                 </Button>
+
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="whitespace-nowrap ml-2"
+                  onClick={() => setShowAutoAnnotateModal(true)}
+                >
+                  <Wand2 className="w-4 h-4 mr-2" />
+                  Auto-Annotate
+                </Button>
                 
                 {trainingTasks.filter(t => t.status === 'failed' && t.task_type !== 'model_evaluation').length > 0 && (
                   <Button 
@@ -1861,6 +1873,19 @@ curl http://localhost:9999/tasks/${task.id}`;
             }}
             datasets={project?.datasets || []}
             datasetGroups={datasetGroups}
+            projectId={id || ''}
+          />
+
+          <AutoAnnotateModal
+            open={showAutoAnnotateModal}
+            onOpenChange={(open) => {
+              setShowAutoAnnotateModal(open);
+              if (!open) {
+                // Refresh training tasks after modal closes
+                setTimeout(() => fetchTrainingTasks(), 1000);
+              }
+            }}
+            datasets={project?.datasets || []}
             projectId={id || ''}
           />
           
