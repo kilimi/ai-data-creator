@@ -93,9 +93,9 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
         dataset_id: datasetId,
       };
 
-      if (selectedFamily === "depth_anything" && saveAsNew) {
-        body.save_as = saveTarget;
-        if (saveTarget === "dataset") {
+      if (selectedFamily === "depth_anything") {
+        body.save_as = saveAsNew ? "dataset" : "collection";
+        if (saveAsNew) {
           body.new_dataset_name = newDatasetName || `${datasetName} - Depth`;
         }
       }
@@ -272,52 +272,32 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
 
               {/* Save output options */}
               <div className="space-y-3 rounded-lg border border-border p-3">
+                <p className="text-sm text-muted-foreground">
+                  Output will be saved as a <span className="font-medium text-foreground">New Image Collection</span>.
+                </p>
                 <div className="flex items-center gap-2">
                   <Checkbox
-                    id="save-as-new"
+                    id="save-as-dataset"
                     checked={saveAsNew}
                     onCheckedChange={(checked) => setSaveAsNew(checked === true)}
                   />
-                  <Label htmlFor="save-as-new" className="text-sm font-medium cursor-pointer">
-                    Save output as new resource
+                  <Label htmlFor="save-as-dataset" className="text-sm font-medium cursor-pointer">
+                    Save as New Dataset instead
                   </Label>
                 </div>
 
                 {saveAsNew && (
-                  <div className="space-y-3 pl-6">
-                    <RadioGroup
-                      value={saveTarget}
-                      onValueChange={(v) => setSaveTarget(v as "dataset" | "collection")}
-                      className="space-y-2"
-                    >
-                      <div className="flex items-center gap-2">
-                        <RadioGroupItem value="dataset" id="target-dataset" />
-                        <Label htmlFor="target-dataset" className="text-sm cursor-pointer">
-                          New Dataset
-                        </Label>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <RadioGroupItem value="collection" id="target-collection" />
-                        <Label htmlFor="target-collection" className="text-sm cursor-pointer">
-                          New Image Collection
-                        </Label>
-                      </div>
-                    </RadioGroup>
-
-                    {saveTarget === "dataset" && (
-                      <div className="space-y-1.5">
-                        <Label htmlFor="new-dataset-name" className="text-xs text-muted-foreground">
-                          Dataset name
-                        </Label>
-                        <Input
-                          id="new-dataset-name"
-                          placeholder={`${datasetName} - Depth`}
-                          value={newDatasetName}
-                          onChange={(e) => setNewDatasetName(e.target.value)}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    )}
+                  <div className="space-y-1.5 pl-6">
+                    <Label htmlFor="new-dataset-name" className="text-xs text-muted-foreground">
+                      Dataset name
+                    </Label>
+                    <Input
+                      id="new-dataset-name"
+                      placeholder={`${datasetName} - Depth`}
+                      value={newDatasetName}
+                      onChange={(e) => setNewDatasetName(e.target.value)}
+                      className="h-8 text-sm"
+                    />
                   </div>
                 )}
               </div>
