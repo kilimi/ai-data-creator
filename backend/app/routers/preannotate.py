@@ -162,7 +162,8 @@ def create_annotation_from_detection(db, box, box_idx: int, result, annotation_f
 
 
 def process_single_image(db, model, img, project_id: int, dataset_id: int, 
-                        annotation_file_id: str, use_segmentation: bool, class_counts: dict):
+                        annotation_file_id: str, use_segmentation: bool, class_counts: dict,
+                        conf_threshold: float = 0.25):
     """Process a single image with YOLO inference and create annotations"""
     import uuid
     
@@ -176,7 +177,7 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
     
     # Run inference
     try:
-        results = model.predict(source=str(img_path), conf=0.25, iou=0.45, verbose=False, save=False)
+        results = model.predict(source=str(img_path), conf=conf_threshold, iou=0.45, verbose=False, save=False)
     except Exception as e:
         logger.warning(f"Inference failed on {img_path}: {e}")
         return 0
@@ -231,7 +232,7 @@ def finalize_annotation_file(db, annotation_file_id: str, total_annotations: int
         db.commit()
 
 
-async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int):
+async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int, conf_threshold: float = 0.25):
     """Background task to run YOLO inference and create annotations"""
     logger.info(f"Starting preannotate task {task_id} with model {model_name}")
     
@@ -290,7 +291,8 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         for img_idx, img in enumerate(images):
             annotations_count = process_single_image(
                 db, model, img, project_id, dataset_id, 
-                annotation_file_id, use_segmentation, class_counts
+                annotation_file_id, use_segmentation, class_counts,
+                conf_threshold=conf_threshold
             )
             
             total_annotations += annotations_count
@@ -347,6 +349,7 @@ async def start_preannotate(
         save_as = request.get("save_as")
         new_dataset_name = request.get("new_dataset_name")
         annotation_file_name = request.get("annotation_file_name")
+        conf_threshold = request.get("conf_threshold", 0.25)
         
         if not model_name or not dataset_id:
             raise HTTPException(status_code=400, detail="model_name and dataset_id are required")
@@ -369,7 +372,8 @@ async def start_preannotate(
                 "dataset_id": dataset_id,
                 "save_as": save_as,
                 "new_dataset_name": new_dataset_name,
-                "annotation_file_name": annotation_file_name or f"Auto_{model_name}"
+                "annotation_file_name": annotation_file_name or f"Auto_{model_name}",
+                "conf_threshold": conf_threshold
             }
         )
         db.add(task)
@@ -385,7 +389,8 @@ async def start_preannotate(
             task.id,
             db_url,
             model_name,
-            dataset_id
+            dataset_id,
+            conf_threshold
         )
         
         logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
