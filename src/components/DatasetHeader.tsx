@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Pencil, Trash2, Copy, MoreHorizontal } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, Copy, MoreHorizontal, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { Dataset } from "@/types";
 import { DatasetInfoBar } from "@/components/DatasetInfoBar";
+import { AutoAnnotateModal } from "@/components/AutoAnnotateModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +27,8 @@ interface DatasetHeaderProps {
 }
 
 export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, onDuplicateDataset, projectId, imageCount = 0 }: DatasetHeaderProps) {
+  const [isAutoAnnotateOpen, setIsAutoAnnotateOpen] = useState(false);
+
   return (
     <div className="space-y-3">
       {/* Top row: back + title + actions */}
@@ -46,6 +50,19 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
         </div>
         
         <div className="flex items-center gap-2">
+          {/* Auto-Annotate button */}
+          {dataset && !isLoading && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5"
+              onClick={() => setIsAutoAnnotateOpen(true)}
+            >
+              <Bot className="h-4 w-4 text-primary" />
+              Auto-Annotate
+            </Button>
+          )}
+
           {/* Dataset actions dropdown */}
           {dataset && (onEditDataset || onDuplicateDataset || onDeleteDataset) && (
             <DropdownMenu>
@@ -95,6 +112,16 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
         <DatasetInfoBar
           dataset={dataset}
           imageCount={imageCount}
+        />
+      )}
+
+      {/* Auto-Annotate Modal */}
+      {dataset && (
+        <AutoAnnotateModal
+          open={isAutoAnnotateOpen}
+          onOpenChange={setIsAutoAnnotateOpen}
+          datasetId={dataset.id}
+          datasetName={dataset.name}
         />
       )}
     </div>
