@@ -50,20 +50,16 @@ function toCOCOFormat(file: AnnotationFile) {
     name,
     supercategory: ""
   }));
-  // Try to get images array from props (if available)
-  // This function is called in a closure, so we need to access images from the closure if possible
-  // We'll use a fallback if not available
-  let imagesArr = [];
-  try {
-    // @ts-ignore
-    if (typeof images !== 'undefined' && Array.isArray(images)) imagesArr = images;
-  } catch {}
 
-  // Helper to get image info by id
-  function getImageInfo(imageId) {
-    if (!imagesArr.length) return { width: 640, height: 480 };
-    const found = imagesArr.find(img => img.id === imageId || img.id === String(imageId));
-    if (found && found.width && found.height) return { width: found.width, height: found.height };
+  // Helper to get image info by id from imageDetails
+  function getImageInfo(imageId: string) {
+    if (file.imageDetails && file.imageDetails[imageId]) {
+      return {
+        width: file.imageDetails[imageId].width,
+        height: file.imageDetails[imageId].height
+      };
+    }
+    // Fallback to default dimensions if not found
     return { width: 640, height: 480 };
   }
 
@@ -208,6 +204,7 @@ export function AnnotationsContent({
   const [isLoadingFromBackend, setIsLoadingFromBackend] = useState(false);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [renameClassDialog, setRenameClassDialog] = useState<{ isOpen: boolean; className: string; annotationId: string }>({ isOpen: false, className: '', annotationId: '' });
+  const [deleteClassDialog, setDeleteClassDialog] = useState<{ isOpen: boolean; className: string; annotationId: string }>({ isOpen: false, className: '', annotationId: '' });
   const [dirtyAnnotationIds, setDirtyAnnotationIds] = useState<Set<string>>(new Set());
   
   // Merge functionality state
@@ -908,7 +905,12 @@ export function AnnotationsContent({
     setFilteredAnnotationFiles(annotationFiles);
   }, [annotationFiles]);
 
-  const handleMergeClasses = (annotationId: string, sources: string[], mergedName: string) => {
+  const handleMergeClasses = async (annotationId: string, sources: string[], mergedName: string) => {
+    console.log(`[MERGE DEBUG] handleMergeClasses called - annotationId: ${annotationId}, sources: [${sources.join(', ')}], mergedName: ${mergedName}`);
+    const originalFile = annotationFiles.find(f => f.id === annotationId);
+    console.log(`[MERGE DEBUG] originalFile samples length: ${originalFile?.samples?.length || 0}`);
+    console.log(`[MERGE DEBUG] originalFile classStats:`, originalFile?.classStats);
+    
     const updatedFiles = annotationFiles.map(file => {
       if (file.id === annotationId) {
         // Update samples
@@ -960,8 +962,65 @@ export function AnnotationsContent({
       return file;
     });
     setAnnotationFiles(updatedFiles);
-    markDirty(annotationId);
-    toast({ title: "Classes merged", description: `Merged [${sources.join(", ")}] into '${mergedName}'.` });
+    
+    // Automatically save the changes to the backend
+    const updatedFile = updatedFiles.find(f => f.id === annotationId);
+    if (updatedFile && api) {
+      try {
+        // CRITICAL: Ensure samples are loaded before converting to COCO
+        // If samples were just updated in memory but not fully loaded, we need the complete data
+        let fileWithSamples = updatedFile;
+        console.log(`[MERGE DEBUG] updatedFile.samples length: ${updatedFile.samples?.length || 0}`);
+        console.log(`[MERGE DEBUG] updatedFile.imageMapping:`, updatedFile.imageMapping);
+        if (!updatedFile.samples || updatedFile.samples.length === 0) {
+          console.log(`Loading samples for ${updatedFile.name} before saving merge...`);
+          const contentResponse = await api.getAnnotationContent(id, updatedFile.id);
+          if (contentResponse && contentResponse.success && contentResponse.data.content) {
+            const mockFile = new File([contentResponse.data.content], updatedFile.name, { type: 'application/json' });
+            const result = await processCOCOAnnotations(mockFile, id);
+            console.log(`[MERGE DEBUG] processCOCOAnnotations returned ${result.samples.length} samples`);
+            // Apply the class merge to the freshly loaded samples
+            const mergedSamples = result.samples.map(sample =>
+              sources.includes(sample.className)
+                ? { ...sample, className: mergedName }
+                : sample
+            );
+            fileWithSamples = {
+              ...updatedFile,
+              samples: mergedSamples,
+              imageMapping: result.imageMapping || updatedFile.imageMapping,
+              imageDetails: result.imageDetails || updatedFile.imageDetails
+            };
+            console.log(`Loaded ${mergedSamples.length} samples with merged classes`);
+          }
+        } else {
+          console.log(`[MERGE DEBUG] Using updatedFile.samples directly (${updatedFile.samples.length} samples)`);
+        }
+        
+        console.log(`[MERGE DEBUG] fileWithSamples.samples length before toCOCOFormat: ${fileWithSamples.samples?.length || 0}`);
+        console.log(`[MERGE DEBUG] fileWithSamples.imageMapping:`, fileWithSamples.imageMapping);
+        const cocoData = toCOCOFormat(fileWithSamples);
+        console.log(`[MERGE DEBUG] toCOCOFormat returned ${cocoData.annotations.length} annotations`);
+        console.log(`[MERGE DEBUG] toCOCOFormat returned ${cocoData.images.length} images`);
+        const jsonContent = JSON.stringify(cocoData, null, 2);
+        const fileToUpload = new File([jsonContent], fileWithSamples.name, { type: 'application/json' });
+        const response = await api.updateAnnotationContent(id, annotationId, fileToUpload);
+        if (!response.success) {
+          throw new Error(response.error || "Failed to save merged classes");
+        }
+        toast({ title: "Classes merged", description: `Merged [${sources.join(", ")}] into '${mergedName}' and saved to database.` });
+      } catch (error) {
+        markDirty(annotationId);
+        toast({ 
+          title: "Classes merged (not saved)", 
+          description: `Merged classes but failed to save: ${error instanceof Error ? error.message : "Unknown error"}. Please save manually.`,
+          variant: "destructive"
+        });
+      }
+    } else {
+      markDirty(annotationId);
+      toast({ title: "Classes merged", description: `Merged [${sources.join(", ")}] into '${mergedName}'.` });
+    }
   };
 
   // Save annotations to localStorage only when no API is available
@@ -1839,41 +1898,31 @@ export function AnnotationsContent({
     }
 
     try {
-      // Check if this is a classification file stored only in localStorage
-      const isClassificationFile = detectAnnotationType(fileToDelete) === 'Classification';
+      // Always try to delete from backend first if API is available
+      if (api) {
+        const response = await api.deleteAnnotation(id, annotationId);
+        if (!response.success) {
+          throw new Error(response.error || "Failed to delete annotation file");
+        }
+        
+        // If backend deletion was successful, refresh from backend
+        await loadAnnotationFilesFromBackend();
+      } else {
+        // If no API, update the UI manually and clean up localStorage
+        const updatedFiles = annotationFiles.filter(file => file.id !== annotationId);
+        setAnnotationFiles(updatedFiles);
+        localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+      }
       
-      if (isClassificationFile) {
-        // Delete from saved_annotations localStorage
-        const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
-        if (savedAnnotations) {
+      // Also clean up classification localStorage if it exists (legacy support)
+      const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
+      if (savedAnnotations) {
+        try {
           const annotationsList = JSON.parse(savedAnnotations);
           const updatedList = annotationsList.filter((annotation: any) => annotation.id !== annotationId);
           localStorage.setItem(`saved_annotations_${id}`, JSON.stringify(updatedList));
-        }
-        
-        // Update the UI by removing the classification file
-        const updatedFiles = annotationFiles.filter(file => file.id !== annotationId);
-        setAnnotationFiles(updatedFiles);
-        
-        toast({
-          title: "Classification deleted",
-          description: `Classification annotation "${fileToDelete.name}" has been deleted.`,
-        });
-      } else {
-        // Delete from backend first (for regular annotation files)
-        if (api) {
-          const response = await api.deleteAnnotation(id, annotationId);
-          if (!response.success) {
-            throw new Error(response.error || "Failed to delete annotation file");
-          }
-          
-          // If backend deletion was successful, refresh from backend
-          await loadAnnotationFilesFromBackend();
-        } else {
-          // If no API, update the UI manually
-          const updatedFiles = annotationFiles.filter(file => file.id !== annotationId);
-          setAnnotationFiles(updatedFiles);
-          localStorage.setItem(`annotations_${id}`, JSON.stringify(updatedFiles));
+        } catch (e) {
+          console.warn('Failed to clean up classification localStorage:', e);
         }
       }
       
@@ -1903,7 +1952,7 @@ export function AnnotationsContent({
       
       toast({
         title: "Annotation deleted",
-        description: "Annotation file has been removed.",
+        description: `Annotation file "${fileToDelete.name}" has been removed.`,
       });
     } catch (error) {
       toast({
@@ -3144,6 +3193,7 @@ export function AnnotationsContent({
             showBboxes: false, // Individual bbox visibility disabled by default
             classColors: result.classColors,
             imageMapping: result.imageMapping,
+            imageDetails: result.imageDetails, // ADDED: Preserve image dimensions
             tags: [] // Initialize with empty tags array
           };
           
@@ -3524,6 +3574,7 @@ export function AnnotationsContent({
                 annotationFile.classColors = result.classColors;
               }
               annotationFile.imageMapping = result.imageMapping;
+              annotationFile.imageDetails = result.imageDetails; // ADDED: Preserve image dimensions
               annotationFile.samples = result.samples.map(sample => ({
                 ...sample,
                 isVisible: false,
@@ -4059,7 +4110,18 @@ export function AnnotationsContent({
 
   const selectedAnnotationData = annotationFiles.find(file => file.id === selectedAnnotation);
 
-  const handleDeleteClass = async (annotationId: string, className: string) => {
+  const handleDeleteClassClick = (annotationId: string, className: string) => {
+    // Show confirmation dialog
+    setDeleteClassDialog({ isOpen: true, className, annotationId });
+  };
+
+  const handleDeleteClass = async () => {
+    const { annotationId, className } = deleteClassDialog;
+    if (!annotationId || !className) return;
+    
+    // Close dialog
+    setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' });
+    
     try {
       console.log('Deleting class:', className, 'from annotation:', annotationId);
       if (api) {
@@ -4146,8 +4208,32 @@ export function AnnotationsContent({
     if (!fileToSave) return;
     try {
       if (api) {
-        const jsonContent = JSON.stringify(toCOCOFormat(fileToSave), null, 2);
-        const updatedFile = new File([jsonContent], fileToSave.name, { type: 'application/json' });
+        // CRITICAL: If samples are not loaded yet (lazy loading), load them now before converting to COCO
+        // This prevents losing all annotations when saving after class merge without expanding the file
+        let fileWithSamples = fileToSave;
+        if (!fileToSave.samples || fileToSave.samples.length === 0) {
+          console.log(`Loading samples for ${fileToSave.name} before saving...`);
+          try {
+            const contentResponse = await api.getAnnotationContent(id, fileToSave.id);
+            if (contentResponse && contentResponse.success && contentResponse.data.content) {
+              const mockFile = new File([contentResponse.data.content], fileToSave.name, { type: 'application/json' });
+              const result = await processCOCOAnnotations(mockFile, id);
+              fileWithSamples = {
+                ...fileToSave,
+                samples: result.samples,
+                imageMapping: result.imageMapping || fileToSave.imageMapping,
+                imageDetails: result.imageDetails || fileToSave.imageDetails // ADDED: Preserve image dimensions
+              };
+              console.log(`Loaded ${result.samples.length} samples before saving`);
+            }
+          } catch (loadError) {
+            console.error('Failed to load samples before save:', loadError);
+            throw new Error('Cannot save without loading annotation data first. Please expand the annotation file to load data.');
+          }
+        }
+        
+        const jsonContent = JSON.stringify(toCOCOFormat(fileWithSamples), null, 2);
+        const updatedFile = new File([jsonContent], fileWithSamples.name, { type: 'application/json' });
         const response = await api.updateAnnotationContent(id, annotationId, updatedFile);
         if (!response.success) throw new Error(response.error || "Failed to update annotation file on server");
       } else {
@@ -4826,7 +4912,7 @@ export function AnnotationsContent({
                                 opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
                                 onColorOpacityChange={handleClassColorOpacityChange}
                                 onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
-                                onDeleteClass={(className) => handleDeleteClass(file.id, className)}
+                                onDeleteClass={(className) => handleDeleteClassClick(file.id, className)}
                               />
                             </div>
                           )}
@@ -4838,6 +4924,36 @@ export function AnnotationsContent({
                             annotations={annotationFiles.find(f => f.id === renameClassDialog.annotationId)?.samples || []}
                             onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
                           />
+                          {/* Delete Class Confirmation Dialog */}
+                          <Dialog open={deleteClassDialog.isOpen} onOpenChange={(open) => !open && setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' })}>
+                            <DialogContent>
+                              <DialogHeader>
+                                <DialogTitle>Delete All Annotations?</DialogTitle>
+                              </DialogHeader>
+                              <div className="py-4">
+                                <p className="text-sm text-muted-foreground">
+                                  Are you sure you want to delete all annotations for class <strong>"{deleteClassDialog.className}"</strong>?
+                                </p>
+                                <p className="text-sm text-destructive mt-2">
+                                  This action cannot be undone.
+                                </p>
+                              </div>
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  variant="outline"
+                                  onClick={() => setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' })}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  variant="destructive"
+                                  onClick={handleDeleteClass}
+                                >
+                                  Delete All
+                                </Button>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
                         </div>
                       </div>
                   </div>

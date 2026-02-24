@@ -2299,6 +2299,9 @@ async def update_single_image_annotations(
             )
             db.add(new_class)
         
+        # Flush changes to make new annotations and classes visible to subsequent queries
+        db.flush()
+        
         # Recompute statistics for this annotation file after update
         all_annotations = db.query(models.Annotation).filter(
             models.Annotation.annotation_file_id == annotation_id

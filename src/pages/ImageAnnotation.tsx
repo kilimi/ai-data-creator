@@ -294,6 +294,9 @@ const ImageAnnotation = () => {
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
   const navigateAfterSaveRef = useRef(false);
 
+  // Delete all annotations confirmation dialog state
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+
   // Helper function to safely save to localStorage with quota handling
   const safeLocalStorageSet = (key: string, value: string) => {
     try {
@@ -449,6 +452,12 @@ const ImageAnnotation = () => {
       const updated = [...prev, ...newAnns];
       const storageKey = `annotations_${id}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(updated));
+      // Also save image dimensions so they can be used when saving annotation file
+      const nw = imageRef.current?.naturalWidth;
+      const nh = imageRef.current?.naturalHeight;
+      if (nw && nh) {
+        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify({ width: nw, height: nh }));
+      }
       return updated;
     });
 
@@ -1108,6 +1117,14 @@ const ImageAnnotation = () => {
       if (savedAnnotations) {
         const parsedAnnotations = JSON.parse(savedAnnotations);
         
+        // If parsedAnnotations is an empty array, this means annotations were deleted
+        // Set empty state and return early to prevent loading from sessionStorage
+        if (parsedAnnotations.length === 0) {
+          setAnnotations([]);
+          console.log(`No annotations for ${imageName} (explicitly deleted or never annotated)`);
+          return;
+        }
+        
         // Sync annotation colors with current in-memory class colors
         // (user may have changed class colors since these were saved)
         const classColorMap: { [name: string]: string } = {};
@@ -1185,6 +1202,14 @@ const ImageAnnotation = () => {
             });
             setGlobalStats(counts);
             setGlobalAvgAreas({});
+            
+            // CRITICAL: Update classes state with actual counts from database
+            // This ensures the UI displays correct counts after saving
+            setClasses(prev => prev.map(c => ({
+              ...c,
+              count: counts[c.name] ?? 0
+            })));
+            
             return;
           }
         } catch (dbError) {
@@ -1488,6 +1513,13 @@ const ImageAnnotation = () => {
         const raw = localStorage.getItem(storageKey);
         const existing: AnnotationShape[] = raw ? JSON.parse(raw) : [];
         safeLocalStorageSet(storageKey, JSON.stringify([...existing, newAnn]));
+        
+        // Save image dimensions so they can be used when saving annotation file
+        if (img.width && img.height) {
+          const dimsKey = `annotations_${id}_${imageName}_dims`;
+          safeLocalStorageSet(dimsKey, JSON.stringify({ width: img.width, height: img.height }));
+        }
+        
         addedCount += 1;
       } catch {
         failCount++;
@@ -2500,9 +2532,19 @@ const ImageAnnotation = () => {
     const annotationToScreen = (px: number, py: number) =>
       imageToScreenCoords(px * scaleX, py * scaleY);
 
+    // Debug: log all annotations and their visibility
+    const visibleCount = annotations.filter(a => a.visible).length;
+    const invisibleCount = annotations.filter(a => !a.visible).length;
+    if (annotations.length > 0) {
+      console.log('[Canvas Draw] Annotations:', { total: annotations.length, visible: visibleCount, invisible: invisibleCount });
+    }
+
     // Draw annotations
     annotations.forEach((annotation, idx) => {
-      if (!annotation.visible) return;
+      if (!annotation.visible) {
+        console.log('[Canvas Draw] Skipping invisible annotation:', { id: annotation.id, label: annotation.label, visible: annotation.visible });
+        return;
+      }
 
       ctx.strokeStyle = annotation.color;
       ctx.fillStyle = annotation.color + '30'; // Semi-transparent fill
@@ -3025,13 +3067,25 @@ const ImageAnnotation = () => {
     const ann = annotations.find(a => a.id === annotationId);
     if (!ann) return;
 
+    console.log('[saveAnnotationLabel] Before update:', { annotationId, oldLabel: ann.label, oldVisible: ann.visible, targetClassId });
+
     const oldLabel = ann.label;
     const targetClass = classes.find(c => c.id === targetClassId);
     if (!targetClass) return; // no changes if class not found
 
     // Update annotation label
     setAnnotations(prev => {
-  const updated = prev.map(a => a.id === annotationId ? { ...a, label: targetClass!.name, color: targetClass!.color } : a);
+      const updated = prev.map(a => a.id === annotationId ? { ...a, label: targetClass!.name, color: targetClass!.color } : a);
+      
+      // Log the updated annotation to verify visible property is preserved
+      const updatedAnn = updated.find(a => a.id === annotationId);
+      console.log('[saveAnnotationLabel] After update:', { 
+        annotationId, 
+        newLabel: updatedAnn?.label, 
+        newVisible: updatedAnn?.visible, 
+        hasPoints: !!updatedAnn?.points?.length 
+      });
+      
       // persist (and keep reference dimensions in sync)
       const storageKey = `annotations_${id}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(updated));
@@ -3222,6 +3276,22 @@ const ImageAnnotation = () => {
           }
         }
         
+        // If no dimensions found, try to get from current image or COCO data
+        if ((imgWidth === 0 || imgHeight === 0) && cocoImageDimensionsRef.current[imageName]) {
+          const cocoDims = cocoImageDimensionsRef.current[imageName];
+          imgWidth = cocoDims.width || 0;
+          imgHeight = cocoDims.height || 0;
+        }
+        
+        // Final fallback: if this is the current image, use its dimensions
+        if ((imgWidth === 0 || imgHeight === 0) && imageName === currentImageName) {
+          const img = displayImage || currentImage;
+          if (img) {
+            imgWidth = (img as any)?.naturalWidth || 0;
+            imgHeight = (img as any)?.naturalHeight || 0;
+          }
+        }
+        
         if (!saved) {
           // Add image entry even if no annotations (if we have dimensions)
           if (imgWidth > 0 && imgHeight > 0) {
@@ -3252,6 +3322,10 @@ const ImageAnnotation = () => {
             height: imgHeight 
           });
         } else {
+          // If we have annotations but no dimensions, that's a problem
+          if (parsed.length > 0) {
+            console.warn(`Skipping ${parsed.length} annotations for ${imageName}: no image dimensions available`);
+          }
           // Skip this image if no dimensions
           imageId++;
           continue;
@@ -3305,6 +3379,38 @@ const ImageAnnotation = () => {
       
       if (result.success) {
         const fileName = name.endsWith('.json') ? name : `${name}.json`;
+        const newAnnotationFileId = result.annotation_file_id;
+        
+        // Update the URL to include the annotation ID so subsequent edits work correctly
+        if (newAnnotationFileId) {
+          // Update URL params to include the new annotation file ID
+          const currentParams = new URLSearchParams(window.location.search);
+          currentParams.set('annotationId', newAnnotationFileId);
+          navigate(`${window.location.pathname}?${currentParams.toString()}`, { replace: true });
+          
+          // Reload annotation data from database to get fresh statistics
+          if (api) {
+            try {
+              const annotationResponse = await api.getAnnotation(id, newAnnotationFileId);
+              const contentResponse = await api.getAnnotationContent(id, newAnnotationFileId);
+              
+              if (contentResponse.success && contentResponse.data) {
+                // Store in sessionStorage for future reference
+                sessionStorage.setItem(`annotation_file_${id}`, JSON.stringify({
+                  fileId: newAnnotationFileId,
+                  fileName: fileName,
+                  cocoData: contentResponse.data
+                }));
+                
+                // Refresh statistics from the database
+                await computeGlobalStats();
+              }
+            } catch (error) {
+              console.warn('Could not reload annotation data after save:', error);
+            }
+          }
+        }
+        
         toast({ 
           title: 'Saved successfully', 
           description: `Annotation file "${fileName}" has been created with ${annotationsArr.length} annotations from ${imagesArr.length} images` 
@@ -3785,15 +3891,23 @@ const ImageAnnotation = () => {
   // Delete annotations for current image only
   const deleteCurrentImageAnnotations = async () => {
     if (!currentImageName || !id) return;
-    
-    const confirmed = window.confirm(`Delete all annotations for "${currentImageName}"? This cannot be undone.`);
-    if (!confirmed) return;
+
+    setShowDeleteAllDialog(false); // Close the dialog
 
     const deletedCount = annotations.length;
+    
+    // Compute class counts BEFORE clearing annotations
+    const countsByName: { [name: string]: number } = {};
+    annotations.forEach((a: any) => {
+      countsByName[a.label] = (countsByName[a.label] || 0) + 1;
+    });
 
-    // Remove from localStorage
+    // Clear in-memory annotations
+    setAnnotations([]);
+    
+    // Save empty array to localStorage (don't remove the key, so overlay logic works)
     const storageKey = `annotations_${id}_${currentImageName}`;
-    localStorage.removeItem(storageKey);
+    localStorage.setItem(storageKey, JSON.stringify([]));
 
     // Also update sessionStorage COCO data to remove annotations for this image
     try {
@@ -3820,17 +3934,8 @@ const ImageAnnotation = () => {
       console.warn('Could not update sessionStorage:', e);
     }
 
-    // Clear in-memory annotations
-    setAnnotations([]);
-      setClasses([]); // Clear classes for fresh start
-      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
-    
-    // Update class counts
-    const countsByName: { [name: string]: number } = {};
-    annotations.forEach((a: any) => {
-      countsByName[a.label] = (countsByName[a.label] || 0) + 1;
-    });
-    
+    // Update global class counts by reducing the deleted annotation counts
+    // Don't clear classes - they should persist across images
     setClasses(prev => {
       const updated = prev.map(c => ({
         ...c,
@@ -3844,10 +3949,15 @@ const ImageAnnotation = () => {
     if (annotationId) {
       const saveSuccess = await saveCurrentImageToDatabase();
       if (saveSuccess) {
-        // Recompute global stats after successful database save
-        await computeGlobalStats();
+        // Set unsaved changes to false BEFORE recomputing stats
         setHasUnsavedChanges(false);
         lastSaveTimeRef.current = Date.now();
+        
+        // Recompute global stats after successful database save
+        // Use a small delay to ensure backend has processed the update
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await computeGlobalStats();
+        
         toast({ 
           title: 'Annotations deleted', 
           description: `Removed ${deletedCount} annotation(s) from "${currentImageName}" and saved to database` 
@@ -3944,6 +4054,8 @@ const ImageAnnotation = () => {
         await saveCurrentImageToDatabase();
         setHasUnsavedChanges(false);
         lastSaveTimeRef.current = Date.now();
+        // Refresh statistics after saving
+        await computeGlobalStats();
       }
     }
     
@@ -5131,7 +5243,7 @@ const ImageAnnotation = () => {
                         variant="destructive"
                         size="sm"
                         className="h-7 text-xs"
-                        onClick={deleteCurrentImageAnnotations}
+                        onClick={() => setShowDeleteAllDialog(true)}
                         title="Delete all annotations for this image"
                       >
                         <Trash2 className="w-3 h-3 mr-1" />
@@ -5289,8 +5401,9 @@ const ImageAnnotation = () => {
               </TabsContent>
 
               {/* Statistics Tab */}
-              <TabsContent value="statistics" className="flex-1 overflow-hidden m-0 p-0">
-                <div className="flex-1 overflow-y-auto p-3 scrollbar-thin">
+              <TabsContent value="statistics" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
+                  <div className="p-3">
                   {(() => {
                     // Merge saved globalStats with unsaved current-image annotations
                     const mergedStats: { [name: string]: number } = { ...globalStats };
@@ -5425,6 +5538,7 @@ const ImageAnnotation = () => {
                       </div>
                     );
                   })()}
+                  </div>
                 </div>
               </TabsContent>
             </Tabs>
@@ -5574,6 +5688,28 @@ const ImageAnnotation = () => {
               <Save className="w-4 h-4 mr-2" />
               Save & Leave
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete All Annotations Confirmation Dialog */}
+      <AlertDialog open={showDeleteAllDialog} onOpenChange={setShowDeleteAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete All Annotations?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete all {annotations.length} annotation{annotations.length !== 1 ? 's' : ''} for image "{currentImageName}"?
+              <br />
+              <span className="text-destructive font-medium">This action cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              Cancel
+            </AlertDialogCancel>
+            <Button variant="destructive" onClick={deleteCurrentImageAnnotations}>
+              Delete All
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -33,6 +33,7 @@ export interface AnnotationFile {
   showBboxes?: boolean; // Add individual bbox visibility control for the annotation file
   classColors?: { [className: string]: string }; // Add class color mapping
   imageMapping?: { [imageId: string]: string }; // Map COCO image IDs to filenames
+  imageDetails?: { [imageId: string]: { fileName: string; width: number; height: number } }; // ADDED: Full image details with dimensions
   cocoImages?: { id: number; file_name: string; width: number; height: number }[]; // COCO images array for scaling segmentation to dataset image space
   tags?: string[]; // Add tags for categorization and search
   processing_status?: string; // Backend processing status
@@ -146,6 +147,7 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
   matchedImageCount: number; // Added field for matched images
   classColors: { [className: string]: string }; // Add class colors
   imageMapping: { [imageId: string]: string }; // Map COCO image IDs to filenames
+  imageDetails: { [imageId: string]: { fileName: string; width: number; height: number } }; // ADDED: Full image details with dimensions
 }>{
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -183,8 +185,14 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
         });
 
         const imageMap: { [key: number]: string } = {};
+        const imageDetailsMap: { [key: string]: { fileName: string; width: number; height: number } } = {};
         data.images.forEach((img: any) => {
           imageMap[img.id] = img.file_name;
+          imageDetailsMap[String(img.id)] = {
+            fileName: img.file_name,
+            width: img.width || 640,
+            height: img.height || 480
+          };
         });
 
         const classCounts: { [key: string]: number } = {};
@@ -256,7 +264,8 @@ export async function processCOCOAnnotations(file: File, datasetId?: string): Pr
           totalImageCount: totalImageCount,
           matchedImageCount: matchedImages.length,
           classColors: classColors,
-          imageMapping: imageMap
+          imageMapping: imageMap,
+          imageDetails: imageDetailsMap
         });
 
       } catch (err) {
