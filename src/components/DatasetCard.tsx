@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink, Copy } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, Bot, ScanEye, Eye, SquareStack, ExternalLink, Copy, ChevronRight, Crosshair } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useImageLoad } from "@/utils/animations";
@@ -31,7 +31,8 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
-  const [selectedModel, setSelectedModel] = React.useState<string>("SAM");
+  const [selectedFamily, setSelectedFamily] = React.useState<"yolo" | "depth_anything" | null>(null);
+  const [selectedModel, setSelectedModel] = React.useState<string>("yolo11n");
   const { api } = useApi();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -281,27 +282,30 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             </p>
           </DialogHeader>
           <div className="flex flex-col gap-4 mt-2">
-            <span className="block font-medium text-sm">Choose a model</span>
-            <div className="grid gap-2">
+            <span className="block font-medium text-sm">Choose a model family</span>
+            <div className="grid grid-cols-2 gap-2">
               {[
-                { value: "SAM", icon: ScanEye, label: "SAM", desc: "Segment Anything — best for instance segmentation masks" },
-                { value: "YOLOv11n", icon: Eye, label: "YOLOv11n", desc: "Nano — fast detection, lower accuracy" },
-                { value: "YOLOv11s", icon: SquareStack, label: "YOLOv11s", desc: "Small — balanced speed and accuracy" },
-              ].map(({ value, icon: Icon, label, desc }) => (
+                { key: "yolo" as const, icon: Crosshair, label: "YOLO", desc: "Object detection & segmentation" },
+                { key: "depth_anything" as const, icon: Layers, label: "Depth Anything V2", desc: "Monocular depth estimation" },
+              ].map(({ key, icon: Icon, label, desc }) => (
                 <button
-                  key={value}
+                  key={key}
                   type="button"
-                  onClick={() => setSelectedModel(value)}
+                  onClick={() => {
+                    setSelectedFamily(key);
+                    if (key === "yolo") setSelectedModel("yolo11n");
+                    else setSelectedModel("depth_anything_v2_small");
+                  }}
                   className={cn(
                     "flex items-center gap-3 rounded-lg border p-3 text-left transition-all",
-                    selectedModel === value
+                    selectedFamily === key
                       ? "border-primary bg-primary/5 ring-1 ring-primary/30"
                       : "border-border hover:border-muted-foreground/30 hover:bg-muted/40"
                   )}
                 >
                   <div className={cn(
                     "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-                    selectedModel === value ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                    selectedFamily === key ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                   )}>
                     <Icon className="h-4 w-4" />
                   </div>
@@ -312,6 +316,75 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                 </button>
               ))}
             </div>
+
+            {/* YOLO variant selector */}
+            {selectedFamily === "yolo" && (
+              <div className="space-y-2">
+                <span className="block font-medium text-sm">Select YOLO variant</span>
+                <div className="grid gap-1.5 max-h-48 overflow-y-auto pr-1">
+                  {[
+                    { value: "yolo11n", label: "YOLO11 Nano", desc: "Fastest, lowest accuracy" },
+                    { value: "yolo11s", label: "YOLO11 Small", desc: "Fast, good accuracy" },
+                    { value: "yolo11m", label: "YOLO11 Medium", desc: "Balanced speed & accuracy" },
+                    { value: "yolo11l", label: "YOLO11 Large", desc: "High accuracy, slower" },
+                    { value: "yolo11x", label: "YOLO11 XLarge", desc: "Best accuracy, slowest" },
+                    { value: "yolov8n", label: "YOLOv8 Nano", desc: "Legacy fast model" },
+                    { value: "yolov8s", label: "YOLOv8 Small", desc: "Legacy balanced model" },
+                    { value: "yolov8m", label: "YOLOv8 Medium", desc: "Legacy medium model" },
+                  ].map(({ value, label, desc }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSelectedModel(value)}
+                      className={cn(
+                        "flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-all",
+                        selectedModel === value
+                          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                          : "border-border hover:bg-muted/40"
+                      )}
+                    >
+                      <div>
+                        <span className="font-medium">{label}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">{desc}</span>
+                      </div>
+                      {selectedModel === value && <ChevronRight className="h-3.5 w-3.5 text-primary shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Depth Anything V2 variant selector */}
+            {selectedFamily === "depth_anything" && (
+              <div className="space-y-2">
+                <span className="block font-medium text-sm">Select model size</span>
+                <div className="grid gap-1.5">
+                  {[
+                    { value: "depth_anything_v2_small", label: "Small (ViT-S)", desc: "Fast, lightweight" },
+                    { value: "depth_anything_v2_base", label: "Base (ViT-B)", desc: "Balanced performance" },
+                    { value: "depth_anything_v2_large", label: "Large (ViT-L)", desc: "Best quality" },
+                  ].map(({ value, label, desc }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSelectedModel(value)}
+                      className={cn(
+                        "flex items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-all",
+                        selectedModel === value
+                          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                          : "border-border hover:bg-muted/40"
+                      )}
+                    >
+                      <div>
+                        <span className="font-medium">{label}</span>
+                        <span className="ml-2 text-xs text-muted-foreground">{desc}</span>
+                      </div>
+                      {selectedModel === value && <ChevronRight className="h-3.5 w-3.5 text-primary shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <DialogFooter className="mt-2">
               <Button
                 variant="outline"
@@ -320,6 +393,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                 Cancel
               </Button>
               <Button
+                disabled={!selectedFamily}
                 onClick={async () => {
                   try {
                     await fetch("/api/preannotate", {
