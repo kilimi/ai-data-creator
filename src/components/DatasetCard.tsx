@@ -4,8 +4,7 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, Bot, ExternalLink, Copy } from "lucide-react";
-import { AutoAnnotateModal } from "@/components/AutoAnnotateModal";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, ExternalLink, Copy } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +28,7 @@ interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
 export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ...props }: DatasetCardProps) {
   const imageLoaded = useImageLoad(dataset.thumbnailUrl);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
-  const [isAnnotateModalOpen, setIsAnnotateModalOpen] = React.useState(false);
+  
   const { api } = useApi();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -174,15 +173,6 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem asChild>
-                  <button
-                    className="flex items-center w-full"
-                    onClick={() => setIsAnnotateModalOpen(true)}
-                  >
-                    <Bot className="h-4 w-4 mr-2 text-primary" />
-                    Auto-Annotate (AI)
-                  </button>
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setIsEditDialogOpen(true)}>
                   <Edit className="h-4 w-4 mr-2" />
                   Edit Dataset
@@ -266,12 +256,6 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
         onDatasetUpdated={handleDatasetUpdated}
       />
 
-      <AutoAnnotateModal
-        open={isAnnotateModalOpen}
-        onOpenChange={setIsAnnotateModalOpen}
-        datasetId={dataset.id}
-        datasetName={dataset.name}
-      />
     </Card>
   );
 }
