@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { Bot, Crosshair, Layers } from "lucide-react";
+import { Bot, Crosshair, Layers, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -57,6 +57,19 @@ const DEPTH_SIZES = [
   { value: "large", label: "Large (ViT-L)" },
 ];
 
+const COCO_CLASSES = [
+  "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+  "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+  "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+  "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+  "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+  "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+  "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
+  "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop",
+  "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+  "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+];
+
 export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }: AutoAnnotateModalProps) {
   const { toast } = useToast();
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
@@ -65,6 +78,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [saveAsNew, setSaveAsNew] = React.useState(false);
   const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
   const [newDatasetName, setNewDatasetName] = React.useState("");
+  const [showClasses, setShowClasses] = React.useState(false);
 
   const selectedModel = selectedFamily === "yolo"
     ? `${selectedYoloArch}${selectedSize}`
@@ -202,6 +216,32 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Detectable classes info */}
+              <div className="rounded-lg border border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowClasses(!showClasses)}
+                  className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-muted/40 transition-colors rounded-lg"
+                >
+                  <span className="text-muted-foreground">
+                    Pretrained on <span className="font-medium text-foreground">COCO</span> — {COCO_CLASSES.length} detectable classes
+                  </span>
+                  <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", showClasses && "rotate-180")} />
+                </button>
+                {showClasses && (
+                  <div className="px-3 pb-3 flex flex-wrap gap-1">
+                    {COCO_CLASSES.map((cls) => (
+                      <span
+                        key={cls}
+                        className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                      >
+                        {cls}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           )}
