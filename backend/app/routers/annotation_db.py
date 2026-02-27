@@ -754,9 +754,18 @@ async def get_annotation_data(
     offset = (page - 1) * limit
     annotations = query.offset(offset).limit(limit).all()
     
+    # Preload image dimensions from AnnotationFileImage
+    image_ids_in_result = set(ann.image_id for ann in annotations)
+    ann_file_images = db.query(AnnotationFileImage).filter(
+        AnnotationFileImage.annotation_file_id == annotation_file_id,
+        AnnotationFileImage.dataset_image_id.in_(image_ids_in_result)
+    ).all()
+    image_dims = {afi.dataset_image_id: (afi.width, afi.height) for afi in ann_file_images}
+    
     # Convert to response format
     annotation_data = []
     for ann in annotations:
+        dims = image_dims.get(ann.image_id, (None, None))
         annotation_data.append({
             "id": ann.id,
             "imageId": ann.image_id,
@@ -766,7 +775,9 @@ async def get_annotation_data(
             "area": ann.area,
             "confidence": ann.confidence,
             "cocoImageId": ann.coco_image_id,
-            "cocoAnnotationId": ann.coco_annotation_id
+            "cocoAnnotationId": ann.coco_annotation_id,
+            "imageWidth": dims[0],
+            "imageHeight": dims[1]
         })
     
     return {
