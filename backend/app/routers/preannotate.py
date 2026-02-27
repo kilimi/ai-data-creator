@@ -213,22 +213,75 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
 
 def finalize_annotation_file(db, annotation_file_id: str, total_annotations: int, 
                              processed_images: int, class_counts: dict):
-    """Update annotation file with final statistics"""
+    """Update annotation file with final statistics. Remove classes with count 0 and renumber category_id."""
     annotation_file = db.query(models.AnnotationFile).filter(
         models.AnnotationFile.id == annotation_file_id
     ).first()
     
-    if annotation_file:
+    if not annotation_file:
+        return
+
+    # Update count on each AnnotationClass from class_counts
+    for ann_cls in db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_file_id
+    ).all():
+        ann_cls.count = class_counts.get(ann_cls.class_name, 0)
+    db.commit()
+
+    # Keep only classes that have at least one annotation
+    used_class_names = [name for name, count in class_counts.items() if count > 0]
+    if not used_class_names:
         annotation_file.annotation_count = total_annotations
         annotation_file.image_count = processed_images
-        annotation_file.category_count = len(COCO_CLASSES)
+        annotation_file.category_count = 0
         annotation_file.statistics = {
             'class_counts': class_counts,
             'total_annotations': total_annotations
         }
         annotation_file.is_processed = True
         annotation_file.processing_status = "completed"
+        db.query(models.AnnotationClass).filter(
+            models.AnnotationClass.annotation_file_id == annotation_file_id
+        ).delete()
         db.commit()
+        return
+
+    # Delete classes with count 0
+    db.query(models.AnnotationClass).filter(
+        models.AnnotationClass.annotation_file_id == annotation_file_id,
+        ~models.AnnotationClass.class_name.in_(used_class_names)
+    ).delete(synchronize_session=False)
+    db.commit()
+
+    # Renumber category_id 1, 2, 3, ... for remaining classes (stable order by class name)
+    remaining_classes = db.query(models.AnnotationClass).filter(
+        models.AnnotationClass.annotation_file_id == annotation_file_id
+    ).order_by(models.AnnotationClass.class_name).all()
+    name_to_new_category_id = {}
+    for idx, ann_cls in enumerate(remaining_classes):
+        new_id = idx + 1
+        name_to_new_category_id[ann_cls.class_name] = new_id
+        ann_cls.category_id = new_id
+    db.commit()
+
+    # Update annotations to use new category_id
+    for ann in db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == annotation_file_id
+    ).all():
+        if ann.category in name_to_new_category_id:
+            ann.category_id = name_to_new_category_id[ann.category]
+    db.commit()
+
+    annotation_file.annotation_count = total_annotations
+    annotation_file.image_count = processed_images
+    annotation_file.category_count = len(remaining_classes)
+    annotation_file.statistics = {
+        'class_counts': {k: v for k, v in class_counts.items() if v > 0},
+        'total_annotations': total_annotations
+    }
+    annotation_file.is_processed = True
+    annotation_file.processing_status = "completed"
+    db.commit()
 
 
 async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int):

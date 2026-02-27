@@ -37,11 +37,12 @@ interface TasksPopoverProps {
 
 export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   const navigate = useNavigate();
-  const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks } = useTasks(projectId);
+  const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks, fetchActiveTasks } = useTasks(projectId);
   const { toast } = useToast();
   const [cancellingTasks, setCancellingTasks] = useState<Set<number>>(new Set());
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
 
   const getTaskTypeIcon = (taskType: string) => {
     switch (taskType) {
@@ -212,6 +213,10 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'augmentation':
       case 'duplication':
         return `/projects/${taskProjectId}/datasets`;
+      case 'preannotate':
+        return metadata.dataset_id
+          ? `/projects/${taskProjectId}/datasets/${metadata.dataset_id}`
+          : `/projects/${taskProjectId}/datasets`;
       default:
         return `/projects/${taskProjectId}`;
     }
@@ -254,9 +259,17 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
     return `${seconds}s`;
   };
 
+  const handlePopoverOpenChange = (open: boolean) => {
+    setPopoverOpen(open);
+    if (open) {
+      fetchActiveTasks();
+      fetchAllTasks();
+    }
+  };
+
   return (
     <>
-      <Popover>
+      <Popover open={popoverOpen} onOpenChange={handlePopoverOpenChange}>
         <PopoverTrigger asChild>
           <Button
             variant="ghost"

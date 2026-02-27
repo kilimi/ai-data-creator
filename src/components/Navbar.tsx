@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Settings, Sparkles, Sun, Moon } from "lucide-react";
@@ -8,6 +8,18 @@ import { useTheme } from "./ThemeProvider";
 
 export function Navbar() {
   const location = useLocation();
+  const pathname = location.pathname;
+  const params = useParams<{ projectId?: string; id?: string }>();
+  // Use projectId only when it's actually a project: /projects/:projectId/datasets/... has projectId.
+  // On /datasets/:id the param "id" is the dataset id — never use it as projectId or we fetch wrong tasks.
+  // On /projects/:id (project layout) the param "id" is the project id.
+  const projectIdNum = params.projectId
+    ? parseInt(params.projectId, 10)
+    : pathname.startsWith("/datasets/")
+      ? undefined
+      : params.id
+        ? parseInt(params.id, 10)
+        : undefined;
   const [scrolled, setScrolled] = useState(false);
   const { theme, toggleTheme } = useTheme();
   

@@ -150,7 +150,7 @@ export function useTasks(projectId?: number) {
         fetchActiveTasks();
         fetchAllTasks();
       }
-    }, 15000); // Refresh every 15 seconds (reduced from 5s)
+    }, 5000); // Refresh every 5 seconds so new tasks (e.g. Auto annotate) appear quickly
 
     return () => clearInterval(interval);
   }, [api, isConfigured, projectId, isExporting]);

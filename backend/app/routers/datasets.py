@@ -1608,14 +1608,22 @@ async def get_dataset_annotation_content(
         if not annotations_response["success"] or not classes_response["success"]:
             raise HTTPException(status_code=500, detail="Failed to retrieve annotation data")
         
+        project_name = None
+        if dataset.project_id:
+            project = db.query(models.Project).filter(models.Project.id == dataset.project_id).first()
+            project_name = project.name if project else None
+        dataset_name = dataset.name or f"Dataset {dataset_id}"
+        
         # Build COCO format efficiently
         coco_data = {
             "info": {
-                "description": f"Annotations for dataset {dataset_id}",
+                "description": f"Annotations for dataset {dataset_name}",
                 "version": "1.0",
-                "year": 2025,
-                "contributor": "AI Data Creator",
-                "date_created": annotation_file.created_at.isoformat() if annotation_file.created_at else None
+                "year": datetime.utcnow().year,
+                "contributor": "LAI",
+                "date_created": annotation_file.created_at.isoformat() if annotation_file.created_at else None,
+                "project_name": project_name,
+                "dataset_name": dataset_name
             },
             "categories": [],
             "images": [],
@@ -1690,9 +1698,9 @@ async def get_dataset_annotation_content(
                     # Get image dimensions for this annotation
                     img_width, img_height = image_dims.get(image_id, (1, 1))
                     
-                    # Build base annotation
+                    # Build base annotation (use primary key when cocoAnnotationId is null)
                     coco_ann = {
-                        "id": ann.get("cocoAnnotationId", ann["id"]),
+                        "id": ann.get("cocoAnnotationId") if ann.get("cocoAnnotationId") is not None else ann["id"],
                         "image_id": image_id_map.get(image_id, 1) if include_images else ann["imageId"],
                         "category_id": category_id_map.get(ann["className"], 1)
                     }
