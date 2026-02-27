@@ -1885,8 +1885,8 @@ curl http://localhost:9999/tasks/${task.id}`;
                 setTimeout(() => fetchTrainingTasks(), 1000);
               }
             }}
-            datasets={project?.datasets || []}
-            projectId={id || ''}
+            datasetId={datasets[0]?.id || 0}
+            datasetName={datasets[0]?.name || ''}
           />
           
           <CreateAugmentedDatasetModal

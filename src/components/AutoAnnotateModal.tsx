@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Bot, Crosshair, Layers, ChevronDown } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -80,6 +81,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
   const [newDatasetName, setNewDatasetName] = React.useState("");
   const [showClasses, setShowClasses] = React.useState(false);
+  const [confThreshold, setConfThreshold] = React.useState(0.25);
 
   const selectedModel = selectedFamily === "yolo"
     ? `${selectedYoloArch}${selectedSize}`
@@ -96,6 +98,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
 
       if (selectedFamily === "yolo") {
         body.annotation_file_name = annotationFileName || `Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`;
+        body.conf_threshold = confThreshold;
       } else if (selectedFamily === "depth_anything") {
         body.save_as = saveAsNew ? "dataset" : "collection";
         if (saveAsNew) {
@@ -230,6 +233,24 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Confidence threshold */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Confidence Threshold</Label>
+                  <span className="text-sm font-mono text-muted-foreground">{confThreshold.toFixed(2)}</span>
+                </div>
+                <Slider
+                  min={0.05}
+                  max={0.95}
+                  step={0.05}
+                  value={[confThreshold]}
+                  onValueChange={([v]) => setConfThreshold(v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Lower values detect more objects but may include false positives
+                </p>
               </div>
 
               {/* Detectable classes info */}

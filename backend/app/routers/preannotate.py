@@ -162,30 +162,68 @@ def create_annotation_from_detection(db, box, box_idx: int, result, annotation_f
 
 
 def process_single_image(db, model, img, project_id: int, dataset_id: int, 
-                        annotation_file_id: str, use_segmentation: bool, class_counts: dict):
+                        annotation_file_id: str, use_segmentation: bool, class_counts: dict,
+                        conf_threshold: float = 0.25):
     """Process a single image with YOLO inference and create annotations"""
     import uuid
     
-    # Construct image path
+    # Construct image path - try multiple locations
     img_path = Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name
+    logger.info(f"Trying image path: {img_path} (exists: {img_path.exists()})")
     if not img_path.exists():
         img_path = Path("data") / "images" / str(dataset_id) / img.file_name
+        logger.info(f"Trying fallback path: {img_path} (exists: {img_path.exists()})")
     if not img_path.exists():
-        logger.warning(f"Image not found: {img_path}")
-        return 0
+        # Try absolute path from img.url if available
+        if img.url:
+            # url is like /static/projects/1/2/images/file.png - strip /static/ prefix
+            url_path = img.url.lstrip('/')
+            if url_path.startswith('static/'):
+                url_path = url_path[len('static/'):]
+            alt_path = Path(url_path)
+            logger.info(f"Trying URL-based path: {alt_path} (exists: {alt_path.exists()})")
+            if alt_path.exists():
+                img_path = alt_path
+            else:
+                logger.warning(f"Image not found at any path for {img.file_name} (id={img.id}, url={img.url})")
+                # List what actually exists in the expected directory
+                expected_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
+                if expected_dir.exists():
+                    files = list(expected_dir.iterdir())[:5]
+                    logger.warning(f"  Directory {expected_dir} exists with {len(list(expected_dir.iterdir()))} files, first 5: {[f.name for f in files]}")
+                else:
+                    logger.warning(f"  Directory {expected_dir} does NOT exist")
+                return 0
+        else:
+            logger.warning(f"Image not found and no URL: {img.file_name} (id={img.id})")
+            return 0
+    
+    logger.info(f"Processing image: {img_path} (size: {img_path.stat().st_size} bytes)")
     
     # Run inference
     try:
-        results = model.predict(source=str(img_path), conf=0.25, iou=0.45, verbose=False, save=False)
+        results = model.predict(source=str(img_path), conf=conf_threshold, iou=0.45, verbose=False, save=False)
     except Exception as e:
-        logger.warning(f"Inference failed on {img_path}: {e}")
+        logger.error(f"Inference failed on {img_path}: {e}", exc_info=True)
         return 0
     
     if not results or len(results) == 0:
+        logger.warning(f"No results returned for {img_path}")
         return 0
     
     result = results[0]
     img_height, img_width = result.orig_shape
+    logger.info(f"Image {img.file_name}: shape={result.orig_shape}, boxes={len(result.boxes) if result.boxes is not None else 'None'}")
+    
+    # Log raw detection info for debugging
+    if result.boxes is not None and len(result.boxes) > 0:
+        for i, box in enumerate(result.boxes):
+            cls_id = int(box.cls.item())
+            conf = float(box.conf.item())
+            cls_name = COCO_CLASSES[cls_id] if cls_id < len(COCO_CLASSES) else f"unknown_{cls_id}"
+            logger.info(f"  Detection {i}: class={cls_name}(id={cls_id}), conf={conf:.3f}, xyxy={box.xyxy[0].cpu().numpy()}")
+    else:
+        logger.info(f"  No detections for {img.file_name} at conf_threshold={conf_threshold}")
     
     # Create AnnotationFileImage
     ann_file_img = models.AnnotationFileImage(
@@ -199,7 +237,7 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
     
     # Process detections
     annotations_count = 0
-    if result.boxes and len(result.boxes) > 0:
+    if result.boxes is not None and len(result.boxes) > 0:
         for box_idx, box in enumerate(result.boxes):
             class_name = create_annotation_from_detection(
                 db, box, box_idx, result, annotation_file_id, img.id, dataset_id, use_segmentation
@@ -208,6 +246,7 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
                 class_counts[class_name] += 1
                 annotations_count += 1
     
+    logger.info(f"Image {img.file_name}: created {annotations_count} annotations")
     return annotations_count
 
 
@@ -284,7 +323,7 @@ def finalize_annotation_file(db, annotation_file_id: str, total_annotations: int
     db.commit()
 
 
-async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int):
+async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int, conf_threshold: float = 0.25):
     """Background task to run YOLO inference and create annotations"""
     logger.info(f"Starting preannotate task {task_id} with model {model_name}")
     
@@ -315,7 +354,12 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
             raise Exception(f"Dataset {dataset_id} not found")
         
         images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
-        logger.info(f"Task {task_id}: Found {len(images)} images to process")
+        logger.info(f"Task {task_id}: Found {len(images)} images to process in dataset {dataset_id} (project {dataset.project_id})")
+        
+        if len(images) > 0:
+            # Log first few image details for debugging
+            for i, img in enumerate(images[:3]):
+                logger.info(f"  Image {i}: id={img.id}, file_name={img.file_name}, url={img.url}")
         
         if len(images) == 0:
             raise Exception("No images found in dataset")
@@ -343,7 +387,8 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         for img_idx, img in enumerate(images):
             annotations_count = process_single_image(
                 db, model, img, project_id, dataset_id, 
-                annotation_file_id, use_segmentation, class_counts
+                annotation_file_id, use_segmentation, class_counts,
+                conf_threshold=conf_threshold
             )
             
             total_annotations += annotations_count
@@ -400,6 +445,7 @@ async def start_preannotate(
         save_as = request.get("save_as")
         new_dataset_name = request.get("new_dataset_name")
         annotation_file_name = request.get("annotation_file_name")
+        conf_threshold = request.get("conf_threshold", 0.25)
         
         if not model_name or not dataset_id:
             raise HTTPException(status_code=400, detail="model_name and dataset_id are required")
@@ -422,7 +468,8 @@ async def start_preannotate(
                 "dataset_id": dataset_id,
                 "save_as": save_as,
                 "new_dataset_name": new_dataset_name,
-                "annotation_file_name": annotation_file_name or f"Auto_{model_name}"
+                "annotation_file_name": annotation_file_name or f"Auto_{model_name}",
+                "conf_threshold": conf_threshold
             }
         )
         db.add(task)
@@ -438,7 +485,8 @@ async def start_preannotate(
             task.id,
             db_url,
             model_name,
-            dataset_id
+            dataset_id,
+            conf_threshold
         )
         
         logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
