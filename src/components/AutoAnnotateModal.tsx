@@ -60,6 +60,13 @@ const YOLO_TASKS: { value: YoloTask; label: string; desc: string }[] = [
   { value: "classify", label: "Classification", desc: "Image-level labels" },
 ];
 
+const ARCH_SUPPORTED_TASKS: Record<string, YoloTask[]> = {
+  yolo11: ["detect", "segment", "classify"],
+  yolo26: ["detect", "segment", "classify"],
+  yolo_nas: ["detect"],
+  rtdetr: ["detect"],
+};
+
 const DEPTH_SIZES = [
   { value: "small", label: "Small (ViT-S)" },
   { value: "base", label: "Base (ViT-B)" },
@@ -210,6 +217,8 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                         setSelectedYoloArch(value);
                         const sizes = YOLO_SIZES[value];
                         setSelectedSize(sizes[0].value);
+                        const supported = ARCH_SUPPORTED_TASKS[value] || ["detect"];
+                        if (!supported.includes(selectedTask)) setSelectedTask(supported[0]);
                       }}
                       className={cn(
                         "flex flex-col rounded-md border px-3 py-2 text-left text-sm transition-all",
@@ -249,7 +258,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
               <div className="space-y-2">
                 <span className="block font-medium text-sm">Task</span>
                 <div className="flex gap-1.5 flex-wrap">
-                  {YOLO_TASKS.map(({ value, label, desc }) => (
+                  {YOLO_TASKS.filter(t => (ARCH_SUPPORTED_TASKS[selectedYoloArch] || ["detect"]).includes(t.value)).map(({ value, label, desc }) => (
                     <button
                       key={value}
                       type="button"
