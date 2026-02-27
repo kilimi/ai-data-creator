@@ -323,7 +323,9 @@ export function AnnotationsContent({
               color: color,
               isVisible: true, // This controls mask visibility
               showBboxes: bboxState !== false,
-              annotationFileName: file.name
+              annotationFileName: file.name,
+              referenceImageWidth: anno.imageWidth || undefined,
+              referenceImageHeight: anno.imageHeight || undefined,
             };
             console.log(`Converted annotation for image ${anno.imageId}:`, annotationSample);
             return annotationSample;
