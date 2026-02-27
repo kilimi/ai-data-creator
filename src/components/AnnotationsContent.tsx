@@ -35,6 +35,15 @@ interface AnnotationsContentProps {
   currentPageImageIds?: string[]; // NEW: Current page image IDs
 }
 
+// Normalize segmentation: backend may store as flat array [x,y,x,y,...] instead of [[x,y,x,y,...]]
+function normalizeSegmentation(seg: any): number[][] | undefined {
+  if (!seg || !Array.isArray(seg) || seg.length === 0) return undefined;
+  // If first element is a number, it's a flat array — wrap it
+  if (typeof seg[0] === 'number') return [seg];
+  // Already array of arrays
+  return seg;
+}
+
 // Helper to convert AnnotationFile to COCO format
 function toCOCOFormat(file: AnnotationFile) {
   // Extract unique categories from samples
@@ -308,7 +317,7 @@ export function AnnotationsContent({
               imageId: anno.imageId,
               className: anno.className,
               bbox: anno.bbox || [0, 0, 0, 0],
-              segmentation: anno.segmentation || undefined,
+              segmentation: normalizeSegmentation(anno.segmentation),
               area: anno.area || 0,
               confidence: anno.confidence || 1.0,
               color: color,
@@ -453,7 +462,7 @@ export function AnnotationsContent({
               imageId: matchingImage.id,
               className,
               bbox,
-              segmentation: anno.segmentation || undefined,
+              segmentation: normalizeSegmentation(anno.segmentation),
               area: anno.area,
               confidence: 1.0,
               color: color,
