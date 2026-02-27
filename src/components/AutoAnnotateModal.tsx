@@ -52,6 +52,14 @@ const YOLO_SIZES: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
+type YoloTask = "detect" | "segment" | "classify";
+
+const YOLO_TASKS: { value: YoloTask; label: string; desc: string }[] = [
+  { value: "detect", label: "Detection", desc: "Bounding boxes" },
+  { value: "segment", label: "Segmentation", desc: "Instance masks" },
+  { value: "classify", label: "Classification", desc: "Image-level labels" },
+];
+
 const DEPTH_SIZES = [
   { value: "small", label: "Small (ViT-S)" },
   { value: "base", label: "Base (ViT-B)" },
@@ -76,6 +84,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
   const [selectedYoloArch, setSelectedYoloArch] = React.useState("yolo11");
   const [selectedSize, setSelectedSize] = React.useState("n");
+  const [selectedTask, setSelectedTask] = React.useState<YoloTask>("detect");
   const [annotationFileName, setAnnotationFileName] = React.useState("");
   const [saveAsNew, setSaveAsNew] = React.useState(false);
   const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
@@ -99,6 +108,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
       if (selectedFamily === "yolo") {
         body.annotation_file_name = annotationFileName || `Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`;
         body.conf_threshold = confThreshold;
+        body.task_type = selectedTask;
       } else if (selectedFamily === "depth_anything") {
         body.save_as = saveAsNew ? "dataset" : "collection";
         if (saveAsNew) {
@@ -160,7 +170,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                 type="button"
                 onClick={() => {
                   setSelectedFamily(key);
-                  if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); }
+                  if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); setSelectedTask("detect"); }
                   else { setSelectedSize("small"); }
                   setSaveAsNew(false);
                   setNewDatasetName("");
@@ -230,6 +240,29 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                       )}
                     >
                       {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Task type */}
+              <div className="space-y-2">
+                <span className="block font-medium text-sm">Task</span>
+                <div className="flex gap-1.5 flex-wrap">
+                  {YOLO_TASKS.map(({ value, label, desc }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setSelectedTask(value)}
+                      className={cn(
+                        "flex flex-col rounded-md border px-3 py-1.5 text-sm transition-all",
+                        selectedTask === value
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border hover:bg-muted/40"
+                      )}
+                    >
+                      <span className="font-medium">{label}</span>
+                      <span className={cn("text-xs", selectedTask === value ? "text-primary-foreground/70" : "text-muted-foreground")}>{desc}</span>
                     </button>
                   ))}
                 </div>
