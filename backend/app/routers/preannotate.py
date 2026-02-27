@@ -36,18 +36,26 @@ COCO_CLASSES = [
 ]
 
 
-def load_yolo_model(model_name: str, task_id: int):
-    """Load YOLO model and return model object with metadata"""
+def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
+    """Load YOLO model and return model object with metadata.
+    
+    task_type: 'detect', 'segment', or 'classify'
+    Model file suffix: base name for detect, -seg for segment, -cls for classify.
+    """
     from ultralytics import YOLO
     
-    logger.info(f"Task {task_id}: Loading YOLO model {model_name}")
-    model = YOLO(f"{model_name}.pt")
+    suffix_map = {"detect": "", "segment": "-seg", "classify": "-cls"}
+    model_suffix = suffix_map.get(task_type, "")
+    full_model_name = f"{model_name}{model_suffix}"
     
-    model_task = getattr(model, 'task', 'detect')
-    use_segmentation = model_task in ['segment', 'segmentation']
-    logger.info(f"Task {task_id}: Model type: {model_task}, segmentation: {use_segmentation}")
+    logger.info(f"Task {task_id}: Loading YOLO model {full_model_name} (task_type={task_type})")
+    model = YOLO(f"{full_model_name}.pt")
     
-    return model, use_segmentation
+    use_segmentation = task_type == "segment"
+    is_classification = task_type == "classify"
+    logger.info(f"Task {task_id}: Model type: {task_type}, segmentation: {use_segmentation}, classification: {is_classification}")
+    
+    return model, use_segmentation, is_classification
 
 
 def create_annotation_file_with_classes(db, dataset_id: int, annotation_file_name: str, use_segmentation: bool, task_id: int):
@@ -323,7 +331,7 @@ def finalize_annotation_file(db, annotation_file_id: str, total_annotations: int
     db.commit()
 
 
-async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int, conf_threshold: float = 0.25):
+async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int, conf_threshold: float = 0.25, task_type: str = "detect"):
     """Background task to run YOLO inference and create annotations"""
     logger.info(f"Starting preannotate task {task_id} with model {model_name}")
     
@@ -368,7 +376,7 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         db.commit()
         
         # Load YOLO model
-        model, use_segmentation = load_yolo_model(model_name, task_id)
+        model, use_segmentation, is_classification = load_yolo_model(model_name, task_id, task_type)
         task.progress = 20.0
         db.commit()
         
@@ -446,6 +454,7 @@ async def start_preannotate(
         new_dataset_name = request.get("new_dataset_name")
         annotation_file_name = request.get("annotation_file_name")
         conf_threshold = request.get("conf_threshold", 0.25)
+        task_type = request.get("task_type", "detect")
         
         if not model_name or not dataset_id:
             raise HTTPException(status_code=400, detail="model_name and dataset_id are required")
@@ -469,7 +478,8 @@ async def start_preannotate(
                 "save_as": save_as,
                 "new_dataset_name": new_dataset_name,
                 "annotation_file_name": annotation_file_name or f"Auto_{model_name}",
-                "conf_threshold": conf_threshold
+                "conf_threshold": conf_threshold,
+                "task_type": task_type
             }
         )
         db.add(task)
@@ -486,7 +496,8 @@ async def start_preannotate(
             db_url,
             model_name,
             dataset_id,
-            conf_threshold
+            conf_threshold,
+            task_type
         )
         
         logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
