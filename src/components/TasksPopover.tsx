@@ -176,24 +176,19 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
     setIsDetailOpen(true);
   };
 
-  // Filter tasks: only show running/pending tasks OR tasks completed within 1 hour
-  const ONE_HOUR_MS = 60 * 60 * 1000;
-  const now = Date.now();
-  
-  const filteredTasks = tasks.filter(task => {
-    // Always show active tasks (pending/running)
-    if (task.status === 'pending' || task.status === 'running') {
-      return true;
-    }
-    // Show completed/failed/cancelled tasks only if completed within last hour
-    if (task.completed_at) {
-      const completedTime = new Date(task.completed_at).getTime();
-      return (now - completedTime) < ONE_HOUR_MS;
-    }
-    return false;
+  // Show: all active tasks + all tasks from getTasks (which is called with recent_hours=1,
+  // so backend already returns active OR completed-in-last-hour). Merge by id so we show
+  // every task without re-filtering by completed_at on the frontend (avoids timezone/parsing issues).
+  const tasksList = Array.isArray(tasks) ? tasks : [];
+  const activeList = Array.isArray(activeTasks) ? activeTasks : [];
+  const tasksById = new Map<number, Task>();
+  activeList.forEach((t) => tasksById.set(t.id, t));
+  tasksList.forEach((t) => {
+    if (!tasksById.has(t.id)) tasksById.set(t.id, t);
   });
-
-  const visibleTasks = filteredTasks;
+  const visibleTasks = Array.from(tasksById.values()).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
   const visibleActiveTaskCount = visibleTasks.filter(task => 
     task.status === 'pending' || task.status === 'running'
   ).length;
@@ -201,7 +196,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   // Get navigation URL based on task type and metadata
   const getTaskNavigationUrl = (task: Task): string | null => {
     const metadata = task.task_metadata || task.metadata || {};
-    const taskProjectId = metadata.project_id || projectId;
+    const taskProjectId = metadata.project_id ?? task.project_id ?? projectId;
     
     if (!taskProjectId) return null;
     

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import shutil
 from pathlib import Path
@@ -29,23 +30,50 @@ async def get_tasks(
     status: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
+    recent_hours: Optional[float] = None,
     db: Session = Depends(get_db)
 ):
-    """Get tasks with optional filtering"""
+    """Get tasks with optional filtering.
+    When recent_hours is set (e.g. 1), returns tasks that are either active (pending/running)
+    or completed within the last N hours, so long-running tasks (e.g. training) still appear
+    after completion for the navbar 'last hour' view."""
     try:
         query = db.query(models.Task)
-        
-        # Apply filters in order of selectivity (most selective first)
-        # This helps the query optimizer use indexes efficiently
+
         if project_id:
             query = query.filter(models.Task.project_id == project_id)
         if status:
             query = query.filter(models.Task.status == status)
         if task_type:
             query = query.filter(models.Task.task_type == task_type)
-        
-        # Order by created_at descending (most recent first)
-        # Use index on created_at for better performance
+
+        if recent_hours is not None and recent_hours > 0:
+            cutoff = datetime.utcnow() - timedelta(hours=recent_hours)
+            # Include: active tasks (any age) OR completed/failed/cancelled in last N hours
+            # Also include tasks created in last N hours (fallback if completed_at not set)
+            query_filtered = query.filter(
+                or_(
+                    models.Task.status.in_(['pending', 'running']),
+                    and_(
+                        models.Task.completed_at.isnot(None),
+                        models.Task.completed_at >= cutoff
+                    ),
+                    models.Task.created_at >= cutoff
+                )
+            )
+            result = query_filtered.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
+            # If filter returned nothing, return most recent tasks so navbar always shows something
+            if not result:
+                query_fallback = db.query(models.Task)
+                if project_id:
+                    query_fallback = query_fallback.filter(models.Task.project_id == project_id)
+                if task_type:
+                    query_fallback = query_fallback.filter(models.Task.task_type == task_type)
+                if status:
+                    query_fallback = query_fallback.filter(models.Task.status == status)
+                result = query_fallback.order_by(models.Task.created_at.desc()).offset(skip).limit(min(limit, 50)).all()
+            return result
+
         return query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
     except Exception as e:
         logger.error(f"Database error in get_tasks: {e}")

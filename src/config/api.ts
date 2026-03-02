@@ -1,5 +1,5 @@
-// Get API URL from localStorage if available, otherwise use default
-const getApiBaseUrl = () => {
+// Get API URL from localStorage if available, otherwise use default (exported for components that need to call the API directly)
+export const getApiBaseUrl = () => {
   // Check localStorage first
   const savedUrl = localStorage.getItem("apiBaseUrl");
   

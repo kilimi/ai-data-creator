@@ -22,18 +22,31 @@ interface ClassificationData {
 }
 
 export default function Classification() {
-  const { id } = useParams<{ id: string }>();
+  const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { api, isConfigured } = useApi();
-  
+
+  // Redirect legacy /datasets/:id/annotate/classification to project-scoped URL
+  useEffect(() => {
+    if (!id || projectId || !api) return;
+    let cancelled = false;
+    api.getDataset(id).then((res) => {
+      if (cancelled || !res.success || !res.data?.project_id) return;
+      const annot = searchParams.get('annotationId');
+      const q = annot ? `?annotationId=${annot}` : '';
+      navigate(`/projects/${res.data.project_id}/datasets/${id}/annotate/classification${q}`, { replace: true });
+    });
+    return () => { cancelled = true; };
+  }, [id, projectId, api, navigate]);
+
   // Get annotation ID from URL params if editing existing annotation
   const annotationId = searchParams.get('annotationId');
-  
+
   // Dataset settings
   const datasetId = id || '';
-  const { settings, updateImagesPerPage, updateImageSize, updateLayout } = useDatasetSettings(datasetId);
+  const { settings, updateImagesPerPage, updateImageSize, updateLayout } = useDatasetSettings(datasetId, { imageSize: 320 });
   
   // Optimized storage instance
   const storage = useMemo(() => {
@@ -829,8 +842,12 @@ export default function Classification() {
     if (settings.layout === 'images-only' || settings.layout === 'annotations-only') {
       updateLayout('horizontal');
     }
-    // Navigate to dataset page
-    navigate(`/datasets/${id}`);
+    // Navigate to dataset page (project-scoped URL when available so images load correctly)
+    if (projectId && id) {
+      navigate(`/projects/${projectId}/datasets/${id}`);
+    } else if (id) {
+      navigate(`/datasets/${id}`);
+    }
   };
 
   // Handle keyboard shortcuts
@@ -1460,7 +1477,7 @@ export default function Classification() {
                     <Card key={image.id} className="overflow-hidden">
                       <div className="relative">
                         <img
-                          src={image.thumbnailUrl || image.url}
+                          src={image.url}
                           alt={image.fileName}
                           className="w-full aspect-square object-cover"
                           loading="lazy"

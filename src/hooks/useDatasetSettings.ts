@@ -16,8 +16,12 @@ const DEFAULT_SETTINGS: DatasetSettings = {
   sliderPosition: 50 // Default 50/50 split
 };
 
-export function useDatasetSettings(datasetId: string) {
-  const [settings, setSettings] = useState<DatasetSettings>(DEFAULT_SETTINGS);
+/** Optional overrides when no saved settings exist (e.g. classification view uses larger default image size) */
+export type DatasetSettingsOverrides = Partial<Pick<DatasetSettings, 'imageSize'>>;
+
+export function useDatasetSettings(datasetId: string, overrides?: DatasetSettingsOverrides) {
+  const defaults = overrides ? { ...DEFAULT_SETTINGS, ...overrides } : DEFAULT_SETTINGS;
+  const [settings, setSettings] = useState<DatasetSettings>(defaults);
   const [isLoaded, setIsLoaded] = useState(false);
   
   // Load settings from localStorage on mount and when datasetId changes
@@ -26,7 +30,7 @@ export function useDatasetSettings(datasetId: string) {
     
     if (!datasetId || datasetId.trim() === '') {
       console.log('No valid datasetId, using defaults');
-      setSettings(DEFAULT_SETTINGS);
+      setSettings(defaults);
       setIsLoaded(false);
       return;
     }
@@ -41,19 +45,19 @@ export function useDatasetSettings(datasetId: string) {
     if (storedSettings) {
       try {
         const parsed = JSON.parse(storedSettings);
-        const mergedSettings = { ...DEFAULT_SETTINGS, ...parsed };
+        const mergedSettings = { ...defaults, ...parsed };
         console.log('Parsed settings:', parsed);
         console.log('Merged settings:', mergedSettings);
         setSettings(mergedSettings);
         setIsLoaded(true);
       } catch (error) {
         console.warn('Failed to parse stored dataset settings:', error);
-        setSettings(DEFAULT_SETTINGS);
+        setSettings(defaults);
         setIsLoaded(true);
       }
     } else {
       console.log('No stored settings found, using defaults');
-      setSettings(DEFAULT_SETTINGS);
+      setSettings(defaults);
       setIsLoaded(true);
     }
   }, [datasetId]);

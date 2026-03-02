@@ -284,7 +284,12 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           console.log('🌐 API responses received:', { datasetRes: !!datasetRes, imagesRes: !!imagesRes, annotationsRes: !!annotationsRes });
           
           if (datasetRes?.success && datasetRes.data) {
-            setDataset(datasetRes.data);
+            const data = datasetRes.data;
+            if (!projectId && data.project_id != null) {
+              navigate(`/projects/${data.project_id}/datasets/${id}/edit`, { replace: true });
+              return;
+            }
+            setDataset(data);
           } else {
             // Fallback to mock data if API fails
             setDataset(getMockDataset(id));

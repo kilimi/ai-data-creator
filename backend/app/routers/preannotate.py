@@ -35,6 +35,39 @@ COCO_CLASSES = [
     "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
 ]
 
+# Size label for tags (short code -> display)
+SIZE_LABELS = {"n": "nano", "s": "small", "m": "medium", "l": "large", "x": "xlarge"}
+
+
+def _auto_annotate_tags(model_name: str, task_type: str) -> List[str]:
+    """Build tags for auto-annotate: model type, size, and task (detection/segmentation/classification)."""
+    import re
+    tags = []
+    task_label = {"detect": "detection", "segment": "segmentation", "classify": "classification"}.get(
+        task_type, task_type
+    )
+    tags.append(task_label)
+    if model_name.startswith("depth_anything"):
+        # e.g. depth_anything_v2_small
+        parts = model_name.split("_")
+        if "v2" in parts:
+            tags.insert(0, "depth_anything_v2")
+        else:
+            tags.insert(0, "depth_anything")
+        size_part = parts[-1] if parts else ""
+        if size_part:
+            tags.insert(1, size_part)
+    else:
+        # YOLO-style: yolo11n, yolo26s, yolo_nasm, rtdetrl
+        match = re.match(r"(yolo11|yolo26|yolo_nas|rtdetr)([nsmlx])", model_name, re.IGNORECASE)
+        if match:
+            arch, size = match.group(1), match.group(2).lower()
+            tags.insert(0, arch)
+            tags.insert(1, SIZE_LABELS.get(size, size))
+        else:
+            tags.insert(0, model_name)
+    return tags
+
 
 def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
     """Load YOLO model and return model object with metadata.
@@ -58,35 +91,74 @@ def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
     return model, use_segmentation, is_classification
 
 
-def create_annotation_file_with_classes(db, dataset_id: int, annotation_file_name: str, use_segmentation: bool, task_id: int):
-    """Create annotation file and annotation classes"""
+def create_annotation_file_with_classes(
+    db,
+    dataset_id: int,
+    annotation_file_name: str,
+    use_segmentation: bool,
+    task_id: int,
+    tags: Optional[List[str]] = None,
+    is_classification: bool = False,
+):
+    """Create annotation file and annotation classes. Optionally set tags (e.g. model type, size, task).
+    For classification, type is set to 'Classification' and no initial classes are created (added on the fly)."""
     import uuid
-    
+
     annotation_file_id = str(uuid.uuid4())
+    if is_classification:
+        file_type = "Classification"
+    else:
+        file_type = "Segmentation (mask+bbox)" if use_segmentation else "Object Detection (bbox)"
     annotation_file = models.AnnotationFile(
         id=annotation_file_id,
         dataset_id=dataset_id,
         name=annotation_file_name if annotation_file_name.endswith('.json') else f"{annotation_file_name}.json",
         format="COCO",
-        type="Segmentation (mask+bbox)" if use_segmentation else "Object Detection (bbox)",
+        type=file_type,
         is_processed=False,
-        processing_status="processing"
+        processing_status="processing",
     )
+    if tags:
+        annotation_file.tags = list(tags)
     db.add(annotation_file)
     db.commit()
-    logger.info(f"Task {task_id}: Created annotation file {annotation_file_id}")
+    logger.info(f"Task {task_id}: Created annotation file {annotation_file_id}" + (f" type={file_type}" if is_classification else "") + (f" with tags {tags}" if tags else ""))
     
-    # Create annotation classes
-    for idx, class_name in enumerate(COCO_CLASSES):
-        ann_class = models.AnnotationClass(
-            annotation_file_id=annotation_file_id,
-            class_name=class_name,
-            category_id=idx + 1
-        )
-        db.add(ann_class)
-    db.commit()
+    # Create annotation classes only for detection/segmentation (COCO 80 classes); classification adds classes on the fly
+    if not is_classification:
+        for idx, class_name in enumerate(COCO_CLASSES):
+            ann_class = models.AnnotationClass(
+                annotation_file_id=annotation_file_id,
+                class_name=class_name,
+                category_id=idx + 1
+            )
+            db.add(ann_class)
+        db.commit()
     
     return annotation_file_id
+
+
+def get_or_create_annotation_class(db, annotation_file_id: str, class_name: str) -> int:
+    """Get or create an AnnotationClass for this file and class; return category_id."""
+    existing = db.query(models.AnnotationClass).filter(
+        models.AnnotationClass.annotation_file_id == annotation_file_id,
+        models.AnnotationClass.class_name == class_name,
+    ).first()
+    if existing:
+        return existing.category_id
+    max_id = db.query(models.AnnotationClass).filter(
+        models.AnnotationClass.annotation_file_id == annotation_file_id,
+    ).count()
+    category_id = max_id + 1
+    ann_class = models.AnnotationClass(
+        annotation_file_id=annotation_file_id,
+        class_name=class_name,
+        category_id=category_id,
+        count=0,
+    )
+    db.add(ann_class)
+    db.commit()
+    return category_id
 
 
 def calculate_polygon_area(segmentation: List[float]) -> float:
@@ -258,6 +330,121 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
     return annotations_count
 
 
+def _resolve_image_path(img, project_id: int, dataset_id: int) -> Optional[Path]:
+    """Resolve image path using same order as process_single_image. Returns None if not found."""
+    img_path = Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name
+    logger.info(f"Classification: trying image path {img_path} (exists={img_path.exists()})")
+    if img_path.exists():
+        return img_path.resolve()
+    img_path = Path("data") / "images" / str(dataset_id) / img.file_name
+    logger.info(f"Classification: fallback path {img_path} (exists={img_path.exists()})")
+    if img_path.exists():
+        return img_path.resolve()
+    if img.url:
+        url_path = img.url.lstrip("/")
+        if url_path.startswith("static/"):
+            url_path = url_path[len("static/"):]
+        alt_path = Path(url_path)
+        if alt_path.exists():
+            logger.info(f"Classification: using URL-based path {alt_path}")
+            return alt_path.resolve()
+        # Try projects/ relative to CWD in case url is like "projects/1/2/images/file.jpg"
+        if not url_path.startswith("projects"):
+            alt_path = Path("projects") / url_path
+        else:
+            alt_path = Path(url_path)
+        if alt_path.exists():
+            return alt_path.resolve()
+    return None
+
+
+def process_single_image_classification(
+    db,
+    model,
+    img,
+    project_id: int,
+    annotation_file_id: str,
+    dataset_id: int,
+    class_counts: dict,
+):
+    """Run YOLO classification on one image and create one Annotation (image-level label, no bbox/segmentation)."""
+    img_path = _resolve_image_path(img, project_id, dataset_id)
+    if img_path is None:
+        logger.warning(f"Image not found for classification: {img.file_name} (project_id={project_id}, dataset_id={dataset_id}, url={getattr(img, 'url', None)})")
+        return 0
+    source_str = str(img_path)
+    try:
+        # Classification models (e.g. ImageNet) expect 224x224 by default
+        results = model.predict(source=source_str, imgsz=224, verbose=False)
+    except Exception as e:
+        logger.error(f"Classification inference failed on {source_str}: {e}", exc_info=True)
+        return 0
+    if not results or len(results) == 0:
+        logger.warning(f"Classification: no results returned for {img.file_name}")
+        return 0
+    result = results[0]
+    probs = getattr(result, "probs", None)
+    if probs is None:
+        logger.warning(
+            f"No probs in result for {img.file_name}; result type={type(result).__name__}, "
+            f"has boxes={hasattr(result, 'boxes') and result.boxes is not None}"
+        )
+        return 0
+    top1_val = getattr(probs, "top1", None)
+    if top1_val is None:
+        logger.warning(f"Classification: probs has no top1 for {img.file_name}")
+        return 0
+    top1_idx = int(top1_val.item()) if hasattr(top1_val, "item") else int(top1_val)
+    names = getattr(result, "names", None) or getattr(model, "names", None) or {}
+    if isinstance(names, (list, tuple)):
+        class_name = names[int(top1_idx)] if int(top1_idx) < len(names) else f"class_{top1_idx}"
+    elif isinstance(names, dict):
+        class_name = names.get(int(top1_idx), str(top1_idx))
+    else:
+        class_name = f"class_{top1_idx}"
+    confidence = None
+    if hasattr(probs, "data") and probs.data is not None:
+        try:
+            data = probs.data
+            if hasattr(data, "shape") and len(data.shape) > 1:
+                confidence = float(data[0, int(top1_idx)].item())
+            else:
+                confidence = float(data[int(top1_idx)].item())
+        except Exception:
+            pass
+    # Image dimensions for AnnotationFileImage
+    img_width = getattr(result, "orig_shape", (0, 0))[1] if hasattr(result, "orig_shape") else 0
+    img_height = getattr(result, "orig_shape", (0, 0))[0] if hasattr(result, "orig_shape") else 0
+    if not img_width or not img_height:
+        img_width = img.width or 1
+        img_height = img.height or 1
+    ann_file_img = models.AnnotationFileImage(
+        annotation_file_id=annotation_file_id,
+        dataset_image_id=img.id,
+        file_name=img.file_name,
+        width=img_width,
+        height=img_height,
+    )
+    db.add(ann_file_img)
+    category_id = get_or_create_annotation_class(db, annotation_file_id, class_name)
+    class_counts[class_name] = class_counts.get(class_name, 0) + 1
+    ann = models.Annotation(
+        annotation_file_id=annotation_file_id,
+        image_id=img.id,
+        dataset_id=dataset_id,
+        category=class_name,
+        category_id=category_id,
+        bbox=None,
+        segmentation=None,
+        area=None,
+        confidence=confidence,
+    )
+    db.add(ann)
+    db.commit()
+    logger.info(f"Image {img.file_name}: classification -> {class_name}")
+    return 1
+
+
 def finalize_annotation_file(db, annotation_file_id: str, total_annotations: int, 
                              processed_images: int, class_counts: dict):
     """Update annotation file with final statistics. Remove classes with count 0 and renumber category_id."""
@@ -380,24 +567,31 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         task.progress = 20.0
         db.commit()
         
-        # Create annotation file
+        # Create annotation file with tags: model type, size, task (detection/segmentation/classification)
         annotation_file_name = task.task_metadata.get('annotation_file_name', f'Auto_{model_name}')
+        auto_tags = _auto_annotate_tags(model_name, task_type)
         annotation_file_id = create_annotation_file_with_classes(
-            db, dataset_id, annotation_file_name, use_segmentation, task_id
+            db, dataset_id, annotation_file_name, use_segmentation, task_id, tags=auto_tags,
+            is_classification=is_classification,
         )
         
         # Process all images
         total_annotations = 0
-        class_counts = {name: 0 for name in COCO_CLASSES}
+        class_counts = {} if is_classification else {name: 0 for name in COCO_CLASSES}
         processed_images = 0
-        project_id = dataset.project_id
+        project_id = dataset.project_id or 0
         
         for img_idx, img in enumerate(images):
-            annotations_count = process_single_image(
-                db, model, img, project_id, dataset_id, 
-                annotation_file_id, use_segmentation, class_counts,
-                conf_threshold=conf_threshold
-            )
+            if is_classification:
+                annotations_count = process_single_image_classification(
+                    db, model, img, project_id, annotation_file_id, dataset_id, class_counts
+                )
+            else:
+                annotations_count = process_single_image(
+                    db, model, img, project_id, dataset_id,
+                    annotation_file_id, use_segmentation, class_counts,
+                    conf_threshold=conf_threshold
+                )
             
             total_annotations += annotations_count
             processed_images += 1
@@ -475,6 +669,7 @@ async def start_preannotate(
             task_metadata={
                 "model_name": model_name,
                 "dataset_id": dataset_id,
+                "project_id": dataset.project_id,
                 "save_as": save_as,
                 "new_dataset_name": new_dataset_name,
                 "annotation_file_name": annotation_file_name or f"Auto_{model_name}",

@@ -141,6 +141,18 @@ const ImageAnnotation = () => {
   // Get annotation ID from URL params if editing existing annotation
   const annotationId = searchParams.get('annotationId');
 
+  // Redirect legacy /datasets/:id/annotate/segmentation to project-scoped URL
+  useEffect(() => {
+    if (!id || projectId || !api) return;
+    let cancelled = false;
+    api.getDataset(id).then((res) => {
+      if (cancelled || !res.success || !res.data?.project_id) return;
+      const q = annotationId ? `?annotationId=${annotationId}` : '';
+      navigate(`/projects/${res.data.project_id}/datasets/${id}/annotate/segmentation${q}`, { replace: true });
+    });
+    return () => { cancelled = true; };
+  }, [id, projectId, api, navigate, annotationId]);
+
   // Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);

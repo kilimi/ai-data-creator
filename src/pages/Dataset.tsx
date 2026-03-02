@@ -340,12 +340,18 @@ export default function Dataset() {
       setIsLoading(true);
       const response = await api.getDataset(id);
       if (response.success && response.data) {
-        setDataset(response.data);
+        const data = response.data;
+        // If we're on legacy URL (/datasets/:id) and dataset has a project, redirect to project-scoped URL
+        if (!projectId && data.project_id != null) {
+          navigate(`/projects/${data.project_id}/datasets/${id}`, { replace: true });
+          return;
+        }
+        setDataset(data);
         
         // If dataset has project_id, fetch the project name
-        if (response.data.project_id) {
-          setDatasetProjectId(response.data.project_id.toString());
-          const projectResponse = await api.getProject(response.data.project_id.toString());
+        if (data.project_id) {
+          setDatasetProjectId(data.project_id.toString());
+          const projectResponse = await api.getProject(data.project_id.toString());
           if (projectResponse.success && projectResponse.data) {
             setProjectName(projectResponse.data.name);
           }
@@ -376,7 +382,7 @@ export default function Dataset() {
 
   useEffect(() => {
     fetchDataset();
-  }, [id, api, toast]);
+  }, [id, projectId, api, toast]);
 
   // Re-evaluate annotations when images change (fixes issue when annotations are uploaded before images)
   useEffect(() => {

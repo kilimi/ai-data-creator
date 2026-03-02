@@ -788,6 +788,8 @@ export class ApiClient {
     status?: string;
     skip?: number;
     limit?: number;
+    /** When set, include tasks that are active OR completed in the last N hours (for navbar "last hour" view) */
+    recent_hours?: number;
   }): Promise<ApiResponse<Array<{
     id: number;
     name: string;
@@ -808,6 +810,7 @@ export class ApiClient {
     if (params?.status) searchParams.append('status', params.status);
     if (params?.skip) searchParams.append('skip', params.skip.toString());
     if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.recent_hours != null) searchParams.append('recent_hours', params.recent_hours.toString());
     
     const queryString = searchParams.toString();
     const endpoint = queryString ? `/tasks/?${queryString}` : '/tasks/';

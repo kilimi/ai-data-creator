@@ -132,7 +132,7 @@ class TaskBase(BaseModel):
     name: str
     description: Optional[str] = None
     task_type: str
-    project_id: int
+    project_id: Optional[int] = None  # None when dataset has no project (e.g. legacy)
     task_metadata: Optional[dict] = None
 
 class TaskCreate(TaskBase):

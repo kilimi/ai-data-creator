@@ -13,7 +13,7 @@ export interface Task {
   started_at?: string;
   completed_at?: string;
   error_message?: string;
-  project_id: number;
+  project_id?: number | null;  // Optional when dataset has no project
   metadata?: any;  // Frontend field
   task_metadata?: any;  // Backend field
 }
@@ -72,11 +72,22 @@ export function useTasks(projectId?: number) {
       
       const response = await api.getTasks({
         project_id: projectId,
-        limit: 100
+        limit: 100,
+        recent_hours: 1
       });
       
       if (response.success) {
-        setTasks(response.data as Task[]);
+        // Backend returns a raw JSON array; ensure we always set an array (handle wrapped responses)
+        const raw = response.data as unknown;
+        const list = Array.isArray(raw)
+          ? raw
+          : (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data))
+            ? (raw as { data: Task[] }).data
+            : [];
+        if (!Array.isArray(raw) && list.length > 0) {
+          console.log('Tasks response was wrapped; extracted list length:', list.length);
+        }
+        setTasks(list as Task[]);
       } else {
         // Don't set error for timeout/abort errors during polling - they're expected
         const isTimeoutError = response.error?.includes('timed out') || 

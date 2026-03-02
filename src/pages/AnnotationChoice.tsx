@@ -1,17 +1,31 @@
+import { useEffect } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Navbar } from "@/components/Navbar";
 import { ArrowLeft, Grid3X3, Layers } from "lucide-react";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
+import { useApi } from "@/hooks/use-api";
 
 export default function AnnotationChoice() {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const navigate = useNavigate();
-  
+  const { api } = useApi();
+
   // Dataset settings
   const datasetId = id || '';
   const { settings, updateLayout } = useDatasetSettings(datasetId);
+
+  // Redirect legacy /datasets/:id/annotate to /projects/:projectId/datasets/:id/annotate
+  useEffect(() => {
+    if (!id || projectId || !api) return;
+    let cancelled = false;
+    api.getDataset(id).then((res) => {
+      if (cancelled || !res.success || !res.data?.project_id) return;
+      navigate(`/projects/${res.data.project_id}/datasets/${id}/annotate`, { replace: true });
+    });
+    return () => { cancelled = true; };
+  }, [id, projectId, api, navigate]);
 
   // Handle back to dataset navigation
   const handleBackToDataset = () => {

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
+import { getApiBaseUrl } from "@/config/api";
 
 interface AutoAnnotateModalProps {
   open: boolean;
@@ -52,19 +53,18 @@ const YOLO_SIZES: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
-type YoloTask = "detect" | "segment" | "classify";
+type YoloTask = "segment" | "classify";
 
 const YOLO_TASKS: { value: YoloTask; label: string; desc: string }[] = [
-  { value: "detect", label: "Detection", desc: "Bounding boxes" },
   { value: "segment", label: "Segmentation", desc: "Instance masks" },
   { value: "classify", label: "Classification", desc: "Image-level labels" },
 ];
 
 const ARCH_SUPPORTED_TASKS: Record<string, YoloTask[]> = {
-  yolo11: ["detect", "segment", "classify"],
-  yolo26: ["detect", "segment", "classify"],
-  yolo_nas: ["detect"],
-  rtdetr: ["detect"],
+  yolo11: ["segment", "classify"],
+  yolo26: ["segment", "classify"],
+  yolo_nas: ["segment"],
+  rtdetr: ["segment"],
 };
 
 const DEPTH_SIZES = [
@@ -91,7 +91,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
   const [selectedYoloArch, setSelectedYoloArch] = React.useState("yolo11");
   const [selectedSize, setSelectedSize] = React.useState("n");
-  const [selectedTask, setSelectedTask] = React.useState<YoloTask>("detect");
+  const [selectedTask, setSelectedTask] = React.useState<YoloTask>("segment");
   const [annotationFileName, setAnnotationFileName] = React.useState("");
   const [saveAsNew, setSaveAsNew] = React.useState(false);
   const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
@@ -124,8 +124,8 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
       }
 
       console.log('Starting auto-annotation with:', body);
-      
-      const response = await fetch("http://localhost:9999/preannotate", {
+      const apiBase = getApiBaseUrl();
+      const response = await fetch(`${apiBase}/preannotate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -177,7 +177,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                 type="button"
                 onClick={() => {
                   setSelectedFamily(key);
-                  if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); setSelectedTask("detect"); }
+                  if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); setSelectedTask("segment"); }
                   else { setSelectedSize("small"); }
                   setSaveAsNew(false);
                   setNewDatasetName("");
@@ -217,7 +217,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                         setSelectedYoloArch(value);
                         const sizes = YOLO_SIZES[value];
                         setSelectedSize(sizes[0].value);
-                        const supported = ARCH_SUPPORTED_TASKS[value] || ["detect"];
+                        const supported = ARCH_SUPPORTED_TASKS[value] || ["segment"];
                         if (!supported.includes(selectedTask)) setSelectedTask(supported[0]);
                       }}
                       className={cn(
@@ -258,7 +258,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
               <div className="space-y-2">
                 <span className="block font-medium text-sm">Task</span>
                 <div className="flex gap-1.5 flex-wrap">
-                  {YOLO_TASKS.filter(t => (ARCH_SUPPORTED_TASKS[selectedYoloArch] || ["detect"]).includes(t.value)).map(({ value, label, desc }) => (
+                  {YOLO_TASKS.filter(t => (ARCH_SUPPORTED_TASKS[selectedYoloArch] || ["segment"]).includes(t.value)).map(({ value, label, desc }) => (
                     <button
                       key={value}
                       type="button"

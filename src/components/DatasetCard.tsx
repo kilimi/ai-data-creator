@@ -195,7 +195,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
       
       <CardContent className="p-4">
         <div className="space-y-1">
-          <Link to={`/projects/${dataset.project_id}/datasets/${dataset.id}`} className="block">
+          <Link to={dataset.project_id ? `/projects/${dataset.project_id}/datasets/${dataset.id}` : `/datasets/${dataset.id}`} className="block">
             <h3 className="font-medium line-clamp-1 hover:text-primary transition-colors">
               {dataset.name}
             </h3>

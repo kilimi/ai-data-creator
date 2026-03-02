@@ -4448,11 +4448,21 @@ export function AnnotationsContent({
             return timeB - timeA; // Newest first
           })
           .map((file, index) => {
+            const isBboxOnly = detectAnnotationType(file) === 'Segmentation (bbox)';
+            const isOther = detectAnnotationType(file) === 'Other';
+            const isUnsupportedFormat = isBboxOnly || isOther;
             return (
-              <div key={file.id} className="border border-border/60 rounded-lg overflow-hidden">
+              <div
+                key={file.id}
+                className={`border rounded-lg overflow-hidden ${
+                  isUnsupportedFormat
+                    ? 'border-yellow-500/50 bg-yellow-500/10 dark:bg-yellow-500/10'
+                    : 'border-border/60'
+                }`}
+              >
                 {/* Main annotation row */}
                 <div 
-                  className={`cursor-pointer p-4 hover:bg-accent/50 transition-colors ${selectedAnnotation === file.id ? 'bg-accent' : ''}`}
+                  className={`cursor-pointer p-4 hover:bg-accent/50 transition-colors ${selectedAnnotation === file.id ? 'bg-accent' : ''} ${isUnsupportedFormat ? 'hover:bg-yellow-500/20' : ''}`}
                   onClick={() => handleAnnotationClick(file.id)}
                 >
                    <div className="flex items-center justify-between">
@@ -4576,13 +4586,19 @@ export function AnnotationsContent({
                           <Badge 
                             variant="secondary" 
                             className={`text-xs capitalize ${
-                              detectAnnotationType(file) === 'Classification'
+                              isUnsupportedFormat
+                                ? 'cursor-default bg-yellow-500/25 text-yellow-800 dark:text-yellow-200 border-yellow-500/60'
+                                : detectAnnotationType(file) === 'Classification'
                                 ? 'cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors bg-primary/20 text-primary border-primary/50' 
                                 : detectAnnotationType(file).startsWith('Segmentation')
                                 ? 'cursor-pointer hover:bg-accent-foreground hover:text-accent transition-colors bg-accent text-accent-foreground border-accent'
-                                : 'bg-muted text-muted-foreground border-border' // Other
+                                : 'bg-muted text-muted-foreground border-border'
                             }`}
                             onClick={(e) => {
+                              if (isUnsupportedFormat) {
+                                e.stopPropagation();
+                                return;
+                              }
                               if (detectAnnotationType(file) === 'Classification') {
                                 handleEditClassificationAnnotation(file.id, e);
                               } else if (detectAnnotationType(file).startsWith('Segmentation')) {
@@ -4590,7 +4606,11 @@ export function AnnotationsContent({
                               }
                             }}
                             title={
-                              detectAnnotationType(file) === 'Classification'
+                              isBboxOnly
+                                ? 'Format not supported, missing masks'
+                                : isOther
+                                ? 'Format not supported'
+                                : detectAnnotationType(file) === 'Classification'
                                 ? 'Click to edit classification annotations'
                                 : detectAnnotationType(file).startsWith('Segmentation')
                                 ? 'Click to edit segmentation annotations'
@@ -4639,6 +4659,16 @@ export function AnnotationsContent({
                               }
                             })()}
                           </Badge>
+                          {isBboxOnly && (
+                            <span className="text-xs text-yellow-700 dark:text-yellow-300 ml-1" title="Edit segmentation is not supported for bbox-only annotations">
+                              Format not supported, missing masks
+                            </span>
+                          )}
+                          {isOther && (
+                            <span className="text-xs text-yellow-700 dark:text-yellow-300 ml-1" title="Edit is not supported for this annotation type">
+                              Format not supported
+                            </span>
+                          )}
                           {file.processing_status === 'processing' && (
                             <Badge
                               variant="secondary"
@@ -4809,6 +4839,26 @@ export function AnnotationsContent({
                              className="h-8 w-8 text-muted-foreground hover:text-primary"
                              onClick={(e) => handleEditClassificationAnnotation(file.id, e)}
                              title="Edit classification annotations"
+                           >
+                             <Edit className="h-4 w-4" />
+                           </Button>
+                         ) : isBboxOnly ? (
+                           <Button
+                             variant="ghost"
+                             size="icon"
+                             className="h-8 w-8 text-muted-foreground/50 cursor-not-allowed"
+                             disabled
+                             title="Format not supported, missing masks"
+                           >
+                             <Brush className="h-4 w-4" />
+                           </Button>
+                         ) : isOther ? (
+                           <Button
+                             variant="ghost"
+                             size="icon"
+                             className="h-8 w-8 text-muted-foreground/50 cursor-not-allowed"
+                             disabled
+                             title="Format not supported"
                            >
                              <Edit className="h-4 w-4" />
                            </Button>
