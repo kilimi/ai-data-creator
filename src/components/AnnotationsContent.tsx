@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown, LayoutGrid } from "lucide-react";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
@@ -260,6 +260,9 @@ export function AnnotationsContent({
   const { api } = useApi();
   const { toast } = useToast();
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [fiftyOneDialogOpen, setFiftyOneDialogOpen] = useState(false);
+  const [selectedForFiftyOne, setSelectedForFiftyOne] = useState<Set<string>>(new Set());
+  const [launchingFiftyOne, setLaunchingFiftyOne] = useState(false);
 
   // Smart annotation loading for current page
   const loadAnnotationsForCurrentPage = async (fileId: string, force = false, currentBboxState?: boolean) => {
@@ -908,6 +911,33 @@ export function AnnotationsContent({
         description: error instanceof Error ? error.message : "Failed to merge annotation files.",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleOpenFiftyOne = async () => {
+    if (selectedForFiftyOne.size === 0 || !api) return;
+    setLaunchingFiftyOne(true);
+    try {
+      const response = await api.viewAnnotationsInFiftyOne(id, Array.from(selectedForFiftyOne));
+      if (response.success && response.data) {
+        const msg = response.data.message ?? "FiftyOne is starting. Open the URL to view annotations as predictions.";
+        toast({ title: "FiftyOne", description: msg });
+        setFiftyOneDialogOpen(false);
+        setSelectedForFiftyOne(new Set());
+        if (response.data.url) {
+          window.open(response.data.url, "_blank");
+        }
+      } else {
+        throw new Error(response.error ?? "Failed to launch FiftyOne");
+      }
+    } catch (error) {
+      toast({
+        title: "FiftyOne failed",
+        description: error instanceof Error ? error.message : "Failed to open FiftyOne",
+        variant: "destructive",
+      });
+    } finally {
+      setLaunchingFiftyOne(false);
     }
   };
 
@@ -4377,6 +4407,18 @@ export function AnnotationsContent({
               </Button>
             </div>
           )}
+          {/* FiftyOne: open selected annotation files as predictions */}
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSelectedForFiftyOne(new Set());
+              setFiftyOneDialogOpen(true);
+            }}
+            disabled={filteredAnnotationFiles.length === 0}
+          >
+            <LayoutGrid className="w-4 h-4 mr-2" />
+            FiftyOne
+          </Button>
         </div>      </div>
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
@@ -5229,6 +5271,60 @@ export function AnnotationsContent({
         classStats={selectedAnnotationData?.classStats || []}
         onMerge={(sources, mergedName) => handleMergeClasses(selectedAnnotation!, sources, mergedName)}
       />
+
+      <Dialog open={fiftyOneDialogOpen} onOpenChange={setFiftyOneDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Open in FiftyOne</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground mb-3">
+            Select annotation files to view as predictions in FiftyOne. Each file will appear as a separate predictions field.
+          </p>
+          <ScrollArea className="max-h-[280px] rounded-md border p-2">
+            <div className="space-y-2">
+              {annotationFiles.map((file) => (
+                <label key={file.id} className="flex items-center gap-2 cursor-pointer hover:bg-muted/50 rounded p-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedForFiftyOne.has(file.id)}
+                    onChange={() => {
+                      setSelectedForFiftyOne((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(file.id)) next.delete(file.id);
+                        else next.add(file.id);
+                        return next;
+                      });
+                    }}
+                    className="rounded"
+                  />
+                  <span className="text-sm truncate">{file.name}</span>
+                </label>
+              ))}
+            </div>
+          </ScrollArea>
+          <div className="flex justify-end gap-2 mt-3">
+            <Button variant="outline" onClick={() => setFiftyOneDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleOpenFiftyOne}
+              disabled={selectedForFiftyOne.size === 0 || launchingFiftyOne}
+            >
+              {launchingFiftyOne ? (
+                <>
+                  <Loader className="w-4 h-4 mr-2 animate-spin" />
+                  Opening…
+                </>
+              ) : (
+                <>
+                  <LayoutGrid className="w-4 h-4 mr-2" />
+                  Open in FiftyOne
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       
       <AnnotationChoiceModal
         isOpen={showAnnotationChoiceModal}

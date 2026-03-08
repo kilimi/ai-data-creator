@@ -276,7 +276,6 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                   ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10' 
                   : ''
             }`}
-            disabled={loading}
             title={
               activeTaskCount > 0 
                 ? `${runningTaskCount > 0 ? `${runningTaskCount} running` : ''}${runningTaskCount > 0 && pendingTaskCount > 0 ? ', ' : ''}${pendingTaskCount > 0 ? `${pendingTaskCount} waiting` : ''}` 

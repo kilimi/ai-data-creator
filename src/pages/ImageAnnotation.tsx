@@ -1025,9 +1025,9 @@ const ImageAnnotation = () => {
                     const className = categoryIdToName[annotation.category_id.toString()];
                     
                     if (className && annotation.segmentation && annotation.segmentation.length > 0) {
-                      const segmentation = annotation.segmentation[0];
-                      
-                      if (segmentation && segmentation.length >= 6) {
+                      const raw = annotation.segmentation;
+                      const segmentation: number[] = Array.isArray(raw[0]) ? (raw[0] as number[]) : (raw as number[]);
+                      if (segmentation.length >= 6) {
                         const points: Point[] = [];
                         
                         // Detect if coordinates are abnormally large (backend conversion error)
@@ -1276,8 +1276,9 @@ const ImageAnnotation = () => {
               if (className) {
                 // Calculate area for segmentation annotations and validate
                 let isValid = true;
-                if (annotation.segmentation && annotation.segmentation[0]) {
-                  const segmentation = annotation.segmentation[0];
+                if (annotation.segmentation && annotation.segmentation.length > 0) {
+                  const raw = annotation.segmentation;
+                  const segmentation: number[] = Array.isArray(raw[0]) ? (raw[0] as number[]) : (raw as number[]);
                   if (segmentation.length >= 6) {
                     const imageDims = imageDimensions[annotation.image_id.toString()];
                     
@@ -1869,9 +1870,10 @@ const ImageAnnotation = () => {
             const className = categoryIdToName[categoryId.toString()];
             
             if (className && annotation.segmentation && annotation.segmentation.length > 0) {
-              const segmentation = annotation.segmentation[0];
-              
-              if (segmentation && segmentation.length >= 6) {
+              // COCO: segmentation is [[x1,y1,x2,y2,...]]; some exports use flat [x1,y1,x2,y2,...]
+              const raw = annotation.segmentation;
+              const segmentation: number[] = Array.isArray(raw[0]) ? (raw[0] as number[]) : (raw as number[]);
+              if (segmentation.length >= 6) {
                 const points: Point[] = [];
                 
                 // Detect and fix abnormally large coordinates
@@ -4249,12 +4251,13 @@ const ImageAnnotation = () => {
                     });
                     
                     cocoData.annotations?.forEach((annotation: any) => {
-                      if (annotation.image_id === imageEntry.id && annotation.segmentation && annotation.segmentation[0]) {
+                      if (annotation.image_id === imageEntry.id && annotation.segmentation && annotation.segmentation.length > 0) {
                         // Handle null category_id
                         if (annotation.category_id == null) {
                           return;
                         }
-                        const segmentation = annotation.segmentation[0];
+                        const raw = annotation.segmentation;
+                        const segmentation: number[] = Array.isArray(raw[0]) ? (raw[0] as number[]) : (raw as number[]);
                         if (segmentation.length >= 6) {
                           const points = [];
                           

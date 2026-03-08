@@ -33,10 +33,14 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 &
 # Upgrade pip
 RUN python -m pip install --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA support first (for better compatibility)
+# Install PyTorch built for CUDA 12.1 to match base image (nvidia/cuda:12.1.0).
+# Using the official cu121 index ensures matching CUDA ABI and GPU kernel support.
+# (Plain "pip install torch" can pull a CPU or wrong-CUDA wheel and cause
+#  "no kernel image is available for execution on the device".)
 RUN pip install --no-cache-dir \
-    torch==2.9.1 \
-    torchvision==0.24.1 
+    torch==2.5.1 \
+    torchvision==0.20.1 \
+    --index-url https://download.pytorch.org/whl/cu121 
 
 # Install essential scientific packages
 RUN pip install --no-cache-dir \
@@ -44,9 +48,11 @@ RUN pip install --no-cache-dir \
     pillow>=9.0.0 \
     scipy>=1.10.0
 
-# Copy requirements and install dependencies
+# Copy requirements and install dependencies (use cu121 index so torch/torchvision
+# are not replaced by CPU builds from PyPI)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    --extra-index-url https://download.pytorch.org/whl/cu121
 
 # Install ultralytics with all dependencies
 RUN pip install --no-cache-dir ultralytics>=8.0.0

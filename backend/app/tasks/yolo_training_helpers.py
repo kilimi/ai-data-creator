@@ -277,12 +277,23 @@ def build_yolo_training_args(
     
     logger.info(f"Using data.yaml path: {yaml_path} (exists: {Path(yaml_path).exists()})")
     
+    device = training_config.get('device', '0')
+    try:
+        import torch
+        if device != 'cpu' and not torch.cuda.is_available():
+            device = 'cpu'
+            logger.warning(
+                "CUDA not available (e.g. CUDA_VISIBLE_DEVICES is empty or PyTorch has no GPU). "
+                "Using device='cpu'. Set CUDA_VISIBLE_DEVICES=0 in the celery_worker environment if you expect a GPU."
+            )
+    except Exception:
+        pass
     train_args = {
         'data': yaml_path,  # Use absolute path
         'epochs': training_config.get('epochs', 100),
         'batch': training_config.get('batch_size', 16),
         'imgsz': training_config.get('image_size', 640),
-        'device': training_config.get('device', '0'),
+        'device': device,
         'patience': training_config.get('patience', 50),
         'optimizer': training_config.get('optimizer', 'auto'),
         'lr0': training_config.get('learning_rate', 0.01),

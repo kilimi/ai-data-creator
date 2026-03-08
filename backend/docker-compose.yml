@@ -16,6 +16,7 @@ services:
       - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017
       - FIFTYONE_DEFAULT_APP_PORT=5151
       - FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0
+      - NVIDIA_VISIBLE_DEVICES=all
     ports:
       - "9999:8000"
       - "5151:5151"  # FiftyOne UI
@@ -41,13 +42,19 @@ services:
         reservations:
           memory: 1G
           cpus: "1.0"
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    runtime: nvidia
 
   # Celery Worker for Training Tasks with GPU support
   celery_worker:
     build:
       context: .
       dockerfile: Dockerfile.training
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo
+    # Always set CUDA_VISIBLE_DEVICES=0 so PyTorch sees the first GPU (GTX 1070 etc). Empty/unset would hide the GPU.
+    command: sh -c "export CUDA_VISIBLE_DEVICES=0; exec celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo"
     volumes:
       - .:/app
       - ./projects:/app/projects
@@ -57,6 +64,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - REDIS_URL=redis://redis:6379/0
+      # Expose GPU to the container; use first GPU. Do not set CUDA_VISIBLE_DEVICES to empty or PyTorch will see no GPU.
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
     depends_on:

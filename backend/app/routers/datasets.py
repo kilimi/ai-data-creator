@@ -6,6 +6,12 @@ import json
 import base64
 from pathlib import Path
 import os
+import re
+import base64
+import tempfile
+import subprocess
+import time
+import logging
 from datetime import datetime
 import asyncio
 import shutil
@@ -25,6 +31,10 @@ router = APIRouter()
 class MergeAnnotationFilesRequest(BaseModel):
     annotation_file_ids: List[str]
     merged_filename: Optional[str] = None
+
+
+class ViewFiftyOneRequest(BaseModel):
+    annotation_file_ids: List[str]
 
 
 def _create_thumbnail(image_data: bytes, mime_type: str, max_size: tuple = (200, 200)) -> str:
@@ -811,6 +821,152 @@ async def upload_images(
         }
     except Exception as e:
         db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/datasets/{dataset_id}/video-extract")
+async def extract_frames_from_video(
+    request: Request,
+    dataset_id: int,
+    video: UploadFile = File(...),
+    interval_seconds: float = Form(1.0),
+    max_frames: int = Form(0),
+    db: Session = Depends(get_db)
+):
+    """Upload a video file; extract frames at the given interval and add them as images to the dataset."""
+    try:
+        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        # Validate video type
+        name = (video.filename or "").lower()
+        if not any(name.endswith(ext) for ext in (".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v", ".wmv")):
+            raise HTTPException(status_code=400, detail="Invalid video file. Supported: MP4, AVI, MOV, MKV, WebM, M4V, WMV")
+
+        if interval_seconds <= 0:
+            raise HTTPException(status_code=400, detail="interval_seconds must be positive")
+        if max_frames < 0:
+            raise HTTPException(status_code=400, detail="max_frames must be >= 0")
+
+        base_url = str(request.base_url).rstrip("/")
+        project_id = dataset.project_id
+        dataset_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+
+        default_collection = db.query(models.ImageCollection).filter(
+            models.ImageCollection.dataset_id == dataset_id,
+            models.ImageCollection.is_default == True
+        ).first()
+        if not default_collection:
+            default_collection = models.ImageCollection(
+                dataset_id=dataset_id,
+                name="RGB Images",
+                description="Default image collection",
+                is_default=True
+            )
+            db.add(default_collection)
+            db.flush()
+
+        contents = await video.read()
+        video_base = os.path.splitext(os.path.basename(video.filename or "video"))[0]
+        temp_video = dataset_dir / f"_temp_{uuid.uuid4().hex[:12]}_{os.path.basename(video.filename or 'video')}"
+        try:
+            with open(temp_video, "wb") as f:
+                f.write(contents)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save video: {e}")
+
+        cap = cv2.VideoCapture(str(temp_video))
+        if not cap.isOpened():
+            if temp_video.exists():
+                temp_video.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail="Could not open video file")
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        frame_interval = max(1, int(round(fps * interval_seconds)))
+        frame_idx = 0
+        extracted = 0
+        uploaded_images = []
+
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if max_frames > 0 and extracted >= max_frames:
+                    break
+                if frame_idx % frame_interval != 0:
+                    frame_idx += 1
+                    continue
+                extracted += 1
+                height, width = frame.shape[:2]
+                final_filename = f"{video_base}_frame_{extracted:06d}.png"
+                file_path = dataset_dir / final_filename
+                counter = 1
+                while file_path.exists():
+                    final_filename = f"{video_base}_frame_{extracted:06d}_{counter}.png"
+                    file_path = dataset_dir / final_filename
+                    counter += 1
+                success = cv2.imwrite(str(file_path), frame)
+                if not success:
+                    continue
+                contents_png = file_path.read_bytes()
+                relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{final_filename}"
+                db_image = models.Image(
+                    dataset_id=dataset_id,
+                    collection_id=default_collection.id,
+                    file_name=final_filename,
+                    file_size=len(contents_png),
+                    width=int(width),
+                    height=int(height),
+                    url=relative_url,
+                    thumbnail_url=relative_url,
+                    annotations_count=0
+                )
+                db.add(db_image)
+                uploaded_images.append(db_image)
+                frame_idx += 1
+        finally:
+            cap.release()
+            if temp_video.exists():
+                temp_video.unlink(missing_ok=True)
+
+        current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
+        dataset.image_count = current_image_count + len(uploaded_images)
+        db.commit()
+        _set_random_image_as_logo(dataset, db, base_url)
+
+        response_images = []
+        for img in uploaded_images:
+            url = f"{base_url}{img.url}" if img.url.startswith("/") else img.url
+            thumbnail_url = f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url.startswith("/") else img.thumbnail_url
+            response_images.append({
+                "id": str(img.id),
+                "datasetId": str(dataset_id),
+                "fileName": img.file_name,
+                "fileSize": img.file_size,
+                "width": img.width,
+                "height": img.height,
+                "url": url,
+                "thumbnailUrl": thumbnail_url,
+                "uploadedAt": img.uploaded_at.isoformat(),
+                "annotationsCount": img.annotations_count
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "uploaded": len(uploaded_images),
+                "overwritten": 0,
+                "images": response_images
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        if db:
+            db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1705,10 +1861,15 @@ async def get_dataset_annotation_content(
                         "category_id": category_id_map.get(ann["className"], 1)
                     }
 
-                    # Handle segmentation - coordinates are already stored as pixels
-                    if ann.get("segmentation") and isinstance(ann["segmentation"], list):
-                        # Segmentation is already in pixel coordinates, use directly
-                        coco_ann["segmentation"] = ann["segmentation"]
+                    # Handle segmentation - coordinates are already stored as pixels.
+                    # COCO format expects list of polygons [[x1,y1,x2,y2,...]]; normalize if stored as flat [x1,y1,...].
+                    seg_raw = ann.get("segmentation")
+                    if seg_raw and isinstance(seg_raw, list) and len(seg_raw) >= 6:
+                        first = seg_raw[0]
+                        if isinstance(first, (int, float)):
+                            coco_ann["segmentation"] = [seg_raw]
+                        else:
+                            coco_ann["segmentation"] = seg_raw
 
                     # Handle bbox - coordinates are stored as pixels, use directly
                     if ann.get("bbox") and len(ann["bbox"]) == 4:
@@ -2884,3 +3045,175 @@ async def merge_annotation_files(
     except Exception as e:
         print(f"Error in merge_annotation_files: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start merge task: {str(e)}")
+
+
+def _sanitize_fiftyone_field_name(name: str) -> str:
+    """Sanitize annotation file name for use as FiftyOne field name."""
+    base = os.path.splitext(name)[0] if name else "annotations"
+    base = re.sub(r"[^a-zA-Z0-9_]", "_", base)
+    return f"predictions_{base}" if base else "predictions"
+
+
+@router.post("/datasets/{dataset_id}/annotations/view-fiftyone")
+async def view_annotations_in_fiftyone(
+    dataset_id: int,
+    body: ViewFiftyOneRequest,
+    db: Session = Depends(get_db)
+):
+    """Open selected annotation files in FiftyOne, shown as predictions (one field per file)."""
+    logger = logging.getLogger(__name__)
+    if not body.annotation_file_ids:
+        raise HTTPException(status_code=400, detail="Select at least one annotation file")
+
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    project_id = dataset.project_id or 0
+    images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
+    if not images:
+        raise HTTPException(status_code=400, detail="No images in dataset")
+
+    image_dict = {str(img.id): {"file_name": img.file_name, "width": img.width or 1, "height": img.height or 1} for img in images}
+
+    # Per annotation file: field_name -> { image_id -> [ {label, bbox, confidence} ] }
+    predictions_by_field = {}
+
+    for af_id in body.annotation_file_ids:
+        af = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == af_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        if not af:
+            continue
+        field_name = _sanitize_fiftyone_field_name(af.name or af_id[:8])
+        annotations = db.query(models.Annotation).filter(
+            models.Annotation.annotation_file_id == af_id,
+            models.Annotation.dataset_id == dataset_id
+        ).all()
+
+        by_image = {}
+        for ann in annotations:
+            img_id = str(ann.image_id)
+            if img_id not in image_dict:
+                continue
+            w = image_dict[img_id]["width"]
+            h = image_dict[img_id]["height"]
+            if w <= 0 or h <= 0:
+                w, h = 1, 1
+            x, y, ww, hh = None, None, None, None
+            if ann.bbox_x is not None and ann.bbox_y is not None and ann.bbox_width is not None and ann.bbox_height is not None:
+                x, y, ww, hh = ann.bbox_x, ann.bbox_y, ann.bbox_width, ann.bbox_height
+            elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+                x, y, ww, hh = ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]
+            if x is None:
+                continue
+            label = ann.category or "unknown"
+            conf = float(ann.confidence) if ann.confidence is not None else 1.0
+            bbox_norm = [x / w, y / h, ww / w, hh / h]
+            if img_id not in by_image:
+                by_image[img_id] = []
+            by_image[img_id].append({"label": label, "bbox": bbox_norm, "confidence": conf})
+
+        predictions_by_field[field_name] = by_image
+
+    if not predictions_by_field:
+        raise HTTPException(status_code=400, detail="No valid annotation files or annotations found")
+
+    image_dict_b64 = base64.b64encode(json.dumps(image_dict).encode()).decode()
+    predictions_b64 = base64.b64encode(json.dumps(predictions_by_field).encode()).decode()
+
+    # Build script: one predictions field per annotation file (inside the image loop)
+    field_blocks = []
+    for fn in predictions_by_field:
+        # Escape single quotes in field name for Python string
+        fn_esc = fn.replace("\\", "\\\\").replace("'", "\\'")
+        field_blocks.append(f"    if '{fn_esc}' in predictions_by_field:")
+        field_blocks.append(f"        by_img = predictions_by_field['{fn_esc}']")
+        field_blocks.append("        if img_id in by_img:")
+        field_blocks.append("            detections = []")
+        field_blocks.append("            for pred in by_img[img_id]:")
+        field_blocks.append("                d = fo.Detection(")
+        field_blocks.append("                    label=pred['label'],")
+        field_blocks.append("                    bounding_box=pred['bbox'],")
+        field_blocks.append("                    confidence=pred['confidence'])")
+        field_blocks.append("                detections.append(d)")
+        field_blocks.append(f"            sample['{fn_esc}'] = fo.Detections(detections=detections)")
+
+    script_content = f"""
+import fiftyone as fo
+import json
+from pathlib import Path
+
+dataset_name = "annotations_ds_{dataset_id}"
+if dataset_name in fo.list_datasets():
+    fo.delete_dataset(dataset_name)
+dataset = fo.Dataset(dataset_name)
+dataset.persistent = False
+
+import base64 as _b64
+image_dict = json.loads(_b64.b64decode('''{image_dict_b64}''').decode())
+predictions_by_field = json.loads(_b64.b64decode('''{predictions_b64}''').decode())
+
+# Resolve projects root (works when CWD is /app in Docker or project root locally)
+_projects_root = Path("projects")
+if not _projects_root.exists():
+    _projects_root = Path("/app/projects")
+_data_root = Path("data")
+
+samples = []
+for img_id, img_info in image_dict.items():
+    img_path = _projects_root / "{project_id}" / "{dataset_id}" / "images" / img_info['file_name']
+    if not img_path.exists():
+        img_path = _data_root / "images" / "{dataset_id}" / img_info['file_name']
+    if not img_path.exists():
+        continue
+    sample = fo.Sample(filepath=str(img_path))
+"""
+    script_content += "\n".join(field_blocks)
+    script_content += """
+    samples.append(sample)
+
+dataset.add_samples(samples)
+print(f"Loaded {len(samples)} samples, {len(predictions_by_field)} prediction fields")
+
+import signal, sys
+def _h(sig, frame): sys.exit(0)
+signal.signal(signal.SIGINT, _h)
+signal.signal(signal.SIGTERM, _h)
+print('Launching FiftyOne app on port 5151...')
+session = fo.launch_app(dataset, port=5151, address="0.0.0.0")
+session.wait(-1)
+"""
+
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(script_content)
+            script_path = f.name
+        process = subprocess.Popen(
+            ["python", script_path],
+            stdout=open("/tmp/fiftyone_stdout.log", "w"),
+            stderr=open("/tmp/fiftyone_stderr.log", "w"),
+            env={**os.environ, "FIFTYONE_DEFAULT_APP_PORT": "5151", "FIFTYONE_DEFAULT_APP_ADDRESS": "0.0.0.0"},
+            start_new_session=True,
+        )
+        time.sleep(2)
+        if process.poll() is not None:
+            try:
+                with open("/tmp/fiftyone_stderr.log") as ef:
+                    err = ef.read()
+                raise HTTPException(status_code=500, detail=f"FiftyOne failed: {err[:500]}")
+            except FileNotFoundError:
+                raise HTTPException(status_code=500, detail="FiftyOne failed to start")
+        return {
+            "success": True,
+            "data": {
+                "message": "FiftyOne is starting. Open http://localhost:5151 to view annotations as predictions.",
+                "url": "http://localhost:5151",
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("view_annotations_in_fiftyone")
+        raise HTTPException(status_code=500, detail=str(e))

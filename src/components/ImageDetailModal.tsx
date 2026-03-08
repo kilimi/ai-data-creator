@@ -2,7 +2,7 @@
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, Download } from "lucide-react";
 import { AnnotationSample } from "@/utils/annotations";
 import { useState, useEffect } from "react";
 import { ImageZoomControls } from "@/components/ImageZoomControls";
@@ -227,6 +227,24 @@ export function ImageDetailModal({
     }
   };
 
+  const handleDownload = async () => {
+    if (!image?.url) return;
+    try {
+      const res = await fetch(image.url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch image");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = image.fileName ?? "image";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback: open in new tab so user can save manually
+      window.open(image.url, "_blank", "noopener,noreferrer");
+    }
+  };
+
   console.log('ImageDetailModal: Rendering with annotations:', {
     imageId: image.id,
     annotationsCount: annotations.length,
@@ -299,19 +317,31 @@ export function ImageDetailModal({
           </div>
           <div className="flex justify-between items-center pt-2">
             <ImageAnnotationDisplay annotations={annotationsWithFileName} />
-            {onDelete && (
+            <div className="flex items-center gap-2">
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
-                onClick={() => {
-                  onDelete(image.id);
-                  onClose();
-                }}
+                onClick={handleDownload}
+                disabled={!image?.url}
+                className="inline-flex items-center"
               >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Image
+                <Download className="mr-2 h-4 w-4" />
+                Download
               </Button>
-            )}
+              {onDelete && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    onDelete(image.id);
+                    onClose();
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete Image
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </DialogContent>

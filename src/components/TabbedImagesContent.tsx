@@ -1,6 +1,12 @@
 import { Link } from "react-router-dom";
-import { Pencil, Upload, Plus, X, FolderOpen, Search } from "lucide-react";
+import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -28,6 +34,7 @@ interface TabbedImagesContentProps {
   onUploadImages: (tabId: string, files: File[]) => Promise<void>;
   onAddTab: (tabName: string) => void;
   onRemoveTab: (tabId: string) => void;
+  onOpenVideoUploadDialog?: () => void;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
   selectedImageIndex: number | null;
@@ -55,6 +62,7 @@ export function TabbedImagesContent({
   onUploadImages,
   onAddTab,
   onRemoveTab,
+  onOpenVideoUploadDialog,
   annotations = [],
   annotationFiles = [],
   selectedImageIndex,
@@ -277,13 +285,27 @@ export function TabbedImagesContent({
                         {collection.images.length} {collection.images.length === 1 ? 'image' : 'images'}
                       </span>
                     </div>
-                    <Button 
-                      onClick={() => handleUploadClick(collection.id)}
-                      className="gap-2"
-                    >
-                      <Upload className="w-4 h-4" />
-                      Upload Images
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button className="gap-2">
+                          <Upload className="w-4 h-4" />
+                          Upload
+                          <ChevronDown className="w-4 h-4 opacity-70" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleUploadClick(collection.id)} className="gap-2">
+                          <ImageIcon className="w-4 h-4" />
+                          Upload Images
+                        </DropdownMenuItem>
+                        {onOpenVideoUploadDialog && (
+                          <DropdownMenuItem onClick={onOpenVideoUploadDialog} className="gap-2">
+                            <Video className="w-4 h-4" />
+                            Upload Video
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
 
@@ -335,6 +357,7 @@ export function TabbedImagesContent({
                           images={filteredImages}
                           imageSize={imageSize}
                           onOpenUploadDialog={() => handleUploadClick(collection.id)}
+                          onOpenVideoUploadDialog={onOpenVideoUploadDialog}
                           onDeleteImage={(imageId) => onDeleteImage(collection.id, imageId)}
                           onImageClick={handleImageClick}
                           annotations={annotationsWithFileName}

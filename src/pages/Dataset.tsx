@@ -5,6 +5,7 @@ import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
 import { Dataset as DatasetType, Image, ImageCollection } from "@/types";
 import { ImageUploadDialog } from "@/components/ImageUploadDialog";
+import { VideoUploadDialog } from "@/components/VideoUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
@@ -28,14 +29,19 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+// Session cache: once we've loaded a dataset id, don't show full-page loading again for it (avoids "Loading dataset" when component remounts during auto-annotate, etc.)
+const loadedDatasetIds = new Set<string>();
+
 export default function Dataset() {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
   const { api } = useApi();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [dataset, setDataset] = useState<DatasetType | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => (id ? !loadedDatasetIds.has(id) : true));
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isVideoUploadDialogOpen, setIsVideoUploadDialogOpen] = useState(false);
+  const [isVideoUploading, setIsVideoUploading] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
@@ -64,30 +70,39 @@ export default function Dataset() {
   const datasetId = id || '';
   const { settings, isLoaded: settingsLoaded, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(datasetId);
   
-  // Load image collections from database
+  // Load image collections from database (use same API client as rest of app so base URL is consistent)
   const loadImageCollections = async (): Promise<void> => {
     if (!datasetId) return;
-    
+    if (!api) return;
+
     try {
-      const backendCollections = await imageCollectionsApi.getImageCollections(datasetId);
-      
+      let backendCollections: ImageCollectionData[];
+      const response = await api.getImageCollections(datasetId);
+      if (response.success && response.data) {
+        backendCollections = response.data as ImageCollectionData[];
+      } else {
+        throw new Error(response.error || 'Failed to fetch image collections');
+      }
+
       // Convert to frontend format
-      const frontendCollections = backendCollections.map(collection => 
+      const frontendCollections = backendCollections.map(collection =>
         convertToFrontendImageCollection(collection, settings.imagesPerPage)
       );
-      
-      console.log('Loaded image collections:', frontendCollections);
+
       setImageCollections(frontendCollections);
-      
-      // If no collections exist, initialize default collection
+
+      // If no collections exist, initialize default collection then reload
       if (backendCollections.length === 0) {
         await imageCollectionsApi.initializeDefaultCollection(datasetId);
-        // Reload collections after initialization
-        const newCollections = await imageCollectionsApi.getImageCollections(datasetId);
-        const newFrontendCollections = newCollections.map(collection => 
-          convertToFrontendImageCollection(collection, settings.imagesPerPage)
-        );
-        setImageCollections(newFrontendCollections);
+        const reloadResponse = await api.getImageCollections(datasetId);
+        if (reloadResponse.success && reloadResponse.data) {
+          const newCollections = reloadResponse.data as ImageCollectionData[];
+          setImageCollections(
+            newCollections.map((c) =>
+              convertToFrontendImageCollection(c, settings.imagesPerPage)
+            )
+          );
+        }
       }
     } catch (error) {
       console.error('Error loading image collections:', error);
@@ -154,12 +169,12 @@ export default function Dataset() {
     };
   };
 
-  // Initialize collections when dataset is loaded (even if empty)
+  // Initialize collections when dataset is loaded and api is available
   useEffect(() => {
-    if (settingsLoaded && dataset) {
+    if (settingsLoaded && dataset && api) {
       loadImageCollections();
     }
-  }, [dataset, settingsLoaded]);
+  }, [dataset, settingsLoaded, api]);
 
   // Update collections pagination when settings change
   useEffect(() => {
@@ -334,10 +349,17 @@ export default function Dataset() {
   };
 
   const fetchDataset = async () => {
-    if (!id || !api) return;
+    if (!id || !api) {
+      setIsLoading(false);
+      return;
+    }
 
+    const isInitialLoad = dataset === null || (dataset != null && String(dataset.id) !== String(id));
+    const alreadyLoadedThisSession = loadedDatasetIds.has(id);
     try {
-      setIsLoading(true);
+      if (isInitialLoad && !alreadyLoadedThisSession) {
+        setIsLoading(true);
+      }
       const response = await api.getDataset(id);
       if (response.success && response.data) {
         const data = response.data;
@@ -346,6 +368,7 @@ export default function Dataset() {
           navigate(`/projects/${data.project_id}/datasets/${id}`, { replace: true });
           return;
         }
+        loadedDatasetIds.add(id);
         setDataset(data);
         
         // If dataset has project_id, fetch the project name
@@ -380,9 +403,10 @@ export default function Dataset() {
     }
   };
 
+  // Refetch when route params or api change — include api so we refetch when api becomes available (useApi starts with null)
   useEffect(() => {
     fetchDataset();
-  }, [id, projectId, api, toast]);
+  }, [id, projectId, api]);
 
   // Re-evaluate annotations when images change (fixes issue when annotations are uploaded before images)
   useEffect(() => {
@@ -595,6 +619,43 @@ export default function Dataset() {
       setIsUploadDialogOpen(false);
     }
   };
+
+  const handleVideoUpload = async (
+    file: File,
+    params: { interval_seconds: number; max_frames: number }
+  ) => {
+    if (!api || !id) return;
+    setIsVideoUploading(true);
+    try {
+      const response = await api.uploadVideoExtract(id, file, params);
+      if (response.success && response.data) {
+        const data = response.data as { uploaded?: number; images?: any[] };
+        const uploaded = data.uploaded ?? (data as any).images?.length ?? 0;
+        await loadImageCollections();
+        const imagesResponse = await api.getImages(id);
+        if (imagesResponse.success && imagesResponse.data) {
+          setImages(imagesResponse.data);
+        }
+        toast({
+          title: "Video upload complete",
+          description: `Extracted and uploaded ${uploaded} frame(s) from the video.`,
+        });
+        setIsVideoUploadDialogOpen(false);
+      } else {
+        throw new Error((response as any).error || "Video upload failed");
+      }
+    } catch (error) {
+      console.error("Video upload error:", error);
+      toast({
+        title: "Video upload failed",
+        description: error instanceof Error ? error.message : "Failed to extract frames from video",
+        variant: "destructive",
+      });
+    } finally {
+      setIsVideoUploading(false);
+    }
+  };
+
   const handleDeleteImage = async (imageId: string) => {
     if (!id) return;
     
@@ -962,6 +1023,7 @@ export default function Dataset() {
                 onSliderPositionChange={updateSliderPosition}
                 onPageChange={setCurrentPage}
                 onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+                onOpenVideoUploadDialog={() => setIsVideoUploadDialogOpen(true)}
                 onDeleteImage={handleDeleteImage}
                 paginatedImages={paginatedImages}
                 totalPages={totalPages}
@@ -984,6 +1046,12 @@ export default function Dataset() {
           open={isUploadDialogOpen}
           onOpenChange={setIsUploadDialogOpen}
           onFilesSelected={handleUploadImages}
+        />
+        <VideoUploadDialog
+          open={isVideoUploadDialogOpen}
+          onOpenChange={setIsVideoUploadDialogOpen}
+          onSubmit={handleVideoUpload}
+          isUploading={isVideoUploading}
         />
         {dataset && (
           <EditDatasetDialog

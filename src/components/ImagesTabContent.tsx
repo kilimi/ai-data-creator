@@ -1,6 +1,12 @@
 import { Link } from "react-router-dom";
-import { Pencil, Upload } from "lucide-react";
+import { Pencil, Upload, Video, ChevronDown, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Image } from "@/types";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
@@ -21,6 +27,7 @@ interface ImagesTabContentProps {
   onImageSizeChange: (value: number[]) => void;
   onPageChange: (page: number) => void;
   onOpenUploadDialog: () => void;
+  onOpenVideoUploadDialog?: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onImageClick?: (image: Image) => void;
   paginatedImages: Image[];
@@ -50,6 +57,7 @@ export function ImagesTabContent({
   onImageSizeChange,
   onPageChange,
   onOpenUploadDialog,
+  onOpenVideoUploadDialog,
   onDeleteImage,
   paginatedImages,
   totalPages,
@@ -156,10 +164,27 @@ export function ImagesTabContent({
             <Pencil className="w-4 h-4 mr-2" />
             Annotate
           </Button>
-          <Button onClick={onOpenUploadDialog} className="bg-blue-600 hover:bg-blue-700">
-            <Upload className="w-4 h-4 mr-2" />
-            Upload Images
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button className="bg-blue-600 hover:bg-blue-700 gap-2">
+                <Upload className="w-4 h-4" />
+                Upload
+                <ChevronDown className="w-4 h-4 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onOpenUploadDialog} className="gap-2">
+                <ImageIcon className="w-4 h-4" />
+                Upload Images
+              </DropdownMenuItem>
+              {onOpenVideoUploadDialog && (
+                <DropdownMenuItem onClick={onOpenVideoUploadDialog} className="gap-2">
+                  <Video className="w-4 h-4" />
+                  Upload Video
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -180,6 +205,7 @@ export function ImagesTabContent({
             images={paginatedImages}
             imageSize={imageSize}
             onOpenUploadDialog={onOpenUploadDialog}
+            onOpenVideoUploadDialog={onOpenVideoUploadDialog}
             onDeleteImage={onDeleteImage}
             onImageClick={handleImageClick}
             annotations={annotationsWithFileName}

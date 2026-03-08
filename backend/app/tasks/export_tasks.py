@@ -20,6 +20,32 @@ from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 
+# Directory where pre-downloaded Ultralytics models are stored (populated at Docker build)
+PRETRAINED_MODELS_DIR = Path("/app/models")
+
+def _pretrained_model_path(model_name: str) -> Path | None:
+    """Resolve foundation model name to path under PRETRAINED_MODELS_DIR if it exists."""
+    name = model_name.strip().lower().replace(".pt", "")
+    for candidate in [f"{name}.pt", f"{model_name}.pt"]:
+        path = PRETRAINED_MODELS_DIR / candidate
+        if path.exists():
+            return path
+    return None
+
+# COCO 80 class names for foundation (pre-trained) model exports
+COCO_CLASSES = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+    "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+    "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+    "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+    "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+    "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake",
+    "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop",
+    "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+]
+
 # Database setup for Celery workers
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db/lai_db')
 engine = create_engine(DATABASE_URL)
@@ -44,7 +70,15 @@ def preprocess_image(image_path, target_size=(640, 640)):
         raise ValueError(f"Could not read image from {{image_path}}")
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     original_shape = img_rgb.shape[:2]  # (height, width)
-    
+    try:
+        tw = int(target_size[0]) if target_size[0] is not None else 640
+    except (TypeError, ValueError):
+        tw = 640
+    try:
+        th = int(target_size[1]) if target_size[1] is not None else 640
+    except (TypeError, ValueError):
+        th = 640
+    target_size = (tw, th)
     # Resize maintaining aspect ratio
     scale = min(target_size[0] / original_shape[1], target_size[1] / original_shape[0])
     new_width = int(original_shape[1] * scale)
@@ -80,39 +114,45 @@ def postprocess_yolo_output(output, original_shape, scale, conf_threshold=0.25, 
     num_detections = output.shape[0]
     num_features = output.shape[1]
     
-    if num_features < 5 or num_detections == 0:
+    if num_features < 4 or num_detections == 0:
         return predictions
     
-    # Extract boxes and confidence
+    # Extract boxes (first 4 values)
     boxes = output[:, :4]
-    raw_confidence = output[:, 4]
-    
-    # Determine number of classes
-    num_classes = len(class_names) if class_names else (num_features - 5)
-    if num_features > 5 + num_classes:
-        num_classes = num_features - 5
-    
-    # Extract class scores
-    class_scores = output[:, 5:5 + num_classes]
+    # Ultralytics YOLOv8/v11/v26: [bbox(4), class_scores(N)] - no objectness, confidence = max(class_scores)
+    # Legacy: [bbox(4), objectness(1), class_scores(N)]
+    num_expected = len(class_names) if class_names else None
+    has_objectness = True
+    if num_expected is not None:
+        if num_features == 4 + num_expected:
+            has_objectness = False
+        # else 5 + num_expected -> has_objectness stays True
+    num_classes = (num_features - 4) if not has_objectness else (num_features - 5)
+    if not has_objectness:
+        class_scores = output[:, 4:4 + num_classes]
+        raw_confidence = np.max(class_scores, axis=1)
+    else:
+        class_scores = output[:, 5:5 + num_classes]
+        raw_confidence = output[:, 4]
     
     # Apply softmax if needed
     if np.any(class_scores < 0) or np.any(class_scores > 1.5):
         exp_scores = np.exp(class_scores - np.max(class_scores, axis=1, keepdims=True))
         class_scores = exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
     
-    # Get class with highest score
     if class_scores.shape[1] > len(class_names) and class_names:
         class_scores = class_scores[:, :len(class_names)]
     
     class_ids = np.argmax(class_scores, axis=1)
-    
-    # Apply sigmoid to confidence if needed
-    if np.any(raw_confidence < 0) or np.any(raw_confidence > 1.5):
-        final_confidences = 1.0 / (1.0 + np.exp(-raw_confidence))
+    class_confidences = np.max(class_scores, axis=1)
+    if not has_objectness:
+        final_confidences = np.clip(class_confidences, 0.0, 1.0)
     else:
-        final_confidences = raw_confidence.copy()
-    
-    final_confidences = np.clip(final_confidences, 0.0, 1.0)
+        if np.any(raw_confidence < 0) or np.any(raw_confidence > 1.5):
+            final_confidences = 1.0 / (1.0 + np.exp(-raw_confidence))
+        else:
+            final_confidences = raw_confidence.copy()
+        final_confidences = np.clip(final_confidences, 0.0, 1.0)
     
     # Filter by confidence
     valid_indices = final_confidences > conf_threshold
@@ -123,26 +163,38 @@ def postprocess_yolo_output(output, original_shape, scale, conf_threshold=0.25, 
     final_confidences = final_confidences[valid_indices]
     class_ids = class_ids[valid_indices]
     
-    # Convert coordinates
+    # Convert coordinates: Ultralytics may output xyxy (x1,y1,x2,y2) or xywh (center, center, w, h)
     is_normalized = np.max(boxes) <= 1.0 and np.min(boxes) >= 0.0
     model_input_size = 640
-    
-    if is_normalized:
-        x_center = boxes[:, 0] * model_input_size
-        y_center = boxes[:, 1] * model_input_size
-        width = boxes[:, 2] * model_input_size
-        height = boxes[:, 3] * model_input_size
+    use_xyxy = False
+    if not has_objectness and len(boxes) > 0:
+        xyxy_like = np.mean((boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1]))
+        if xyxy_like > 0.5:
+            use_xyxy = True
+    if use_xyxy:
+        x1_norm, y1_norm = boxes[:, 0], boxes[:, 1]
+        x2_norm, y2_norm = boxes[:, 2], boxes[:, 3]
+        if is_normalized:
+            x1_model = x1_norm * model_input_size
+            y1_model = y1_norm * model_input_size
+            x2_model = x2_norm * model_input_size
+            y2_model = y2_norm * model_input_size
+        else:
+            x1_model, y1_model = x1_norm, y1_norm
+            x2_model, y2_model = x2_norm, y2_norm
     else:
-        x_center = boxes[:, 0]
-        y_center = boxes[:, 1]
-        width = boxes[:, 2]
-        height = boxes[:, 3]
-    
-    # Convert to xyxy
-    x1_model = x_center - width / 2
-    y1_model = y_center - height / 2
-    x2_model = x_center + width / 2
-    y2_model = y_center + height / 2
+        if is_normalized:
+            x_center = boxes[:, 0] * model_input_size
+            y_center = boxes[:, 1] * model_input_size
+            width = boxes[:, 2] * model_input_size
+            height = boxes[:, 3] * model_input_size
+        else:
+            x_center, y_center = boxes[:, 0], boxes[:, 1]
+            width, height = boxes[:, 2], boxes[:, 3]
+        x1_model = x_center - width / 2
+        y1_model = y_center - height / 2
+        x2_model = x_center + width / 2
+        y2_model = y_center + height / 2
     
     # Scale to original image
     if resized_size:
@@ -202,10 +254,18 @@ if __name__ == '__main__':
     # Load ONNX model
     session = ort.InferenceSession(onnx_path)
     
-    # Get input shape
+    # Get input shape (ONNX may return dynamic dims as strings; coerce to int)
     input_name = session.get_inputs()[0].name
     input_shape = session.get_inputs()[0].shape
-    target_size = (input_shape[3], input_shape[2]) if len(input_shape) == 4 else (640, 640)
+    def _dim(d):
+        try:
+            return int(d) if d is not None else 640
+        except (TypeError, ValueError):
+            return 640
+    if len(input_shape) == 4:
+        target_size = (_dim(input_shape[3]), _dim(input_shape[2]))
+    else:
+        target_size = (640, 640)
     
     # Preprocess image
     img_input, original_shape, scale, original_img, resized_size = preprocess_image(image_path, target_size)
@@ -348,84 +408,116 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
         }
         db.commit()
         
-        model_path = export_config['model_path']
+        model_path = export_config.get('model_path')
+        model_name = export_config.get('model_name')
         export_format = export_config.get('export_format', 'onnx')
         training_task_id = export_config.get('training_task_id')
         
-        # Get class names from training task
+        # Get class names: from training task for trained models, COCO for foundation
         class_names = []
         if training_task_id:
             training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
             if training_task and training_task.task_metadata:
                 class_names = training_task.task_metadata.get('class_names', [])
+        if not class_names and model_name:
+            class_names = COCO_CLASSES
         
         # Use static/exports directory for easy access
         output_dir = Path("static/exports")
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Starting export of model {model_path} to {export_format}")
-        logger.info(f"Class names to save: {class_names}")
+        logger.info(f"Starting export (model_path={model_path}, model_name={model_name}) to {export_format}")
+        logger.info(f"Class names to save: {len(class_names)}")
         
-        # Load YOLO model
+        # Load YOLO model (by path for trained, by name for foundation)
         task.progress = 20
         task.task_metadata = {**task.task_metadata, "stage": "loading_model"}
         db.commit()
         
-        model = YOLO(model_path)
+        if model_name:
+            # Use pre-downloaded model from /app/models if present (from Docker build)
+            pretrained_path = _pretrained_model_path(model_name)
+            if pretrained_path is not None:
+                logger.info(f"Loading foundation model from pre-downloaded path: {pretrained_path}")
+                model = YOLO(str(pretrained_path))
+            else:
+                model = YOLO(model_name)
+            # Exporter uses model.pt_path (or yaml_file) to build output paths; set it if missing (e.g. hub-loaded model)
+            if not getattr(model, 'pt_path', None):
+                model_path_attr = getattr(model, 'path', None) or getattr(model, 'ckpt_path', None)
+                if model_path_attr:
+                    model.pt_path = Path(model_path_attr) if not isinstance(model_path_attr, Path) else model_path_attr
+        else:
+            model = YOLO(model_path)
         
         # Export to ONNX
         task.progress = 50
         task.task_metadata = {**task.task_metadata, "stage": "exporting"}
         db.commit()
         
-        # Export model
+        export_kwargs = {
+            'format': 'onnx',
+            'imgsz': export_config.get('imgsz', 640),
+            'half': export_config.get('half', False),
+            'simplify': export_config.get('simplify', False),
+            'dynamic': export_config.get('dynamic', False),
+        }
+        if export_config.get('opset') is not None:
+            export_kwargs['opset'] = export_config['opset']
+        # workspace: Ultralytics expects int or float only (e.g. MB). Never pass a path or string.
+        _w = export_config.get("workspace")
+        if isinstance(_w, (int, float)):
+            export_kwargs["workspace"] = _w
+        logger.info(f"Exporting ONNX with parameters: {export_kwargs}")
+        
         if export_format.lower() == 'onnx':
-            # Determine output filename
-            checkpoint = export_config.get('checkpoint', 'best')
-            model_stem = Path(model_path).stem
-            output_filename = f"{model_stem}_{checkpoint}.onnx"
+            if model_name:
+                checkpoint = "foundation"
+                model_stem = model_name.replace(".pt", "").strip()
+                exported_file_str = model.export(**export_kwargs)
+                # export() can return str or list of paths (e.g. when half=True)
+                if isinstance(exported_file_str, (list, tuple)):
+                    exported_file_str = next((p for p in exported_file_str if str(p).endswith('.onnx')), exported_file_str[0] if exported_file_str else None)
+                exported_file = Path(exported_file_str) if exported_file_str else None
+                if not exported_file or not exported_file.exists():
+                    # Fallback: look in workspace (output_dir) for expected name
+                    half_suffix = "_fp16" if export_config.get('half', False) else ""
+                    for candidate in [output_dir / f"{model_stem}{half_suffix}.onnx", output_dir / f"{model_stem}.onnx"]:
+                        if candidate.exists():
+                            exported_file = candidate
+                            break
+                    if not exported_file or not exported_file.exists():
+                        # Last resort: any .onnx in output_dir from this export
+                        for p in output_dir.glob("*.onnx"):
+                            if model_stem in p.stem:
+                                exported_file = p
+                                break
+                if not exported_file:
+                    exported_file = Path(exported_file_str) if isinstance(exported_file_str, str) else Path(str(exported_file_str))
+            else:
+                model.export(**export_kwargs)
+                checkpoint = export_config.get('checkpoint', 'best')
+                model_stem = Path(model_path).stem
+                model_dir = Path(model_path).parent
+                exported_file = model_dir / f"{model_stem}.onnx"
+                if not exported_file.exists():
+                    exported_file = model_dir / f"{Path(model_path).stem.replace('.pt', '')}.onnx"
+                if not exported_file.exists():
+                    exported_file = Path(model_path).with_suffix('.onnx')
             
-            # Add precision suffix to filename if using FP16
+            output_filename = f"{model_stem}_{checkpoint}.onnx"
             if export_config.get('half', False):
                 output_filename = output_filename.replace('.onnx', '_fp16.onnx')
-            
             output_path = output_dir / output_filename
             
-            # Prepare export parameters
-            export_kwargs = {
-                'format': 'onnx',
-                'imgsz': export_config.get('imgsz', 640),
-                'half': export_config.get('half', False),
-                'simplify': export_config.get('simplify', False),
-                'dynamic': export_config.get('dynamic', False),
-            }
-            
-            # Add optional parameters if provided
-            if export_config.get('opset') is not None:
-                export_kwargs['opset'] = export_config['opset']
-            if export_config.get('workspace') is not None:
-                export_kwargs['workspace'] = export_config['workspace']
-            
-            logger.info(f"Exporting ONNX with parameters: {export_kwargs}")
-            
-            # Export to ONNX - YOLO exports to the same directory as the model
-            model.export(**export_kwargs)
-            
-            # Find the exported file (YOLO exports to same directory as model by default)
-            model_dir = Path(model_path).parent
-            exported_file = model_dir / f"{model_stem}.onnx"
-            
-            if not exported_file.exists():
-                # Try alternative location (without .pt extension)
-                exported_file = model_dir / f"{Path(model_path).stem.replace('.pt', '')}.onnx"
-            
-            if not exported_file.exists():
-                # Try with just the base name
-                exported_file = Path(model_path).with_suffix('.onnx')
-            
-            if exported_file.exists():
-                # Copy to output directory (static/exports)
+            if model_name and exported_file and exported_file.exists():
+                if exported_file.resolve() != output_path.resolve():
+                    shutil.copy2(str(exported_file), str(output_path))
+            elif model_path and exported_file.exists():
+                # Copy to output directory (static/exports) for trained models
                 shutil.copy2(str(exported_file), str(output_path))
+            
+            if output_path.exists():
                 logger.info(f"Model exported to {output_path}")
                 
                 # Save class names to a JSON file alongside the ONNX file
@@ -491,7 +583,7 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
                     zip_filename = zip_path.name
                     raise  # Re-raise to fail the task
             else:
-                raise FileNotFoundError(f"Exported ONNX file not found. Searched in {model_dir}")
+                raise FileNotFoundError(f"Exported ONNX file not found for {model_name or model_path}")
         else:
             raise ValueError(f"Unsupported export format: {export_format}")
         
@@ -516,6 +608,7 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
             "export_format": export_format,
             "file_size": zip_path.stat().st_size if zip_path.exists() else 0,
             "onnx_file": str(output_path.resolve()),  # Keep reference to ONNX file (absolute path)
+            "class_names": class_names,  # For download endpoint when building zip from ONNX
             "export_parameters": {
                 "half": export_config.get('half', False),
                 "imgsz": export_config.get('imgsz', 640),

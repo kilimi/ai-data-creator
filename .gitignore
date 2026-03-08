@@ -12,7 +12,9 @@ node_modules
 dist
 dist-ssr
 *.local
-
+*.onnx
+*.pt
+*.engine
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

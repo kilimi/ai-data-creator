@@ -102,6 +102,7 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
                 <SelectItem value="yolo9">YOLOv9</SelectItem>
                 <SelectItem value="yolo10">YOLOv10</SelectItem>
                 <SelectItem value="yolo11">YOLOv11</SelectItem>
+                <SelectItem value="yolo26">YOLO26</SelectItem>
               </SelectContent>
             </Select>
           </div>

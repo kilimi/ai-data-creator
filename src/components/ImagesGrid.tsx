@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Trash2 } from "lucide-react";
+import { Upload, Trash2, ChevronDown, ImageIcon, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { Image } from "@/types";
 import { AnnotationSample } from "@/utils/annotations";
@@ -10,6 +16,7 @@ interface ImagesGridProps {
   images: Image[];
   imageSize: number;
   onOpenUploadDialog: () => void;
+  onOpenVideoUploadDialog?: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onImageClick?: (image: Image) => void;
   annotations?: AnnotationSample[];
@@ -93,11 +100,11 @@ export function ImagesGrid({
   images,
   imageSize,
   onOpenUploadDialog,
+  onOpenVideoUploadDialog,
   onDeleteImage,
   onImageClick,
   annotations = [],
   annotationFiles = [],
-  
 }: ImagesGridProps) {
   // Only show annotations that are visible (if isVisible is defined, must be true)
   const filteredAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
@@ -135,10 +142,37 @@ export function ImagesGrid({
     filteredAnnotations.filter(annotation => String(annotation.imageId) === String(imageId));
 
   if (images.length === 0) {
+    const uploadButton = onOpenVideoUploadDialog ? (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="lg" className="gap-2">
+            <Upload className="w-4 h-4" />
+            Upload
+            <ChevronDown className="w-4 h-4 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="center">
+          <DropdownMenuItem onClick={onOpenUploadDialog} className="gap-2">
+            <ImageIcon className="w-4 h-4" />
+            Upload Images
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onOpenVideoUploadDialog} className="gap-2">
+            <Video className="w-4 h-4" />
+            Upload Video
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ) : (
+      <Button onClick={onOpenUploadDialog} size="lg" className="gap-2">
+        <Upload className="w-4 h-4" />
+        Upload Images
+      </Button>
+    );
     return (
       <div className="flex-1 flex items-center justify-center py-16">
         <div className="text-center max-w-md mx-auto">
-          <div className="w-40 h-40 mx-auto mb-6 rounded-2xl border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center bg-muted/30 hover:bg-muted/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
+          <div
+            className="w-40 h-40 mx-auto mb-6 rounded-2xl border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center bg-muted/30 hover:bg-muted/50 hover:border-primary/50 transition-all duration-300 cursor-pointer group"
             onClick={onOpenUploadDialog}
           >
             <Upload className="w-10 h-10 text-muted-foreground/50 group-hover:text-primary transition-colors mb-2" />
@@ -148,12 +182,9 @@ export function ImagesGrid({
           </div>
           <h3 className="text-lg font-semibold mb-2">No images in this collection</h3>
           <p className="text-sm text-muted-foreground mb-5">
-            Upload images to start annotating. Supports JPG, PNG, TIFF, and WebP formats.
+            Upload images or extract frames from a video. Supports JPG, PNG, TIFF, WebP, and video files.
           </p>
-          <Button onClick={onOpenUploadDialog} size="lg" className="gap-2">
-            <Upload className="w-4 h-4" />
-            Upload Images
-          </Button>
+          {uploadButton}
         </div>
       </div>
     );

@@ -35,11 +35,13 @@ if USE_CELERY:
 
 
 class ExportRequest(BaseModel):
-    """Request model for exporting a model"""
-    task_id: int  # Training task ID
-    checkpoint: str = "best"  # "best" or "last"
+    """Request model for exporting a model. Use either task_id (trained) or model_name (foundation)."""
+    task_id: Optional[int] = None  # Training task ID (for trained models)
+    model_name: Optional[str] = None  # Foundation model name, e.g. yolo11n, yolo26s (for pre-trained)
+    checkpoint: str = "best"  # "best" or "last" (only for task_id)
     export_format: str = "onnx"  # Currently only "onnx" supported
     task_name: Optional[str] = None
+    project_id: Optional[int] = None  # Optional project for foundation export (for UI grouping)
     # ONNX export parameters
     half: bool = False  # FP16 quantization
     imgsz: Optional[int] = 640  # Image size (height/width)
@@ -57,79 +59,108 @@ async def start_yolo_export(
 ):
     """
     Start converting a YOLO model to ONNX format.
+    Source: Trained model (task_id) or Foundation model (model_name, same as Auto-Annotate).
     Creates a background task for the conversion process.
     """
     try:
-        # Get the training task
-        training_task = db.query(models.Task).filter(
-            models.Task.id == request.task_id,
-            models.Task.task_type == 'yolo_training'
-        ).first()
-        
-        if not training_task:
-            raise HTTPException(status_code=404, detail="Training task not found")
-        
-        if training_task.status != 'completed':
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Training task must be completed. Current status: {training_task.status}"
+        if request.model_name:
+            # Foundation model export (pre-trained from Ultralytics hub)
+            task_name = request.task_name or f"Export {request.model_name} to {request.export_format.upper()}"
+            export_task = models.Task(
+                project_id=request.project_id,
+                name=task_name,
+                task_type="model_export",
+                status="pending",
+                task_metadata={
+                    "model_name": request.model_name,
+                    "export_format": request.export_format,
+                    "source": "foundation",
+                }
             )
-        
-        # Get model path from task metadata
-        task_metadata = training_task.task_metadata or {}
-        model_path = None
-        
-        if request.checkpoint == "best":
-            model_path = task_metadata.get('best_model')
-        else:
-            last_model = task_metadata.get('last_model')
-            if last_model:
-                model_path = last_model
-            elif task_metadata.get('results_dir'):
-                model_path = str(Path(task_metadata['results_dir']) / "weights" / "last.pt")
-        
-        if not model_path or not Path(model_path).exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Model checkpoint '{request.checkpoint}' not found at {model_path}"
+            db.add(export_task)
+            db.commit()
+            db.refresh(export_task)
+            export_config = {
+                "model_name": request.model_name,
+                "export_format": request.export_format,
+                "output_dir": str(Path("static/exports").resolve()),
+                "half": request.half,
+                "imgsz": request.imgsz,
+                "simplify": request.simplify,
+                "opset": request.opset,
+                "dynamic": request.dynamic,
+                "workspace": request.workspace,
+            }
+        elif request.task_id is not None:
+            # Trained model export
+            training_task = db.query(models.Task).filter(
+                models.Task.id == request.task_id,
+                models.Task.task_type == 'yolo_training'
+            ).first()
+            
+            if not training_task:
+                raise HTTPException(status_code=404, detail="Training task not found")
+            
+            if training_task.status != 'completed':
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Training task must be completed. Current status: {training_task.status}"
+                )
+            
+            task_metadata = training_task.task_metadata or {}
+            model_path = None
+            
+            if request.checkpoint == "best":
+                model_path = task_metadata.get('best_model')
+            else:
+                last_model = task_metadata.get('last_model')
+                if last_model:
+                    model_path = last_model
+                elif task_metadata.get('results_dir'):
+                    model_path = str(Path(task_metadata['results_dir']) / "weights" / "last.pt")
+            
+            if not model_path or not Path(model_path).exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model checkpoint '{request.checkpoint}' not found at {model_path}"
+                )
+            
+            task_name = request.task_name or f"Export {training_task.name} - {request.checkpoint} to {request.export_format.upper()}"
+            export_task = models.Task(
+                project_id=training_task.project_id,
+                name=task_name,
+                task_type="model_export",
+                status="pending",
+                task_metadata={
+                    "training_task_id": request.task_id,
+                    "model_path": model_path,
+                    "checkpoint": request.checkpoint,
+                    "export_format": request.export_format,
+                    "original_task_name": training_task.name,
+                    "source": "trained",
+                }
             )
-        
-        # Create export task
-        task_name = request.task_name or f"Export {training_task.name} - {request.checkpoint} to {request.export_format.upper()}"
-        
-        export_task = models.Task(
-            project_id=training_task.project_id,
-            name=task_name,
-            task_type="model_export",
-            status="pending",
-            task_metadata={
-                "training_task_id": request.task_id,
+            db.add(export_task)
+            db.commit()
+            db.refresh(export_task)
+            export_config = {
                 "model_path": model_path,
                 "checkpoint": request.checkpoint,
                 "export_format": request.export_format,
-                "original_task_name": training_task.name
+                "training_task_id": request.task_id,
+                "output_dir": str(Path(training_task.task_metadata.get('results_dir', '.')) / "exports"),
+                "half": request.half,
+                "imgsz": request.imgsz,
+                "simplify": request.simplify,
+                "opset": request.opset,
+                "dynamic": request.dynamic,
+                "workspace": request.workspace,
             }
-        )
-        
-        db.add(export_task)
-        db.commit()
-        db.refresh(export_task)
-        
-        # Prepare export config
-        export_config = {
-            "model_path": model_path,
-            "checkpoint": request.checkpoint,
-            "export_format": request.export_format,
-            "training_task_id": request.task_id,
-            "output_dir": str(Path(training_task.task_metadata.get('results_dir', '.')) / "exports"),
-            # ONNX export parameters
-            "half": request.half,
-            "imgsz": request.imgsz,
-            "simplify": request.simplify,
-            "opset": request.opset,
-            "dynamic": request.dynamic,
-            "workspace": request.workspace,
-        }
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide either task_id (trained model) or model_name (foundation model)."
+            )
         
         # Start export in background
         if USE_CELERY:
@@ -488,7 +519,15 @@ def preprocess_image(image_path, target_size=(640, 640)):
         raise ValueError(f"Could not read image from {image_path}")
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     original_shape = img_rgb.shape[:2]  # (height, width)
-    
+    try:
+        tw = int(target_size[0]) if target_size[0] is not None else 640
+    except (TypeError, ValueError):
+        tw = 640
+    try:
+        th = int(target_size[1]) if target_size[1] is not None else 640
+    except (TypeError, ValueError):
+        th = 640
+    target_size = (tw, th)
     # Resize maintaining aspect ratio
     scale = min(target_size[0] / original_shape[1], target_size[1] / original_shape[0])
     new_width = int(original_shape[1] * scale)
@@ -546,40 +585,38 @@ def postprocess_yolo_output(output, original_shape, scale, conf_threshold=0.25, 
     # Extract boxes (first 4 values)
     boxes = output[:, :4]  # [num_detections, 4]
     
-    # Debug: Print sample box values to determine format
+    # Detect output layout: Ultralytics YOLOv8/v11/v26 use [bbox(4), class_scores(N)] with NO objectness.
+    # Legacy format is [bbox(4), objectness(1), class_scores(N)]. Confidence = max(class_scores) for Ultralytics.
+    num_expected_classes = len(class_names) if class_names else None
+    has_objectness = True  # legacy default
+    if num_expected_classes is not None:
+        if num_features == 4 + num_expected_classes:
+            has_objectness = False  # Ultralytics format
+            print(f"Using Ultralytics format (bbox + {num_expected_classes} class scores, no objectness)")
+        elif num_features == 5 + num_expected_classes:
+            has_objectness = True
+            print(f"Using legacy format (bbox + objectness + {num_expected_classes} class scores)")
+    
+    num_classes = (num_features - 4) if not has_objectness else (num_features - 5)
+    mask_coeffs = None
+    if has_objectness and masks_output is not None and num_features > 37:
+        if num_features >= 37 + 32:
+            num_classes = num_features - 5 - 32
+            mask_coeffs = output[:, 5 + num_classes:5 + num_classes + 32]
+            print(f"Detected mask coefficients. Shape: {mask_coeffs.shape}")
+        elif num_features == 37:
+            num_classes = 32
+    
+    if not has_objectness:
+        class_scores = output[:, 4:4 + num_classes]  # [num_detections, num_classes]
+        raw_confidence = np.max(class_scores, axis=1)  # Ultralytics: confidence = max(class_scores)
+    else:
+        class_scores = output[:, 5:5 + num_classes]  # [num_detections, num_classes]
+        raw_confidence = output[:, 4]  # objectness or combined confidence
+    
     if len(boxes) > 0:
         print(f"Sample box values (first detection): {boxes[0]}")
         print(f"Box value ranges: min={np.min(boxes, axis=0)}, max={np.max(boxes, axis=0)}")
-    
-    # Extract confidence (5th value) - in YOLO ONNX, this is typically the FINAL confidence
-    # (objectness * max_class_score), not just objectness
-    raw_confidence = output[:, 4]  # [num_detections]
-    
-    # For YOLO segmentation models, the output format is typically:
-    # [bbox(4), conf(1), class_scores(N), mask_coeffs(32)]
-    # Check if we have mask coefficients (typically 32 values after class scores)
-    num_classes = num_features - 5  # Default: assume all remaining are class scores
-    mask_coeffs = None
-    
-    # If we have masks_output, check if we have mask coefficients in the detection output
-    if masks_output is not None and num_features > 37:
-        # Likely has mask coefficients: typically 32 coefficients for 32 prototype masks
-        # Format: [bbox(4), conf(1), class_scores(N), mask_coeffs(32)]
-        # Try to detect: if num_features - 5 - num_classes == 32, then we have mask coeffs
-        # For now, assume last 32 values are mask coefficients if we have enough features
-        if num_features >= 37 + 32:  # At least 1 class + 32 mask coeffs
-            num_classes = num_features - 5 - 32
-            mask_coeffs = output[:, 5 + num_classes:5 + num_classes + 32]  # [num_detections, 32]
-            print(f"Detected mask coefficients in detection output. Shape: {mask_coeffs.shape}")
-        elif num_features == 37:
-            # Exactly 37 features: [bbox(4), conf(1), class_scores(32)]
-            # No mask coefficients in detection output - masks might be per-detection or need different handling
-            num_classes = 32
-            print(f"No mask coefficients detected in detection output (37 features total)")
-    
-    # Extract class scores
-    class_scores = output[:, 5:5 + num_classes]  # [num_detections, num_classes]
-    
     print(f"Class scores shape: {class_scores.shape} (num_detections={class_scores.shape[0]}, num_classes={class_scores.shape[1]})")
     if class_scores.shape[0] > 0:
         print(f"Sample class scores (first detection): {class_scores[0, :10] if class_scores.shape[1] >= 10 else class_scores[0]}")
@@ -610,16 +647,17 @@ def postprocess_yolo_output(output, original_shape, scale, conf_threshold=0.25, 
     print(f"Class IDs range: min={np.min(class_ids) if len(class_ids) > 0 else 'N/A'}, max={np.max(class_ids) if len(class_ids) > 0 else 'N/A'}")
     print(f"Expected class names count: {len(class_names) if class_names else 'N/A'}")
     
-    # For YOLO ONNX models exported from ultralytics, the 5th value is typically the FINAL confidence
-    # (already objectness * class_confidence). However, if it looks like a logit, apply sigmoid.
-    # Check if confidence needs sigmoid (if values are negative or > 1.5, they're likely logits)
-    if np.any(raw_confidence < 0) or np.any(raw_confidence > 1.5):
-        final_confidences = 1.0 / (1.0 + np.exp(-raw_confidence))  # Sigmoid
-        print(f"Applied sigmoid to confidence (raw range: [{np.min(raw_confidence):.4f}, {np.max(raw_confidence):.4f}])")
+    # Confidence: Ultralytics uses max(class_scores); legacy uses 5th value (objectness or combined)
+    if not has_objectness:
+        final_confidences = np.clip(class_confidences.copy(), 0.0, 1.0)
+        print(f"Using max(class_scores) as confidence (Ultralytics format)")
     else:
-        # Already in 0-1 range, use directly
-        final_confidences = raw_confidence.copy()
-        print(f"Using confidence directly (already in 0-1 range)")
+        if np.any(raw_confidence < 0) or np.any(raw_confidence > 1.5):
+            final_confidences = 1.0 / (1.0 + np.exp(-raw_confidence))  # Sigmoid
+            print(f"Applied sigmoid to confidence (raw range: [{np.min(raw_confidence):.4f}, {np.max(raw_confidence):.4f}])")
+        else:
+            final_confidences = raw_confidence.copy()
+            print(f"Using confidence directly (already in 0-1 range)")
     
     # Clamp confidence to 0-1 range
     final_confidences = np.clip(final_confidences, 0.0, 1.0)
@@ -660,52 +698,66 @@ def postprocess_yolo_output(output, original_shape, scale, conf_threshold=0.25, 
     print(f"After confidence filtering: {len(boxes)} detections (from {num_detections} total)")
     print(f"Original indices mapping: {original_indices[:10] if len(original_indices) >= 10 else original_indices}")
     
-    # YOLO ONNX models from ultralytics output coordinates in NORMALIZED format (0-1)
-    # Format: [x_center, y_center, width, height] where all values are normalized (0-1)
-    # relative to the INPUT image size (640x640), not the original image
-    
+    # Ultralytics ONNX can output either [x1, y1, x2, y2] (xyxy) or [x_center, y_center, w, h] (xywh), often normalized 0-1
     first_box = boxes[0]
     box_max = np.max(boxes, axis=0)
     box_min = np.min(boxes, axis=0)
-    
     print(f"Box coordinate ranges: min={box_min}, max={box_max}")
     
-    # Check if coordinates are normalized (0-1 range) - YOLO ONNX typically outputs normalized
     is_normalized = (box_max[0] <= 1.0 and box_max[1] <= 1.0 and 
                      box_max[2] <= 1.0 and box_max[3] <= 1.0 and
                      box_min[0] >= 0.0 and box_min[1] >= 0.0)
-    
     print(f"Format detection: normalized={is_normalized}")
     
-    # YOLO ONNX format is always center: [x_center, y_center, width, height]
-    x_center_norm = boxes[:, 0]
-    y_center_norm = boxes[:, 1]
-    width_norm = boxes[:, 2]
-    height_norm = boxes[:, 3]
+    # Detect xyxy: Ultralytics often exports [x1, y1, x2, y2]; xywh has (x_center, y_center, w, h) with w,h > 0 and x2 > x1, y2 > y1 only as corners
+    use_xyxy = False
+    if not has_objectness and len(boxes) > 0:
+        # xyxy: second pair (x2,y2) should be greater than first (x1,y1) for valid boxes
+        xyxy_like = np.mean((boxes[:, 2] > boxes[:, 0]) & (boxes[:, 3] > boxes[:, 1]))
+        if xyxy_like > 0.5:
+            use_xyxy = True
+            print("Using xyxy bbox format (x1, y1, x2, y2)")
     
-    # Get model input size (typically 640x640)
     model_input_size = 640
-    
-    if is_normalized:
-        # Convert normalized coordinates to pixel space in model input (640x640)
-        x_center = x_center_norm * model_input_size
-        y_center = y_center_norm * model_input_size
-        width = width_norm * model_input_size
-        height = height_norm * model_input_size
-        print("Converted normalized coordinates to pixel space (640x640)")
+    if use_xyxy:
+        x1_norm = boxes[:, 0]
+        y1_norm = boxes[:, 1]
+        x2_norm = boxes[:, 2]
+        y2_norm = boxes[:, 3]
+        if is_normalized:
+            x1_model = x1_norm * model_input_size
+            y1_model = y1_norm * model_input_size
+            x2_model = x2_norm * model_input_size
+            y2_model = y2_norm * model_input_size
+            print("Converted normalized xyxy to pixel space (640x640)")
+        else:
+            x1_model = x1_norm
+            y1_model = y1_norm
+            x2_model = x2_norm
+            y2_model = y2_norm
+            print("Using xyxy coordinates in pixel space")
     else:
-        # Already in pixel space
-        x_center = x_center_norm
-        y_center = y_center_norm
-        width = width_norm
-        height = height_norm
-        print("Coordinates already in pixel space")
-    
-    # Convert center format to xyxy in model space (640x640)
-    x1_model = x_center - width / 2
-    y1_model = y_center - height / 2
-    x2_model = x_center + width / 2
-    y2_model = y_center + height / 2
+        # Center-wh: [x_center, y_center, width, height]
+        x_center_norm = boxes[:, 0]
+        y_center_norm = boxes[:, 1]
+        width_norm = boxes[:, 2]
+        height_norm = boxes[:, 3]
+        if is_normalized:
+            x_center = x_center_norm * model_input_size
+            y_center = y_center_norm * model_input_size
+            width = width_norm * model_input_size
+            height = height_norm * model_input_size
+            print("Converted normalized xywh to pixel space (640x640)")
+        else:
+            x_center = x_center_norm
+            y_center = y_center_norm
+            width = width_norm
+            height = height_norm
+            print("Coordinates already in pixel space (xywh)")
+        x1_model = x_center - width / 2
+        y1_model = y_center - height / 2
+        x2_model = x_center + width / 2
+        y2_model = y_center + height / 2
     
     print(f"After format conversion - x1_model range: [{np.min(x1_model):.1f}, {np.max(x1_model):.1f}]")
     print(f"After format conversion - y1_model range: [{np.min(y1_model):.1f}, {np.max(y1_model):.1f}]")
@@ -1072,10 +1124,18 @@ class_names = json.loads(class_names_json)
 # Load ONNX model
 session = ort.InferenceSession(onnx_path)
 
-# Get input shape
+# Get input shape (ONNX may return dynamic dims as strings; coerce to int for preprocess)
 input_name = session.get_inputs()[0].name
 input_shape = session.get_inputs()[0].shape
-target_size = (input_shape[3], input_shape[2]) if len(input_shape) == 4 else (640, 640)
+def _dim(d):
+    try:
+        return int(d) if d is not None else 640
+    except (TypeError, ValueError):
+        return 640
+if len(input_shape) == 4:
+    target_size = (_dim(input_shape[3]), _dim(input_shape[2]))
+else:
+    target_size = (640, 640)
 
 # Preprocess image
 img_input, original_shape, scale, original_img, resized_size = preprocess_image(image_path, target_size)

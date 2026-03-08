@@ -34,6 +34,10 @@ RUN pip install --default-timeout=1000 --retries 5 fiftyone>=0.23.0
 # Copy the rest of the application
 COPY . .
 
+# Pre-download Ultralytics foundation models (Auto-Annotate / Convert Model) so they are available offline
+ENV HOME=/app
+RUN python scripts/download_ultralytics_models.py
+
 # Expose the port
 EXPOSE 8000
 EXPOSE 5151

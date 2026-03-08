@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -48,26 +49,49 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
         db.add(default_collection)
         db.commit()
         db.refresh(default_collection)
-        
-        # Move any unassigned images to the default collection
-        unassigned_images = db.query(Image).filter(
-            Image.dataset_id == dataset_id,
-            Image.collection_id.is_(None)
-        ).all()
-        
-        for image in unassigned_images:
-            image.collection_id = default_collection.id
-        
-        if unassigned_images:
-            db.commit()
+    
+    # Always move any unassigned images to the default collection (e.g. after upload via flat API)
+    unassigned_images = db.query(Image).filter(
+        Image.dataset_id == dataset_id,
+        Image.collection_id.is_(None)
+    ).all()
+    for image in unassigned_images:
+        image.collection_id = default_collection.id
+    if unassigned_images:
+        db.commit()
     
     collections = db.query(ImageCollection).filter(
         ImageCollection.dataset_id == dataset_id
     ).order_by(ImageCollection.is_default.desc(), ImageCollection.created_at.asc()).all()
     
-    # Convert to response format with image counts
+    # For default collection: include all dataset images (assigned to default OR unassigned) so nothing is missing when re-entering
+    default_collection_id = default_collection.id if default_collection else None
+
+    def image_to_dict(img):
+        return {
+            "id": img.id,
+            "datasetId": img.dataset_id,
+            "fileName": img.file_name,
+            "fileSize": img.file_size,
+            "width": img.width,
+            "height": img.height,
+            "url": f"{base_url}{img.url}" if img.url and img.url.startswith('/') else img.url,
+            "thumbnailUrl": f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url and img.thumbnail_url.startswith('/') else img.thumbnail_url,
+            "uploadedAt": img.uploaded_at,
+            "annotationsCount": img.annotations_count
+        }
+
     result = []
     for collection in collections:
+        if collection.is_default and default_collection_id is not None:
+            # Default collection: return all images in dataset that are in this collection OR unassigned
+            default_images = db.query(Image).filter(
+                Image.dataset_id == dataset_id,
+                or_(Image.collection_id == default_collection_id, Image.collection_id.is_(None))
+            ).order_by(Image.id.asc()).all()
+            images_list = [image_to_dict(img) for img in default_images]
+        else:
+            images_list = [image_to_dict(img) for img in collection.images]
         collection_dict = {
             "id": collection.id,
             "dataset_id": collection.dataset_id,
@@ -76,22 +100,8 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
             "is_default": collection.is_default,
             "created_at": collection.created_at,
             "updated_at": collection.updated_at,
-            "image_count": len(collection.images),
-            "images": [
-                {
-                    "id": img.id,
-                    "datasetId": img.dataset_id,
-                    "fileName": img.file_name,
-                    "fileSize": img.file_size,
-                    "width": img.width,
-                    "height": img.height,
-                    "url": f"{base_url}{img.url}" if img.url and img.url.startswith('/') else img.url,
-                    "thumbnailUrl": f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url and img.thumbnail_url.startswith('/') else img.thumbnail_url,
-                    "uploadedAt": img.uploaded_at,
-                    "annotationsCount": img.annotations_count
-                }
-                for img in collection.images
-            ]
+            "image_count": len(images_list),
+            "images": images_list
         }
         result.append(collection_dict)
     

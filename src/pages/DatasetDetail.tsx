@@ -319,6 +319,7 @@ curl http://localhost:9999/tasks/${task.id}`;
   const getModelFamily = (modelName: string): string => {
     if (!modelName) return '-';
     const lower = modelName.toLowerCase();
+    if (lower.includes('yolo26')) return 'YOLO26';
     if (lower.includes('yolo11')) return 'YOLO11';
     if (lower.includes('yolo10')) return 'YOLO10';
     if (lower.includes('yolo9')) return 'YOLO9';

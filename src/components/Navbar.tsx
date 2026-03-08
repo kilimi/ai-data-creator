@@ -1,10 +1,13 @@
 import { Link, useLocation, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Settings, Sparkles, Sun, Moon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Settings, Sparkles, Sun, Moon, Cpu, Loader2 } from "lucide-react";
+import { useEffect, useState, useCallback } from "react";
 import { TasksPopover } from "./TasksPopover";
 import { useTheme } from "./ThemeProvider";
+import { useApi } from "@/hooks/use-api";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
 
 export function Navbar() {
   const location = useLocation();
@@ -22,7 +25,41 @@ export function Navbar() {
         : undefined;
   const [scrolled, setScrolled] = useState(false);
   const { theme, toggleTheme } = useTheme();
-  
+  const { api } = useApi();
+  const [gpuStatus, setGpuStatus] = useState<{
+    has_gpu: boolean;
+    gpu_count: number;
+    gpus: Array<{ name: string; memory_used_mb: number; memory_total_mb: number; utilization_percent: number }>;
+    memory_used_mb: number;
+    memory_total_mb: number;
+  } | null>(null);
+  const [gpuLoading, setGpuLoading] = useState(false);
+
+  const fetchGpuStatus = useCallback(async () => {
+    if (!api) return;
+    setGpuLoading(true);
+    try {
+      const res = await api.getGpuStatus();
+      // API may return { success, data } or (if wrapped elsewhere) payload at top level
+      const payload = res.data ?? (res as unknown as { has_gpu?: boolean; gpus?: unknown[] });
+      if (payload && typeof (payload as { has_gpu?: boolean }).has_gpu === "boolean") {
+        setGpuStatus(payload as typeof gpuStatus);
+      } else {
+        setGpuStatus(null);
+      }
+    } catch {
+      setGpuStatus(null);
+    } finally {
+      setGpuLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    fetchGpuStatus();
+    const interval = setInterval(fetchGpuStatus, 15000);
+    return () => clearInterval(interval);
+  }, [fetchGpuStatus]);
+
   useEffect(() => {
     const handleScroll = () => {
       setScrolled(window.scrollY > 10);
@@ -31,6 +68,8 @@ export function Navbar() {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  const formatMb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
 
   return (
     <header
@@ -57,6 +96,61 @@ export function Navbar() {
         
         <div className="flex items-center gap-2">
           <TasksPopover />
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1.5 px-2.5 text-xs font-medium"
+                title="GPU resource usage"
+              >
+                {gpuLoading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Cpu className="h-3.5 w-3.5" />
+                )}
+                {gpuStatus?.has_gpu ? (
+                  <span className="hidden sm:inline">
+                    {formatMb(gpuStatus.memory_used_mb)} / {formatMb(gpuStatus.memory_total_mb)}
+                  </span>
+                ) : gpuStatus && !gpuStatus.has_gpu ? (
+                  <span className="hidden sm:inline text-muted-foreground">No GPU</span>
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-0" align="end">
+              <div className="p-3 border-b">
+                <p className="text-sm font-medium">GPU resources</p>
+                <p className="text-xs text-muted-foreground">
+                  {gpuStatus?.has_gpu
+                    ? `${gpuStatus.gpu_count} GPU${gpuStatus.gpu_count > 1 ? "s" : ""} · ${formatMb(gpuStatus.memory_used_mb)} / ${formatMb(gpuStatus.memory_total_mb)} used`
+                    : "No GPU detected"}
+                </p>
+              </div>
+              {gpuStatus?.gpus && gpuStatus.gpus.length > 0 && (
+                <div className="p-3 space-y-3 max-h-64 overflow-y-auto">
+                  {gpuStatus.gpus.map((gpu, i) => {
+                    const pct = gpu.memory_total_mb > 0 ? (gpu.memory_used_mb / gpu.memory_total_mb) * 100 : 0;
+                    return (
+                      <div key={i} className="space-y-1.5">
+                        <p className="text-xs font-medium truncate" title={gpu.name}>
+                          GPU {i + 1}: {gpu.name}
+                        </p>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Progress value={pct} className="h-1.5 flex-1" />
+                          <span>{formatMb(gpu.memory_used_mb)} / {formatMb(gpu.memory_total_mb)}</span>
+                        </div>
+                        {gpu.utilization_percent > 0 && (
+                          <p className="text-xs text-muted-foreground">Utilization: {gpu.utilization_percent}%</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
           
           <Button
             variant="outline"

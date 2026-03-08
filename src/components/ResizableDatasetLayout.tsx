@@ -26,6 +26,7 @@ interface ResizableDatasetLayoutProps {
   onPageChange: (page: number) => void;
   onTabPageChange?: (tabId: string, page: number) => void; // NEW: for tabbed pagination
   onOpenUploadDialog: () => void;
+  onOpenVideoUploadDialog?: () => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onTabDeleteImage?: (tabId: string, imageId: string) => Promise<void>; // NEW: for tabbed image deletion
   onTabUploadImages?: (tabId: string, files: File[]) => Promise<void>; // NEW: for tabbed image upload
@@ -57,6 +58,7 @@ export function ResizableDatasetLayout({
   onPageChange,
   onTabPageChange,
   onOpenUploadDialog,
+  onOpenVideoUploadDialog,
   onDeleteImage,
   onTabDeleteImage,
   onTabUploadImages,
@@ -93,7 +95,7 @@ export function ResizableDatasetLayout({
   const renderImagesSection = () => (
     <ScrollArea className="h-full w-full">
       <div className="p-6">
-        {useTabbedImages && imageCollections ? (
+        {useTabbedImages && imageCollections && imageCollections.length > 0 && imageCollections.some(c => c.images?.length > 0) ? (
           <TabbedImagesContent
             id={id}
             projectId={projectId}
@@ -107,6 +109,7 @@ export function ResizableDatasetLayout({
             onUploadImages={onTabUploadImages || (() => Promise.resolve())}
             onAddTab={onAddImageTab || (() => {})}
             onRemoveTab={onRemoveImageTab || (() => {})}
+            onOpenVideoUploadDialog={onOpenVideoUploadDialog}
             annotations={annotations}
             annotationFiles={annotationFiles}
             selectedImageIndex={selectedImageIndex}
@@ -123,6 +126,7 @@ export function ResizableDatasetLayout({
             onImageSizeChange={onImageSizeChange}
             onPageChange={onPageChange}
             onOpenUploadDialog={onOpenUploadDialog}
+            onOpenVideoUploadDialog={onOpenVideoUploadDialog}
             onDeleteImage={onDeleteImage}
             paginatedImages={paginatedImages}
             totalPages={totalPages}

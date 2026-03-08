@@ -464,6 +464,22 @@ export class ApiClient {
     });
   }
 
+  /** Upload a video; backend extracts frames and adds them as dataset images. */
+  async uploadVideoExtract(
+    datasetId: string | number,
+    videoFile: File,
+    params: { interval_seconds: number; max_frames: number }
+  ): Promise<ApiResponse<{ uploaded: number; images: any[] }>> {
+    const form = new FormData();
+    form.append('video', videoFile);
+    form.append('interval_seconds', String(params.interval_seconds));
+    form.append('max_frames', String(params.max_frames));
+    return this.request<{ uploaded: number; images: any[] }>(`/datasets/${datasetId}/video-extract`, {
+      method: 'POST',
+      body: form
+    });
+  }
+
   async getImages(datasetId: string | number): Promise<ApiResponse<Image[]>> {
     return this.request<Image[]>(`/datasets/${datasetId}/images`);
   }
@@ -992,6 +1008,17 @@ export class ApiClient {
     });
   }
 
+  async viewAnnotationsInFiftyOne(
+    datasetId: string | number,
+    annotationFileIds: string[]
+  ): Promise<ApiResponse<{ message: string; url?: string }>> {
+    return this.request(`/datasets/${datasetId}/annotations/view-fiftyone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ annotation_file_ids: annotationFileIds })
+    });
+  }
+
   // Database backup and restore methods
   async getDatabaseConnectionInfo(): Promise<ApiResponse<{
     database_name: string;
@@ -1480,6 +1507,21 @@ export class ApiClient {
     return this.request(`/backup/${backupId}`, {
       method: 'DELETE'
     });
+  }
+
+  async getGpuStatus(): Promise<ApiResponse<{
+    has_gpu: boolean;
+    gpu_count: number;
+    gpus: Array<{
+      name: string;
+      memory_used_mb: number;
+      memory_total_mb: number;
+      utilization_percent: number;
+    }>;
+    memory_used_mb: number;
+    memory_total_mb: number;
+  }>> {
+    return this.request('/system/gpu', { method: 'GET' });
   }
 }
 

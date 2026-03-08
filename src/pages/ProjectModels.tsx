@@ -35,6 +35,9 @@ interface OutletContext {
 // Helper functions
 const getModelFamily = (modelName: string) => {
   if (!modelName) return '-';
+  const lower = modelName.toLowerCase();
+  if (lower.includes('yolo26')) return 'YOLO26';
+  if (lower.includes('yolo11')) return 'YOLO11';
   if (modelName.includes('yolo') || modelName.includes('YOLO')) return 'YOLO';
   if (modelName.includes('rtdetr') || modelName.includes('RT-DETR')) return 'RT-DETR';
   return modelName;

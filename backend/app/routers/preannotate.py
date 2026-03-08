@@ -40,9 +40,9 @@ SIZE_LABELS = {"n": "nano", "s": "small", "m": "medium", "l": "large", "x": "xla
 
 
 def _auto_annotate_tags(model_name: str, task_type: str) -> List[str]:
-    """Build tags for auto-annotate: model type, size, and task (detection/segmentation/classification)."""
+    """Build tags for auto-annotate: auto, model type, size, and task (detection/segmentation/classification)."""
     import re
-    tags = []
+    tags = ["auto"]
     task_label = {"detect": "detection", "segment": "segmentation", "classify": "classification"}.get(
         task_type, task_type
     )
@@ -51,22 +51,26 @@ def _auto_annotate_tags(model_name: str, task_type: str) -> List[str]:
         # e.g. depth_anything_v2_small
         parts = model_name.split("_")
         if "v2" in parts:
-            tags.insert(0, "depth_anything_v2")
+            tags.insert(1, "depth_anything_v2")
         else:
-            tags.insert(0, "depth_anything")
+            tags.insert(1, "depth_anything")
         size_part = parts[-1] if parts else ""
         if size_part:
-            tags.insert(1, size_part)
+            tags.insert(2, size_part)
     else:
         # YOLO-style: yolo11n, yolo26s, yolo_nasm, rtdetrl
         match = re.match(r"(yolo11|yolo26|yolo_nas|rtdetr)([nsmlx])", model_name, re.IGNORECASE)
         if match:
             arch, size = match.group(1), match.group(2).lower()
-            tags.insert(0, arch)
-            tags.insert(1, SIZE_LABELS.get(size, size))
+            tags.insert(1, arch)
+            tags.insert(2, SIZE_LABELS.get(size, size))
         else:
-            tags.insert(0, model_name)
+            tags.insert(1, model_name)
     return tags
+
+
+# Pre-downloaded models from Docker build (same as export_tasks)
+PRETRAINED_MODELS_DIR = Path("/app/models")
 
 
 def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
@@ -74,15 +78,22 @@ def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
     
     task_type: 'detect', 'segment', or 'classify'
     Model file suffix: base name for detect, -seg for segment, -cls for classify.
+    Uses pre-downloaded model from /app/models when present (from Docker build).
     """
     from ultralytics import YOLO
     
     suffix_map = {"detect": "", "segment": "-seg", "classify": "-cls"}
     model_suffix = suffix_map.get(task_type, "")
     full_model_name = f"{model_name}{model_suffix}"
+    pt_name = f"{full_model_name}.pt"
     
-    logger.info(f"Task {task_id}: Loading YOLO model {full_model_name} (task_type={task_type})")
-    model = YOLO(f"{full_model_name}.pt")
+    pretrained_path = PRETRAINED_MODELS_DIR / pt_name
+    if pretrained_path.exists():
+        logger.info(f"Task {task_id}: Loading YOLO model from pre-downloaded {pretrained_path}")
+        model = YOLO(str(pretrained_path))
+    else:
+        logger.info(f"Task {task_id}: Loading YOLO model {full_model_name} (task_type={task_type})")
+        model = YOLO(pt_name)
     
     use_segmentation = task_type == "segment"
     is_classification = task_type == "classify"

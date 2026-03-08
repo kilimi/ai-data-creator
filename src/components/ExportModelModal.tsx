@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -15,13 +16,50 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Brain, Download, Info, CheckCircle2 } from "lucide-react";
+import { Brain, Download, Info, CheckCircle2, Box, Sparkles } from "lucide-react";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { getApiBaseUrl } from "@/config/api";
+
+type ConvertSource = "trained" | "foundation";
+
+const YOLO_ARCHS = [
+  { value: "yolo11", label: "YOLO11" },
+  { value: "yolo26", label: "YOLO26" },
+  { value: "yolo_nas", label: "YOLO-NAS" },
+  { value: "rtdetr", label: "RT-DETR" },
+];
+
+const YOLO_SIZES: Record<string, { value: string; label: string }[]> = {
+  yolo11: [
+    { value: "n", label: "Nano" },
+    { value: "s", label: "Small" },
+    { value: "m", label: "Medium" },
+    { value: "l", label: "Large" },
+    { value: "x", label: "X-Large" },
+  ],
+  yolo26: [
+    { value: "n", label: "Nano" },
+    { value: "s", label: "Small" },
+    { value: "m", label: "Medium" },
+    { value: "l", label: "Large" },
+    { value: "x", label: "X-Large" },
+  ],
+  yolo_nas: [
+    { value: "s", label: "Small" },
+    { value: "m", label: "Medium" },
+    { value: "l", label: "Large" },
+  ],
+  rtdetr: [
+    { value: "l", label: "Large" },
+    { value: "x", label: "X-Large" },
+  ],
+};
 
 interface ExportModelModalProps {
   open: boolean;
@@ -40,8 +78,11 @@ export function ExportModelModal({
 }: ExportModelModalProps) {
   const { api } = useApi();
   const { toast } = useToast();
+  const [sourceType, setSourceType] = useState<ConvertSource>("trained");
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<'best' | 'last'>('best');
+  const [foundationArch, setFoundationArch] = useState("yolo11");
+  const [foundationSize, setFoundationSize] = useState("n");
   const [exportFormat, setExportFormat] = useState<string>('onnx');
   const [exportName, setExportName] = useState('');
   const [isExporting, setIsExporting] = useState(false);
@@ -54,34 +95,46 @@ export function ExportModelModal({
   const [dynamic, setDynamic] = useState(false);
   const [workspace, setWorkspace] = useState<number | ''>('');
 
+  const foundationModelName = `${foundationArch}${foundationSize}`;
+
   // Filter to only completed YOLO training tasks
   const availableModels = trainingTasks.filter(
     task => task.task_type === 'yolo_training' && task.status === 'completed'
   );
 
-  // Update model info when model is selected
+  // Suggest a default task name when source/model selection changes (do not overwrite when only half/format change so user can edit)
   useEffect(() => {
-    if (!selectedModel) {
-      setModelInfo(null);
-      setExportName('');
+    if (sourceType !== "trained" || !selectedModel) {
+      if (sourceType === "foundation") {
+        const precision = half ? "FP16" : "FP32";
+        setExportName(`${foundationModelName} to ${exportFormat.toUpperCase()} (${precision})`);
+      } else {
+        setModelInfo(null);
+        setExportName("");
+      }
       return;
     }
 
     const task = availableModels.find(t => t.id.toString() === selectedModel);
     if (task) {
       setModelInfo(task);
-      // Generate default export name
       const checkpoint = selectedCheckpoint === 'best' ? 'best' : 'last';
       const precision = half ? 'FP16' : 'FP32';
       setExportName(`${task.name} - ${checkpoint} to ${exportFormat.toUpperCase()} (${precision})`);
     }
-  }, [selectedModel, selectedCheckpoint, exportFormat, half, availableModels]);
+    // Intentionally omit half, exportFormat from deps so toggling them does not overwrite user-edited task name
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceType, selectedModel, selectedCheckpoint, availableModels, foundationModelName]);
 
   const handleExport = async () => {
-    if (!selectedModel || !api) {
+    const hasTrained = sourceType === "trained" && selectedModel && availableModels.length > 0;
+    const hasFoundation = sourceType === "foundation" && foundationModelName;
+    if (!hasTrained && !hasFoundation) {
       toast({
         title: "Error",
-        description: "Please select a model to convert",
+        description: sourceType === "trained"
+          ? "Please select a trained model to convert"
+          : "Please choose a foundation model",
         variant: "destructive",
       });
       return;
@@ -89,23 +142,31 @@ export function ExportModelModal({
 
     setIsExporting(true);
     try {
-      const response = await fetch(`http://localhost:9999/export/yolo/start`, {
+      const baseUrl = getApiBaseUrl();
+      const body: Record<string, unknown> = {
+        export_format: exportFormat,
+        task_name: exportName || undefined,
+        half,
+        imgsz,
+        simplify,
+        opset: opset || undefined,
+        dynamic,
+        workspace: workspace || undefined,
+      };
+      if (sourceType === "trained") {
+        body.task_id = parseInt(selectedModel, 10);
+        body.checkpoint = selectedCheckpoint;
+      } else {
+        body.model_name = foundationModelName;
+        body.project_id = projectId ? parseInt(projectId, 10) : undefined;
+      }
+
+      const response = await fetch(`${baseUrl}/export/yolo/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          task_id: parseInt(selectedModel),
-          checkpoint: selectedCheckpoint,
-          export_format: exportFormat,
-          task_name: exportName || undefined,
-          half: half,
-          imgsz: imgsz,
-          simplify: simplify,
-          opset: opset || undefined,
-          dynamic: dynamic,
-          workspace: workspace || undefined,
-        }),
+        body: JSON.stringify(body),
       });
 
       const result = await response.json();
@@ -124,8 +185,11 @@ export function ExportModelModal({
         onOpenChange(false);
         
         // Reset form
+        setSourceType("trained");
         setSelectedModel('');
         setSelectedCheckpoint('best');
+        setFoundationArch("yolo11");
+        setFoundationSize("n");
         setExportFormat('onnx');
         setExportName('');
         setModelInfo(null);
@@ -172,48 +236,99 @@ export function ExportModelModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Download className="h-5 w-5 text-primary" />
-            Convert Model
+            Convert Model to ONNX
           </DialogTitle>
           <DialogDescription>
-            Convert a trained YOLO model to different formats (ONNX, etc.) for deployment.
+            Export a YOLO model to ONNX format for deployment. Choose a model you trained or a pre-trained foundation model (same as in Auto-Annotate).
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 py-4">
-          {/* Model Selection */}
+          {/* Step 1: What to convert */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Model Selection</CardTitle>
+              <CardTitle className="text-base">What do you want to convert?</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSourceType("trained")}
+                  className={cn(
+                    "flex items-start gap-3 rounded-lg border p-4 text-left transition-all",
+                    sourceType === "trained"
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                      : "border-border hover:bg-muted/50"
+                  )}
+                >
+                  <Box className="h-10 w-10 shrink-0 rounded-md bg-muted p-2 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">Trained model</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      A model you trained in this project
+                    </div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSourceType("foundation")}
+                  className={cn(
+                    "flex items-start gap-3 rounded-lg border p-4 text-left transition-all",
+                    sourceType === "foundation"
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                      : "border-border hover:bg-muted/50"
+                  )}
+                >
+                  <Sparkles className="h-10 w-10 shrink-0 rounded-md bg-muted p-2 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">Foundation model</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Pre-trained models (YOLO11, YOLO26, etc.) — same as Auto-Annotate
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Model Selection: Trained or Foundation */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                {sourceType === "trained" ? "Select trained model" : "Select foundation model"}
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="model-select">Trained Model</Label>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger id="model-select">
-                    <SelectValue placeholder="Select a trained model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableModels.length === 0 ? (
-                      <SelectItem value="no-models" disabled>
-                        No completed YOLO models available
-                      </SelectItem>
-                    ) : (
-                      availableModels.map(task => (
-                        <SelectItem key={task.id} value={task.id.toString()}>
-                          {task.name} (ID: {task.id})
-                        </SelectItem>
-                      ))
+              {sourceType === "trained" && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="model-select">Trained model</Label>
+                    <Select value={selectedModel} onValueChange={setSelectedModel}>
+                      <SelectTrigger id="model-select">
+                        <SelectValue placeholder="Select a trained model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableModels.length === 0 ? (
+                          <SelectItem value="no-models" disabled>
+                            No completed YOLO models available
+                          </SelectItem>
+                        ) : (
+                          availableModels.map(task => (
+                            <SelectItem key={task.id} value={task.id.toString()}>
+                              {task.name} (ID: {task.id})
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {availableModels.length === 0 && (
+                      <p className="text-sm text-muted-foreground">
+                        Train and complete at least one YOLO model in this project to convert it.
+                      </p>
                     )}
-                  </SelectContent>
-                </Select>
-                {availableModels.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    You need to train and complete at least one YOLO model before you can export it.
-                  </p>
-                )}
-              </div>
+                  </div>
 
-              {selectedModel && (
+                  {selectedModel && (
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="checkpoint-select">Checkpoint</Label>
@@ -282,6 +397,60 @@ export function ExportModelModal({
                     </div>
                   )}
                 </>
+              )}
+                </>
+              )}
+
+              {sourceType === "foundation" && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Architecture</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {YOLO_ARCHS.map(({ value, label }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => {
+                            setFoundationArch(value);
+                            const sizes = YOLO_SIZES[value];
+                            setFoundationSize(sizes[0].value);
+                          }}
+                          className={cn(
+                            "rounded-md border px-3 py-2 text-sm font-medium transition-all",
+                            foundationArch === value
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border hover:bg-muted/50"
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Size</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(YOLO_SIZES[foundationArch] || []).map(({ value, label }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setFoundationSize(value)}
+                          className={cn(
+                            "rounded-md border px-3 py-1.5 text-sm font-medium transition-all",
+                            foundationSize === value
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border hover:bg-muted/50"
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Model: <span className="font-mono font-medium">{foundationModelName}</span> — same list as in Auto-Annotate. Export will download the pre-trained weights and convert to ONNX.
+                  </p>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -438,13 +607,12 @@ export function ExportModelModal({
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="export-name">Conversion Task Name (Optional)</Label>
-                <input
+                <Input
                   id="export-name"
                   type="text"
                   value={exportName}
                   onChange={(e) => setExportName(e.target.value)}
                   placeholder="Auto-generated if left empty"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
             </CardContent>
@@ -457,7 +625,11 @@ export function ExportModelModal({
           </Button>
           <Button 
             onClick={handleExport} 
-            disabled={!selectedModel || isExporting || availableModels.length === 0}
+            disabled={
+              isExporting ||
+              (sourceType === "trained" && (!selectedModel || availableModels.length === 0)) ||
+              (sourceType === "foundation" && !foundationModelName)
+            }
           >
             {isExporting ? (
               <>
