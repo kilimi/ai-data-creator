@@ -142,49 +142,63 @@ def create_image_collection(
 
 @router.delete("/datasets/{dataset_id}/image-collections/{collection_id}")
 def delete_image_collection(
-    dataset_id: int, 
-    collection_id: int, 
+    dataset_id: int,
+    collection_id: int,
     db: Session = Depends(get_db)
 ):
-    """Delete an image collection and move its images back to the default collection"""
+    """Delete an image collection and all images in it (database records and physical files)."""
     collection = db.query(ImageCollection).filter(
         ImageCollection.id == collection_id,
         ImageCollection.dataset_id == dataset_id
     ).first()
-    
+
     if not collection:
         raise HTTPException(status_code=404, detail="Collection not found")
-    
+
     if collection.is_default:
         raise HTTPException(status_code=400, detail="Cannot delete default collection")
-    
-    # Get or create default collection
-    default_collection = db.query(ImageCollection).filter(
-        ImageCollection.dataset_id == dataset_id,
-        ImageCollection.is_default == True
-    ).first()
-    
-    if not default_collection:
-        default_collection = ImageCollection(
-            dataset_id=dataset_id,
-            name="RGB Images",
-            description="Default image collection",
-            is_default=True
-        )
-        db.add(default_collection)
-        db.commit()
-        db.refresh(default_collection)
-    
-    # Move all images from this collection to the default collection
-    images_to_move = db.query(Image).filter(Image.collection_id == collection_id).all()
-    for image in images_to_move:
-        image.collection_id = default_collection.id
-    
-    # Delete the collection
+
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    project_id = dataset.project_id or 0
+    dataset_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
+    old_dataset_dir = Path("data/images") / str(dataset_id)
+
+    AnnotationFileImage = None
+    try:
+        from ..models import AnnotationFileImage
+    except ImportError:
+        pass
+
+    images_in_collection = db.query(Image).filter(Image.collection_id == collection_id).all()
+    for image in images_in_collection:
+        try:
+            file_path = dataset_dir / image.file_name
+            if file_path.exists():
+                os.remove(file_path)
+            else:
+                old_file_path = old_dataset_dir / image.file_name
+                if old_file_path.exists():
+                    os.remove(old_file_path)
+        except Exception:
+            pass
+        if AnnotationFileImage is not None:
+            try:
+                db.query(AnnotationFileImage).filter(
+                    AnnotationFileImage.dataset_image_id == image.id
+                ).update({"dataset_image_id": None})
+            except Exception:
+                pass
+        db.delete(image)
+
     db.delete(collection)
+    current_count = db.query(Image).filter(Image.dataset_id == dataset_id).count()
+    dataset.image_count = current_count
     db.commit()
-    
-    return {"message": "Collection deleted successfully"}
+
+    return {"message": "Collection and all its images deleted successfully"}
 
 @router.post("/datasets/{dataset_id}/image-collections/{collection_id}/images")
 async def upload_images_to_collection(

@@ -651,7 +651,7 @@ async def start_preannotate(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db)
 ):
-    """Start auto-annotation with foundation model"""
+    """Start auto-annotation with foundation model or depth estimation"""
     try:
         model_name = request.get("model_name")
         dataset_id = request.get("dataset_id")
@@ -660,6 +660,8 @@ async def start_preannotate(
         annotation_file_name = request.get("annotation_file_name")
         conf_threshold = request.get("conf_threshold", 0.25)
         task_type = request.get("task_type", "detect")
+        environment = request.get("environment", "outdoor")
+        model_size = request.get("model_size", "vitb")
         
         if not model_name or not dataset_id:
             raise HTTPException(status_code=400, detail="model_name and dataset_id are required")
@@ -669,10 +671,14 @@ async def start_preannotate(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
+        # Check if this is a depth estimation request
+        is_depth_estimation = model_name.startswith("depth_anything")
+        
         # Create task record
+        task_name = f"Generate depth maps for {dataset.name}" if is_depth_estimation else f"Auto-annotate {dataset.name} with {model_name}"
         task = models.Task(
-            name=f"Auto-annotate {dataset.name} with {model_name}",
-            task_type="preannotate",
+            name=task_name,
+            task_type="depth_estimation" if is_depth_estimation else "preannotate",
             status="pending",
             progress=0.0,
             project_id=dataset.project_id,
@@ -685,7 +691,9 @@ async def start_preannotate(
                 "new_dataset_name": new_dataset_name,
                 "annotation_file_name": annotation_file_name or f"Auto_{model_name}",
                 "conf_threshold": conf_threshold,
-                "task_type": task_type
+                "task_type": task_type,
+                "environment": environment,
+                "model_size": model_size
             }
         )
         db.add(task)
@@ -695,23 +703,44 @@ async def start_preannotate(
         # Get database URL from environment
         db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db/lai_db")
         
-        # Start background task
-        background_tasks.add_task(
-            preannotate_with_foundation_model_task,
-            task.id,
-            db_url,
-            model_name,
-            dataset_id,
-            conf_threshold,
-            task_type
-        )
-        
-        logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
+        # Start appropriate background task
+        if is_depth_estimation:
+            # Import depth estimation task
+            from ..tasks.depth_estimation_tasks import generate_depth_maps
+            
+            # Start depth estimation task
+            celery_task = generate_depth_maps.delay(
+                task.id,
+                dataset_id,
+                model_size,
+                environment,
+                save_as or "collection",
+                new_dataset_name
+            )
+            task.task_metadata = {**(task.task_metadata or {}), "celery_task_id": celery_task.id}
+            db.commit()
+
+            logger.info(f"Started depth estimation task {task.id} for dataset {dataset_id} with model {model_name}")
+            message = f"Depth estimation started with {model_name}"
+        else:
+            # Start YOLO auto-annotation task
+            background_tasks.add_task(
+                preannotate_with_foundation_model_task,
+                task.id,
+                db_url,
+                model_name,
+                dataset_id,
+                conf_threshold,
+                task_type
+            )
+            
+            logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
+            message = f"Auto-annotation started with {model_name}"
         
         return {
             "success": True,
             "task_id": task.id,
-            "message": f"Auto-annotation started with {model_name}",
+            "message": message,
             "task": {
                 "id": task.id,
                 "name": task.name,

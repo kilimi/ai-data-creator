@@ -44,6 +44,7 @@ export default function Dataset() {
   const [isVideoUploading, setIsVideoUploading] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [collectionToDelete, setCollectionToDelete] = useState<{ id: string; name: string } | null>(null);
   const [images, setImages] = useState<Image[]>([]);
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
   const [useTabbedImages, setUseTabbedImages] = useState(true); // Feature flag for tabbed images
@@ -205,19 +206,20 @@ export default function Dataset() {
     }
   };
 
-  const handleRemoveImageTab = async (collectionId: string): Promise<void> => {
-    if (!datasetId) return;
-    
-    // Don't allow removing the main collection (default collection)
+  const handleRemoveImageTab = (collectionId: string): void => {
     const collection = imageCollections.find(c => c.id === collectionId);
     if (!collection) return;
-    
+    setCollectionToDelete({ id: collectionId, name: collection.name });
+  };
+
+  const handleConfirmDeleteCollection = async (): Promise<void> => {
+    if (!datasetId || !collectionToDelete) return;
     try {
-      await imageCollectionsApi.deleteImageCollection(datasetId, parseInt(collectionId));
-      await loadImageCollections(); // Reload to get updated data
+      await imageCollectionsApi.deleteImageCollection(datasetId, parseInt(collectionToDelete.id));
+      await loadImageCollections();
       toast({
         title: "Success",
-        description: `Image collection "${collection.name}" deleted successfully`,
+        description: `Image collection "${collectionToDelete.name}" and all its images were deleted.`,
       });
     } catch (error: any) {
       toast({
@@ -225,6 +227,8 @@ export default function Dataset() {
         description: error.message || "Failed to delete image collection",
         variant: "destructive",
       });
+    } finally {
+      setCollectionToDelete(null);
     }
   };
 
@@ -1078,6 +1082,27 @@ export default function Dataset() {
                 className="bg-destructive hover:bg-destructive/90"
               >
                 Delete Dataset
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={!!collectionToDelete} onOpenChange={(open) => !open && setCollectionToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete image collection?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure? This will delete the collection &quot;{collectionToDelete?.name}&quot; and all images in it.
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={handleConfirmDeleteCollection}
+                className="bg-destructive hover:bg-destructive/90"
+              >
+                Delete collection and images
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

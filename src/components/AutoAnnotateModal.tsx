@@ -68,9 +68,9 @@ const ARCH_SUPPORTED_TASKS: Record<string, YoloTask[]> = {
 };
 
 const DEPTH_SIZES = [
-  { value: "small", label: "Small (ViT-S)" },
-  { value: "base", label: "Base (ViT-B)" },
-  { value: "large", label: "Large (ViT-L)" },
+  { value: "vits", label: "Small (ViT-S)" },
+  { value: "vitb", label: "Base (ViT-B)" },
+  { value: "vitl", label: "Large (ViT-L)" },
 ];
 
 const COCO_CLASSES = [
@@ -98,11 +98,12 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [newDatasetName, setNewDatasetName] = React.useState("");
   const [showClasses, setShowClasses] = React.useState(false);
   const [confThreshold, setConfThreshold] = React.useState(0.25);
+  const [depthEnvironment, setDepthEnvironment] = React.useState<"indoor" | "outdoor">("outdoor");
 
   const selectedModel = selectedFamily === "yolo"
     ? `${selectedYoloArch}${selectedSize}`
     : selectedFamily === "depth_anything"
-    ? `depth_anything_v2_${selectedSize}`
+    ? `depth_anything_v2_${selectedSize}_${depthEnvironment}`
     : "";
 
   const handleSubmit = async () => {
@@ -118,6 +119,8 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
         body.task_type = selectedTask;
       } else if (selectedFamily === "depth_anything") {
         body.save_as = saveAsNew ? "dataset" : "collection";
+        body.environment = depthEnvironment;
+        body.model_size = selectedSize;
         if (saveAsNew) {
           body.new_dataset_name = newDatasetName || `${datasetName} - Depth`;
         }
@@ -178,7 +181,7 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
                 onClick={() => {
                   setSelectedFamily(key);
                   if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); setSelectedTask("segment"); }
-                  else { setSelectedSize("small"); }
+                  else { setSelectedSize("vitb"); setDepthEnvironment("outdoor"); }
                   setSaveAsNew(false);
                   setNewDatasetName("");
                 }}
@@ -340,9 +343,30 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
             </>
           )}
 
-          {/* Depth Anything V2: size + save options */}
+          {/* Depth Anything V2: environment + size + save options */}
           {selectedFamily === "depth_anything" && (
             <>
+              <div className="space-y-2">
+                <span className="block font-medium text-sm">Environment</span>
+                <div className="flex gap-1.5">
+                  {[{ value: "outdoor" as const, label: "Outdoor" }, { value: "indoor" as const, label: "Indoor" }].map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setDepthEnvironment(value)}
+                      className={cn(
+                        "rounded-md border px-4 py-1.5 text-sm font-medium transition-all",
+                        depthEnvironment === value
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border hover:bg-muted/40"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <span className="block font-medium text-sm">Model size</span>
                 <div className="flex gap-1.5">

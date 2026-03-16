@@ -38,6 +38,9 @@ COPY . .
 ENV HOME=/app
 RUN python scripts/download_ultralytics_models.py
 
+# Pre-download Depth-Anything models for depth estimation
+RUN python scripts/download_depth_anything_models.py
+
 # Expose the port
 EXPOSE 8000
 EXPOSE 5151

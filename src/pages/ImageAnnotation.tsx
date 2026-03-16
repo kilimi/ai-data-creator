@@ -903,21 +903,25 @@ const ImageAnnotation = () => {
       setCurrentLayerImageNames([]);
     }
     
-    // Find the image with this name in the display layer
+    // Find the image with this name in the display layer (exact match, or same base name e.g. depth layer has photo.png for photo.jpg)
     const displayCollection = collections.find(c => c.id === layerId);
     let foundDisplayImage: Image | null = null;
 
     if (displayCollection) {
-      // If a specific layer is selected, only use images from that layer.
       foundDisplayImage = displayCollection.images.find(img => img.fileName === imageName) || null;
       if (!foundDisplayImage) {
-        // No corresponding image in the selected layer — clear display image and set flag
+        const baseName = imageName.includes('.') ? imageName.slice(0, imageName.lastIndexOf('.')) : imageName;
+        foundDisplayImage = displayCollection.images.find(img => {
+          const imgBase = img.fileName?.includes('.') ? img.fileName.slice(0, img.fileName.lastIndexOf('.')) : (img.fileName ?? '');
+          return imgBase === baseName;
+        }) || null;
+      }
+      if (!foundDisplayImage) {
         setDisplayImage(null);
         setNoCorrespondingImage(true);
         return;
-      } else {
-        setNoCorrespondingImage(false);
       }
+      setNoCorrespondingImage(false);
     }
 
     // If no specific layer selected, or displayCollection undefined, fall back to current image
@@ -4339,8 +4343,15 @@ const ImageAnnotation = () => {
       return;
     }
 
-    // Try to find same filename in the new layer
+    // Try to find same filename in the new layer, or same base name (e.g. depth layer: photo.png for photo.jpg)
     let newDisplayImage = displayCollection.images.find(img => img.fileName === currentImageName) || null;
+    if (!newDisplayImage && currentImageName) {
+      const baseName = currentImageName.includes('.') ? currentImageName.slice(0, currentImageName.lastIndexOf('.')) : currentImageName;
+      newDisplayImage = displayCollection.images.find(img => {
+        const imgBase = img.fileName?.includes('.') ? img.fileName.slice(0, img.fileName.lastIndexOf('.')) : (img.fileName ?? '');
+        return imgBase === baseName;
+      }) || null;
+    }
 
     // Use setTimeout to batch the state updates and reduce flickering
     setTimeout(() => {
