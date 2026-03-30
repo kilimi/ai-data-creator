@@ -7,6 +7,7 @@ POST /segment accepts "model": "sam2" | "sam3" (default sam2). GET /health retur
 import os
 import hashlib
 from flask import Flask, request, jsonify
+from werkzeug.middleware.proxy_fix import ProxyFix
 from PIL import Image
 import numpy as np
 import requests

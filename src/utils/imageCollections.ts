@@ -22,6 +22,7 @@ export interface ImageCollectionData {
     thumbnailUrl: string;
     uploadedAt: string;
     annotationsCount: number;
+    groupId?: string;
   }>;
 }
 
@@ -184,6 +185,7 @@ export function convertToFrontendImageCollection(
     thumbnailUrl: img.thumbnailUrl,
     uploadedAt: img.uploadedAt,
     annotationsCount: img.annotationsCount,
+    groupId: img.groupId,
   }));
 
   const totalPages = Math.ceil(images.length / imagesPerPage);

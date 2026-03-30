@@ -21,7 +21,8 @@ interface ImagesGridProps {
   onImageClick?: (image: Image) => void;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
-  
+  // All images across all collections, used to match annotations by filename across collections
+  allCollectionImages?: Image[];
 }
 
 // Helper: get annotation file name for an annotation
@@ -105,6 +106,7 @@ export function ImagesGrid({
   onImageClick,
   annotations = [],
   annotationFiles = [],
+  allCollectionImages,
 }: ImagesGridProps) {
   // Only show annotations that are visible (if isVisible is defined, must be true)
   const filteredAnnotations = annotations.filter(a => a.isVisible === undefined || a.isVisible);
@@ -138,8 +140,35 @@ export function ImagesGrid({
     setLoadedImages(prev => new Set(prev).add(imageId));
   };
 
-  const getImageAnnotations = (imageId: string) =>
-    filteredAnnotations.filter(annotation => String(annotation.imageId) === String(imageId));
+  const getImageAnnotations = (imageId: string) => {
+    const direct = filteredAnnotations.filter(annotation => String(annotation.imageId) === String(imageId));
+
+    // Also match annotations from other collections whose image corresponds to this one.
+    // Prefer groupId match (explicit DB connection); fall back to same base filename.
+    if (allCollectionImages && allCollectionImages.length > 0) {
+      const thisImage = images.find(img => String(img.id) === String(imageId));
+      if (thisImage) {
+        const sameGroupIds = new Set(
+          allCollectionImages
+            .filter(img => {
+              if (String(img.id) === String(imageId)) return false;
+              if (thisImage.groupId && img.groupId) return img.groupId === thisImage.groupId;
+              // Fallback: compare base filenames (strip extension)
+              const baseName = (n: string) => n.includes('.') ? n.slice(0, n.lastIndexOf('.')).toLowerCase() : n.toLowerCase();
+              return baseName(img.fileName) === baseName(thisImage.fileName);
+            })
+            .map(img => String(img.id))
+        );
+        if (sameGroupIds.size > 0) {
+          const crossCollection = filteredAnnotations.filter(
+            ann => sameGroupIds.has(String(ann.imageId)) && !direct.some(d => d.id === ann.id)
+          );
+          return [...direct, ...crossCollection];
+        }
+      }
+    }
+    return direct;
+  };
 
   if (images.length === 0) {
     const uploadButton = onOpenVideoUploadDialog ? (

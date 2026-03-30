@@ -92,6 +92,8 @@ export function TabbedImagesContent({
 
   const activeCollection = imageCollections.find(c => c.id === activeTab);
   const allImages = imageCollections.flatMap(c => c.images);
+  // Images used for modal navigation: only images in the active collection
+  const activeCollectionImages = activeCollection ? activeCollection.images : allImages;
 
   // Filter paginated images by search query
   const getFilteredPaginatedImages = (collection: ImageCollection) => {
@@ -100,9 +102,9 @@ export function TabbedImagesContent({
     return collection.paginatedImages.filter(img => img.fileName?.toLowerCase().includes(q));
   };
 
-  // Open modal at clicked image index
+  // Open modal at clicked image index (restricted to active collection)
   const handleImageClick = (image: Image) => {
-    const idx = allImages.findIndex((img) => img.id === image.id);
+    const idx = activeCollectionImages.findIndex((img) => img.id === image.id);
     if (idx !== -1) {
       setSelectedImageIndex(idx);
       setSelectedClickedImage(image);
@@ -174,27 +176,44 @@ export function TabbedImagesContent({
     }
   };
 
-  // Navigation handlers
+  // Navigation handlers (restricted to active collection)
   const hasPrev = selectedImageIndex !== null && selectedImageIndex > 0;
-  const hasNext = selectedImageIndex !== null && selectedImageIndex < allImages.length - 1;
+  const hasNext = selectedImageIndex !== null && selectedImageIndex < activeCollectionImages.length - 1;
   const handlePrev = () => {
     if (hasPrev && selectedImageIndex !== null) {
       const n = selectedImageIndex - 1;
       setSelectedImageIndex(n);
-      setSelectedClickedImage(allImages[n]);
+      setSelectedClickedImage(activeCollectionImages[n]);
     }
   };
   const handleNext = () => {
     if (hasNext && selectedImageIndex !== null) {
       const n = selectedImageIndex + 1;
       setSelectedImageIndex(n);
-      setSelectedClickedImage(allImages[n]);
+      setSelectedClickedImage(activeCollectionImages[n]);
     }
   };
 
-  const selectedImage = selectedClickedImage || (selectedImageIndex !== null ? allImages[selectedImageIndex] : null);
+  const selectedImage = selectedClickedImage || (selectedImageIndex !== null ? activeCollectionImages[selectedImageIndex] : null);
+  // Match annotations for modal: by direct imageId, or by groupId / filename across all collections
   const selectedImageAnnotations = selectedImage
-    ? annotations.filter((anno) => String(anno.imageId) === String(selectedImage.id))
+    ? (() => {
+        const direct = annotations.filter((anno) => String(anno.imageId) === String(selectedImage.id));
+        const baseName = (n: string) => n.includes('.') ? n.slice(0, n.lastIndexOf('.')).toLowerCase() : n.toLowerCase();
+        const sameGroupIds = new Set(
+          allImages
+            .filter(img => {
+              if (String(img.id) === String(selectedImage.id)) return false;
+              if (selectedImage.groupId && img.groupId) return img.groupId === selectedImage.groupId;
+              return baseName(img.fileName) === baseName(selectedImage.fileName);
+            })
+            .map(img => String(img.id))
+        );
+        const crossCollection = sameGroupIds.size > 0
+          ? annotations.filter(ann => sameGroupIds.has(String(ann.imageId)) && !direct.some(d => d.id === ann.id))
+          : [];
+        return [...direct, ...crossCollection];
+      })()
     : [];
 
   const annotationsWithFileName = annotations.map((ann) => ({
@@ -362,6 +381,7 @@ export function TabbedImagesContent({
                           onImageClick={handleImageClick}
                           annotations={annotationsWithFileName}
                           annotationFiles={annotationFiles}
+                          allCollectionImages={allImages}
                         />
                       </div>
                     </ScrollArea>
@@ -395,7 +415,7 @@ export function TabbedImagesContent({
         hasPrev={hasPrev}
         hasNext={hasNext}
         imageIndex={selectedImageIndex !== null ? selectedImageIndex + 1 : null}
-        imageCount={allImages.length}
+        imageCount={activeCollectionImages.length}
       />
 
       <AnnotationChoiceModal
@@ -403,6 +423,7 @@ export function TabbedImagesContent({
         onOpenChange={setIsAnnotationChoiceModalOpen}
         datasetId={id}
         projectId={projectId}
+        collectionId={activeTab}
       />
 
       <AddImageTabDialog

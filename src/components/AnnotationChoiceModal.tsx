@@ -9,9 +9,10 @@ interface AnnotationChoiceModalProps {
   onOpenChange: (open: boolean) => void;
   datasetId: string;
   projectId?: string;
+  collectionId?: string; // Optional collection ID to restrict navigation
 }
 
-export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId, projectId }: AnnotationChoiceModalProps) {
+export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId, projectId, collectionId }: AnnotationChoiceModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl">
@@ -43,7 +44,11 @@ export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId, project
                 className="w-full"
                 onClick={() => onOpenChange(false)}
               >
-                <Link to={projectId ? `/projects/${projectId}/datasets/${datasetId}/annotate/classification` : `/datasets/${datasetId}/annotate/classification`}>
+                <Link to={
+                  projectId 
+                    ? `/projects/${projectId}/datasets/${datasetId}/annotate/classification${collectionId ? `?collectionId=${collectionId}` : ''}` 
+                    : `/datasets/${datasetId}/annotate/classification${collectionId ? `?collectionId=${collectionId}` : ''}`
+                }>
                   Start Classification
                 </Link>
               </Button>
@@ -73,7 +78,11 @@ export function AnnotationChoiceModal({ isOpen, onOpenChange, datasetId, project
                 className="w-full"
                 onClick={() => onOpenChange(false)}
               >
-                <Link to={projectId ? `/projects/${projectId}/datasets/${datasetId}/annotate/segmentation` : `/datasets/${datasetId}/annotate/segmentation`}>
+                <Link to={
+                  projectId 
+                    ? `/projects/${projectId}/datasets/${datasetId}/annotate/segmentation${collectionId ? `?collectionId=${collectionId}` : ''}` 
+                    : `/datasets/${datasetId}/annotate/segmentation${collectionId ? `?collectionId=${collectionId}` : ''}`
+                }>
                   Start Segmentation
                 </Link>
               </Button>

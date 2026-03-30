@@ -172,6 +172,7 @@ const ImageAnnotation = () => {
   const [currentLayerImageNames, setCurrentLayerImageNames] = useState<string[]>([]);
   const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
+  const layerSwitchCounterRef = useRef(0); // Increment on every layer switch to force image remount
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
@@ -305,6 +306,7 @@ const ImageAnnotation = () => {
   const [saveAnnotationName, setSaveAnnotationName] = useState('');
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
   const navigateAfterSaveRef = useRef(false);
+  const justSavedRef = useRef(false); // Track when we just saved to prevent reload
 
   // Delete all annotations confirmation dialog state
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
@@ -771,13 +773,29 @@ const ImageAnnotation = () => {
           const uniqueNames = Array.from(allNames).sort();
           setAllImageNames(uniqueNames);
           
-          // Set default display layer (prefer RGB Images or first collection)
-          const defaultCollection = collectionsResponse.data.find(c => c.name.toLowerCase().includes('rgb')) ||
-                                   collectionsResponse.data[0];
+          // Check if a specific collection ID was provided in URL (to restrict navigation)
+          const urlCollectionId = searchParams.get('collectionId');
+          let defaultCollection: ImageCollection | undefined;
+          
+          if (urlCollectionId) {
+            // Use the collection specified in URL
+            defaultCollection = collectionsResponse.data.find(c => c.id === urlCollectionId);
+            if (defaultCollection) {
+              console.log('Using collection from URL:', defaultCollection.name);
+            } else {
+              console.warn('Collection from URL not found:', urlCollectionId);
+            }
+          }
+          
+          // Fallback: prefer RGB Images or first collection
+          if (!defaultCollection) {
+            defaultCollection = collectionsResponse.data.find(c => c.name.toLowerCase().includes('rgb')) ||
+                                     collectionsResponse.data[0];
+          }
           
           if (defaultCollection) {
             setDisplayLayer(defaultCollection.id);
-            setMainLayer(defaultCollection.id); // Set main layer (usually RGB)
+            setMainLayer(defaultCollection.id); // Set main layer (controls which images are available for navigation)
           }
           
           if (uniqueNames.length > 0) {
@@ -786,9 +804,15 @@ const ImageAnnotation = () => {
             loadAnnotationsForImage(uniqueNames[0]);
           }
           
+          const navCount = urlCollectionId && defaultCollection 
+            ? defaultCollection.images.length 
+            : uniqueNames.length;
+          
           toast({
             title: 'Collections loaded',
-            description: `Loaded ${collectionsResponse.data.length} collections with ${uniqueNames.length} unique images for navigation`,
+            description: urlCollectionId && defaultCollection 
+              ? `Loaded ${collectionsResponse.data.length} collections. Navigation restricted to "${defaultCollection.name}" (${navCount} images).`
+              : `Loaded ${collectionsResponse.data.length} collections with ${uniqueNames.length} unique images for navigation.`,
           });
         } else {
           // Fallback to old single collection method
@@ -870,6 +894,28 @@ const ImageAnnotation = () => {
       }
     }
   }, [currentLayerImageNames, isInitialLoad]);
+
+  // Create default "unknown" class if no classes exist after initial load
+  useEffect(() => {
+    // Only run after initial load completes and only if no annotationId (new annotation)
+    if (isInitialLoad || annotationId) return;
+    
+    // If no classes exist, create a default "unknown" class
+    if (classes.length === 0) {
+      const defaultClass: AnnotationClass = {
+        id: `class_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: 'unknown',
+        color: DEFAULT_COLORS[0],
+        visible: true,
+        count: 0
+      };
+      
+      setClasses([defaultClass]);
+      setSelectedClass(defaultClass.id);
+      
+      console.log('[ImageAnnotation] Created default "unknown" class for new annotation');
+    }
+  }, [isInitialLoad, annotationId, classes.length]);
 
   const updateCurrentImages = (imageName: string, layerId: string, collections: ImageCollection[]) => {
     // Find RGB collection for annotations priority
@@ -1960,6 +2006,13 @@ const ImageAnnotation = () => {
   // Load from annotation file if annotationId is provided
   useEffect(() => {
     if (annotationId && !isLoading) {
+      // Skip reload if we just saved - data is already in localStorage
+      if (justSavedRef.current) {
+        console.log('Skipping reload after save - data already in localStorage');
+        justSavedRef.current = false;
+        return;
+      }
+      
       // Wait for images to be loaded before attempting to load annotation file
       console.log('Loading annotation file with ID:', annotationId);
       loadFromAnnotationFile(annotationId).then((success) => {
@@ -2505,8 +2558,16 @@ const ImageAnnotation = () => {
 
   const redrawCanvas = useCallback(() => {
     // Require canvas and an image to draw: either the displayImage (selected layer) or the currentImage (annotations source)
-    // Skip drawing during layer transitions to prevent flickering
-    if (!canvasRef.current || !imageRef.current || (!displayImage && !currentImage) || isLayerSwitching) return;
+    if (!canvasRef.current || !imageRef.current || (!displayImage && !currentImage)) {
+      return;
+    }
+
+    // CRITICAL: Check if image is actually loaded before attempting to draw
+    // This prevents black screens when switching layers - the image element is remounted and starts loading,
+    // We must wait for it to actually load before drawing
+    if (!imageRef.current.complete || !imageRef.current.naturalWidth) {
+      return; // Wait for image to load before drawing
+    }
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -2666,12 +2727,12 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, isLayerSwitching]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
     redrawCanvas();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, samPoints, activeTool, imageScale, imageOffset, displayImage, currentImage, isLayerSwitching, redrawCanvas]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, samPoints, activeTool, imageScale, imageOffset, displayImage, currentImage, redrawCanvas]);
 
   // Redraw canvas for image scaling and offset changes
   useEffect(() => {
@@ -2906,7 +2967,12 @@ const ImageAnnotation = () => {
   const handleImageLoad = () => {
     // Reset preserve flag for new image loads
     preserveZoomRef.current = false;
-    handleImageResize();
+    
+    // Use requestAnimationFrame to ensure DOM has settled before calculating sizes
+    // This prevents "weird" initial rendering where container dimensions might still be stabilizing
+    requestAnimationFrame(() => {
+      handleImageResize();
+    });
   };
 
   const handleImageResize = () => {
@@ -2950,25 +3016,42 @@ const ImageAnnotation = () => {
         x: (containerRect.width - scaledWidth) / 2,
         y: (containerRect.height - scaledHeight) / 2
       });
+      // Don't call redrawCanvas here - let the useEffect handle it when state updates
+      // This prevents race conditions where we draw before imageScale/imageOffset are updated
+      // Clear layer switching state - useEffect will handle redraw when scale/offset update
+      requestAnimationFrame(() => {
+        setIsLayerSwitching(false);
+        // For layer switching, force one more redraw after overlay is gone to ensure visibility
+        if (isLayerSwitching) {
+          requestAnimationFrame(() => redrawCanvas());
+        }
+      });
     } else {
       // When preserving zoom, keep the current offset - don't recenter
-      // Just update the canvas size, the scale and offset should remain unchanged
+      // Just update the canvas size, redraw will happen via useEffect when needed
+      // Force a redraw since we're not changing scale/offset (so useEffect won't trigger)
+      requestAnimationFrame(() => {
+        redrawCanvas();
+        setIsLayerSwitching(false);
+        // Force another redraw after overlay is removed to ensure image is visible
+        requestAnimationFrame(() => {
+          redrawCanvas();
+        });
+      });
     }
-
-    redrawCanvas();
   };
 
     // Recompute canvas and image scale when panels change or image changes so aspect ratio stays correct
     useEffect(() => {
       // If image already loaded, recompute layout to maintain aspect ratio when side panels are hidden/resized
-      if (imageRef.current) {
+      // Also check that image is complete to avoid resizing before image is loaded
+      if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
         // Preserve zoom when just resizing panels
         preserveZoomRef.current = true;
         
         // small timeout to let layout settle after panel resize/collapse
         const t = setTimeout(() => {
           handleImageResize();
-          redrawCanvas();
         }, 50);
         return () => clearTimeout(t);
       }
@@ -3401,6 +3484,9 @@ const ImageAnnotation = () => {
         
         // Update the URL to include the annotation ID so subsequent edits work correctly
         if (newAnnotationFileId) {
+          // Mark that we just saved so we don't reload and clear localStorage
+          justSavedRef.current = true;
+          
           // Update URL params to include the new annotation file ID
           const currentParams = new URLSearchParams(window.location.search);
           currentParams.set('annotationId', newAnnotationFileId);
@@ -4329,6 +4415,8 @@ const ImageAnnotation = () => {
   const handleLayerChange = (layerId: string) => {
     setIsLayerSwitching(true);
     setDisplayLayer(layerId);
+    // Increment counter to force image remount and onLoad to fire
+    layerSwitchCounterRef.current += 1;
     
     // When layer changes, update the display image to show the current image name in the new layer
     if (imageCollections.length === 0) {
@@ -4359,6 +4447,7 @@ const ImageAnnotation = () => {
         // Image doesn't exist in this layer - set both states atomically to prevent flickering
         setDisplayImage(null);
         setNoCorrespondingImage(true);
+        setIsLayerSwitching(false); // No image to load, clear switching state immediately
         // Don't change currentImageName or currentImageIndex - maintain navigation position
       } else {
         // Image exists in this layer - set both states atomically
@@ -4366,9 +4455,8 @@ const ImageAnnotation = () => {
         setNoCorrespondingImage(false);
         // Ensure annotations for that name are loaded
         loadAnnotationsForImage(currentImageName);
+        // Note: isLayerSwitching will be cleared by handleImageLoad when the new image loads
       }
-      
-      setIsLayerSwitching(false);
       
       // Debounce the redraw to prevent multiple rapid calls during state updates
       setTimeout(() => {
@@ -4976,9 +5064,10 @@ const ImageAnnotation = () => {
             ref={containerRef}
             className="flex-1 relative overflow-hidden bg-muted/30"
           >
-            {(displayImage || currentImage) && !isLayerSwitching ? (
+            {(displayImage || currentImage) ? (
               <>
                 <img
+                  key={`layer-${layerSwitchCounterRef.current}-${displayLayer}-${(displayImage || currentImage)?.url || 'no-image'}`}
                   ref={imageRef}
                   src={(displayImage || currentImage)?.url || ''}
                   alt={(displayImage || currentImage)?.fileName || 'Current image'}
@@ -4999,14 +5088,16 @@ const ImageAnnotation = () => {
                   onDoubleClick={handleCanvasDoubleClick}
                   onContextMenu={handleCanvasRightClick}
                 />
+                {/* Show loading overlay during layer switching */}
+                {isLayerSwitching && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-10">
+                    <div className="text-center text-white">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
+                      <div className="text-sm">Switching layer...</div>
+                    </div>
+                  </div>
+                )}
               </>
-            ) : isLayerSwitching ? (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center text-muted-foreground">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
-                  <div className="text-sm">Switching layer...</div>
-                </div>
-              </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center text-muted-foreground">
@@ -5130,7 +5221,7 @@ const ImageAnnotation = () => {
                   </span>
                   {currentLayerImageNames.length > 0 && (
                     <span className="text-xs text-primary">
-                      ({imageCollections.find(c => c.id === displayLayer)?.name || 'layer'})
+                      ({imageCollections.find(c => c.id === mainLayer)?.name || 'layer'})
                     </span>
                   )}
                   {currentImageName && (

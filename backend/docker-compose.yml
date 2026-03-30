@@ -145,6 +145,7 @@ services:
       - PYTHONUNBUFFERED=1
       - HF_TOKEN=${HF_TOKEN:-}
       - SAM3_CHECKPOINT_PATH=/models/sam3/sam3.pt
+      - WERKZEUG_RUN_MAIN=true
     volumes:
       - ./sam_service/models:/models/sam3:ro
     ports:

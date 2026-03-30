@@ -630,7 +630,8 @@ async def clear_database(db: Session = Depends(get_db)):
         
         for table_name in table_order:
             try:
-                # Count records before deletion
+                # Use a savepoint so a failure here doesn't abort the whole transaction
+                db.execute(text(f"SAVEPOINT sp_{table_name}"))
                 count_before = 0
                 if table_name == 'projects':
                     count_before = db.query(models.Project).count()
@@ -663,10 +664,16 @@ async def clear_database(db: Session = Depends(get_db)):
                     count_before = db.query(models.DatasetGroup).count()
                     db.query(models.DatasetGroup).delete(synchronize_session=False)
                 
+                db.execute(text(f"RELEASE SAVEPOINT sp_{table_name}"))
                 deleted_counts[table_name] = count_before
                 logger.info(f"Cleared {count_before} records from {table_name}")
                 
             except Exception as e:
+                # Roll back only this table's savepoint — transaction stays alive for remaining tables
+                try:
+                    db.execute(text(f"ROLLBACK TO SAVEPOINT sp_{table_name}"))
+                except Exception:
+                    pass
                 logger.error(f"Error clearing table {table_name}: {str(e)}")
                 deleted_counts[table_name] = 0
         

@@ -89,6 +89,7 @@ class Image(BaseModel):
     thumbnailUrl: str
     uploadedAt: datetime
     annotationsCount: int = 0
+    groupId: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -23,6 +23,31 @@ from ..schemas import (
 
 router = APIRouter()
 
+
+def _base_name(filename: str) -> str:
+    """Return filename without extension, lower-cased, for group matching."""
+    if filename and '.' in filename:
+        return filename.rsplit('.', 1)[0].lower()
+    return (filename or '').lower()
+
+
+def get_or_create_group_id(db: Session, dataset_id: int, file_name: str) -> str:
+    """
+    Return the group_id shared by all images in this dataset with the same base filename.
+    Creates a new UUID if no group exists yet.
+    """
+    base = _base_name(file_name)
+    # Look for any existing image in this dataset with the same base filename
+    existing = (
+        db.query(Image)
+        .filter(Image.dataset_id == dataset_id, Image.group_id.isnot(None))
+        .all()
+    )
+    for img in existing:
+        if _base_name(img.file_name) == base and img.group_id:
+            return img.group_id
+    return str(uuid.uuid4())
+
 @router.get("/datasets/{dataset_id}/image-collections", response_model=List[ImageCollectionWithImages])
 def get_image_collections(request: Request, dataset_id: int, db: Session = Depends(get_db)):
     """Get all image collections for a dataset"""
@@ -78,7 +103,8 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
             "url": f"{base_url}{img.url}" if img.url and img.url.startswith('/') else img.url,
             "thumbnailUrl": f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url and img.thumbnail_url.startswith('/') else img.thumbnail_url,
             "uploadedAt": img.uploaded_at,
-            "annotationsCount": img.annotations_count
+            "annotationsCount": img.annotations_count,
+            "groupId": img.group_id,
         }
 
     result = []
@@ -439,7 +465,8 @@ async def upload_images_to_collection(
                 height=height,
                 url=relative_url,
                 thumbnail_url=relative_url,
-                uploaded_at=datetime.utcnow()
+                uploaded_at=datetime.utcnow(),
+                group_id=get_or_create_group_id(db, dataset_id, final_filename),
             )
             
             db.add(image)
@@ -485,7 +512,8 @@ async def upload_images_to_collection(
                 "url": f"{base_url}{img.url}" if img.url.startswith('/') else img.url,
                 "thumbnailUrl": f"{base_url}{img.thumbnail_url}?thumb=300" if img.thumbnail_url.startswith('/') else img.thumbnail_url,
                 "uploadedAt": img.uploaded_at.isoformat(),
-                "annotationsCount": img.annotations_count
+                "annotationsCount": img.annotations_count,
+                "groupId": img.group_id,
             }
             for img in uploaded_images
         ]
@@ -561,4 +589,45 @@ def initialize_default_collection(dataset_id: int, db: Session = Depends(get_db)
         "message": "Default collection initialized",
         "collection": default_collection,
         "images_moved": len(images)
+    }
+
+
+@router.post("/datasets/{dataset_id}/image-collections/sync-groups")
+def sync_image_groups(dataset_id: int, db: Session = Depends(get_db)):
+    """
+    Back-fill group_id for all images in a dataset.
+    Images with the same base filename (ignoring extension) across collections
+    will share the same group_id.
+    """
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+
+    # Build (base_name → group_id) map from already-assigned images first
+    groups: dict[str, str] = {}
+    for img in images:
+        if img.group_id:
+            base = _base_name(img.file_name)
+            if base not in groups:
+                groups[base] = img.group_id
+
+    # Assign / fix group_ids
+    updated = 0
+    for img in images:
+        base = _base_name(img.file_name)
+        if base not in groups:
+            groups[base] = str(uuid.uuid4())
+        if img.group_id != groups[base]:
+            img.group_id = groups[base]
+            updated += 1
+
+    db.commit()
+
+    return {
+        "message": f"Group IDs synced for dataset {dataset_id}",
+        "total_images": len(images),
+        "updated": updated,
+        "groups": len(groups),
     }

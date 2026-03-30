@@ -120,6 +120,7 @@ class Image(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     annotations_count = Column(Integer, default=0)
     collection_id = Column(Integer, ForeignKey("image_collections.id"), nullable=True, index=True)  # Optional: which collection this image belongs to
+    group_id = Column(String, nullable=True, index=True)  # Groups corresponding images across collections (same base filename → same group_id)
 
     dataset = relationship("Dataset", back_populates="images")
     annotations = relationship("Annotation", cascade="all, delete-orphan", back_populates="image")

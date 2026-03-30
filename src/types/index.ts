@@ -59,6 +59,7 @@ export interface Image {
   thumbnailUrl: string;
   uploadedAt: string;
   annotationsCount: number;
+  groupId?: string; // Groups corresponding images across collections (same base filename = same groupId)
   annotations?: Annotation[]; // Optional: array of polygon or bbox annotations for this image
 }
 
