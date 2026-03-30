@@ -80,7 +80,7 @@ export default function Dataset() {
       let backendCollections: ImageCollectionData[];
       const response = await api.getImageCollections(datasetId);
       if (response.success && response.data) {
-        backendCollections = response.data as ImageCollectionData[];
+        backendCollections = response.data as unknown as ImageCollectionData[];
       } else {
         throw new Error(response.error || 'Failed to fetch image collections');
       }
