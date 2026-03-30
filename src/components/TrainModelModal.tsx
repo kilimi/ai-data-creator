@@ -303,11 +303,19 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       let modelName = '';
 
       if (selectedModel === 'yolo') {
+        // Compute model file name from inline settings if not set by full dialog
+        let modelType = modelSettings.modelSize;
+        if (!modelType) {
+          const ver = modelSettings.version || 'yolo11';
+          const sz = modelSettings.size || 'n';
+          const task = modelSettings.task || 'segmentation';
+          modelType = `${ver}${sz}${task === 'segmentation' ? '-seg' : task === 'classification' ? '-cls' : ''}.pt`;
+        }
         // Prepare YOLO training request
         const trainingRequest = {
           project_id: parseInt(projectId),
           dataset_configs: datasetConfigs,
-          model_type: modelSettings.modelSize || 'yolo11n-seg.pt',
+          model_type: modelType,
           epochs: modelSettings.epochs || 100,
           batch_size: modelSettings.batchSize || 16,
           image_size: modelSettings.imageSize || 640,
@@ -745,89 +753,214 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* YOLO */}
-                <Card className={`cursor-pointer transition-all ${selectedModel === 'yolo' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="p-4" onClick={() => setSelectedModel('yolo')}>
-                    <div className="flex items-center justify-between mb-2">
+                <Card className={`cursor-pointer transition-all ${selectedModel === 'yolo' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
+                  onClick={() => { setSelectedModel('yolo'); if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: 'yolo11', size: 'n', task: 'segmentation' })); }}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-1">
                       <h4 className="font-medium">YOLO</h4>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowYoloSettings(true);
-                        }}
-                      >
-                        <Settings className="h-3 w-3" />
-                      </Button>
+                      {selectedModel === 'yolo' && <Check className="h-4 w-4 text-primary" />}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      You Only Look Once - Fast object detection
-                    </p>
-                    {selectedModel === 'yolo' && (
-                      <Badge variant="default" className="mt-2 text-xs">
-                        Selected
-                      </Badge>
-                    )}
+                    <p className="text-xs text-muted-foreground">Fast object detection & segmentation</p>
                   </CardContent>
                 </Card>
 
                 {/* Mask R-CNN */}
-                <Card className={`cursor-pointer transition-all ${selectedModel === 'mask-rcnn' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="p-4" onClick={() => setSelectedModel('mask-rcnn')}>
-                    <div className="flex items-center justify-between mb-2">
+                <Card className={`cursor-pointer transition-all ${selectedModel === 'mask-rcnn' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
+                  onClick={() => { setSelectedModel('mask-rcnn'); if (!modelSettings.backbone) setModelSettings((prev: any) => ({ ...prev, backbone: 'resnet50', fpn: true, epochs: 100, learningRate: 0.001 })); }}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-1">
                       <h4 className="font-medium">Mask R-CNN</h4>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowMaskRCNNSettings(true);
-                        }}
-                      >
-                        <Settings className="h-3 w-3" />
-                      </Button>
+                      {selectedModel === 'mask-rcnn' && <Check className="h-4 w-4 text-primary" />}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Instance segmentation and object detection
-                    </p>
-                    {selectedModel === 'mask-rcnn' && (
-                      <Badge variant="default" className="mt-2 text-xs">
-                        Selected
-                      </Badge>
-                    )}
+                    <p className="text-xs text-muted-foreground">Instance segmentation</p>
                   </CardContent>
                 </Card>
 
                 {/* RF-DETR */}
-                <Card className={`cursor-pointer transition-all ${selectedModel === 'rf-detr' ? 'ring-2 ring-primary' : ''}`}>
-                  <CardContent className="p-4" onClick={() => setSelectedModel('rf-detr')}>
-                    <div className="flex items-center justify-between mb-2">
+                <Card className={`cursor-pointer transition-all ${selectedModel === 'rf-detr' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
+                  onClick={() => { setSelectedModel('rf-detr'); if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 300, batchSize: 16 })); }}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-1">
                       <h4 className="font-medium">RF-DETR</h4>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-6 w-6"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowRFDETRSettings(true);
-                        }}
-                      >
-                        <Settings className="h-3 w-3" />
-                      </Button>
+                      {selectedModel === 'rf-detr' && <Check className="h-4 w-4 text-primary" />}
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Real-time detection transformer
-                    </p>
-                    {selectedModel === 'rf-detr' && (
-                      <Badge variant="default" className="mt-2 text-xs">
-                        Selected
-                      </Badge>
-                    )}
+                    <p className="text-xs text-muted-foreground">Real-time detection transformer</p>
                   </CardContent>
                 </Card>
               </div>
+
+              {/* Inline Model Settings */}
+              {selectedModel === 'yolo' && (
+                <Card className="border-primary/30">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Settings className="h-4 w-4" /> YOLO Configuration
+                      </CardTitle>
+                      <Button size="sm" variant="outline" onClick={() => setShowYoloSettings(true)}>
+                        <Settings className="h-3 w-3 mr-1" /> All Settings
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Version</Label>
+                        <Select value={modelSettings.version || 'yolo11'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, version: v }))}>
+                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-background border shadow-md z-[70]">
+                            <SelectItem value="yolo5">YOLOv5</SelectItem>
+                            <SelectItem value="yolo8">YOLOv8</SelectItem>
+                            <SelectItem value="yolo9">YOLOv9</SelectItem>
+                            <SelectItem value="yolo10">YOLOv10</SelectItem>
+                            <SelectItem value="yolo11">YOLOv11</SelectItem>
+                            <SelectItem value="yolo26">YOLO26</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Size</Label>
+                        <Select value={modelSettings.size || 'n'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, size: v }))}>
+                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-background border shadow-md z-[70]">
+                            <SelectItem value="n">Nano</SelectItem>
+                            <SelectItem value="s">Small</SelectItem>
+                            <SelectItem value="m">Medium</SelectItem>
+                            <SelectItem value="l">Large</SelectItem>
+                            <SelectItem value="x">X-Large</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Task</Label>
+                        <Select value={modelSettings.task || 'segmentation'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, task: v }))}>
+                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-background border shadow-md z-[70]">
+                            <SelectItem value="detection">Detection</SelectItem>
+                            <SelectItem value="segmentation">Segmentation</SelectItem>
+                            <SelectItem value="classification">Classification</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Epochs</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 100} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Batch Size</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.batchSize || 16} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, batchSize: Number(e.target.value) }))} min={1} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Image Size</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.imageSize || 640} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, imageSize: Number(e.target.value) }))} min={32} step={32} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Learning Rate</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.learningRate || 0.01} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, learningRate: Number(e.target.value) }))} step={0.001} min={0.0001} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Patience</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.patience || 50} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, patience: Number(e.target.value) }))} min={1} />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {selectedModel === 'mask-rcnn' && (
+                <Card className="border-primary/30">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Settings className="h-4 w-4" /> Mask R-CNN Configuration
+                      </CardTitle>
+                      <Button size="sm" variant="outline" onClick={() => setShowMaskRCNNSettings(true)}>
+                        <Settings className="h-3 w-3 mr-1" /> All Settings
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Backbone</Label>
+                        <Select value={modelSettings.backbone || 'resnet50'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, backbone: v }))}>
+                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-background border shadow-md z-[70]">
+                            <SelectItem value="resnet50">ResNet-50</SelectItem>
+                            <SelectItem value="resnet101">ResNet-101</SelectItem>
+                            <SelectItem value="resnext50">ResNeXt-50</SelectItem>
+                            <SelectItem value="resnext101">ResNeXt-101</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Epochs</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 100} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Learning Rate</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.learningRate || 0.001} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, learningRate: Number(e.target.value) }))} step={0.0001} min={0.0001} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">FPN</Label>
+                        <Select value={modelSettings.fpn !== false ? 'true' : 'false'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, fpn: v === 'true' }))}>
+                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-background border shadow-md z-[70]">
+                            <SelectItem value="true">Enabled</SelectItem>
+                            <SelectItem value="false">Disabled</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {selectedModel === 'rf-detr' && (
+                <Card className="border-primary/30">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Settings className="h-4 w-4" /> RF-DETR Configuration
+                      </CardTitle>
+                      <Button size="sm" variant="outline" onClick={() => setShowRFDETRSettings(true)}>
+                        <Settings className="h-3 w-3 mr-1" /> All Settings
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Variant</Label>
+                        <Select value={modelSettings.variant || 'rtdetr-l'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, variant: v }))}>
+                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-background border shadow-md z-[70]">
+                            <SelectItem value="rtdetr-l">RT-DETR-L</SelectItem>
+                            <SelectItem value="rtdetr-x">RT-DETR-X</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Epochs</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 300} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Batch Size</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.batchSize || 16} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, batchSize: Number(e.target.value) }))} min={1} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Image Size</Label>
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.imageSize || 640} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, imageSize: Number(e.target.value) }))} min={32} step={32} />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             <Separator />
@@ -902,6 +1035,83 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </div>
               )}
             </div>
+
+            {/* Training Summary / Review Panel */}
+            {canTrain() && (
+              <>
+                <Separator />
+                <div className="space-y-3">
+                  <Label className="text-base font-medium flex items-center gap-2">
+                    <Check className="h-4 w-4 text-primary" />
+                    Training Summary
+                  </Label>
+                  <Card className="bg-muted/50 border-primary/20">
+                    <CardContent className="p-4">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
+                        <div>
+                          <span className="text-muted-foreground text-xs">Model</span>
+                          <p className="font-medium">
+                            {selectedModel === 'yolo' && `YOLO ${(modelSettings.version || 'v11').toUpperCase()} - ${(modelSettings.size || 'n').toUpperCase()}`}
+                            {selectedModel === 'mask-rcnn' && `Mask R-CNN (${modelSettings.backbone || 'resnet50'})`}
+                            {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
+                          </p>
+                        </div>
+                        {selectedModel === 'yolo' && (
+                          <div>
+                            <span className="text-muted-foreground text-xs">Task</span>
+                            <p className="font-medium capitalize">{modelSettings.task || 'segmentation'}</p>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-muted-foreground text-xs">Epochs</span>
+                          <p className="font-medium">{modelSettings.epochs || (selectedModel === 'rf-detr' ? 300 : 100)}</p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground text-xs">Datasets</span>
+                          <p className="font-medium">{selectedDatasets.length} dataset{selectedDatasets.length !== 1 ? 's' : ''}</p>
+                        </div>
+                        {(selectedModel === 'yolo' || selectedModel === 'rf-detr') && (
+                          <>
+                            <div>
+                              <span className="text-muted-foreground text-xs">Batch Size</span>
+                              <p className="font-medium">{modelSettings.batchSize || 16}</p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground text-xs">Image Size</span>
+                              <p className="font-medium">{modelSettings.imageSize || 640}px</p>
+                            </div>
+                          </>
+                        )}
+                        <div>
+                          <span className="text-muted-foreground text-xs">Learning Rate</span>
+                          <p className="font-medium">{modelSettings.learningRate || (selectedModel === 'mask-rcnn' ? 0.001 : 0.01)}</p>
+                        </div>
+                        {saveToWandb && (
+                          <div>
+                            <span className="text-muted-foreground text-xs">W&B Project</span>
+                            <p className="font-medium">{wandbSettings.project}</p>
+                          </div>
+                        )}
+                      </div>
+                      <Separator className="my-3" />
+                      <div className="space-y-1">
+                        <span className="text-muted-foreground text-xs">Datasets</span>
+                        {selectedDatasets.map((sel) => (
+                          <div key={sel.id} className="flex items-center justify-between text-xs">
+                            <span className="font-medium">{sel.dataset.name}</span>
+                            <div className="flex items-center gap-2 text-muted-foreground">
+                              <span>{sel.imageCollection}</span>
+                              <span>•</span>
+                              <span>{sel.split?.train ?? 80}/{sel.split?.val ?? 20}/{sel.split?.test ?? 0}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </>
+            )}
           </div>
 
           <DialogFooter>

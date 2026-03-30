@@ -80,7 +80,7 @@ export default function Dataset() {
       let backendCollections: ImageCollectionData[];
       const response = await api.getImageCollections(datasetId);
       if (response.success && response.data) {
-        backendCollections = response.data as ImageCollectionData[];
+        backendCollections = response.data as unknown as ImageCollectionData[];
       } else {
         throw new Error(response.error || 'Failed to fetch image collections');
       }
@@ -97,7 +97,7 @@ export default function Dataset() {
         await imageCollectionsApi.initializeDefaultCollection(datasetId);
         const reloadResponse = await api.getImageCollections(datasetId);
         if (reloadResponse.success && reloadResponse.data) {
-          const newCollections = reloadResponse.data as ImageCollectionData[];
+          const newCollections = reloadResponse.data as unknown as ImageCollectionData[];
           setImageCollections(
             newCollections.map((c) =>
               convertToFrontendImageCollection(c, settings.imagesPerPage)
