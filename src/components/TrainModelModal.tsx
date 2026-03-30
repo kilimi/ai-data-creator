@@ -303,11 +303,19 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       let modelName = '';
 
       if (selectedModel === 'yolo') {
+        // Compute model file name from inline settings if not set by full dialog
+        let modelType = modelSettings.modelSize;
+        if (!modelType) {
+          const ver = modelSettings.version || 'yolo11';
+          const sz = modelSettings.size || 'n';
+          const task = modelSettings.task || 'segmentation';
+          modelType = `${ver}${sz}${task === 'segmentation' ? '-seg' : task === 'classification' ? '-cls' : ''}.pt`;
+        }
         // Prepare YOLO training request
         const trainingRequest = {
           project_id: parseInt(projectId),
           dataset_configs: datasetConfigs,
-          model_type: modelSettings.modelSize || 'yolo11n-seg.pt',
+          model_type: modelType,
           epochs: modelSettings.epochs || 100,
           batch_size: modelSettings.batchSize || 16,
           image_size: modelSettings.imageSize || 640,
