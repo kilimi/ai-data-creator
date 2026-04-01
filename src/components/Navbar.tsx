@@ -2,12 +2,20 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Settings, Sparkles, Sun, Moon, Cpu, Loader2 } from "lucide-react";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { TasksPopover } from "./TasksPopover";
 import { useTheme } from "./ThemeProvider";
 import { useApi } from "@/hooks/use-api";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+
+type GpuStatus = {
+  has_gpu: boolean;
+  gpu_count: number;
+  gpus: Array<{ name: string; memory_used_mb: number; memory_total_mb: number; utilization_percent: number }>;
+  memory_used_mb: number;
+  memory_total_mb: number;
+};
 
 export function Navbar() {
   const location = useLocation();
@@ -26,24 +34,19 @@ export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const { api } = useApi();
-  const [gpuStatus, setGpuStatus] = useState<{
-    has_gpu: boolean;
-    gpu_count: number;
-    gpus: Array<{ name: string; memory_used_mb: number; memory_total_mb: number; utilization_percent: number }>;
-    memory_used_mb: number;
-    memory_total_mb: number;
-  } | null>(null);
+  const [gpuStatus, setGpuStatus] = useState<GpuStatus | null>(null);
   const [gpuLoading, setGpuLoading] = useState(false);
+  const [gpuPopoverOpen, setGpuPopoverOpen] = useState(false);
+  const gpuFetchedOnce = useRef(false);
 
   const fetchGpuStatus = useCallback(async () => {
     if (!api) return;
     setGpuLoading(true);
     try {
       const res = await api.getGpuStatus();
-      // API may return { success, data } or (if wrapped elsewhere) payload at top level
       const payload = res.data ?? (res as unknown as { has_gpu?: boolean; gpus?: unknown[] });
       if (payload && typeof (payload as { has_gpu?: boolean }).has_gpu === "boolean") {
-        setGpuStatus(payload as typeof gpuStatus);
+        setGpuStatus(payload as GpuStatus);
       } else {
         setGpuStatus(null);
       }
@@ -54,11 +57,18 @@ export function Navbar() {
     }
   }, [api]);
 
+  // Fetch GPU once on mount, then only poll when popover is open
   useEffect(() => {
+    if (!api) return;
+    if (!gpuFetchedOnce.current) {
+      gpuFetchedOnce.current = true;
+      fetchGpuStatus();
+    }
+    if (!gpuPopoverOpen) return;
     fetchGpuStatus();
-    const interval = setInterval(fetchGpuStatus, 15000);
+    const interval = setInterval(fetchGpuStatus, 15_000);
     return () => clearInterval(interval);
-  }, [fetchGpuStatus]);
+  }, [api, gpuPopoverOpen, fetchGpuStatus]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -97,7 +107,7 @@ export function Navbar() {
         <div className="flex items-center gap-2">
           <TasksPopover />
 
-          <Popover>
+          <Popover open={gpuPopoverOpen} onOpenChange={setGpuPopoverOpen}>
             <PopoverTrigger asChild>
               <Button
                 variant="outline"

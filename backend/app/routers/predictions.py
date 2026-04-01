@@ -14,6 +14,7 @@ import zipfile
 import io
 
 from ..database import get_db
+from ..evaluation_artifacts import load_merged_evaluation_results
 from ..models import Task, Dataset, Image
 
 router = APIRouter()
@@ -323,6 +324,31 @@ async def evaluate_model_multiple_datasets(
         raise HTTPException(status_code=500, detail=f"Failed to start evaluation: {str(e)}")
 
 
+@router.get("/predictions/evaluation-blobs/{task_id}")
+async def get_evaluation_blobs(
+    task_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Large per-detection payload (predictions, ground-truth flat list, CM drill-down samples).
+    Stored on disk for new evaluations; legacy tasks may serve from inline task_metadata.
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.task_type != 'model_evaluation':
+        raise HTTPException(status_code=400, detail="Task is not an evaluation task")
+    if task.status != 'completed':
+        raise HTTPException(status_code=400, detail="Evaluation not completed")
+    results = (task.task_metadata or {}).get('results', {})
+    merged = load_merged_evaluation_results(results)
+    return {
+        "predictions": merged.get("predictions", []),
+        "all_ground_truth": merged.get("all_ground_truth", []),
+        "confusion_matrix_samples": merged.get("confusion_matrix_samples", {}),
+    }
+
+
 @router.get("/predictions/export-coco/{task_id}")
 async def export_coco_results(
     task_id: int,
@@ -341,8 +367,8 @@ async def export_coco_results(
         if task.status != 'completed':
             raise HTTPException(status_code=400, detail="Evaluation not completed")
         
-        # Get results from metadata
-        results = task.task_metadata.get('results', {})
+        # Get results from metadata (merge on-disk blobs if used)
+        results = load_merged_evaluation_results(task.task_metadata.get('results', {}))
         if not results:
             raise HTTPException(status_code=404, detail="No evaluation results found")
         
@@ -473,7 +499,7 @@ async def export_all_coco_results(
                     continue
                 
                 child_metadata = child_task.task_metadata or {}
-                results = child_metadata.get('results', {})
+                results = load_merged_evaluation_results(child_metadata.get('results', {}))
                 if not results:
                     continue
                 
@@ -591,7 +617,7 @@ async def view_in_fiftyone(
         
         # Get results from metadata
         metadata = task.task_metadata or {}
-        results = metadata.get('results', {})
+        results = load_merged_evaluation_results(metadata.get('results', {}))
         if not results:
             raise HTTPException(status_code=404, detail="No evaluation results found")
         

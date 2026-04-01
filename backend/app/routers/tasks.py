@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
-from typing import Optional, List
+from sqlalchemy.orm.attributes import flag_modified
+from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 import logging
 import shutil
@@ -18,9 +19,59 @@ logger = logging.getLogger(__name__)
 # Initialize Celery app for task control
 celery_app = Celery('tasks', broker='redis://redis:6379/0', backend='redis://redis:6379/0')
 
+# Heavy keys omitted from list views (full detail via GET /tasks/{id} or evaluation-blobs).
+_LIST_METADATA_RESULT_KEYS_DROP = frozenset(
+    {'predictions', 'all_ground_truth', 'confusion_matrix_samples'}
+)
+
+
+def _strip_task_metadata_for_list(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not meta or not isinstance(meta, dict):
+        return meta
+    out = dict(meta)
+    res = out.get('results')
+    if isinstance(res, dict):
+        out['results'] = {
+            k: v for k, v in res.items() if k not in _LIST_METADATA_RESULT_KEYS_DROP
+        }
+    return out
+
+
+def _tasks_to_schema_list(tasks: List[models.Task], metadata_mode: str) -> List[schemas.Task]:
+    mode = (metadata_mode or 'full').lower()
+    if mode != 'list':
+        return [schemas.Task.model_validate(t, from_attributes=True) for t in tasks]
+    out: List[schemas.Task] = []
+    for t in tasks:
+        base = schemas.Task.model_validate(t, from_attributes=True)
+        out.append(
+            base.model_copy(update={'task_metadata': _strip_task_metadata_for_list(t.task_metadata)})
+        )
+    return out
+
+
+def _apply_task_type_filter(query, task_type: Optional[str]):
+    if not task_type:
+        return query
+    if ',' in task_type:
+        types = [x.strip() for x in task_type.split(',') if x.strip()]
+        if types:
+            return query.filter(models.Task.task_type.in_(types))
+        return query
+    return query.filter(models.Task.task_type == task_type)
+
 
 class TaskUpdateRequest(BaseModel):
     name: Optional[str] = None
+
+
+class EvalThresholdsRequest(BaseModel):
+    conf_threshold: float
+    iou_threshold: float
+    per_class_conf: Optional[dict] = None  # {class_name: threshold}
+    precision: Optional[float] = None
+    recall: Optional[float] = None
+    f1_score: Optional[float] = None
 
 
 @router.get("/tasks/", response_model=List[schemas.Task])
@@ -31,12 +82,15 @@ async def get_tasks(
     skip: int = 0,
     limit: int = 100,
     recent_hours: Optional[float] = None,
+    metadata_mode: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Get tasks with optional filtering.
     When recent_hours is set (e.g. 1), returns tasks that are either active (pending/running)
     or completed within the last N hours, so long-running tasks (e.g. training) still appear
-    after completion for the navbar 'last hour' view."""
+    after completion for the navbar 'last hour' view.
+    metadata_mode=list strips large evaluation payloads from task_metadata for faster list UIs.
+    task_type may be comma-separated (e.g. yolo_training,training)."""
     try:
         query = db.query(models.Task)
 
@@ -44,8 +98,7 @@ async def get_tasks(
             query = query.filter(models.Task.project_id == project_id)
         if status:
             query = query.filter(models.Task.status == status)
-        if task_type:
-            query = query.filter(models.Task.task_type == task_type)
+        query = _apply_task_type_filter(query, task_type)
 
         if recent_hours is not None and recent_hours > 0:
             cutoff = datetime.utcnow() - timedelta(hours=recent_hours)
@@ -67,14 +120,14 @@ async def get_tasks(
                 query_fallback = db.query(models.Task)
                 if project_id:
                     query_fallback = query_fallback.filter(models.Task.project_id == project_id)
-                if task_type:
-                    query_fallback = query_fallback.filter(models.Task.task_type == task_type)
+                query_fallback = _apply_task_type_filter(query_fallback, task_type)
                 if status:
                     query_fallback = query_fallback.filter(models.Task.status == status)
                 result = query_fallback.order_by(models.Task.created_at.desc()).offset(skip).limit(min(limit, 50)).all()
-            return result
+            return _tasks_to_schema_list(result, metadata_mode or 'full')
 
-        return query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
+        result = query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
+        return _tasks_to_schema_list(result, metadata_mode or 'full')
     except Exception as e:
         logger.error(f"Database error in get_tasks: {e}")
         db.rollback()
@@ -223,6 +276,35 @@ async def update_task(task_id: int, update: TaskUpdateRequest, db: Session = Dep
             "status": task.status
         }
     }
+
+
+@router.patch("/tasks/{task_id}/eval-thresholds")
+async def save_eval_thresholds(task_id: int, request: EvalThresholdsRequest, db: Session = Depends(get_db)):
+    """Save evaluation threshold parameters back to task metadata"""
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    metadata = task.task_metadata or {}
+    results = metadata.get('results', {})
+    results['conf_threshold'] = request.conf_threshold
+    results['iou_threshold'] = request.iou_threshold
+    if request.per_class_conf is not None:
+        results['per_class_conf'] = request.per_class_conf
+    if request.precision is not None:
+        results['precision'] = request.precision
+    if request.recall is not None:
+        results['recall'] = request.recall
+    if request.f1_score is not None:
+        results['f1_score'] = request.f1_score
+    task.task_metadata = {
+        **metadata,
+        'results': results,
+        'conf_threshold': request.conf_threshold,
+        'iou_threshold': request.iou_threshold,
+    }
+    flag_modified(task, "task_metadata")
+    db.commit()
+    return {"success": True, "conf_threshold": request.conf_threshold, "iou_threshold": request.iou_threshold}
 
 
 @router.delete("/tasks/{task_id}")

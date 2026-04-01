@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link, useOutletContext } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,19 +17,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  formatEvaluationModelDisplay,
+  formatMetricPct,
+  getEvaluationRowMetrics,
+} from "@/lib/evaluationTableDisplay";
 
 interface OutletContext {
   project: Project | null;
   loading: boolean;
 }
-
-// Helper functions
-const getModelFamily = (modelName: string) => {
-  if (!modelName) return '-';
-  if (modelName.includes('yolo') || modelName.includes('YOLO')) return 'YOLO';
-  if (modelName.includes('rtdetr') || modelName.includes('RT-DETR')) return 'RT-DETR';
-  return modelName;
-};
 
 export default function ProjectEvaluations() {
   const { id } = useParams<{ id: string }>();
@@ -47,72 +44,82 @@ export default function ProjectEvaluations() {
   const [newTaskName, setNewTaskName] = useState('');
   const [datasets, setDatasets] = useState<any[]>([]);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
+  const [modalResourcesLoading, setModalResourcesLoading] = useState(false);
 
-  // Fetch all tasks
-  const fetchTasks = async () => {
+  const evaluationTasksRef = useRef<any[]>([]);
+  evaluationTasksRef.current = evaluationTasks;
+
+  /** Only evaluation tasks; metadata_mode=list keeps payloads small (no inline predictions). */
+  const fetchEvaluationTasks = useCallback(async () => {
     if (!id) return;
-    
+
     setLoadingTasks(true);
     try {
-      const response = await fetch(`http://localhost:9999/tasks/?project_id=${id}`);
+      const response = await fetch(
+        `http://localhost:9999/tasks/?project_id=${id}&task_type=model_evaluation&metadata_mode=list&limit=200`
+      );
       if (response.ok) {
         const data = await response.json();
-        // Separate training and evaluation tasks
-        setTrainingTasks(data.filter((t: any) => t.task_type !== 'model_evaluation'));
-        setEvaluationTasks(data.filter((t: any) => t.task_type === 'model_evaluation'));
+        setEvaluationTasks(data);
       }
     } catch (error) {
-      console.error('Error fetching tasks:', error);
+      console.error('Error fetching evaluation tasks:', error);
     } finally {
       setLoadingTasks(false);
     }
-  };
+  }, [id]);
 
-  // Fetch datasets for evaluation modal
-  const fetchDatasets = async () => {
+  /** Loaded when "New Evaluation" opens — avoids blocking the evaluations table. */
+  const loadModalResources = useCallback(async () => {
     if (!id) return;
+    setModalResourcesLoading(true);
     try {
-      const response = await fetch(`http://localhost:9999/projects/${id}/datasets/list`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.data) {
-          setDatasets(result.data);
-        }
+      const [dsRes, dgRes, trRes] = await Promise.all([
+        fetch(`http://localhost:9999/projects/${id}/datasets/list`),
+        fetch(`http://localhost:9999/projects/${id}/dataset-groups/`),
+        fetch(
+          `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training&status=completed&metadata_mode=list&limit=150`
+        ),
+      ]);
+      if (dsRes.ok) {
+        const result = await dsRes.json();
+        if (result.success && result.data) setDatasets(result.data);
+      }
+      if (dgRes.ok) {
+        const result = await dgRes.json();
+        if (result.success) setDatasetGroups(result.data);
+      }
+      if (trRes.ok) {
+        setTrainingTasks(await trRes.json());
       }
     } catch (error) {
-      console.error('Error fetching datasets:', error);
+      console.error('Error loading evaluation modal data:', error);
+    } finally {
+      setModalResourcesLoading(false);
     }
-  };
-
-  const fetchDatasetGroups = async () => {
-    if (!id) return;
-    try {
-      const response = await fetch(`http://localhost:9999/projects/${id}/dataset-groups/`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          setDatasetGroups(result.data);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching dataset groups:', error);
-    }
-  };
+  }, [id]);
 
   useEffect(() => {
-    fetchTasks();
-    fetchDatasets();
-    fetchDatasetGroups();
-    
-    // Polling for running tasks
+    if (!id) return;
+    fetchEvaluationTasks();
+
     const interval = setInterval(() => {
-      if (evaluationTasks.some(t => t.status === 'running' || t.status === 'pending')) {
-        fetchTasks();
+      if (
+        evaluationTasksRef.current.some(
+          (t) => t.status === 'running' || t.status === 'pending'
+        )
+      ) {
+        fetchEvaluationTasks();
       }
     }, 5000);
-    
+
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, fetchEvaluationTasks]);
+
+  useEffect(() => {
+    if (!showEvaluationModal || !id) return;
+    loadModalResources();
+  }, [showEvaluationModal, id, loadModalResources]);
 
   // Filter to show only parent tasks and single dataset tasks (not child tasks)
   const parentEvaluations = evaluationTasks.filter(t => !t.task_metadata?.parent_task_id);
@@ -146,7 +153,7 @@ export default function ProjectEvaluations() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground mt-4">Loading evaluation tasks...</p>
         </div>
-      ) : !isConnected ? (
+      ) : isConnected === false ? (
         <div className="text-center py-16">
           <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
           <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
@@ -174,6 +181,9 @@ export default function ProjectEvaluations() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Precision</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Recall</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">F1</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Images</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
               </tr>
@@ -207,6 +217,11 @@ export default function ProjectEvaluations() {
                   return task.status;
                 };
                 const aggregateStatus = getAggregateStatus();
+                const metrics = getEvaluationRowMetrics(metadata, {
+                  isMultiDataset,
+                  aggregateStatus,
+                });
+                const modelDisplay = formatEvaluationModelDisplay(metadata);
                 
                 return (
                   <React.Fragment key={task.id}>
@@ -310,14 +325,19 @@ export default function ProjectEvaluations() {
                           <span className="text-xs text-gray-400 min-w-[35px]">{aggregateProgress}%</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400">
-                        {(() => {
-                          const modelName = metadata.model_config?.model || metadata.model_type || '';
-                          const family = getModelFamily(modelName);
-                          if (family.includes('YOLO')) return 'YOLO';
-                          if (family.includes('DETR')) return 'RT-DETR';
-                          return family || 'Evaluation';
-                        })()}
+                      <td className="px-4 py-3 text-sm text-gray-300 max-w-[220px]">
+                        <span className="line-clamp-2" title={modelDisplay}>
+                          {modelDisplay}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                        {metrics ? formatMetricPct(metrics.precision) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                        {metrics ? formatMetricPct(metrics.recall) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                        {metrics ? formatMetricPct(metrics.f1) : "—"}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-400">
                         {isMultiDataset 
@@ -379,7 +399,7 @@ export default function ProjectEvaluations() {
                                     title: "Task Deleted",
                                     description: `Evaluation task "${task.name}" has been deleted.`
                                   });
-                                  fetchTasks();
+                                  fetchEvaluationTasks();
                                 } else {
                                   throw new Error('Failed to delete task');
                                 }
@@ -399,13 +419,18 @@ export default function ProjectEvaluations() {
                         </div>
                       </td>
                     </tr>
-                    
+
                     {/* Child tasks for multi-dataset evaluations */}
                     {isMultiDataset && isExpanded && childTasks.map((childTask) => {
                       const childMetadata = childTask.task_metadata || {};
                       const childIsRunning = childTask.status === 'running';
                       const childIsFailed = childTask.status === 'failed';
                       const childIsCompleted = childTask.status === 'completed';
+                      const childMetrics = getEvaluationRowMetrics(childMetadata, {
+                        isMultiDataset: false,
+                        aggregateStatus: childTask.status,
+                      });
+                      const childModelDisplay = formatEvaluationModelDisplay(childMetadata);
                       
                       return (
                         <tr 
@@ -456,7 +481,20 @@ export default function ProjectEvaluations() {
                               <span className="text-xs text-gray-500">{childTask.progress}%</span>
                             </div>
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-500">-</td>
+                          <td className="px-4 py-2 text-sm text-gray-300 max-w-[200px]">
+                            <span className="line-clamp-2 text-xs" title={childModelDisplay}>
+                              {childModelDisplay}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
+                            {childMetrics ? formatMetricPct(childMetrics.precision) : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
+                            {childMetrics ? formatMetricPct(childMetrics.recall) : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
+                            {childMetrics ? formatMetricPct(childMetrics.f1) : "—"}
+                          </td>
                           <td className="px-4 py-2 text-sm text-gray-400">
                             {childIsCompleted && childMetadata.results?.images_processed 
                               ? childMetadata.results.images_processed 
@@ -567,7 +605,7 @@ export default function ProjectEvaluations() {
                         description: `Task renamed to "${newTaskName.trim()}"`
                       });
                       setRenamingTask(null);
-                      fetchTasks();
+                      fetchEvaluationTasks();
                     } else {
                       throw new Error('Failed to rename task');
                     }
@@ -594,6 +632,7 @@ export default function ProjectEvaluations() {
           open={true}
           onOpenChange={(open) => !open && setSelectedTaskId(null)}
           taskId={selectedTaskId}
+          onSaved={fetchEvaluationTasks}
         />
       )}
 
@@ -602,6 +641,7 @@ export default function ProjectEvaluations() {
         open={showEvaluationModal}
         onOpenChange={setShowEvaluationModal}
         trainingTasks={trainingTasks}
+        resourcesLoading={modalResourcesLoading}
         projectId={id || ''}
         datasets={datasets}
         datasetGroups={datasetGroups}
@@ -644,7 +684,7 @@ export default function ProjectEvaluations() {
               description: `Task "${data.task_name}" has been created.`
             });
             
-            await fetchTasks();
+            await fetchEvaluationTasks();
             setShowEvaluationModal(false);
           } catch (error) {
             console.error('Error evaluating model:', error);
@@ -696,7 +736,7 @@ export default function ProjectEvaluations() {
               description: `Task "${data.task_name}" has been created with ${data.child_task_ids?.length || 0} dataset evaluations.`
             });
             
-            await fetchTasks();
+            await fetchEvaluationTasks();
             setShowEvaluationModal(false);
           } catch (error) {
             console.error('Error evaluating model on multiple datasets:', error);

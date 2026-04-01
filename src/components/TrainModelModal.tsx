@@ -44,6 +44,8 @@ interface TrainModelModalProps {
   onOpenChange: (open: boolean) => void;
   datasets?: Dataset[];
   datasetGroups?: DatasetGroup[];
+  /** When true, datasets/groups are still loading after the dialog opened */
+  resourcesLoading?: boolean;
   projectId: string;
 }
 
@@ -72,7 +74,7 @@ interface ModelConfig {
   settings: any;
 }
 
-export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], projectId }: TrainModelModalProps) {
+export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId }: TrainModelModalProps) {
   const { api } = useApi();
   const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
@@ -469,10 +471,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <Button 
                       size="sm"
                       variant="outline"
-                      disabled={datasets.length === 0 && datasetGroups.length === 0}
+                      disabled={
+                        resourcesLoading ||
+                        (datasets.length === 0 && datasetGroups.length === 0)
+                      }
                     >
                       <Plus className="h-4 w-4 mr-2" />
-                      Add
+                      {resourcesLoading ? 'Loading…' : 'Add'}
                       <ChevronDown className="h-4 w-4 ml-2" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -1124,10 +1129,10 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             </Button>
             <Button 
               onClick={handleTrain}
-              disabled={!canTrain() || isTraining}
+              disabled={!canTrain() || isTraining || resourcesLoading}
             >
               <Brain className="h-4 w-4 mr-2" />
-              {isTraining ? 'Training...' : 'Train Model'}
+              {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
             </Button>
           </DialogFooter>
         </DialogContent>

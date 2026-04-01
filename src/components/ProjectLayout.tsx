@@ -1,14 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Link, useParams, useLocation, Outlet } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Navbar } from "@/components/Navbar";
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
-import { useProject } from '@/hooks/use-projects';
 import { ProjectContext } from '@/hooks/use-project-context';
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Database, Brain, Activity, Loader2, Download, Workflow } from "lucide-react";
 import { createApiClient } from '@/utils/api';
-import { API_CONFIG } from '@/config/api';
+import { getApiBaseUrl } from '@/config/api';
+import { Project } from '@/types';
 
 interface NavItemProps {
   to: string;
@@ -54,60 +54,63 @@ function NavItem({ to, icon, label, count, isActive }: NavItemProps) {
 export function ProjectLayout() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
-  const { project, loading, refetch } = useProject(id || '');
-  
-  // State for counts
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [datasetCount, setDatasetCount] = useState(0);
   const [modelsCount, setModelsCount] = useState<number | undefined>(undefined);
   const [pipelinesCount, setPipelinesCount] = useState<number | undefined>(undefined);
   const [evaluationsCount, setEvaluationsCount] = useState<number | undefined>(undefined);
   const [exportsCount, setExportsCount] = useState<number | undefined>(undefined);
-  
-  // Fetch counts for sidebar
+  const mountedRef = useRef(true);
+
+  // Single effect: fetch project summary + sidebar counts in parallel (2 lightweight SQL queries)
   useEffect(() => {
+    mountedRef.current = true;
     if (!id) return;
-    
-    const apiClient = createApiClient(API_CONFIG);
-    
-    // Fetch models count (training tasks)
-    apiClient.request<any[]>(`/tasks/?project_id=${id}&task_type=training&limit=1000`)
-      .then(res => {
-        if (res.success && res.data) {
-          // Count completed training tasks as models
-          const completed = res.data.filter(t => t.status === 'completed').length;
-          setModelsCount(completed);
-        }
-      })
-      .catch(() => setModelsCount(0));
-    
-    // Fetch pipelines count
-    apiClient.request<any[]>(`/pipelines/?project_id=${id}`)
-      .then(res => {
-        if (res.success && res.data) {
-          setPipelinesCount(res.data.length);
-        }
-      })
-      .catch(() => setPipelinesCount(0));
-    
-    // Fetch evaluations count
-    apiClient.request<any[]>(`/tasks/?project_id=${id}&task_type=evaluation&limit=1000`)
-      .then(res => {
-        if (res.success && res.data) {
-          setEvaluationsCount(res.data.length);
-        }
-      })
-      .catch(() => setEvaluationsCount(0));
-    
-    // Fetch exports count
-    apiClient.request<any[]>(`/tasks/?project_id=${id}&task_type=export&limit=1000`)
-      .then(res => {
-        if (res.success && res.data) {
-          setExportsCount(res.data.length);
-        }
-      })
-      .catch(() => setExportsCount(0));
+
+    const client = createApiClient({ baseUrl: getApiBaseUrl() });
+
+    const summaryP = client.getProjectSummary(id).then((res) => {
+      if (!mountedRef.current) return;
+      if (res.success && res.data) {
+        setProject(res.data as Project);
+        setDatasetCount((res.data as any).dataset_count ?? res.data.datasets?.length ?? 0);
+      }
+      setLoading(false);
+    }).catch(() => { if (mountedRef.current) setLoading(false); });
+
+    const countsP = client.getProjectSidebarCounts(id).then((res) => {
+      if (!mountedRef.current || !res.success || !res.data) return;
+      setModelsCount(res.data.models);
+      setEvaluationsCount(res.data.evaluations);
+      setExportsCount(res.data.exports);
+      setPipelinesCount(res.data.pipelines);
+    }).catch(() => {
+      if (mountedRef.current) {
+        setModelsCount(0);
+        setEvaluationsCount(0);
+        setExportsCount(0);
+        setPipelinesCount(0);
+      }
+    });
+
+    return () => { mountedRef.current = false; };
   }, [id]);
-  
-  // Determine active section from path
+
+  const refetch = () => {
+    if (!id) return;
+    setLoading(true);
+    const client = createApiClient({ baseUrl: getApiBaseUrl() });
+    client.getProjectSummary(id).then((res) => {
+      if (res.success && res.data) {
+        setProject(res.data as Project);
+        setDatasetCount((res.data as any).dataset_count ?? res.data.datasets?.length ?? 0);
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  };
+
   const getActiveSection = () => {
     const path = location.pathname;
     if (path.includes('/models')) return 'models';
@@ -116,16 +119,13 @@ export function ProjectLayout() {
     if (path.includes('/exports')) return 'exports';
     return 'datasets';
   };
-  
+
   const activeSection = getActiveSection();
-  
-  // Calculate counts from project data
-  const datasetCount = project?.datasets?.length || 0;
 
   const contextValue = {
     project,
     loading,
-    refreshProject: refetch || (() => {})
+    refreshProject: refetch,
   };
 
   return (

@@ -1,14 +1,17 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Activity, Target, Gauge, Download, Eye, ChevronDown, Database, AlertCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Brain, Activity, Download, Eye, ChevronDown, Database, AlertCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { type CmSample } from "@/components/ConfusionMatrixCellModal";
+import { ThresholdExplorer, type RawPrediction, type RawGTBox } from "@/components/ThresholdExplorer";
 
 interface EvaluationDetailsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   taskId: number;
+  onSaved?: () => void;
 }
 
 interface TaskDetails {
@@ -41,14 +44,30 @@ interface TaskDetails {
       map50_95: number;
       confusion_matrix: number[][];
       class_names: string[];
+      confusion_matrix_samples?: Record<string, CmSample[]>;
+      project_id?: number;
+      dataset_id?: number;
       predictions_count: number;
       images_processed: number;
       inference_time_ms: number;
+      all_ground_truth?: RawGTBox[];
+      image_id_to_filename?: Record<string, string>;
+      predictions?: RawPrediction[];
+      conf_threshold?: number;
+      iou_threshold?: number;
+      per_class_conf?: Record<string, number>;
+      artifacts?: { blobs?: string; format_version?: number };
     };
   };
 }
 
-export function EvaluationDetailsModal({ open, onOpenChange, taskId }: EvaluationDetailsModalProps) {
+interface EvalBlobPayload {
+  predictions: RawPrediction[];
+  all_ground_truth: RawGTBox[];
+  confusion_matrix_samples?: Record<string, CmSample[]>;
+}
+
+export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: EvaluationDetailsModalProps) {
   const [task, setTask] = useState<TaskDetails | null>(null);
   const [childTasks, setChildTasks] = useState<TaskDetails[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,6 +76,9 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [launchingFiftyOne, setLaunchingFiftyOne] = useState(false);
   const [expandedChildId, setExpandedChildId] = useState<number | null>(null);
+  const [evalBlobPayload, setEvalBlobPayload] = useState<EvalBlobPayload | null>(null);
+  const [evalBlobsLoading, setEvalBlobsLoading] = useState(false);
+  const [evalBlobsError, setEvalBlobsError] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -64,6 +86,64 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
       fetchTaskDetails();
     }
   }, [open, taskId]);
+
+  /** Large predictions/GT live in gzip JSON on disk; fetch after task row loads. */
+  useEffect(() => {
+    if (!open || !taskId || !task || task.id !== taskId || task.status !== "completed") {
+      setEvalBlobPayload(null);
+      setEvalBlobsLoading(false);
+      setEvalBlobsError(null);
+      return;
+    }
+    const r = task.task_metadata?.results;
+    if (!r?.artifacts?.blobs || r.predictions !== undefined) {
+      setEvalBlobPayload(null);
+      setEvalBlobsLoading(false);
+      setEvalBlobsError(null);
+      return;
+    }
+    let cancelled = false;
+    setEvalBlobsLoading(true);
+    setEvalBlobsError(null);
+    fetch(`http://localhost:9999/predictions/evaluation-blobs/${taskId}`)
+      .then(async (res) => {
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(t || `HTTP ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data: EvalBlobPayload) => {
+        if (!cancelled) {
+          setEvalBlobPayload({
+            predictions: data.predictions ?? [],
+            all_ground_truth: data.all_ground_truth ?? [],
+            confusion_matrix_samples: data.confusion_matrix_samples,
+          });
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setEvalBlobPayload(null);
+          setEvalBlobsError(err instanceof Error ? err.message : "Failed to load evaluation blobs");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEvalBlobsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, taskId, task?.id, task?.status, task?.task_metadata?.results?.artifacts?.blobs, task?.task_metadata?.results?.predictions]);
+
+  const mergedResults = useMemo(() => {
+    if (!task) return undefined;
+    const md = task.task_metadata || {};
+    const raw = md.results;
+    if (!raw) return undefined;
+    if (evalBlobPayload) return { ...raw, ...evalBlobPayload };
+    return raw;
+  }, [task, evalBlobPayload]);
 
   useEffect(() => {
     if (!open || !taskId) return;
@@ -108,6 +188,16 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
       setLoading(false);
     }
   };
+
+  const refreshTaskMetadata = useCallback(async () => {
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      setTask(data);
+    } catch { /* silent */ }
+    onSaved?.();
+  }, [taskId, onSaved]);
 
   const formatDuration = (start: string, end?: string) => {
     const startDate = new Date(start);
@@ -256,6 +346,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto bg-background">
+          <DialogTitle className="sr-only">Loading evaluation details</DialogTitle>
           <div className="flex items-center justify-center p-8">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
           </div>
@@ -268,6 +359,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl bg-background">
+          <DialogTitle className="sr-only">Evaluation error</DialogTitle>
           <div className="text-center p-8 text-red-500">
             {error || 'Evaluation not found'}
           </div>
@@ -277,7 +369,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
   }
 
   const metadata = task.task_metadata || {};
-  const results = metadata.results;
+  const results = mergedResults;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -456,103 +548,35 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId }: Evaluatio
           {/* Results */}
           {results && task.status === 'completed' && (
             <>
-              {/* Metrics Cards */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Target className="w-4 h-4 text-green-500" />
-                    <span className="text-sm text-gray-400">Precision</span>
+              {evalBlobsLoading &&
+                metadata.results?.artifacts?.blobs &&
+                metadata.results.predictions === undefined && (
+                  <div className="text-sm text-gray-400 py-2">
+                    Loading interactive evaluation data…
                   </div>
-                  <div className="text-2xl font-bold text-white">
-                    {(results.precision * 100).toFixed(1)}%
-                  </div>
+                )}
+              {evalBlobsError && (
+                <div className="text-sm text-red-400 py-2 rounded border border-red-900/50 px-3 bg-red-950/30">
+                  {evalBlobsError}
                 </div>
-
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <TrendingUp className="w-4 h-4 text-blue-500" />
-                    <span className="text-sm text-gray-400">Recall</span>
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {(results.recall * 100).toFixed(1)}%
-                  </div>
-                </div>
-
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Gauge className="w-4 h-4 text-purple-500" />
-                    <span className="text-sm text-gray-400">F1 Score</span>
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {(results.f1_score * 100).toFixed(1)}%
-                  </div>
-                </div>
-
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Activity className="w-4 h-4 text-orange-500" />
-                    <span className="text-sm text-gray-400">Predictions</span>
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {results.predictions_count}
-                  </div>
-                </div>
-
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Brain className="w-4 h-4 text-cyan-500" />
-                    <span className="text-sm text-gray-400">Images</span>
-                  </div>
-                  <div className="text-2xl font-bold text-white">
-                    {results.images_processed}
-                  </div>
-                </div>
-              </div>
-
-              {/* Inference Time */}
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                <h3 className="text-sm font-semibold mb-2 text-gray-400">Performance</h3>
-                <div className="text-sm">
-                  <span className="text-gray-400">Total Inference Time:</span>
-                  <span className="ml-2 text-white font-medium">
-                    {results.inference_time_ms.toFixed(0)}ms
-                  </span>
-                  <span className="ml-4 text-gray-400">Avg per image:</span>
-                  <span className="ml-2 text-white font-medium">
-                    {(results.inference_time_ms / results.images_processed).toFixed(1)}ms
-                  </span>
-                </div>
-              </div>
-
-              {/* Confusion Matrix (if available and has ground truth) */}
-              {metadata.has_ground_truth && results.confusion_matrix && results.class_names && (
-                <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3">Confusion Matrix</h3>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-xs">
-                      <thead>
-                        <tr>
-                          <th className="px-2 py-1 text-left text-gray-400">Actual \ Predicted</th>
-                          {results.class_names.map((name, idx) => (
-                            <th key={idx} className="px-2 py-1 text-center text-gray-400">{name}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {results.confusion_matrix.map((row, i) => (
-                          <tr key={i} className="border-t border-gray-800">
-                            <td className="px-2 py-1 text-gray-400 font-medium">{results.class_names[i]}</td>
-                            {row.map((val, j) => (
-                              <td key={j} className={`px-2 py-1 text-center ${val > 0 ? (i === j ? 'text-green-400 font-bold' : 'text-red-400') : 'text-gray-600'}`}>
-                                {val}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+              )}
+              {/* Threshold Explorer — adjust conf/IoU and see live metrics */}
+              {results.all_ground_truth &&
+                results.predictions !== undefined &&
+                (results.predictions.length > 0 || results.all_ground_truth.length > 0) && (
+                <ThresholdExplorer
+                  predictions={results.predictions}
+                  groundTruth={results.all_ground_truth}
+                  classNames={results.class_names}
+                  imageIdToFilename={results.image_id_to_filename ?? {}}
+                  projectId={results.project_id ?? 0}
+                  datasetId={results.dataset_id ?? 0}
+                  initialConf={results.conf_threshold ?? metadata.conf_threshold ?? 0.25}
+                  initialIou={results.iou_threshold ?? metadata.iou_threshold ?? 0.45}
+                  initialPerClassConf={results.per_class_conf}
+                  taskId={taskId}
+                  onSaved={refreshTaskMetadata}
+                />
               )}
             </>
           )}

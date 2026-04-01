@@ -41,7 +41,8 @@ export class ApiClient {
           response = await fetch(url, {
             ...options,
             signal: controller.signal,
-            credentials: 'include', // Add this to handle cookies if needed
+            // Omit credentials so any dev Origin (e.g. http://[::1]:8080) works with CORS
+            credentials: 'omit',
             cache: 'no-cache', // Prevent caching issues
           });
         } catch (fetchError) {
@@ -210,123 +211,101 @@ export class ApiClient {
     };
   }
 
-  // Test connection to the API with retry logic
-  async testConnection(retries: number = 3): Promise<ApiResponse<{ status: string; database?: string }>> {
+  /**
+   * Lightweight health check.  Called once (shared across all useApi hooks) so
+   * 30+ components don't each fire 3 × 15 s retries.
+   */
+  async testConnection(retries: number = 2): Promise<ApiResponse<{ status: string; database?: string }>> {
     const url = `${this.config.baseUrl}/health-check`;
-    console.log(`Testing connection to: ${url}`);
-    console.log(`API Base URL configured as: ${this.config.baseUrl}`);
-    
-    // Warn if trying to connect to frontend port
+
     if (this.config.baseUrl.includes(':8080')) {
-      console.error('⚠️ WARNING: API URL points to port 8080 (frontend). Backend should be on port 9999!');
       return {
         success: false,
-        error: `Invalid API URL: ${this.config.baseUrl}. Port 8080 is the frontend. Backend API should be on port 9999. Please check Settings.`
+        error: `API URL points to the frontend port (8080). Backend should be on port 9999.`,
       };
     }
-    
+
     for (let attempt = 1; attempt <= retries; attempt++) {
-      let controller: AbortController | null = null;
-      let timeoutId: NodeJS.Timeout | null = null;
-      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5_000);
+
       try {
-        controller = new AbortController();
-        timeoutId = setTimeout(() => {
-          if (controller) {
-            controller.abort();
-          }
-        }, 15000); // 15 second timeout (increased from 10)
-        
         const response = await fetch(url, {
           method: 'GET',
           signal: controller.signal,
-          cache: 'no-cache', // Prevent caching of health checks
+          credentials: 'omit',
+          cache: 'no-cache',
         });
-        
-        // Clear timeout if we got a response
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-        
+        clearTimeout(timeoutId);
+
         if (response.ok) {
           const data = await response.json();
-          const isHealthy = data.status === 'ok' && data.database === 'connected';
-          
-          if (!isHealthy) {
-            console.warn('Health check returned degraded status:', data);
-          }
-          
-          return { 
-            success: isHealthy, 
-            data: { 
-              status: data.status || 'connected',
-              database: data.database || 'unknown'
-            },
-            error: isHealthy ? undefined : `Database connection issue: ${data.database || 'unknown'}`
+          const apiReachable =
+            data && typeof data === 'object' && (data.status === 'ok' || data.status === 'degraded');
+          return {
+            success: !!apiReachable,
+            data: { status: data.status || 'unknown', database: data.database || 'unknown' },
+            error: apiReachable ? undefined : `Unexpected health response`,
           };
-        } else {
-          throw new Error(`API Error: ${response.status} ${response.statusText}`);
         }
+        throw new Error(`${response.status} ${response.statusText}`);
       } catch (error) {
-        // Clean up timeout
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        
-        // Check if it's an AbortError (timeout or manual abort)
-        const isAbortError = error instanceof Error && 
-                            (error.name === 'AbortError' || error.message.includes('aborted'));
-        
-        if (isAbortError) {
-          console.warn(`Connection test timed out or was aborted (attempt ${attempt}/${retries})`);
-          console.warn(`Trying to connect to: ${url}`);
-          console.warn(`Make sure the backend is running: docker-compose up (in backend/ directory)`);
-          
-          // If this is the last attempt, return error with helpful message
-          if (attempt === retries) {
-            return {
-              success: false,
-              error: `Connection test timed out after ${retries} attempts. Trying to connect to: ${url}. Make sure the backend is running on port 9999 (check with: docker-compose ps in backend/ directory).`
-            };
-          }
-          
-          // Wait before retrying (exponential backoff)
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-          continue; // Retry the connection
-        }
-        
-        console.error(`API Connection Test Error (attempt ${attempt}/${retries}):`, error);
-        
-        // If this is the last attempt, return error
+        clearTimeout(timeoutId);
+
         if (attempt === retries) {
-          return { 
-            success: false, 
-            error: error instanceof Error ? error.message : 'Unknown API error' 
-          };
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          console.debug(`Health check failed (${url}): ${msg}`);
+          return { success: false, error: msg };
         }
-        
-        // Wait before retrying (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        // Short backoff before retry
+        await new Promise((r) => setTimeout(r, 800 * attempt));
       }
     }
-    
-    return {
-      success: false,
-      error: 'Connection test failed after multiple attempts'
-    };
+
+    return { success: false, error: 'Health check failed' };
   }
 
   // Projects endpoints
   
   async getProjects(): Promise<ApiResponse<Project[]>> {
-    // Don't include images in list view for better performance
-    // Thumbnails will be loaded on-demand via logo_url if available
-    return this.request<Project[]>('/projects/');
+    // Omit base64 project logos on the list endpoint (can be huge; cards use placeholder).
+    return this.request<Project[]>('/projects/?include_images=false');
   }
 
-  async getProject(id: string): Promise<ApiResponse<Project>> {
-    return this.request<Project>(`/projects/${id}`);
+  async getProject(
+    id: string,
+    options?: { includeImages?: boolean; includeDatasetAnnotationFiles?: boolean },
+  ): Promise<ApiResponse<Project>> {
+    const params = new URLSearchParams();
+    if (options?.includeImages) {
+      params.set('include_images', 'true');
+    }
+    if (options?.includeDatasetAnnotationFiles) {
+      params.set('include_dataset_annotation_files', 'true');
+    }
+    const q = params.toString();
+    return this.request<Project>(`/projects/${id}${q ? `?${q}` : ''}`);
+  }
+
+  /** Lightweight project summary — name, tags, dataset_count. No annotation queries. */
+  async getProjectSummary(
+    id: string | number,
+  ): Promise<ApiResponse<Project & { dataset_count?: number }>> {
+    return this.request(`/projects/${id}/summary`);
+  }
+
+  /** Layout nav badges: COUNT-only, no task rows */
+  async getProjectSidebarCounts(
+    projectId: string | number,
+  ): Promise<
+    ApiResponse<{
+      models: number;
+      evaluations: number;
+      exports: number;
+      pipelines: number;
+    }>
+  > {
+    return this.request(`/projects/${projectId}/sidebar-counts`);
   }
 
   async createProject(formData: FormData): Promise<ApiResponse<Project>> {
@@ -852,37 +831,9 @@ export class ApiClient {
     metadata?: any;
     task_metadata?: any;
   }>>> {
-    try {
-      const searchParams = new URLSearchParams();
-      if (projectId) searchParams.append('project_id', projectId.toString());
-      
-      // Use the /tasks/active endpoint to get both pending and running in one request
-      const response = await fetch(`${this.config.baseUrl}/tasks/active?${searchParams.toString()}`, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        return {
-          success: false,
-          error: `HTTP error! status: ${response.status}`
-        };
-      }
-      
-      const data = await response.json();
-      
-      return {
-        success: true,
-        data: data
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      };
-    }
+    const searchParams = new URLSearchParams();
+    if (projectId) searchParams.append('project_id', projectId.toString());
+    return this.request(`/tasks/active?${searchParams.toString()}`);
   }
 
   /**

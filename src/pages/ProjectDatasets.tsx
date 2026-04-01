@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { useTasks } from '@/hooks/use-tasks';
+import { getApiBaseUrl } from '@/config/api';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,7 +79,7 @@ export default function ProjectDatasets() {
     
     setIsLoading(true);
     try {
-      const response = await fetch(`http://localhost:9999/projects/${id}/datasets/list`);
+      const response = await fetch(`${getApiBaseUrl()}/projects/${id}/datasets/list`, { credentials: 'omit' });
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data) {
@@ -97,7 +98,7 @@ export default function ProjectDatasets() {
     if (!id) return;
     
     try {
-      const response = await fetch(`http://localhost:9999/projects/${id}/dataset-groups/`);
+      const response = await fetch(`${getApiBaseUrl()}/projects/${id}/dataset-groups/`, { credentials: 'omit' });
       if (response.ok) {
         const result = await response.json();
         if (result.success) {
@@ -226,7 +227,7 @@ export default function ProjectDatasets() {
   const handleDeleteDataset = async (dataset: Dataset) => {
     // First check if there are augmented datasets
     try {
-      const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/augmented-datasets`);
+      const response = await fetch(`${getApiBaseUrl()}/datasets/${dataset.id}/augmented-datasets`, { credentials: 'omit' });
       if (response.ok) {
         const result = await response.json();
         setAugmentedDatasets(result.augmented_datasets || []);
@@ -247,7 +248,7 @@ export default function ProjectDatasets() {
     
     setIsDeleting(true);
     try {
-      const url = new URL(`http://localhost:9999/datasets/${datasetToDelete.id}`);
+      const url = new URL(`${getApiBaseUrl()}/datasets/${datasetToDelete.id}`);
       if (deleteAugmented) {
         url.searchParams.set('delete_augmented', 'true');
       }
@@ -314,7 +315,8 @@ export default function ProjectDatasets() {
   const handleDeleteGroup = (group: DatasetGroup) => {
     const deleteGroup = async () => {
       try {
-        const response = await fetch(`http://localhost:9999/projects/${id}/dataset-groups/${group.id}`, {
+        const response = await fetch(`${getApiBaseUrl()}/projects/${id}/dataset-groups/${group.id}`, {
+          credentials: 'omit',
           method: 'DELETE'
         });
         if (response.ok) {

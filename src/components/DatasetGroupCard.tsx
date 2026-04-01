@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,7 +21,7 @@ import {
   Layers,
   ExternalLink
 } from "lucide-react";
-import { DatasetGroup, Dataset } from "@/types";
+import { DatasetGroup } from "@/types";
 import { cn } from "@/lib/utils";
 
 interface DatasetGroupCardProps {
@@ -43,17 +42,8 @@ export function DatasetGroupCard({
   className,
   ...props 
 }: DatasetGroupCardProps) {
-  const [imageLoaded, setImageLoaded] = useState(false);
-
-  // Create a composite thumbnail from the first few datasets
-  const getThumbnailImages = () => {
-    return group.datasets
-      .filter(d => d.thumbnailUrl)
-      .slice(0, 4)
-      .map(d => d.thumbnailUrl);
-  };
-
-  const thumbnailImages = getThumbnailImages();
+  /** One preview per group keeps network use similar to ungrouped dataset cards (not 4× images). */
+  const headerPreviewUrl = group.datasets.find(d => d.thumbnailUrl)?.thumbnailUrl ?? null;
   const totalImages = group.datasets.reduce((sum, dataset) => sum + (dataset.image_count || 0), 0);
   const totalAnnotations = group.datasets.reduce((sum, dataset) => sum + (dataset.annotation_count || 0), 0);
 
@@ -61,57 +51,14 @@ export function DatasetGroupCard({
     <Card className={cn("overflow-hidden hover-card", className)} {...props}>
       <CardHeader className="p-0">
         <div className="relative h-40 w-full overflow-hidden">
-          {thumbnailImages.length > 0 ? (
-            <div className="grid h-full w-full">
-              {thumbnailImages.length === 1 ? (
-                <img
-                  src={thumbnailImages[0]}
-                  alt={group.name}
-                  className="h-full w-full object-cover"
-                  onLoad={() => setImageLoaded(true)}
-                />
-              ) : thumbnailImages.length === 2 ? (
-                <div className="grid grid-cols-2 h-full">
-                  {thumbnailImages.map((thumb, idx) => (
-                    <img
-                      key={idx}
-                      src={thumb}
-                      alt={`${group.name} dataset ${idx + 1}`}
-                      className="h-full w-full object-cover"
-                    />
-                  ))}
-                </div>
-              ) : thumbnailImages.length === 3 ? (
-                <div className="grid grid-cols-2 h-full">
-                  <img
-                    src={thumbnailImages[0]}
-                    alt={`${group.name} dataset 1`}
-                    className="h-full w-full object-cover"
-                  />
-                  <div className="grid grid-rows-2">
-                    {thumbnailImages.slice(1).map((thumb, idx) => (
-                      <img
-                        key={idx + 1}
-                        src={thumb}
-                        alt={`${group.name} dataset ${idx + 2}`}
-                        className="h-full w-full object-cover"
-                      />
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 grid-rows-2 h-full">
-                  {thumbnailImages.map((thumb, idx) => (
-                    <img
-                      key={idx}
-                      src={thumb}
-                      alt={`${group.name} dataset ${idx + 1}`}
-                      className="h-full w-full object-cover"
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+          {headerPreviewUrl ? (
+            <img
+              src={headerPreviewUrl}
+              alt={group.name}
+              loading="lazy"
+              decoding="async"
+              className="h-full w-full object-cover"
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center bg-muted/50">
               <FolderClosed className="h-16 w-16 text-muted-foreground/30" />
@@ -256,6 +203,8 @@ export function DatasetGroupCard({
                   <img
                     src={dataset.thumbnailUrl}
                     alt={dataset.name}
+                    loading="lazy"
+                    decoding="async"
                     className="w-8 h-8 rounded object-cover"
                   />
                 ) : (

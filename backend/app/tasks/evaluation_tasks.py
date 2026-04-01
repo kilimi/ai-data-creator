@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.celery_app import celery_app
+from app.evaluation_artifacts import write_evaluation_blobs
 from app.models import Task as TaskModel, Annotation, AnnotationClass, AnnotationFile, Dataset, Image
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ def evaluate_model(
     ignored_classes: List of class names to ignore when calculating metrics
     """
     db = SessionLocal()
+    task = None
     
     try:
         # Get the task record
@@ -228,17 +230,31 @@ def evaluate_model(
                 ).all()
                 
                 logger.info(f"Loading {len(annotations)} ground truth annotations from annotation file {annotation_file_id}")
+
+                # Build a map of image_id → (width, height) for denormalization
+                ann_image_ids = {ann.image_id for ann in annotations}
+                image_dims = {
+                    img.id: (img.width or 1, img.height or 1)
+                    for img in db.query(Image).filter(Image.id.in_(ann_image_ids)).all()
+                }
                 
                 for ann in annotations:
                     if ann.image_id not in ground_truth_annotations:
                         ground_truth_annotations[ann.image_id] = []
                     
-                    # Get bbox from either individual fields or JSON bbox field
+                    img_w, img_h = image_dims.get(ann.image_id, (1, 1))
+
+                    # Get bbox — bbox_x/y/width/height are stored NORMALIZED (0-1).
+                    # The legacy ann.bbox JSON field may be absolute pixels (COCO [x,y,w,h]).
                     bbox_x, bbox_y, bbox_width, bbox_height = None, None, None, None
                     if ann.bbox_x is not None and ann.bbox_y is not None and ann.bbox_width is not None and ann.bbox_height is not None:
-                        bbox_x, bbox_y = ann.bbox_x, ann.bbox_y
-                        bbox_width, bbox_height = ann.bbox_width, ann.bbox_height
+                        # Denormalize to absolute pixel coordinates
+                        bbox_x  = ann.bbox_x     * img_w
+                        bbox_y  = ann.bbox_y     * img_h
+                        bbox_width  = ann.bbox_width  * img_w
+                        bbox_height = ann.bbox_height * img_h
                     elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+                        # Legacy JSON bbox — already absolute pixel coords [x, y, w, h]
                         bbox_x, bbox_y = ann.bbox[0], ann.bbox[1]
                         bbox_width, bbox_height = ann.bbox[2], ann.bbox[3]
                     
@@ -248,15 +264,25 @@ def evaluate_model(
                         continue
                     
                     # Use category (class name) directly from annotation
+                    # Case-insensitive match to handle e.g. "Car" vs "car"
                     class_id = -1
-                    if ann.category and ann.category in class_names:
-                        class_id = class_names.index(ann.category)
+                    if ann.category:
+                        ann_cat_lower = ann.category.lower()
+                        for idx_cn, cn in enumerate(class_names):
+                            if cn.lower() == ann_cat_lower:
+                                class_id = idx_cn
+                                break
+                        if class_id == -1:
+                            logger.warning(
+                                f"GT category '{ann.category}' not found in training class_names "
+                                f"{class_names} (case-insensitive) - annotation excluded from metrics"
+                            )
                     
                     ground_truth_annotations[ann.image_id].append({
                         'class_id': class_id,
-                        'bbox': [bbox_x, bbox_y, 
-                                bbox_x + bbox_width, 
-                                bbox_y + bbox_height]
+                        'bbox': [bbox_x, bbox_y,
+                                 bbox_x + bbox_width,
+                                 bbox_y + bbox_height]
                     })
             else:
                 logger.warning(f"Annotation file {annotation_file_id} not found")
@@ -272,11 +298,31 @@ def evaluate_model(
         if not images:
             raise ValueError("No images found in dataset")
         
+        # Map image_id → file_name for frontend threshold explorer
+        image_id_to_filename = {img.id: img.file_name for img in images}
+        
         # Get project_id for constructing image paths
         project_id = dataset.project_id
         if not project_id:
             raise ValueError("Dataset does not belong to a project")
-        
+
+        # Warn if GT image IDs don't overlap with eval dataset image IDs at all
+        if has_ground_truth and ground_truth_annotations:
+            eval_image_ids = {img.id for img in images}
+            gt_image_ids = set(ground_truth_annotations.keys())
+            overlap = gt_image_ids & eval_image_ids
+            logger.info(
+                f"GT covers {len(gt_image_ids)} images, eval dataset has {len(eval_image_ids)} images, "
+                f"overlap={len(overlap)}"
+            )
+            if not overlap:
+                logger.error(
+                    f"ZERO overlap between GT image IDs {sorted(gt_image_ids)[:5]} and "
+                    f"eval image IDs {sorted(eval_image_ids)[:5]}. "
+                    "precision/recall will be 0 — the annotation file may belong to a different "
+                    "collection or dataset."
+                )
+
         # Determine which class IDs to ignore based on ignored_classes list
         ignored_class_ids = set()
         if ignored_classes:
@@ -286,11 +332,25 @@ def evaluate_model(
             logger.info(f"Ignoring classes for metrics: {ignored_classes} (IDs: {ignored_class_ids})")
         
         # Initialize metrics
-        confusion_matrix = np.zeros((num_classes, num_classes), dtype=int)
+        # Size is (num_classes + 1) x (num_classes + 1): the extra row/column at index
+        # num_classes represents "background" (unmatched predictions / missed GT boxes)
+        confusion_matrix = np.zeros((num_classes + 1, num_classes + 1), dtype=int)
         true_positives = 0
         false_positives = 0
         false_negatives = 0
         predictions_count = 0
+        
+        # Per-cell samples for interactive confusion matrix drill-down
+        # Key: "row_col", value: list of up to MAX_CM_SAMPLES example dicts
+        MAX_CM_SAMPLES = 20
+        cm_samples: dict = {}
+
+        def _add_cm_sample(row: int, col: int, sample: dict):
+            key = f"{row}_{col}"
+            if key not in cm_samples:
+                cm_samples[key] = []
+            if len(cm_samples[key]) < MAX_CM_SAMPLES:
+                cm_samples[key].append(sample)
         
         # Store all predictions with bboxes and segmentation masks
         all_predictions = []
@@ -584,18 +644,62 @@ def evaluate_model(
                         
                         if gt_class >= 0 and pred_class >= 0:
                             confusion_matrix[gt_class][pred_class] += 1
-                            
+                            _add_cm_sample(gt_class, pred_class, {
+                                'file_name': img.file_name,
+                                'pred_bbox': pred['bbox'],
+                                'gt_bbox': filtered_gt_boxes[best_gt_idx]['bbox'],
+                                'pred_class_name': class_names[pred_class],
+                                'gt_class_name': class_names[gt_class],
+                                'conf': float(pred['conf']),
+                                'iou': float(best_iou),
+                            })
                             if gt_class == pred_class:
                                 true_positives += 1
                             else:
                                 false_positives += 1
                     else:
                         false_positives += 1
+                        # Unmatched prediction → background GT row, predicted class col
+                        if pred['class_id'] < num_classes:
+                            confusion_matrix[num_classes][pred['class_id']] += 1
+                            _add_cm_sample(num_classes, pred['class_id'], {
+                                'file_name': img.file_name,
+                                'pred_bbox': pred['bbox'],
+                                'gt_bbox': None,
+                                'pred_class_name': class_names[pred['class_id']],
+                                'gt_class_name': 'background',
+                                'conf': float(pred['conf']),
+                                'iou': float(best_iou),
+                            })
                         if best_iou > 0:
                             logger.debug(f"No match: best IoU={best_iou:.3f} < threshold={iou_threshold}")
                 
+                # Unmatched GT boxes → GT class row, background predicted col
+                for j in range(len(filtered_gt_boxes)):
+                    if j not in matched_gt:
+                        gt_class = filtered_gt_boxes[j]['class_id']
+                        if 0 <= gt_class < num_classes:
+                            confusion_matrix[gt_class][num_classes] += 1
+                            _add_cm_sample(gt_class, num_classes, {
+                                'file_name': img.file_name,
+                                'pred_bbox': None,
+                                'gt_bbox': filtered_gt_boxes[j]['bbox'],
+                                'pred_class_name': 'background',
+                                'gt_class_name': class_names[gt_class],
+                                'conf': 0.0,
+                                'iou': 0.0,
+                            })
+                
                 false_negatives += len(filtered_gt_boxes) - len(matched_gt)
                 logger.info(f"Image {img.id} results: TP={len(matched_pred)}, FP={len(filtered_pred_boxes)-len(matched_pred)}, FN={len(filtered_gt_boxes)-len(matched_gt)}")
+
+            elif has_ground_truth:
+                # Image exists in dataset but not in GT file → treat as 0 GT objects.
+                # Any non-ignored predictions are false positives.
+                extra_fp = sum(1 for p in image_predictions if p['class_id'] not in ignored_class_ids)
+                false_positives += extra_fp
+                if extra_fp:
+                    logger.debug(f"Image {img.id} not in GT dict → {extra_fp} predictions counted as FP")
             
             # Update progress
             if (idx + 1) % max(1, total_images // 10) == 0:
@@ -604,6 +708,23 @@ def evaluate_model(
                 db.commit()
         
         inference_time_ms = (time.time() - start_time) * 1000
+        
+        # Build flat ground-truth list for frontend threshold explorer
+        # (xyxy pixel coords, class_id, file_name per box)
+        all_ground_truth = []
+        if has_ground_truth:
+            for img_id, gt_list in ground_truth_annotations.items():
+                fname = image_id_to_filename.get(img_id, '')
+                for box in gt_list:
+                    cid = box['class_id']
+                    if 0 <= cid < num_classes:
+                        all_ground_truth.append({
+                            'image_id': img_id,
+                            'file_name': fname,
+                            'class_id': cid,
+                            'bbox': box['bbox'],   # [x1,y1,x2,y2] pixel coords
+                            'class_name': class_names[cid],
+                        })
         
         task.progress = 95
         task.task_metadata = {**task.task_metadata, 'stage': 'calculating_metrics'}
@@ -616,7 +737,7 @@ def evaluate_model(
         f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
         logger.info(f"Metrics: Precision={precision:.3f}, Recall={recall:.3f}, F1={f1_score:.3f}")
         
-        # Store results in task metadata
+        # Store results in task metadata (heavy lists go to disk — see artifacts)
         results = {
             'precision': float(precision),
             'recall': float(recall),
@@ -624,7 +745,9 @@ def evaluate_model(
             'map50': 0.0,
             'map50_95': 0.0,
             'confusion_matrix': confusion_matrix.tolist(),
-            'class_names': class_names,
+            'class_names': class_names + ['background'],  # background = unmatched row/col
+            'project_id': project_id,
+            'image_id_to_filename': {str(k): v for k, v in image_id_to_filename.items()},
             'predictions_count': predictions_count,
             'has_ground_truth': has_ground_truth,
             'inference_time_ms': float(inference_time_ms),
@@ -637,8 +760,16 @@ def evaluate_model(
             'use_grid': use_grid,
             'grid_size': grid_size if use_grid else None,
             'grid_overlap': grid_overlap if use_grid else None,
-            'predictions': all_predictions  # Store all predictions with bboxes and segmentation
         }
+        if all_predictions or all_ground_truth or cm_samples:
+            blobs_rel = write_evaluation_blobs(
+                project_id,
+                task_id,
+                all_predictions,
+                all_ground_truth,
+                cm_samples,
+            )
+            results['artifacts'] = {'blobs': blobs_rel, 'format_version': 1}
         
         task.status = 'completed'
         task.progress = 100
@@ -660,15 +791,14 @@ def evaluate_model(
         
     except Exception as e:
         logger.error(f"Error in evaluation task: {str(e)}", exc_info=True)
-        task.status = 'failed'
-        task.completed_at = datetime.utcnow()
-        task.error_message = f"Evaluation error: {str(e)}"
-        db.commit()
-        
-        # Update parent task if this is a child task
-        parent_task_id = task.task_metadata.get('parent_task_id') if task.task_metadata else None
-        if parent_task_id:
-            update_parent_task_status(db, parent_task_id)
+        if task is not None:
+            task.status = 'failed'
+            task.completed_at = datetime.utcnow()
+            task.error_message = f"Evaluation error: {str(e)}"
+            db.commit()
+            parent_task_id = task.task_metadata.get('parent_task_id') if task.task_metadata else None
+            if parent_task_id:
+                update_parent_task_status(db, parent_task_id)
         
         raise
     finally:

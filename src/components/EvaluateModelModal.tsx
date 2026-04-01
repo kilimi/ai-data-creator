@@ -37,6 +37,8 @@ interface EvaluateModelModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   trainingTasks: any[];
+  /** When true, datasets / models are still loading after the dialog opened */
+  resourcesLoading?: boolean;
   projectId: string;
   datasets?: Dataset[];
   datasetGroups?: DatasetGroup[];
@@ -71,6 +73,7 @@ export function EvaluateModelModal({
   open,
   onOpenChange,
   trainingTasks,
+  resourcesLoading = false,
   projectId,
   datasets = [],
   datasetGroups = [],
@@ -147,35 +150,51 @@ export function EvaluateModelModal({
     setSelectedDatasets(prev => [...prev, config]);
   };
 
-  // Add all datasets from a group
-  const addDatasetGroupSelection = (group: DatasetGroup) => {
+  // Add all datasets from a group (fetch annotation file lists if not in lightweight group payload)
+  const addDatasetGroupSelection = async (group: DatasetGroup) => {
     if (!group.datasets || group.datasets.length === 0) return;
-    
+
     const newConfigs: DatasetEvalConfig[] = [];
     const groupInfoMap: Record<number, { groupName: string; groupId: number }> = {};
-    
-    group.datasets.forEach(dataset => {
-      // Skip if already added
-      if (selectedDatasets.some(d => d.datasetId === dataset.id)) {
-        return;
+    const mergedEnriched = new Map<number, Dataset & { annotation_files?: any[] }>();
+
+    for (const dataset of group.datasets) {
+      if (selectedDatasets.some((d) => d.datasetId === dataset.id)) continue;
+
+      let annFiles = dataset.annotation_files;
+      if (!annFiles || annFiles.length === 0) {
+        try {
+          const response = await fetch(
+            `http://localhost:9999/datasets/${dataset.id}/annotation-files/list`
+          );
+          if (response.ok) {
+            const result = await response.json();
+            if (result.success && result.data) annFiles = result.data;
+          }
+        } catch (e) {
+          console.error("Error fetching annotation files for group dataset:", e);
+        }
       }
-      
-      // Store dataset in enriched datasets with annotation files from group
-      setEnrichedDatasets(prev => new Map(prev).set(dataset.id, dataset));
-      
-      const config: DatasetEvalConfig = {
+
+      const dsWith = { ...dataset, annotation_files: annFiles || [] };
+      mergedEnriched.set(dataset.id, dsWith);
+
+      newConfigs.push({
         datasetId: dataset.id,
         datasetName: dataset.name,
-        annotationFileId: dataset.annotation_files?.[0]?.id ? String(dataset.annotation_files[0].id) : null,
-        annotationFileName: dataset.annotation_files?.[0]?.file_name || dataset.annotation_files?.[0]?.name || null
-      };
-      
-      newConfigs.push(config);
+        annotationFileId: annFiles?.[0]?.id ? String(annFiles[0].id) : null,
+        annotationFileName: annFiles?.[0]?.file_name || annFiles?.[0]?.name || null,
+      });
       groupInfoMap[dataset.id] = { groupName: group.name, groupId: group.id };
+    }
+
+    setEnrichedDatasets((prev) => {
+      const next = new Map(prev);
+      mergedEnriched.forEach((v, k) => next.set(k, v));
+      return next;
     });
-    
-    setSelectedDatasets(prev => [...prev, ...newConfigs]);
-    setDatasetGroupInfo(prev => ({ ...prev, ...groupInfoMap }));
+    setSelectedDatasets((prev) => [...prev, ...newConfigs]);
+    setDatasetGroupInfo((prev) => ({ ...prev, ...groupInfoMap }));
   };
 
   // Remove dataset from evaluation
@@ -330,7 +349,7 @@ export function EvaluateModelModal({
 
     setIsSubmitting(true);
     try {
-      if (onEvaluateMultiple && selectedDatasets.length > 0) {
+      if (onEvaluateMultiple && selectedDatasets.length > 1) {
         await onEvaluateMultiple({
           taskId: parseInt(selectedModel),
           datasets: selectedDatasets,
@@ -415,9 +434,17 @@ export function EvaluateModelModal({
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="model-select">Trained Model</Label>
-                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                <Select
+                  value={selectedModel}
+                  onValueChange={setSelectedModel}
+                  disabled={resourcesLoading}
+                >
                   <SelectTrigger id="model-select">
-                    <SelectValue placeholder="Select a trained model" />
+                    <SelectValue
+                      placeholder={
+                        resourcesLoading ? 'Loading models…' : 'Select a trained model'
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {trainingTasks.filter(t => t.status === 'completed' && t.task_type === 'yolo_training').map(task => (
@@ -516,7 +543,7 @@ export function EvaluateModelModal({
                           datasetGroups.map(group => (
                             <DropdownMenuItem 
                               key={group.id}
-                              onClick={() => addDatasetGroupSelection(group)}
+                              onClick={() => void addDatasetGroupSelection(group)}
                               className="flex items-center cursor-pointer"
                             >
                               <Users className="w-4 h-4 mr-2" />
@@ -794,7 +821,12 @@ export function EvaluateModelModal({
             </Button>
             <Button 
               onClick={handleSubmit}
-              disabled={isSubmitting || !selectedModel || selectedDatasets.length === 0}
+              disabled={
+                isSubmitting ||
+                resourcesLoading ||
+                !selectedModel ||
+                selectedDatasets.length === 0
+              }
             >
               {isSubmitting ? (
                 <>

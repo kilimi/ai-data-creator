@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { getApiBaseUrl } from '@/config/api';
 import { ExportModelModal } from '@/components/ExportModelModal';
 import { ExportDetailsModal } from '@/components/ExportDetailsModal';
 import { TestInferenceModal } from '@/components/TestInferenceModal';
@@ -48,18 +49,29 @@ export default function ProjectExports() {
   const [newTaskName, setNewTaskName] = useState('');
   const [testInference, setTestInference] = useState<{ id: number; onnxFilePath: string } | null>(null);
 
-  // Fetch all tasks
   const fetchTasks = async () => {
     if (!id) return;
-    
+    const base = getApiBaseUrl();
     setLoadingTasks(true);
     try {
-      const response = await fetch(`http://localhost:9999/tasks/?project_id=${id}`);
-      if (response.ok) {
-        const data = await response.json();
-        // Separate training and export tasks
-        setTrainingTasks(data.filter((t: any) => t.task_type === 'yolo_training' && t.status === 'completed'));
-        setExportTasks(data.filter((t: any) => t.task_type === 'model_export'));
+      // Two targeted requests instead of one "all tasks" dump
+      const [trainingRes, exportRes] = await Promise.all([
+        fetch(
+          `${base}/tasks/?project_id=${id}&task_type=yolo_training,training&status=completed&metadata_mode=list&limit=200`,
+          { credentials: 'omit' },
+        ),
+        fetch(
+          `${base}/tasks/?project_id=${id}&task_type=model_export&metadata_mode=list&limit=500`,
+          { credentials: 'omit' },
+        ),
+      ]);
+      if (trainingRes.ok) {
+        const data = await trainingRes.json();
+        setTrainingTasks(Array.isArray(data) ? data : []);
+      }
+      if (exportRes.ok) {
+        const data = await exportRes.json();
+        setExportTasks(Array.isArray(data) ? data : []);
       }
     } catch (error) {
       console.error('Error fetching tasks:', error);
@@ -85,9 +97,10 @@ export default function ProjectExports() {
     if (!newTaskName.trim()) return;
     
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}`, {
+      const response = await fetch(`${getApiBaseUrl()}/tasks/${taskId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'omit',
         body: JSON.stringify({ name: newTaskName.trim() })
       });
       
@@ -113,8 +126,9 @@ export default function ProjectExports() {
 
   const handleDeleteTask = async (taskId: number) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}`, {
-        method: 'DELETE'
+      const response = await fetch(`${getApiBaseUrl()}/tasks/${taskId}`, {
+        method: 'DELETE',
+        credentials: 'omit',
       });
       
       if (response.ok) {
@@ -237,7 +251,7 @@ export default function ProjectExports() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground mt-4">Loading export tasks...</p>
         </div>
-      ) : !isConnected ? (
+      ) : isConnected === false ? (
         <div className="text-center py-16">
           <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
           <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
@@ -333,7 +347,7 @@ export default function ProjectExports() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                window.open(`http://localhost:9999/export/download/${task.id}`, '_blank');
+                                window.open(`${getApiBaseUrl()}/export/download/${task.id}`, '_blank');
                               }}
                               className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-blue-800 text-blue-300 border border-blue-700 hover:bg-blue-700 hover:text-white transition-colors"
                               title="Download exported model"

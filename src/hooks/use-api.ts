@@ -1,60 +1,62 @@
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ApiClient, createApiClient } from '@/utils/api';
 import { ApiConfig } from '@/types/api';
 import { API_CONFIG } from '@/config/api';
-import { useToast } from '@/components/ui/use-toast';
 
 /**
- * Hook to use the API client throughout the application
+ * Shared, deduplicated health-check so 30+ components that call useApi()
+ * don't each fire their own (15 s × 3 retries) connection test.
  */
+let _sharedHealthPromise: Promise<boolean> | null = null;
+let _sharedHealthBaseUrl: string | null = null;
+
+function getSharedHealthCheck(client: ApiClient, baseUrl: string): Promise<boolean> {
+  if (_sharedHealthPromise && _sharedHealthBaseUrl === baseUrl) {
+    return _sharedHealthPromise;
+  }
+  _sharedHealthBaseUrl = baseUrl;
+  _sharedHealthPromise = client
+    .testConnection(1)
+    .then((r) => r.success)
+    .catch(() => false);
+  // Allow a re-check after 30 s (backend restart, etc.)
+  _sharedHealthPromise.finally(() => {
+    setTimeout(() => {
+      _sharedHealthPromise = null;
+    }, 30_000);
+  });
+  return _sharedHealthPromise;
+}
+
 export const useApi = (config?: Partial<ApiConfig>) => {
   const [apiClient, setApiClient] = useState<ApiClient | null>(null);
   const [isConfigured, setIsConfigured] = useState(false);
   const [isConnected, setIsConnected] = useState<boolean | null>(null);
-  const { toast } = useToast();
+  const mounted = useRef(true);
 
   useEffect(() => {
-    // Merge the default config with any provided config
+    mounted.current = true;
     const mergedConfig: ApiConfig = {
       ...API_CONFIG,
-      ...config
+      ...config,
     };
 
-    // Create the API client with the config
     const client = createApiClient(mergedConfig);
     setApiClient(client);
     setIsConfigured(true);
 
-    // Test connection with reduced error handling to prevent toast spam
-    const checkConnection = async () => {
-      try {
-        const result = await client.testConnection();
-        setIsConnected(result.success);
-        
-        if (!result.success) {
-          console.warn('API connection failed:', result.error);
-          // Only show toast for critical connection errors, not on every page load
-          if (result.error && !result.error.includes('Connection refused')) {
-            toast({
-              title: "API Connection Issue",
-              description: "Could not connect to the FastAPI server. Check API settings.",
-              variant: "destructive",
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error checking API connection:', error);
-        setIsConnected(false);
-      }
+    getSharedHealthCheck(client, mergedConfig.baseUrl).then((ok) => {
+      if (mounted.current) setIsConnected(ok);
+    });
+
+    return () => {
+      mounted.current = false;
     };
-    
-    checkConnection();
-  }, [config?.baseUrl]); // Removed toast dependency to prevent re-renders
+  }, [config?.baseUrl]);
 
   return {
     api: apiClient,
     isConfigured,
-    isConnected
+    isConnected,
   };
 };

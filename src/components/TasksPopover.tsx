@@ -37,12 +37,16 @@ interface TasksPopoverProps {
 
 export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   const navigate = useNavigate();
-  const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks, fetchActiveTasks } = useTasks(projectId);
+  const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks, fetchActiveTasks, setPolling } = useTasks(projectId);
   const { toast } = useToast();
   const [cancellingTasks, setCancellingTasks] = useState<Set<number>>(new Set());
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+
+  useEffect(() => {
+    setPolling(popoverOpen);
+  }, [popoverOpen, setPolling]);
 
   const getTaskTypeIcon = (taskType: string) => {
     switch (taskType) {
@@ -186,9 +190,12 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   tasksList.forEach((t) => {
     if (!tasksById.has(t.id)) tasksById.set(t.id, t);
   });
-  const visibleTasks = Array.from(tasksById.values()).sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
+  const visibleTasks = Array.from(tasksById.values())
+    // Hide child evaluation tasks — they're sub-tasks of a parent and clutter the list
+    .filter((t) => !(t.task_type === 'model_evaluation' && (t.task_metadata?.parent_task_id ?? t.metadata?.parent_task_id)))
+    .sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
   const visibleActiveTaskCount = visibleTasks.filter(task => 
     task.status === 'pending' || task.status === 'running'
   ).length;

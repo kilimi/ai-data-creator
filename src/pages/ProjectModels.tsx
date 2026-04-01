@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link, useOutletContext, useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -97,77 +97,77 @@ export default function ProjectModels() {
   const [newTaskName, setNewTaskName] = useState('');
   const [datasets, setDatasets] = useState<any[]>([]);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
+  const [modalResourcesLoading, setModalResourcesLoading] = useState(false);
   const [downloadModel, setDownloadModel] = useState<{ id: number; name: string } | null>(null);
   const [testInference, setTestInference] = useState<{ id: number; name: string } | null>(null);
 
-  // Fetch training tasks
-  const fetchTrainingTasks = async () => {
+  const trainingTasksRef = useRef<any[]>([]);
+  trainingTasksRef.current = trainingTasks;
+
+  /** Only training tasks, small metadata (no huge eval payloads mixed in). */
+  const fetchTrainingTasks = useCallback(async () => {
     if (!id) return;
-    
+
     setLoadingTasks(true);
     try {
-      const response = await fetch(`http://localhost:9999/tasks/?project_id=${id}`);
+      const response = await fetch(
+        `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training&metadata_mode=list&limit=200`
+      );
       if (response.ok) {
         const data = await response.json();
-        // Filter to only training tasks (yolo_training or training, exclude evaluations and exports)
-        setTrainingTasks(data.filter((t: any) => 
-          (t.task_type === 'yolo_training' || t.task_type === 'training') && 
-          t.task_type !== 'model_evaluation' &&
-          t.task_type !== 'model_export'
-        ));
+        setTrainingTasks(Array.isArray(data) ? data : []);
       }
     } catch (error) {
       console.error('Error fetching training tasks:', error);
     } finally {
       setLoadingTasks(false);
     }
-  };
+  }, [id]);
 
-  // Fetch datasets and groups for training modal
-  const fetchDatasets = async () => {
+  const loadTrainModalResources = useCallback(async () => {
     if (!id) return;
+    setModalResourcesLoading(true);
     try {
-      const response = await fetch(`http://localhost:9999/projects/${id}/datasets/list`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.data) {
-          setDatasets(result.data);
-        }
+      const [dsRes, dgRes] = await Promise.all([
+        fetch(`http://localhost:9999/projects/${id}/datasets/list`),
+        fetch(`http://localhost:9999/projects/${id}/dataset-groups/`),
+      ]);
+      if (dsRes.ok) {
+        const result = await dsRes.json();
+        if (result.success && result.data) setDatasets(result.data);
+      }
+      if (dgRes.ok) {
+        const result = await dgRes.json();
+        if (result.success) setDatasetGroups(result.data);
       }
     } catch (error) {
-      console.error('Error fetching datasets:', error);
+      console.error('Error loading train modal data:', error);
+    } finally {
+      setModalResourcesLoading(false);
     }
-  };
-
-  const fetchDatasetGroups = async () => {
-    if (!id) return;
-    try {
-      const response = await fetch(`http://localhost:9999/projects/${id}/dataset-groups/`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          setDatasetGroups(result.data);
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching dataset groups:', error);
-    }
-  };
+  }, [id]);
 
   useEffect(() => {
+    if (!id) return;
     fetchTrainingTasks();
-    fetchDatasets();
-    fetchDatasetGroups();
-    
-    // Polling for running tasks
+
     const interval = setInterval(() => {
-      if (trainingTasks.some(t => t.status === 'running' || t.status === 'pending')) {
+      if (
+        trainingTasksRef.current.some(
+          (t) => t.status === 'running' || t.status === 'pending'
+        )
+      ) {
         fetchTrainingTasks();
       }
     }, 5000);
-    
+
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, fetchTrainingTasks]);
+
+  useEffect(() => {
+    if (!showTrainModelModal || !id) return;
+    loadTrainModalResources();
+  }, [showTrainModelModal, id, loadTrainModalResources]);
 
   const handleDeleteFailedTasks = async () => {
     const failedTasks = trainingTasks.filter(t => t.status === 'failed');
@@ -308,7 +308,7 @@ export default function ProjectModels() {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground mt-4">Loading training tasks...</p>
         </div>
-      ) : !isConnected ? (
+      ) : isConnected === false ? (
         <div className="text-center py-16">
           <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
           <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
@@ -629,6 +629,7 @@ export default function ProjectModels() {
         }}
         datasets={datasets}
         datasetGroups={datasetGroups}
+        resourcesLoading={modalResourcesLoading}
         projectId={id || ''}
       />
 

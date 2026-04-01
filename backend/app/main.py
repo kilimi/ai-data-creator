@@ -43,20 +43,22 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "http://localhost:8000", 
+        "http://localhost:8000",
         "http://localhost:8080",
         "http://localhost:8081",
         "http://localhost:8082",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8000",
         "http://127.0.0.1:8080",
-        "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ],  # Specify exact origins when credentials are allowed
+        "http://127.0.0.1:8081",
+        "http://127.0.0.1:8082",
+    ],
+    # Vite uses host "::"; browsers may send Origin: http://[::1]:8080 — not in list above
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?",
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"], # Expose all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Add a simple test endpoint for debugging CORS

@@ -49,7 +49,7 @@ export default function Index() {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
-  const { api, isConfigured, isConnected } = useApi();
+  const { api, isConfigured } = useApi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -74,26 +74,20 @@ export default function Index() {
 
   useEffect(() => {
     const fetchProjects = async () => {
-      if (!isConfigured || !api || isConnected === null) {
-        return;
-      }
-
-      if (isConnected === false) {
-        setLoading(false);
-        setError('API connection failed');
+      if (!isConfigured || !api) {
         return;
       }
 
       try {
         setError(null);
         const response = await api.getProjects();
-        
+
         if (response.success && response.data) {
           const transformedProjects = response.data.map((project: any) => ({
             ...project,
-            datasets: project.datasets || []
+            datasets: project.datasets || [],
           }));
-          
+
           setProjects(transformedProjects);
         } else {
           setError(response.error || 'Failed to fetch projects');
@@ -117,7 +111,7 @@ export default function Index() {
     };
 
     fetchProjects();
-  }, [api, isConfigured, isConnected, toast, refetchTrigger]);
+  }, [api, isConfigured, toast, refetchTrigger]);
 
   useEffect(() => {
     if (location.state?.refetch) {

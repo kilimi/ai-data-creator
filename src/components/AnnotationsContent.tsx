@@ -245,6 +245,9 @@ export function AnnotationsContent({
     file_id?: string;
     fileName?: string;
   }>>(new Map());
+  // Refs to avoid stale closures and prevent duplicate polling intervals
+  const activeTasksRef = useRef(new Map<number, any>());
+  const taskMonitorIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Handler for renaming a class in an annotation file
   const markDirty = (annotationId: string) => {
     setDirtyAnnotationIds(prev => new Set(prev).add(annotationId));
@@ -2686,6 +2689,11 @@ export function AnnotationsContent({
     await handleShowImageBreakdown(file);
   };
 
+  // Keep activeTasksRef in sync so the polling interval never has a stale closure
+  useEffect(() => {
+    activeTasksRef.current = activeTasks;
+  }, [activeTasks]);
+
   // Polling function to check processing status
   const startProcessingStatusPolling = useCallback(() => {
     if (!api || processingFiles.size === 0) return;
@@ -2741,14 +2749,16 @@ export function AnnotationsContent({
 
   // Task monitoring function for background annotation processing
   const startTaskMonitoring = useCallback(() => {
-    if (!api || activeTasks.size === 0) return;
+    if (!api || activeTasksRef.current.size === 0) return;
+    // Guard: only one polling interval at a time
+    if (taskMonitorIntervalRef.current !== null) return;
     
-    const taskIds = Array.from(activeTasks.keys());
+    const taskIds = Array.from(activeTasksRef.current.keys());
     console.log(`Starting task monitoring for ${taskIds.length} tasks:`, taskIds);
     
-    const pollInterval = setInterval(async () => {
+    taskMonitorIntervalRef.current = setInterval(async () => {
       try {
-        const updatedTasks = new Map(activeTasks);
+        const updatedTasks = new Map(activeTasksRef.current);
         let shouldRefreshAnnotations = false;
         
         // Add error tracking and circuit breaker
@@ -2760,7 +2770,7 @@ export function AnnotationsContent({
             const taskResponse = await api.getTask(taskId);
             if (taskResponse && taskResponse.success && taskResponse.data) {
               const task = taskResponse.data;
-              const currentTask = activeTasks.get(taskId);
+              const currentTask = activeTasksRef.current.get(taskId);
               
               // Update task in our state
               updatedTasks.set(taskId, {
@@ -2818,7 +2828,8 @@ export function AnnotationsContent({
             // If too many errors for individual tasks, stop polling
             if (errorCount >= maxErrors) {
               console.warn('Too many task polling errors, stopping monitoring');
-              clearInterval(pollInterval);
+              clearInterval(taskMonitorIntervalRef.current!);
+              taskMonitorIntervalRef.current = null;
               setActiveTasks(new Map());
               return;
             }
@@ -2845,7 +2856,8 @@ export function AnnotationsContent({
         
         // Stop polling when no active tasks remain
         if (updatedTasks.size === 0) {
-          clearInterval(pollInterval);
+          clearInterval(taskMonitorIntervalRef.current!);
+          taskMonitorIntervalRef.current = null;
           console.log('All tasks completed, stopping task monitoring');
           
           // Clear any remaining processing state
@@ -2860,18 +2872,27 @@ export function AnnotationsContent({
     
     // Cleanup after 5 minutes max to prevent infinite polling
     setTimeout(() => {
-      clearInterval(pollInterval);
+      clearInterval(taskMonitorIntervalRef.current!);
+      taskMonitorIntervalRef.current = null;
       setActiveTasks(new Map());
       console.log('Task monitoring timeout reached, stopping monitoring');
     }, 300000);
-  }, [api, activeTasks, id, toast]);
+  }, [api, id, toast]);
 
-  // Start task monitoring when tasks are added
+  // Start task monitoring when tasks are added; depend only on the size (primitive)
+  // so this effect does NOT re-run every time startTaskMonitoring's reference changes
   useEffect(() => {
     if (activeTasks.size > 0) {
       startTaskMonitoring();
     }
-  }, [activeTasks.size > 0, startTaskMonitoring]); // Only trigger when we go from 0 to >0 tasks
+    return () => {
+      // Clean up interval when size drops to 0 or component unmounts
+      if (activeTasks.size === 0 && taskMonitorIntervalRef.current !== null) {
+        clearInterval(taskMonitorIntervalRef.current);
+        taskMonitorIntervalRef.current = null;
+      }
+    };
+  }, [activeTasks.size]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Helper function to detect annotation type from COCO content string with detailed segmentation types
   const detectAnnotationTypeFromContent = (content: string, fileName: string): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {

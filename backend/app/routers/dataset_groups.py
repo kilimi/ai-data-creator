@@ -6,8 +6,18 @@ import json
 
 from .. import models, schemas
 from ..database import get_db
+from ..dataset_list_helpers import first_preview_url_by_dataset
 
 router = APIRouter()
+
+
+def _list_thumbnail(url: str | None) -> str | None:
+    """Drop base64 data URLs for list payloads; keep normal URLs."""
+    if not url:
+        return None
+    if url.startswith("data:image/"):
+        return None
+    return url
 
 
 def get_dataset_annotation_counts(db: Session, dataset_ids: List[int]) -> Dict[int, int]:
@@ -122,9 +132,10 @@ async def create_dataset_group(
 @router.get("/projects/{project_id}/dataset-groups/")
 async def get_dataset_groups(
     project_id: int,
+    include_annotation_files: bool = False,
     db: Session = Depends(get_db)
 ):
-    """Get all dataset groups for a project"""
+    """Get all dataset groups for a project. List view omits per-file annotation lists unless include_annotation_files=true."""
     
     # Verify project exists
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
@@ -168,18 +179,18 @@ async def get_dataset_groups(
     # Get annotation counts efficiently
     annotation_counts = get_dataset_annotation_counts(db, all_dataset_ids)
     annotation_file_counts = get_dataset_annotation_file_counts(db, all_dataset_ids)
+
+    preview_by_ds = first_preview_url_by_dataset(db, all_dataset_ids)
     
-    # Get annotation files for all datasets at once
+    # Optional: full annotation file rows (heavy) — only for editors that need them
     annotation_files_by_dataset = {}
-    if all_dataset_ids:
+    if include_annotation_files and all_dataset_ids:
         annotation_files_query = db.query(models.AnnotationFile).filter(
             models.AnnotationFile.dataset_id.in_(all_dataset_ids)
         ).all()
         
-        # Get all annotation file IDs
         ann_file_ids = [af.id for af in annotation_files_query]
         
-        # Get annotation counts for all files in one query
         ann_file_counts = {}
         if ann_file_ids:
             ann_file_counts = dict(
@@ -228,12 +239,11 @@ async def get_dataset_groups(
                 {
                     "id": d.id,
                     "name": d.name,
-                    # Include optimized base64 thumbnails (200x200, ~10-20KB) - they're small enough
-                    "thumbnailUrl": d.thumbnailUrl,
+                    "thumbnailUrl": _list_thumbnail(d.thumbnailUrl) or preview_by_ds.get(d.id),
                     "image_count": d.image_count,
                     "annotation_count": annotation_counts.get(d.id, 0),
                     "annotation_file_count": annotation_file_counts.get(d.id, 0),
-                    "annotation_files": annotation_files_by_dataset.get(d.id, []),
+                    "annotation_files": annotation_files_by_dataset.get(d.id, []) if include_annotation_files else [],
                     "tags": d.tags,
                     "url": d.url
                 }

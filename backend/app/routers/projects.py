@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func, text
 from typing import Optional, List
 from pydantic import BaseModel
 import json
@@ -234,116 +235,91 @@ def read_projects_names_only(db: Session = Depends(get_db)):
 
 
 @router.get("/projects/{project_id}/datasets/list")
-def list_project_datasets(project_id: int, include_thumbnails: bool = True, db: Session = Depends(get_db)):
+def list_project_datasets(
+    project_id: int,
+    include_thumbnails: bool = False,
+    db: Session = Depends(get_db),
+):
     """
-    Get a lightweight list of datasets for a project.
-    Only includes basic dataset info - no images, annotations, or annotation file details.
-    This is optimized for fast loading in the datasets list view.
-    
-    By default, optimized base64-encoded thumbnails (200x200, ~10-20KB) are included.
-    Set include_thumbnails=False to exclude them for even faster loading.
-    URL-based thumbnails are always included as they're small.
+    Lightweight datasets for grid/list views: metadata + counts + one preview image URL each.
+
+    By default, base64 thumbnails stored on the dataset row are omitted (large JSON).
+    Preview uses the first image (min id) per dataset via two small SQL queries — no full table scans.
+    Set include_thumbnails=true to embed optimized base64 thumbnails when present.
     """
     from sqlalchemy import func
-    
-    # Verify project exists
+    from sqlalchemy.orm import load_only
+
+    from ..dataset_list_helpers import first_preview_url_by_dataset
+
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    
-    # Get all datasets for this project with minimal data
-    # Use load_only to avoid loading large binary logo field (can be MBs)
-    from sqlalchemy.orm import load_only
-    datasets = db.query(models.Dataset).options(
-        load_only(
-            models.Dataset.id,
-            models.Dataset.name,
-            models.Dataset.description,
-            models.Dataset._tags,  # Use _tags to access the column directly
-            models.Dataset.project_id,
-            models.Dataset.image_count,
-            models.Dataset.thumbnailUrl,
-            models.Dataset.url,
-            models.Dataset.created_at,
-            models.Dataset.updated_at
+
+    datasets = (
+        db.query(models.Dataset)
+        .options(
+            load_only(
+                models.Dataset.id,
+                models.Dataset.name,
+                models.Dataset.description,
+                models.Dataset._tags,
+                models.Dataset.project_id,
+                models.Dataset.image_count,
+                models.Dataset.thumbnailUrl,
+                models.Dataset.url,
+                models.Dataset.created_at,
+                models.Dataset.updated_at,
+            )
         )
-    ).filter(
-        models.Dataset.project_id == project_id
-    ).all()
-    
+        .filter(models.Dataset.project_id == project_id)
+        .all()
+    )
+
     if not datasets:
         return {"success": True, "data": []}
-    
-    # Get annotation counts for all datasets in one query
+
     dataset_ids = [d.id for d in datasets]
+
     annotation_counts = dict(
-        db.query(
-            models.Annotation.dataset_id,
-            func.count(models.Annotation.id)
-        )
+        db.query(models.Annotation.dataset_id, func.count(models.Annotation.id))
         .filter(models.Annotation.dataset_id.in_(dataset_ids))
         .group_by(models.Annotation.dataset_id)
         .all()
     )
-    
-    # Get annotation file counts for all datasets in one query
+
     annotation_file_counts = dict(
-        db.query(
-            models.AnnotationFile.dataset_id,
-            func.count(models.AnnotationFile.id)
-        )
+        db.query(models.AnnotationFile.dataset_id, func.count(models.AnnotationFile.id))
         .filter(models.AnnotationFile.dataset_id.in_(dataset_ids))
         .group_by(models.AnnotationFile.dataset_id)
         .all()
     )
-    
-    # Build minimal response - optimized for fast loading
-    # Include optimized base64 thumbnails by default (200x200, ~10-20KB each)
-    # These are small enough to include without performance issues
-    import random
-    
+
+    preview_by_ds = first_preview_url_by_dataset(db, dataset_ids)
+
     result = []
     for dataset in datasets:
-        # Set random image as logo if no logo is set and images exist
-        # This ensures existing datasets without logos get them automatically
-        if not dataset.thumbnailUrl and not dataset.logo_url and not dataset.logo:
-            images = db.query(models.Image).filter(
-                models.Image.dataset_id == dataset.id
-            ).all()
-            if images:
-                random_image = random.choice(images)
-                if random_image.url:
-                    # Use relative URL - frontend will handle it
-                    if random_image.url.startswith('/'):
-                        dataset.thumbnailUrl = f"{random_image.url}?thumb=300"
-                        dataset.logo_url = f"{random_image.url}?thumb=300"
-                    else:
-                        dataset.thumbnailUrl = random_image.url
-                        dataset.logo_url = random_image.url
-                    db.commit()
-                    db.refresh(dataset)
-        
-        # Include optimized base64 thumbnails by default (they're small now)
-        # URL-based thumbnails are always included
-        thumbnail_url = dataset.thumbnailUrl
-        if thumbnail_url and _is_base64_image(thumbnail_url) and not include_thumbnails:
-            thumbnail_url = None  # Only exclude if explicitly requested
-        
-        result.append({
-            "id": dataset.id,
-            "name": dataset.name,
-            "description": dataset.description,
-            "project_id": dataset.project_id,
-            "image_count": dataset.image_count,
-            "annotation_count": annotation_counts.get(dataset.id, 0),
-            "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
-            "tags": dataset.tags,
-            "thumbnailUrl": thumbnail_url,
-            "url": dataset.url,
-            "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
-            "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None
-        })
-    
+        thumb = _truncate_base64_url(dataset.thumbnailUrl, include_thumbnails)
+        if not thumb:
+            thumb = preview_by_ds.get(dataset.id)
+
+        result.append(
+            {
+                "id": dataset.id,
+                "name": dataset.name,
+                "description": dataset.description,
+                "project_id": dataset.project_id,
+                "image_count": dataset.image_count,
+                "annotation_count": annotation_counts.get(dataset.id, 0),
+                "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
+                "tags": dataset.tags,
+                "thumbnailUrl": thumb,
+                "url": dataset.url,
+                "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+                "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None,
+            }
+        )
+
     return {"success": True, "data": result}
 
 
@@ -375,13 +351,167 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
     return {"success": True, "data": result}
 
 
+@router.get("/projects/{project_id}/summary")
+def get_project_summary(project_id: int, db: Session = Depends(get_db)):
+    """Ultra-light: just name, description, tags, dates, dataset_count. No joins, no annotation queries."""
+    from sqlalchemy.orm import load_only
+
+    project = (
+        db.query(models.Project)
+        .options(
+            load_only(
+                models.Project.id,
+                models.Project.name,
+                models.Project.description,
+                models.Project.is_project,
+                models.Project._tags,
+                models.Project.created_at,
+                models.Project.updated_at,
+            )
+        )
+        .filter(models.Project.id == project_id)
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    dataset_count = (
+        db.query(func.count(models.Dataset.id))
+        .filter(models.Dataset.project_id == project_id)
+        .scalar()
+        or 0
+    )
+
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "is_project": project.is_project,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "tags": project.tags,
+        "logo_url": None,
+        "thumbnailUrl": None,
+        "datasets": [],
+        "dataset_count": dataset_count,
+    }
+
+
+@router.get("/projects/{project_id}/sidebar-counts")
+def get_project_sidebar_counts(project_id: int, db: Session = Depends(get_db)):
+    """
+    Single round-trip for project layout: models, evaluations (parent rows only), exports, pipelines.
+    Uses COUNT queries only — no task metadata or pipeline bodies.
+    """
+    exists = db.query(models.Project.id).filter(models.Project.id == project_id).first()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    models_count = (
+        db.query(func.count(models.Task.id))
+        .filter(
+            models.Task.project_id == project_id,
+            models.Task.task_type.in_(["yolo_training", "training"]),
+        )
+        .scalar()
+        or 0
+    )
+
+    exports_count = (
+        db.query(func.count(models.Task.id))
+        .filter(
+            models.Task.project_id == project_id,
+            models.Task.task_type == "export",
+        )
+        .scalar()
+        or 0
+    )
+
+    pipelines_count = (
+        db.query(func.count(models.Pipeline.id))
+        .filter(models.Pipeline.project_id == project_id)
+        .scalar()
+        or 0
+    )
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        evaluations_count = (
+            db.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM tasks
+                    WHERE project_id = :pid
+                      AND task_type = 'model_evaluation'
+                      AND (
+                          task_metadata IS NULL
+                          OR (task_metadata->>'parent_task_id') IS NULL
+                          OR TRIM(COALESCE(task_metadata->>'parent_task_id', '')) = ''
+                      )
+                    """
+                ),
+                {"pid": project_id},
+            ).scalar()
+            or 0
+        )
+    elif dialect == "sqlite":
+        evaluations_count = (
+            db.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM tasks
+                    WHERE project_id = :pid
+                      AND task_type = 'model_evaluation'
+                      AND (
+                          task_metadata IS NULL
+                          OR json_extract(task_metadata, '$.parent_task_id') IS NULL
+                          OR TRIM(COALESCE(json_extract(task_metadata, '$.parent_task_id'), '')) = ''
+                      )
+                    """
+                ),
+                {"pid": project_id},
+            ).scalar()
+            or 0
+        )
+    else:
+        evaluations_count = (
+            db.query(func.count(models.Task.id))
+            .filter(
+                models.Task.project_id == project_id,
+                models.Task.task_type == "model_evaluation",
+            )
+            .scalar()
+            or 0
+        )
+
+    return {
+        "success": True,
+        "data": {
+            "models": int(models_count),
+            "evaluations": int(evaluations_count),
+            "exports": int(exports_count),
+            "pipelines": int(pipelines_count),
+        },
+    }
+
+
 @router.get("/projects/{project_id}", response_model=schemas.Project)
-def read_project(project_id: int, include_images: bool = False, db: Session = Depends(get_db)):
+def read_project(
+    project_id: int,
+    include_images: bool = False,
+    include_dataset_annotation_files: bool = False,
+    db: Session = Depends(get_db),
+):
     """
     Get a single project by ID with all its datasets.
-    
+
     By default, base64 encoded logo/thumbnail images are excluded to reduce response size.
     Set include_images=true to include them.
+
+    By default, per-dataset annotation_files lists are omitted (empty arrays). Loading every
+    AnnotationFile row for large projects makes this endpoint very slow and huge; UIs that
+    need file lists should use GET /datasets/{id}/annotation-files/list. Set
+    include_dataset_annotation_files=true for the legacy embedded lists.
     """
     from sqlalchemy import func
     from sqlalchemy.orm import selectinload
@@ -419,23 +549,23 @@ def read_project(project_id: int, include_images: bool = False, db: Session = De
             ).group_by(models.AnnotationFile.dataset_id).all()
         )
         
-        # Get annotation files for each dataset
         annotation_files_by_dataset = {}
-        annotation_files = db.query(models.AnnotationFile).filter(
-            models.AnnotationFile.dataset_id.in_(dataset_ids)
-        ).all()
-        
-        for ann_file in annotation_files:
-            if ann_file.dataset_id not in annotation_files_by_dataset:
-                annotation_files_by_dataset[ann_file.dataset_id] = []
-            annotation_files_by_dataset[ann_file.dataset_id].append({
-                "id": ann_file.id,
-                "file_name": ann_file.name,
-                "name": ann_file.name,
-                "annotation_count": ann_file.annotation_count,
-                "created_at": ann_file.created_at
-            })
-        
+        if include_dataset_annotation_files:
+            annotation_files = db.query(models.AnnotationFile).filter(
+                models.AnnotationFile.dataset_id.in_(dataset_ids)
+            ).all()
+
+            for ann_file in annotation_files:
+                if ann_file.dataset_id not in annotation_files_by_dataset:
+                    annotation_files_by_dataset[ann_file.dataset_id] = []
+                annotation_files_by_dataset[ann_file.dataset_id].append({
+                    "id": ann_file.id,
+                    "file_name": ann_file.name,
+                    "name": ann_file.name,
+                    "annotation_count": ann_file.annotation_count,
+                    "created_at": ann_file.created_at
+                })
+
         for dataset in project.datasets:
             datasets.append({
                 "id": dataset.id,

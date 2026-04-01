@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApi } from './use-api';
 import { useExport } from '@/contexts/ExportContext';
 
@@ -13,9 +13,9 @@ export interface Task {
   started_at?: string;
   completed_at?: string;
   error_message?: string;
-  project_id?: number | null;  // Optional when dataset has no project
-  metadata?: any;  // Frontend field
-  task_metadata?: any;  // Backend field
+  project_id?: number | null;
+  metadata?: any;
+  task_metadata?: any;
 }
 
 export function useTasks(projectId?: number) {
@@ -25,103 +25,63 @@ export function useTasks(projectId?: number) {
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** When true the popover (or equivalent UI) is visible → poll at full speed */
+  const [polling, setPolling] = useState(false);
+  const mountedRef = useRef(true);
 
-  const fetchActiveTasks = async () => {
+  const fetchActiveTasks = useCallback(async () => {
     if (!api || !isConfigured) return;
-
     try {
       setLoading(true);
-      setError(null);
-      
-      console.log('Fetching active tasks for projectId:', projectId);
       const response = await api.getActiveTasks(projectId);
-      console.log('Active tasks response:', response);
-      
+      if (!mountedRef.current) return;
       if (response.success) {
-        console.log('Setting active tasks:', response.data);
         setActiveTasks(response.data as Task[]);
-      } else {
-        // Don't set error for timeout/abort errors during polling - they're expected
-        const isTimeoutError = response.error?.includes('timed out') || 
-                               response.error?.includes('aborted') ||
-                               response.error?.includes('busy');
-        if (!isTimeoutError) {
-          console.error('Failed to fetch active tasks:', response.error);
-          setError(response.error || 'Failed to fetch active tasks');
-        }
       }
-    } catch (err) {
-      // Silently handle timeout errors during polling
-      const isTimeoutError = err instanceof Error && 
-                           (err.name === 'AbortError' || err.message.includes('timeout'));
-      if (!isTimeoutError) {
-        console.error('Error fetching active tasks:', err);
-        setError(err instanceof Error ? err.message : 'Unknown error occurred');
-      }
+    } catch {
+      /* ignore – polling will retry */
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [api, isConfigured, projectId]);
 
-  const fetchAllTasks = async () => {
+  const fetchAllTasks = useCallback(async () => {
     if (!api || !isConfigured) return;
-
     try {
       setLoading(true);
       setError(null);
-      
       const response = await api.getTasks({
         project_id: projectId,
         limit: 100,
-        recent_hours: 1
+        recent_hours: 1,
       });
-      
+      if (!mountedRef.current) return;
       if (response.success) {
-        // Backend returns a raw JSON array; ensure we always set an array (handle wrapped responses)
         const raw = response.data as unknown;
         const list = Array.isArray(raw)
           ? raw
-          : (raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data))
+          : raw && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)
             ? (raw as { data: Task[] }).data
             : [];
-        if (!Array.isArray(raw) && list.length > 0) {
-          console.log('Tasks response was wrapped; extracted list length:', list.length);
-        }
         setTasks(list as Task[]);
-      } else {
-        // Don't set error for timeout/abort errors during polling - they're expected
-        const isTimeoutError = response.error?.includes('timed out') || 
-                               response.error?.includes('aborted');
-        if (!isTimeoutError) {
-          setError(response.error || 'Failed to fetch tasks');
-        }
       }
-    } catch (err) {
-      // Silently handle timeout errors during polling
-      const isTimeoutError = err instanceof Error && 
-                           (err.name === 'AbortError' || err.message.includes('timeout'));
-      if (!isTimeoutError) {
-        setError(err instanceof Error ? err.message : 'Unknown error occurred');
-      }
+    } catch {
+      /* ignore */
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [api, isConfigured, projectId]);
 
   const cancelTask = async (taskId: number) => {
     if (!api || !isConfigured) return false;
-
     try {
       const response = await api.cancelTask(taskId);
-      
       if (response.success) {
-        // Refresh active tasks after cancellation
         await fetchActiveTasks();
         return true;
-      } else {
-        setError(response.error || 'Failed to cancel task');
-        return false;
       }
+      setError(response.error || 'Failed to cancel task');
+      return false;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
       return false;
@@ -130,41 +90,38 @@ export function useTasks(projectId?: number) {
 
   const getTaskById = async (taskId: number) => {
     if (!api || !isConfigured) return null;
-
     try {
       const response = await api.getTask(taskId);
-      
-      if (response.success) {
-        return response.data;
-      } else {
-        setError(response.error || 'Failed to fetch task');
-        return null;
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      return response.success ? response.data : null;
+    } catch {
       return null;
     }
   };
 
-  // Auto-refresh active tasks - optimized polling
-  // Pause polling during database export to avoid conflicts
+  // Initial fetch once the client is ready
   useEffect(() => {
-    if (!isConfigured || isExporting) return;
-
-    // Fetch both active tasks and all tasks on mount and interval
+    mountedRef.current = true;
+    if (!isConfigured || !api) return;
     fetchActiveTasks();
     fetchAllTasks();
-    
+    return () => { mountedRef.current = false; };
+  }, [api, isConfigured, projectId]);
+
+  // Poll only when visible (popover open) OR there are active tasks
+  useEffect(() => {
+    if (!isConfigured || !api || isExporting) return;
+    const shouldPoll = polling || activeTasks.length > 0;
+    if (!shouldPoll) return;
+
     const interval = setInterval(() => {
-      // Don't poll if export is in progress
       if (!isExporting) {
         fetchActiveTasks();
         fetchAllTasks();
       }
-    }, 5000); // Refresh every 5 seconds so new tasks (e.g. Auto annotate) appear quickly
+    }, polling ? 5_000 : 10_000);
 
     return () => clearInterval(interval);
-  }, [api, isConfigured, projectId, isExporting]);
+  }, [api, isConfigured, projectId, isExporting, polling, activeTasks.length]);
 
   return {
     tasks,
@@ -175,6 +132,8 @@ export function useTasks(projectId?: number) {
     fetchAllTasks,
     cancelTask,
     getTaskById,
-    activeTaskCount: activeTasks.length
+    activeTaskCount: activeTasks.length,
+    /** Call setPolling(true) when the tasks UI is visible */
+    setPolling,
   };
 }

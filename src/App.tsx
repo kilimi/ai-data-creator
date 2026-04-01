@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -5,24 +6,39 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ExportProvider } from "@/contexts/ExportContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import Index from "./pages/Index";
-import Datasets from "./pages/Datasets";
-import DatasetDetail from "./pages/DatasetDetail";
-import NotFound from "./pages/NotFound";
-import CreateDataset from "./pages/CreateDataset";
-import EditDataset from "./pages/EditDataset";
-import { ApiSettings } from "./pages/ApiSettings";
-import CreateProject from "./pages/CreateProject";
-import Dataset from "@/pages/Dataset";
-import ImageAnnotation from "./pages/ImageAnnotation";
-import AnnotationChoice from "./pages/AnnotationChoice";
-import Classification from "./pages/Classification";
-import { ProjectLayout } from "./components/ProjectLayout";
-import ProjectDatasets from "./pages/ProjectDatasets";
-import ProjectModels from "./pages/ProjectModels";
-import ProjectEvaluations from "./pages/ProjectEvaluations";
-import ProjectExports from "./pages/ProjectExports";
-import ProjectPipelines from "./pages/ProjectPipelines";
+
+const Index = lazy(() => import("./pages/Index"));
+const CreateProject = lazy(() => import("./pages/CreateProject"));
+const CreateDataset = lazy(() => import("./pages/CreateDataset"));
+const ProjectLayout = lazy(() =>
+  import("./components/ProjectLayout").then((m) => ({ default: m.ProjectLayout })),
+);
+const ProjectDatasets = lazy(() => import("./pages/ProjectDatasets"));
+const ProjectModels = lazy(() => import("./pages/ProjectModels"));
+const ProjectEvaluations = lazy(() => import("./pages/ProjectEvaluations"));
+const ProjectExports = lazy(() => import("./pages/ProjectExports"));
+const ProjectPipelines = lazy(() => import("./pages/ProjectPipelines"));
+const EditDataset = lazy(() => import("./pages/EditDataset"));
+const Dataset = lazy(() => import("@/pages/Dataset"));
+const ImageAnnotation = lazy(() => import("./pages/ImageAnnotation"));
+const AnnotationChoice = lazy(() => import("./pages/AnnotationChoice"));
+const Classification = lazy(() => import("./pages/Classification"));
+const ApiSettings = lazy(() =>
+  import("./pages/ApiSettings").then((m) => ({ default: m.ApiSettings })),
+);
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+function RouteFallback() {
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center bg-background"
+      role="status"
+      aria-label="Loading page"
+    >
+      <div className="h-9 w-9 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+    </div>
+  );
+}
 
 const queryClient = new QueryClient();
 
@@ -39,37 +55,43 @@ const App = () => (
               v7_relativeSplatPath: true,
             }}
           >
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/projects/new" element={<CreateProject />} />
-            <Route path="/projects/new/dataset" element={<CreateDataset />} />
-            
-            {/* Project routes with sidebar layout */}
-            <Route path="/projects/:id" element={<ProjectLayout />}>
-              <Route index element={<ProjectDatasets />} />
-              <Route path="datasets" element={<ProjectDatasets />} />
-              <Route path="models" element={<ProjectModels />} />
-              <Route path="pipelines" element={<ProjectPipelines />} />
-              <Route path="evaluations" element={<ProjectEvaluations />} />
-              <Route path="exports" element={<ProjectExports />} />
-            </Route>
-            
-            <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
-            <Route path="/projects/:projectId/datasets/:id" element={<Dataset />} />
-            <Route path="/projects/:projectId/datasets/:id/edit" element={<EditDataset />} />
-            <Route path="/projects/:projectId/datasets/:id/annotate" element={<AnnotationChoice />} />
-            <Route path="/projects/:projectId/datasets/:id/annotate/classification" element={<Classification />} />
-            <Route path="/projects/:projectId/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
-            {/* Keep legacy routes for backward compatibility */}
-            <Route path="/datasets/:id" element={<Dataset />} />
-            <Route path="/datasets/:id/edit" element={<EditDataset />} />
-            <Route path="/datasets/:id/annotate" element={<AnnotationChoice />} />
-            <Route path="/datasets/:id/annotate/classification" element={<Classification />} />
-            <Route path="/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
-            <Route path="/settings" element={<ApiSettings />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
+            <Suspense fallback={<RouteFallback />}>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/projects/new" element={<CreateProject />} />
+                <Route path="/projects/new/dataset" element={<CreateDataset />} />
+
+                <Route path="/projects/:id" element={<ProjectLayout />}>
+                  <Route index element={<ProjectDatasets />} />
+                  <Route path="datasets" element={<ProjectDatasets />} />
+                  <Route path="models" element={<ProjectModels />} />
+                  <Route path="pipelines" element={<ProjectPipelines />} />
+                  <Route path="evaluations" element={<ProjectEvaluations />} />
+                  <Route path="exports" element={<ProjectExports />} />
+                </Route>
+
+                <Route path="/projects/:id/edit" element={<EditDataset projectMode={true} />} />
+                <Route path="/projects/:projectId/datasets/:id" element={<Dataset />} />
+                <Route path="/projects/:projectId/datasets/:id/edit" element={<EditDataset />} />
+                <Route path="/projects/:projectId/datasets/:id/annotate" element={<AnnotationChoice />} />
+                <Route
+                  path="/projects/:projectId/datasets/:id/annotate/classification"
+                  element={<Classification />}
+                />
+                <Route
+                  path="/projects/:projectId/datasets/:id/annotate/segmentation"
+                  element={<ImageAnnotation />}
+                />
+                <Route path="/datasets/:id" element={<Dataset />} />
+                <Route path="/datasets/:id/edit" element={<EditDataset />} />
+                <Route path="/datasets/:id/annotate" element={<AnnotationChoice />} />
+                <Route path="/datasets/:id/annotate/classification" element={<Classification />} />
+                <Route path="/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
+                <Route path="/settings" element={<ApiSettings />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
         </TooltipProvider>
       </ExportProvider>
     </QueryClientProvider>

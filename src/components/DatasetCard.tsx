@@ -138,6 +138,8 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                 key={dataset.thumbnailUrl}
                 src={dataset.thumbnailUrl}
                 alt={dataset.name}
+                loading="lazy"
+                decoding="async"
                 className={cn(
                   "h-full w-full object-cover transition-all duration-500",
                   !imageLoaded && "opacity-0",

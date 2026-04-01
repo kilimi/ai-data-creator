@@ -24,6 +24,11 @@ import { FolderPlus, ArrowLeft, Copy, Pencil, Trash2, AlertCircle, Search, Slide
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Dataset, Project, DatasetGroup } from '@/types';
+import {
+  formatEvaluationModelDisplay,
+  formatMetricPct,
+  getEvaluationRowMetrics,
+} from "@/lib/evaluationTableDisplay";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -1200,7 +1205,7 @@ curl http://localhost:9999/tasks/${task.id}`;
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
                 <p className="text-muted-foreground mt-4">Loading training tasks...</p>
               </div>
-            ) : !isConnected ? (
+            ) : isConnected === false ? (
               <div className="text-center py-16">
                 <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
                 <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
@@ -1475,7 +1480,7 @@ curl http://localhost:9999/tasks/${task.id}`;
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
                 <p className="text-muted-foreground mt-4">Loading evaluation tasks...</p>
               </div>
-            ) : !isConnected ? (
+            ) : isConnected === false ? (
               <div className="text-center py-16">
                 <AlertCircle className="w-12 h-12 mx-auto mb-4 text-destructive" />
                 <h3 className="text-lg font-medium mb-2">API Connection Error</h3>
@@ -1503,6 +1508,9 @@ curl http://localhost:9999/tasks/${task.id}`;
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Precision</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Recall</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">F1</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Images</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                     </tr>
@@ -1539,6 +1547,11 @@ curl http://localhost:9999/tasks/${task.id}`;
                         return task.status;
                       };
                       const aggregateStatus = getAggregateStatus();
+                      const evalMetrics = getEvaluationRowMetrics(metadata, {
+                        isMultiDataset,
+                        aggregateStatus,
+                      });
+                      const evalModelDisplay = formatEvaluationModelDisplay(metadata);
                       
                       return (
                         <React.Fragment key={task.id}>
@@ -1649,14 +1662,19 @@ curl http://localhost:9999/tasks/${task.id}`;
                                 <span className="text-xs text-gray-400 min-w-[35px]">{aggregateProgress}%</span>
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-sm text-gray-400">
-                              {(() => {
-                                const modelName = metadata.model_config?.model || metadata.model_type || '';
-                                const family = getModelFamily(modelName);
-                                if (family.includes('YOLO')) return 'YOLO';
-                                if (family.includes('DETR')) return 'RT-DETR';
-                                return family || 'Evaluation';
-                              })()}
+                            <td className="px-4 py-3 text-sm text-gray-300 max-w-[220px]">
+                              <span className="line-clamp-2" title={evalModelDisplay}>
+                                {evalModelDisplay}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                              {evalMetrics ? formatMetricPct(evalMetrics.precision) : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                              {evalMetrics ? formatMetricPct(evalMetrics.recall) : "—"}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                              {evalMetrics ? formatMetricPct(evalMetrics.f1) : "—"}
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-400">
                               {isMultiDataset 
@@ -1745,6 +1763,11 @@ curl http://localhost:9999/tasks/${task.id}`;
                             const childIsRunning = childTask.status === 'running';
                             const childIsFailed = childTask.status === 'failed';
                             const childIsCompleted = childTask.status === 'completed';
+                            const childEvalMetrics = getEvaluationRowMetrics(childMetadata, {
+                              isMultiDataset: false,
+                              aggregateStatus: childTask.status,
+                            });
+                            const childEvalModelDisplay = formatEvaluationModelDisplay(childMetadata);
                             
                             return (
                               <tr 
@@ -1798,7 +1821,20 @@ curl http://localhost:9999/tasks/${task.id}`;
                                     <span className="text-xs text-gray-500">{childTask.progress}%</span>
                                   </div>
                                 </td>
-                                <td className="px-4 py-2 text-sm text-gray-500">-</td>
+                                <td className="px-4 py-2 text-sm text-gray-300 max-w-[200px]">
+                                  <span className="line-clamp-2 text-xs" title={childEvalModelDisplay}>
+                                    {childEvalModelDisplay}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
+                                  {childEvalMetrics ? formatMetricPct(childEvalMetrics.precision) : "—"}
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
+                                  {childEvalMetrics ? formatMetricPct(childEvalMetrics.recall) : "—"}
+                                </td>
+                                <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
+                                  {childEvalMetrics ? formatMetricPct(childEvalMetrics.f1) : "—"}
+                                </td>
                                 <td className="px-4 py-2 text-sm text-gray-400">
                                   {childIsCompleted && childMetadata.results?.images_processed 
                                     ? childMetadata.results.images_processed 
