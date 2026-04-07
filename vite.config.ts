@@ -40,9 +40,7 @@ const wasmPlugin = () => ({
 });
 
 // https://vitejs.dev/config/
-export default defineConfig(async ({ mode }) => {
-  const { componentTagger } = await import("lovable-tagger");
-  
+export default defineConfig(async () => {
   return {
     server: {
       host: "::",
@@ -61,9 +59,7 @@ export default defineConfig(async ({ mode }) => {
     plugins: [
       react(),
       wasmPlugin(),
-      mode === 'development' &&
-      componentTagger(),
-    ].filter(Boolean),
+    ],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
