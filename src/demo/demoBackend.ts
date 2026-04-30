@@ -32,29 +32,117 @@ interface Route {
 // ---------- in-memory store ----------
 const now = () => new Date().toISOString();
 
+// Image generator using picsum.photos (deterministic seeds)
+function makeImage(
+  id: number,
+  datasetId: number,
+  seed: string,
+  fileName: string,
+  width = 1024,
+  height = 768,
+) {
+  return {
+    id,
+    datasetId,
+    fileName,
+    fileSize: 240_000 + ((id * 7919) % 180_000),
+    width,
+    height,
+    url: `https://picsum.photos/seed/${seed}/${width}/${height}`,
+    thumbnailUrl: `https://picsum.photos/seed/${seed}/320/240`,
+    uploadedAt: now(),
+    annotationsCount: 0,
+    groupId: `grp-${seed}`,
+  };
+}
+
+let imgIdCounter = 1000;
+function buildCollection(
+  datasetId: number,
+  collectionId: number,
+  name: string,
+  position: number,
+  seedPrefix: string,
+  count: number,
+  isDefault = false,
+) {
+  const images = Array.from({ length: count }, (_, i) => {
+    const id = imgIdCounter++;
+    return makeImage(
+      id,
+      datasetId,
+      `${seedPrefix}-${i + 1}`,
+      `${seedPrefix}_${String(i + 1).padStart(3, "0")}.jpg`,
+    );
+  });
+  return {
+    id: collectionId,
+    dataset_id: datasetId,
+    name,
+    description: `${name} collection`,
+    is_default: isDefault,
+    position,
+    created_at: now(),
+    updated_at: now(),
+    image_count: images.length,
+    images,
+  };
+}
+
+const datasetCollections: Record<number, any[]> = {
+  1: [
+    buildCollection(1, 101, "RGB Images", 0, "city", 12, true),
+    buildCollection(1, 102, "Thermal", 1, "thermal", 12),
+  ],
+  2: [buildCollection(2, 201, "RGB Images", 0, "street", 18, true)],
+  3: [
+    buildCollection(3, 301, "RGB Images", 0, "bird", 20, true),
+    buildCollection(3, 302, "Infrared", 1, "ir-bird", 20),
+  ],
+  4: [buildCollection(4, 401, "RGB Images", 0, "forest", 16, true)],
+  5: [buildCollection(5, 501, "RGB Images", 0, "ocean", 14, true)],
+  6: [buildCollection(6, 601, "RGB Images", 0, "satellite", 24, true)],
+};
+
+function imagesFor(datasetId: number) {
+  const cols = datasetCollections[datasetId] || [];
+  return cols.flatMap((c) => c.images);
+}
+
 const store = {
-  nextProjectId: 3,
-  nextDatasetId: 4,
+  nextProjectId: 4,
+  nextDatasetId: 7,
   projects: [
     {
       id: 1,
-      name: "Demo Project",
-      description: "Sample project shown in demo mode (no backend running).",
+      name: "Urban Scene Analysis",
+      description: "City and street imagery for object detection demos.",
       created_at: now(),
       updated_at: now(),
       is_project: true,
-      tags: ["demo", "sample"],
+      tags: ["demo", "urban"],
       datasets: [] as any[],
       dataset_groups: [] as any[],
     },
     {
       id: 2,
       name: "Wildlife Detection",
-      description: "Another example project to showcase the UI.",
+      description: "Bird and forest imagery for wildlife classification.",
       created_at: now(),
       updated_at: now(),
       is_project: true,
-      tags: ["wildlife"],
+      tags: ["wildlife", "nature"],
+      datasets: [] as any[],
+      dataset_groups: [] as any[],
+    },
+    {
+      id: 3,
+      name: "Aerial Imagery",
+      description: "Satellite and aerial photographs.",
+      created_at: now(),
+      updated_at: now(),
+      is_project: true,
+      tags: ["aerial", "satellite"],
       datasets: [] as any[],
       dataset_groups: [] as any[],
     },
@@ -62,12 +150,12 @@ const store = {
   datasets: [
     {
       id: 1,
-      name: "Sample Images",
-      description: "A small demo dataset.",
-      tags: ["demo"],
+      name: "City Streets",
+      description: "RGB + thermal pairs of city streets.",
+      tags: ["rgb", "thermal"],
       created_at: now(),
       updated_at: now(),
-      image_count: 0,
+      image_count: imagesFor(1).length,
       annotation_count: 0,
       annotation_file_count: 0,
       annotation_files: [],
@@ -75,12 +163,12 @@ const store = {
     },
     {
       id: 2,
-      name: "Training Set",
-      description: "Demo training set.",
-      tags: [],
+      name: "Pedestrian Crossings",
+      description: "Pedestrian detection training set.",
+      tags: ["pedestrian"],
       created_at: now(),
       updated_at: now(),
-      image_count: 0,
+      image_count: imagesFor(2).length,
       annotation_count: 0,
       annotation_file_count: 0,
       annotation_files: [],
@@ -88,16 +176,55 @@ const store = {
     },
     {
       id: 3,
-      name: "Birds",
-      description: "Demo wildlife dataset.",
-      tags: [],
+      name: "Birds (RGB + IR)",
+      description: "Birds captured with paired RGB and infrared cameras.",
+      tags: ["birds", "multispectral"],
       created_at: now(),
       updated_at: now(),
-      image_count: 0,
+      image_count: imagesFor(3).length,
       annotation_count: 0,
       annotation_file_count: 0,
       annotation_files: [],
       project_id: 2,
+    },
+    {
+      id: 4,
+      name: "Forest Wildlife",
+      description: "Camera trap photos from forest reserves.",
+      tags: ["forest", "camera-trap"],
+      created_at: now(),
+      updated_at: now(),
+      image_count: imagesFor(4).length,
+      annotation_count: 0,
+      annotation_file_count: 0,
+      annotation_files: [],
+      project_id: 2,
+    },
+    {
+      id: 5,
+      name: "Marine Life",
+      description: "Underwater and ocean imagery.",
+      tags: ["ocean"],
+      created_at: now(),
+      updated_at: now(),
+      image_count: imagesFor(5).length,
+      annotation_count: 0,
+      annotation_file_count: 0,
+      annotation_files: [],
+      project_id: 2,
+    },
+    {
+      id: 6,
+      name: "Satellite Tiles",
+      description: "Satellite tiles for land-use classification.",
+      tags: ["satellite"],
+      created_at: now(),
+      updated_at: now(),
+      image_count: imagesFor(6).length,
+      annotation_count: 0,
+      annotation_file_count: 0,
+      annotation_files: [],
+      project_id: 3,
     },
   ] as any[],
 };
