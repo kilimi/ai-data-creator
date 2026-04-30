@@ -88,6 +88,7 @@ export function TabbedImagesContent({
   const [uploadedCount, setUploadedCount] = useState(0);
   const [imageSearchQuery, setImageSearchQuery] = useState("");
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   // Update active tab if collections change
   useEffect(() => {
