@@ -1036,27 +1036,7 @@ export function CalibrationDialog({
                 )}
               </div>
 
-              {/* Floating "Clear all points" button — appears only when points exist; no text overlay */}
-              {confirmedPairs.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Clear all points"
-                  className="absolute right-3 bottom-3 z-10 h-8 w-8 rounded-full bg-card/90 border text-destructive hover:text-destructive hover:bg-card shadow-sm"
-                  onClick={() => {
-                    setConfirmedPairs([]);
-                    setPendingSrc(null);
-                    setPendingTgt(null);
-                    setValidation(null);
-                    setComputedH(null);
-                    setComputedHInv(null);
-                    setProbeSrc(null);
-                    setProbeTgt(null);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              )}
+              {/* Clear-all moved to the top toolbar (above) for visibility. */}
             </TabsContent>
 
             {/* â”€â”€ Test tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
