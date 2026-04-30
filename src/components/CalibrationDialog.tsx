@@ -807,7 +807,7 @@ export function CalibrationDialog({
           {/* Collection selectors â€” shared between tabs */}
           <div className="flex flex-wrap gap-4 items-end shrink-0">
             <div className="space-y-1 min-w-40">
-              <Label className="text-xs">Source collection (left)</Label>
+              <Label className="text-xs flex items-center">Source collection (left)<HelpHint text="The reference image set shown on the LEFT. Annotations from here will be projected onto the target." /></Label>
               <Select value={srcCollId} onValueChange={setSrcCollId}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select..." /></SelectTrigger>
                 <SelectContent>
