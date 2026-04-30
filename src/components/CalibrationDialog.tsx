@@ -31,7 +31,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { ImageCollection } from "@/types";
-import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight, Layers2 } from "lucide-react";
+import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight, Target } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Stepper — shows the 5-step calibration flow with the current step highlighted
@@ -778,7 +778,7 @@ export function CalibrationDialog({
       <DialogContent className="w-screen h-screen max-w-none max-h-none m-0 rounded-none flex flex-col p-4 gap-0">
         <DialogHeader className="shrink-0 pb-2">
           <DialogTitle className="flex items-center gap-2">
-            <Layers2 className="h-5 w-5 text-primary" />
+            <Target className="h-5 w-5 text-primary" />
             Collection Calibration
           </DialogTitle>
         </DialogHeader>
