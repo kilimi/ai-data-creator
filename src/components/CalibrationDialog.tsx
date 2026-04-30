@@ -781,6 +781,25 @@ export function CalibrationDialog({
           <DialogTitle className="flex items-center gap-2">
             <Target className="h-5 w-5 text-primary" />
             Collection Calibration
+            <HelpHint
+              size="md"
+              popover
+              ariaLabel="What is Collection Calibration?"
+            >
+              <div className="space-y-2">
+                <p className="font-semibold text-foreground">Collection Calibration</p>
+                <p>
+                  Aligns two image collections of the same scene captured by
+                  different sensors (e.g. RGB ↔ Thermal). You mark matching
+                  point pairs; we fit a homography so annotations made on one
+                  collection can be projected onto the other.
+                </p>
+                <p className="text-muted-foreground">
+                  Tip: 8–15 well-spread point pairs from a few image pairs give
+                  the best results.
+                </p>
+              </div>
+            </HelpHint>
           </DialogTitle>
         </DialogHeader>
 
