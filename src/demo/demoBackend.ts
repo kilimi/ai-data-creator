@@ -139,7 +139,7 @@ const routes: Route[] = [
   {
     method: "GET",
     pattern: /^\/projects\/?($|\?)/,
-    handler: () => ({ data: store.projects }),
+    handler: () => store.projects,
   },
   // Project by id
   {
@@ -148,7 +148,7 @@ const routes: Route[] = [
     handler: (_u, _i, m) => {
       const id = Number(m[1]);
       const p = store.projects.find((x) => x.id === id);
-      return p ? { data: p } : { data: null };
+      return p || null;
     },
   },
   // Create project
@@ -169,7 +169,7 @@ const routes: Route[] = [
         dataset_groups: [],
       };
       store.projects.push(project);
-      return { data: project };
+      return project;
     },
   },
 
