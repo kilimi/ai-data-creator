@@ -31,7 +31,74 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { ImageCollection } from "@/types";
-import { Crosshair, RefreshCw, Trash2, Pencil } from "lucide-react";
+import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight } from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Stepper — shows the 5-step calibration flow with the current step highlighted
+// ---------------------------------------------------------------------------
+
+interface StepDef {
+  id: number;
+  label: string;
+  hint: string;
+}
+
+function StepsBar({
+  steps,
+  current,
+  completed,
+}: {
+  steps: StepDef[];
+  current: number;
+  completed: Set<number>;
+}) {
+  const active = steps.find((s) => s.id === current);
+  return (
+    <div className="shrink-0 rounded-md border bg-card">
+      <div className="flex items-stretch overflow-x-auto">
+        {steps.map((step, i) => {
+          const isDone = completed.has(step.id);
+          const isCurrent = step.id === current;
+          return (
+            <React.Fragment key={step.id}>
+              <div
+                className={`flex items-center gap-2 px-3 py-2 text-xs whitespace-nowrap ${
+                  isCurrent
+                    ? "text-foreground font-semibold"
+                    : isDone
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground/60"
+                }`}
+              >
+                <span
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                    isCurrent
+                      ? "bg-primary text-primary-foreground ring-2 ring-primary/30"
+                      : isDone
+                      ? "bg-primary/20 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {isDone ? <Check className="h-3 w-3" /> : step.id}
+                </span>
+                <span>{step.label}</span>
+              </div>
+              {i < steps.length - 1 && (
+                <ChevronRight className="h-3 w-3 self-center text-muted-foreground/40" />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {active && (
+        <div className="border-t px-3 py-1.5 text-xs text-muted-foreground bg-muted/40">
+          <span className="font-medium text-foreground">Step {active.id}:</span>{" "}
+          {active.hint}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
