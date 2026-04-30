@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Pencil, Trash2, Copy, MoreHorizontal, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { Dataset } from "@/types";
 import { DatasetInfoBar } from "@/components/DatasetInfoBar";
 import { AutoAnnotateModal } from "@/components/AutoAnnotateModal";
+import { HelpHint } from "@/components/ui/help-hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
