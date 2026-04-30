@@ -5420,6 +5420,7 @@ const ImageAnnotation = () => {
                     annotations={annotations}
                     calibrations={calibrations}
                     projectId={projectId ?? null}
+                    onSetPrimary={handleLayerChange}
                   />
                 </ResizablePanel>
               </>

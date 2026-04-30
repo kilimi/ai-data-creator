@@ -103,6 +103,7 @@ interface CompanionCanvasProps {
   primaryDims: { width: number; height: number } | null;
   hasCalibration: boolean;
   projectId?: string | null;
+  onMakePrimary?: () => void;
 }
 
 function CompanionCanvas({
@@ -113,6 +114,7 @@ function CompanionCanvas({
   primaryDims,
   hasCalibration,
   projectId,
+  onMakePrimary,
 }: CompanionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -194,7 +196,7 @@ function CompanionCanvas({
   if (!corresponding) {
     return (
       <div className="h-full flex flex-col">
-        <CompanionHeader name={collection.name} />
+        <CompanionHeader name={collection.name} onMakePrimary={onMakePrimary} />
         <div className="flex-1 flex items-center justify-center text-center text-sm text-muted-foreground p-4">
           <div>
             <div className="text-2xl mb-2">📷</div>
@@ -218,6 +220,7 @@ function CompanionCanvas({
         onToggleCalibration={
           hasCalibration ? () => setCalibrationOn((v) => !v) : undefined
         }
+        onMakePrimary={onMakePrimary}
       />
 
       {/* Resolution-mismatch warning — shown whenever dims differ AND calibration
@@ -294,12 +297,14 @@ function CompanionHeader({
   hasCalibration,
   calibrationOn,
   onToggleCalibration,
+  onMakePrimary,
 }: {
   name: string;
   count?: number;
   hasCalibration?: boolean;
   calibrationOn?: boolean;
   onToggleCalibration?: () => void;
+  onMakePrimary?: () => void;
 }) {
   return (
     <div className="px-3 py-2 border-b bg-card/60 flex items-center justify-between gap-2">
@@ -308,6 +313,16 @@ function CompanionHeader({
         <span className="text-sm font-semibold truncate">{name}</span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {onMakePrimary && (
+          <button
+            type="button"
+            onClick={onMakePrimary}
+            className="inline-flex items-center gap-1 text-[10px] font-medium rounded-md px-2 py-0.5 whitespace-nowrap border border-border text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            title="Make this the primary (editable) layer"
+          >
+            Make primary
+          </button>
+        )}
         {hasCalibration && onToggleCalibration && (
           <button
             type="button"
@@ -355,6 +370,8 @@ interface CompanionLayersPanelProps {
   /** Calibration entries from the backend. */
   calibrations: any[];
   projectId?: string | null;
+  /** Promote a collection to primary (drives the main canvas). */
+  onSetPrimary?: (collectionId: string) => void;
 }
 
 const STORAGE_KEY = "annotation-companion-selected-v1";
@@ -367,6 +384,7 @@ export function CompanionLayersPanel({
   annotations,
   calibrations,
   projectId,
+  onSetPrimary,
 }: CompanionLayersPanelProps) {
   // Available companions = every collection except the one being annotated
   const available = useMemo(
@@ -433,30 +451,58 @@ export function CompanionLayersPanel({
               <ChevronDown className="h-3.5 w-3.5" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-64 p-2">
-            <div className="text-xs font-medium text-muted-foreground px-2 pb-2">
-              Show alongside the main canvas
+          <PopoverContent align="end" className="w-72 p-2">
+            <div className="text-xs font-medium text-muted-foreground px-2 pb-1">
+              Choose primary & companion layers
+            </div>
+            <div className="text-[10px] text-muted-foreground px-2 pb-2">
+              Radio = primary (editable). Checkbox = shown alongside.
             </div>
             <div className="space-y-1 max-h-72 overflow-auto">
-              {available.map((c) => {
+              {collections.map((c) => {
                 const id = String(c.id);
+                const isPrimary = String(primaryCollectionId) === id;
                 const checked = selectedIds.includes(id);
                 return (
-                  <label
+                  <div
                     key={id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer"
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent"
                   >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() => toggle(id)}
+                    <input
+                      type="radio"
+                      name="primary-layer"
+                      checked={isPrimary}
+                      disabled={!onSetPrimary}
+                      onChange={() => onSetPrimary?.(id)}
+                      className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                      title="Set as primary (editable) layer"
                     />
-                    <span className="text-sm flex-1 truncate">{c.name}</span>
-                    {checked ? (
-                      <Eye className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-sm flex-1 truncate">
+                      {c.name}
+                      {isPrimary && (
+                        <span className="ml-1.5 text-[10px] text-primary font-medium">
+                          primary
+                        </span>
+                      )}
+                    </span>
+                    {isPrimary ? (
+                      <span className="text-[10px] text-muted-foreground/60 px-1">
+                        editing
+                      </span>
                     ) : (
-                      <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggle(id)}
+                        />
+                        {checked ? (
+                          <Eye className="h-3.5 w-3.5 text-primary" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
+                        )}
+                      </label>
                     )}
-                  </label>
+                  </div>
                 );
               })}
             </div>
@@ -521,6 +567,11 @@ export function CompanionLayersPanel({
                     primaryDims={primaryDims}
                     hasCalibration={calibrated}
                     projectId={projectId}
+                    onMakePrimary={
+                      onSetPrimary
+                        ? () => onSetPrimary(String(c.id))
+                        : undefined
+                    }
                   />
                 </ResizablePanel>
               </React.Fragment>
