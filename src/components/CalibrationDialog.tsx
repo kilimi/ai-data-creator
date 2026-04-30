@@ -843,7 +843,7 @@ export function CalibrationDialog({
             </TabsList>
 
             {/* â”€â”€ Calibrate tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <TabsContent value="calibrate" className="flex-1 min-h-0 flex flex-col gap-3 mt-0">
+            <TabsContent value="calibrate" className="relative flex-1 min-h-0 flex flex-col gap-3 mt-0">
               {/* Validation metrics */}
               {validation && (
                 <div className="border rounded-md p-3 bg-muted/50 text-xs space-y-1.5 shrink-0">
