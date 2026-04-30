@@ -118,6 +118,7 @@ export function ResizableDatasetLayout({
             onReorderTabs={onReorderImageTabs || (async () => {})}
             onOpenVideoUploadDialog={onOpenVideoUploadDialog}
             onOpenCalibrationDialog={onOpenCalibrationDialog}
+            calibrations={calibrations}
             annotations={annotations}
             annotationFiles={annotationFiles}
             selectedImageIndex={selectedImageIndex}
