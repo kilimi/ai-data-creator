@@ -5025,18 +5025,46 @@ const ImageAnnotation = () => {
 
           {/* Classes */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="p-4 border-b border-border">
+            <div className="p-4 border-b border-border relative">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium">Classes</h3>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  aria-label="Add new class"
-                  onClick={() => setIsAddingClass(true)}
-                >
-                  <Plus className="w-4 h-4" />
-                </Button>
+                <div className="relative">
+                  {/* Pulsing ring around the + button while no classes exist
+                      to draw the user's eye to the first action. */}
+                  {classes.length === 0 && !isAddingClass && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-0 rounded-md ring-2 ring-primary/60 animate-ping"
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant={classes.length === 0 ? 'default' : 'outline'}
+                    aria-label="Add new class"
+                    onClick={() => setIsAddingClass(true)}
+                    className="relative"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
+
+              {/* First-run hint inline in the Classes panel */}
+              {classes.length === 0 && !isAddingClass && (
+                <div className="mb-3 rounded-md border border-primary/30 bg-primary/5 p-2.5 text-xs text-foreground animate-fade-in">
+                  <div className="flex items-start gap-2">
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold">
+                      1
+                    </span>
+                    <div className="leading-snug">
+                      <div className="font-medium">Add a class to get started</div>
+                      <div className="text-muted-foreground mt-0.5">
+                        Click the <span className="inline-flex items-center"><Plus className="inline h-3 w-3" /></span> button to define your first label, then start annotating.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {isAddingClass && (
                 <div className="flex gap-2 mb-3">
@@ -5326,6 +5354,68 @@ const ImageAnnotation = () => {
               </div>
             );
             })()}
+
+            {/* First-run onboarding overlay: shown over the canvas while no
+                classes have been defined. Walks the user through the
+                two-step flow: add classes → then annotate. */}
+            {classes.length === 0 && (
+              <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
+                {/* Soft scrim so the message reads cleanly over any image */}
+                <div className="absolute inset-0 bg-background/60 backdrop-blur-[2px] animate-fade-in" />
+
+                <div className="relative animate-scale-in pointer-events-auto max-w-md mx-4">
+                  <div className="rounded-xl border border-border bg-card/95 shadow-2xl p-5">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Palette className="h-5 w-5 text-primary" />
+                      <h2 className="text-base font-semibold">Let's get you annotating</h2>
+                    </div>
+
+                    <ol className="space-y-3">
+                      <li className="flex items-start gap-3 animate-fade-in" style={{ animationDelay: '80ms', animationFillMode: 'backwards' }}>
+                        <span className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-semibold">
+                          1
+                          <span aria-hidden className="absolute inset-0 rounded-full ring-2 ring-primary/50 animate-ping" />
+                        </span>
+                        <div>
+                          <div className="text-sm font-medium">Add your classes first</div>
+                          <div className="text-xs text-muted-foreground">
+                            Open the <span className="font-medium text-foreground">Classes</span> panel on the left and click <Plus className="inline h-3 w-3 -mt-0.5" /> to define labels (e.g. <em>person</em>, <em>car</em>).
+                          </div>
+                        </div>
+                      </li>
+
+                      <li className="flex items-start gap-3 animate-fade-in opacity-80" style={{ animationDelay: '260ms', animationFillMode: 'backwards' }}>
+                        <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-sm font-semibold">
+                          2
+                        </span>
+                        <div>
+                          <div className="text-sm font-medium">Then annotate</div>
+                          <div className="text-xs text-muted-foreground">
+                            Pick a tool — Polygon, Pencil, or AI Segment — and draw on the image.
+                          </div>
+                        </div>
+                      </li>
+                    </ol>
+
+                    <div className="mt-4 flex justify-end">
+                      <Button
+                        size="sm"
+                        onClick={() => setIsAddingClass(true)}
+                        className="gap-1"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add first class
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Bouncing arrow toward the Classes panel on the left */}
+                  <div className="hidden md:flex absolute -left-10 top-1/2 -translate-y-1/2 items-center text-primary animate-bounce">
+                    <ChevronLeft className="h-8 w-8 drop-shadow" />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Drawing Instructions */}
             {isDrawing && activeTool === 'polygon' && (
