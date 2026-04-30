@@ -315,16 +315,16 @@ const routes: Route[] = [
       return store.datasets.find((d) => d.id === id) || null;
     },
   },
-  // Dataset images / collections / annotations (empty in demo)
+  // Dataset images / collections / annotations
   {
     method: "GET",
-    pattern: /^\/datasets\/\d+\/images/,
-    handler: () => ({ images: [] }),
+    pattern: /^\/datasets\/(\d+)\/images/,
+    handler: (_u, _i, m) => ({ images: imagesFor(Number(m[1])) }),
   },
   {
     method: "GET",
-    pattern: /^\/datasets\/\d+\/image-collections/,
-    handler: () => [],
+    pattern: /^\/datasets\/(\d+)\/image-collections\/?($|\?)/,
+    handler: (_u, _i, m) => datasetCollections[Number(m[1])] || [],
   },
   {
     method: "GET",
