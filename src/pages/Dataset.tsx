@@ -221,6 +221,7 @@ export default function Dataset() {
   useEffect(() => {
     if (settingsLoaded && dataset && api) {
       loadImageCollections();
+      refreshCalibrations();
     }
   }, [dataset, settingsLoaded, api]);
 
