@@ -1197,6 +1197,21 @@ export default function Dataset() {
                 onTabUploadImages={handleTabUploadImages}
                 onOpenCalibrationDialog={() => setIsCalibrationDialogOpen(true)}
                 calibrations={calibrations}
+                onDeleteCalibration={async (calibrationId) => {
+                  if (!api || !datasetId) return;
+                  try {
+                    const res = await api.deleteCalibration(datasetId, calibrationId);
+                    if (!res.success) throw new Error((res as any).error || "Failed");
+                    toast({ title: "Calibration deleted" });
+                    await refreshCalibrations();
+                  } catch (err: any) {
+                    toast({
+                      title: "Failed to delete calibration",
+                      description: err?.message || "Unknown error",
+                      variant: "destructive",
+                    });
+                  }
+                }}
               />
             </div>
             <ImageUploadDialog 
