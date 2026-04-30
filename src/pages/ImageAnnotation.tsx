@@ -73,7 +73,7 @@ import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
 
 // Annotation types
-export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'auto-segment';
+export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'pencil' | 'auto-segment';
 
 export interface Point {
   x: number;
