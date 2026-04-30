@@ -57,7 +57,8 @@ import {
   Hexagon,
   Sun,
   Moon,
-  Crosshair
+  Crosshair,
+  Pencil
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
@@ -72,7 +73,7 @@ import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
 
 // Annotation types
-export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'auto-segment';
+export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'pencil' | 'auto-segment';
 
 export interface Point {
   x: number;
@@ -2423,6 +2424,19 @@ const ImageAnnotation = () => {
       } else {
         setCurrentPath(prev => [...prev, imageCoords]);
       }
+    } else if (activeTool === 'pencil') {
+      if (!selectedClass) {
+        toast({
+          title: 'No class selected',
+          description: 'Please select a class before drawing annotations',
+          variant: 'destructive'
+        });
+        return;
+      }
+      // Begin a free-hand stroke; points will be sampled on mouse move and
+      // the stroke will be committed as a polygon on mouse up.
+      setIsDrawing(true);
+      setCurrentPath([imageCoords]);
     }
   }, [activeTool, selectedClass, classes.length, isDrawing, screenToImageCoords, findAnnotationAtPoint, startAutoSegment, toast]);
 
@@ -2432,6 +2446,21 @@ const ImageAnnotation = () => {
     // Track cursor position in image coordinates for status bar
     const imageCoords = screenToImageCoords(e.clientX, e.clientY);
     setCursorImagePosition(imageCoords);
+
+    // Free-hand pencil: while the mouse is down and pencil is the active
+    // tool, sample points along the cursor path. We thin the stream so we
+    // don't store an excessive number of nearly-identical points.
+    if (isDrawing && activeTool === 'pencil') {
+      setCurrentPath(prev => {
+        if (prev.length === 0) return [imageCoords];
+        const last = prev[prev.length - 1];
+        const dx = imageCoords.x - last.x;
+        const dy = imageCoords.y - last.y;
+        if (dx * dx + dy * dy < 4) return prev; // ~2px min spacing in image coords
+        return [...prev, imageCoords];
+      });
+      return;
+    }
 
     // Handle panning (middle button or space+drag)
     if (isPanningRef.current) {
@@ -2526,7 +2555,7 @@ const ImageAnnotation = () => {
       
       setMoveOffset(imageCoords);
     }
-  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage]);
+  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage, isDrawing, activeTool]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (isPanningRef.current) {
@@ -2538,12 +2567,28 @@ const ImageAnnotation = () => {
       return;
     }
 
+    // Finalize a free-hand pencil stroke into a polygon annotation.
+    if (isDrawing && activeTool === 'pencil') {
+      if (currentPath.length >= 3) {
+        createAnnotation('polygon', currentPath);
+      } else {
+        toast({
+          title: 'Stroke too short',
+          description: 'Drag to draw a longer shape (need at least 3 points).',
+          variant: 'destructive',
+        });
+      }
+      setIsDrawing(false);
+      setCurrentPath([]);
+      return;
+    }
+
     if (isDragging) {
       setIsDragging(false);
     } else if (isMovingAnnotation) {
       setIsMovingAnnotation(false);
     }
-  }, [isDragging, isMovingAnnotation]);
+  }, [isDragging, isMovingAnnotation, isDrawing, activeTool, currentPath, createAnnotation, toast]);
 
   const handleCanvasDoubleClick = useCallback(() => {
     if (isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
@@ -2836,6 +2881,22 @@ const ImageAnnotation = () => {
           ctx.lineWidth = 1;
           ctx.stroke();
         });
+      } else if (activeTool === 'pencil' && currentPath.length > 0) {
+        // Render free-hand stroke as a continuous line (no per-point dots)
+        // and softly fill the closed shape so the user can preview the
+        // resulting polygon while drawing.
+        ctx.beginPath();
+        const firstPoint = imageToScreenCoords(currentPath[0].x, currentPath[0].y);
+        ctx.moveTo(firstPoint.x, firstPoint.y);
+        for (let i = 1; i < currentPath.length; i++) {
+          const point = imageToScreenCoords(currentPath[i].x, currentPath[i].y);
+          ctx.lineTo(point.x, point.y);
+        }
+        if (currentPath.length > 2) {
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.stroke();
       }
     }
 
@@ -4836,6 +4897,18 @@ const ImageAnnotation = () => {
               >
                 <Square className="w-4 h-4 mr-1" />
                 Polygon
+              </Button>
+              <Button
+                variant={activeTool === 'pencil' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (!ensureClassForDrawingTools()) return;
+                  setActiveTool('pencil');
+                }}
+                title="Free-hand draw — click and drag to outline a shape"
+              >
+                <Pencil className="w-4 h-4 mr-1" />
+                Pencil
               </Button>
               <Button
                 variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
