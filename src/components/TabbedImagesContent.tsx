@@ -375,23 +375,75 @@ export function TabbedImagesContent({
             {imageCollections.length >= 2 && onOpenCalibrationDialog && (
               <div className="flex items-center gap-1">
                 <Button
-                  variant={calibrations.length > 0 ? "default" : "outline"}
+                  variant="outline"
                   onClick={onOpenCalibrationDialog}
                   className="px-4 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2"
                   title={
                     calibrations.length > 0
-                      ? `${calibrations.length} calibration${calibrations.length === 1 ? '' : 's'} saved — click to manage`
+                      ? `${calibrations.length} calibration${calibrations.length === 1 ? '' : 's'} saved — click to add another`
                       : "Calibrate image collections for alignment"
                   }
                 >
                   <Target className="w-4 h-4" />
                   <span className="text-sm font-medium">Calibrate Collections</span>
                   {calibrations.length > 0 && (
-                    <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-emerald-500/20 text-emerald-600 text-[10px] font-semibold border border-emerald-500/30">
+                    <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-[10px] font-semibold border border-emerald-500/30">
                       {calibrations.length}
                     </span>
                   )}
                 </Button>
+                {calibrations.length > 0 && (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-9 w-9"
+                        title="Manage saved calibrations"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-80 p-2">
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        Saved calibrations
+                      </div>
+                      <div className="max-h-72 overflow-y-auto">
+                        {calibrations.map((cal) => {
+                          const nameOf = (cid: string | number) =>
+                            imageCollections.find(c => String(c.id) === String(cid))?.name || `#${cid}`;
+                          return (
+                            <div
+                              key={cal.id ?? `${cal.source_collection_id}-${cal.target_collection_id}`}
+                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-muted/60"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0 text-sm">
+                                <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <span className="truncate">
+                                  {nameOf(cal.source_collection_id)} ↔ {nameOf(cal.target_collection_id)}
+                                </span>
+                              </div>
+                              {onDeleteCalibration && cal.id !== undefined && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
+                                  title="Delete this calibration"
+                                  onClick={async () => {
+                                    if (!window.confirm(`Delete calibration between "${nameOf(cal.source_collection_id)}" and "${nameOf(cal.target_collection_id)}"?`)) return;
+                                    await onDeleteCalibration(cal.id!);
+                                  }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 <HelpHint ariaLabel="What is Collection Calibration?" popover>
                   <div className="space-y-2 text-sm">
                     <p className="font-semibold text-foreground">Collection Calibration</p>
