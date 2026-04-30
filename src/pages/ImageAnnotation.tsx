@@ -4917,7 +4917,10 @@ const ImageAnnotation = () => {
           <div className="p-2 border-b border-border flex items-center justify-between">
             <div className="text-sm font-medium">Tools</div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setLeftCollapsed(v => !v)}>
+              <Button size="sm" variant="ghost" onClick={() => {
+                setLeftCollapsed(v => !v);
+                setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
+              }}>
                 {leftCollapsed ? <ChevronRight className="w-4 h-4"/> : <ChevronLeft className="w-4 h-4"/>}
               </Button>
             </div>
