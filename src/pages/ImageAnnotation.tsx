@@ -5165,10 +5165,11 @@ const ImageAnnotation = () => {
         )}
 
         {/* Main Canvas Area */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex min-h-0">
           <div 
             ref={containerRef}
-            className="flex-1 relative overflow-hidden bg-muted/30"
+            className="flex-1 relative overflow-hidden bg-muted/30 min-w-0"
           >
             {/**
              * The canvas must render the bitmap for the *selected display layer*. When a
