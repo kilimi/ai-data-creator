@@ -5402,6 +5402,18 @@ const ImageAnnotation = () => {
               )}
             </div>
           </div>
+            {/* Companion layers — read-only side-by-side view of the same image
+                from other collections, with shared annotations overlaid. */}
+            <CompanionLayersPanel
+              collections={imageCollections}
+              primaryCollectionId={mainLayer || (displayLayer ?? '')}
+              primaryImage={displayImage || currentImage}
+              imageName={currentImageName}
+              annotations={annotations}
+              calibrations={calibrations}
+              projectId={effectiveProjectId}
+            />
+          </div>
 
           {/* Status Bar */}
           <AnnotationStatusBar
