@@ -121,6 +121,7 @@ export function ResizableDatasetLayout({
             onOpenVideoUploadDialog={onOpenVideoUploadDialog}
             onOpenCalibrationDialog={onOpenCalibrationDialog}
             calibrations={calibrations}
+            onDeleteCalibration={onDeleteCalibration}
             annotations={annotations}
             annotationFiles={annotationFiles}
             selectedImageIndex={selectedImageIndex}
