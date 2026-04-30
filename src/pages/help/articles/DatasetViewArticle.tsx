@@ -35,14 +35,14 @@ export function DatasetViewArticle() {
       </ArticleSection>
 
       <ArticleSection id="grid" title="Image grid" icon={LayoutGrid}>
-        <ArticleStep number={1} title="Adjust thumbnail size">
+        <ArticleStep n={1} title="Adjust thumbnail size">
           Use the size slider in the bottom status bar to scale thumbnails
           between 150 and 300 pixels.
         </ArticleStep>
-        <ArticleStep number={2} title="Filter by filename">
+        <ArticleStep n={2} title="Filter by filename">
           Type in the search box to instantly filter visible images by name.
         </ArticleStep>
-        <ArticleStep number={3} title="Open an image">
+        <ArticleStep n={3} title="Open an image">
           Click any thumbnail to open it in the preview panel and inspect
           annotations.
         </ArticleStep>
@@ -55,7 +55,7 @@ export function DatasetViewArticle() {
           <strong>Collection Calibration</strong> from the tabbed images panel
           to align them with point pairs.
         </p>
-        <ArticleCallout variant="info">
+        <ArticleCallout tone="info">
           Need details? See the dedicated{" "}
           <a href="/help/collection-calibration" className="text-primary hover:underline font-medium">
             Collection Calibration guide
