@@ -823,30 +823,66 @@ export function CalibrationDialog({
                 </div>
               )}
 
-              {/* Instructions */}
-              <div className="text-xs text-muted-foreground rounded-md bg-muted px-3 py-1.5 leading-snug shrink-0 truncate">
-                {computedH ? (
-                  <span>
-                    <span className="font-semibold text-cyan-500">Hover either image</span> to project the matching point. Switch to <span className="font-semibold">Test</span> to draw strokes.
-                  </span>
-                ) : pendingSrc ? (
-                  <span><span className="font-semibold text-amber-500">Click on the target image</span> to match the point on the left.</span>
-                ) : pendingTgt ? (
-                  <span><span className="font-semibold text-amber-500">Click on the source image</span> to match the point on the right.</span>
-                ) : (
-                  <span>
-                    <span className="font-semibold text-primary">Click either image</span> to place a point, then click the matching spot on the other.
-                    {confirmedPairs.length > 0 && (
-                      <span className="ml-2 text-green-600 dark:text-green-400 font-medium">
-                        {confirmedPairs.length} pair{confirmedPairs.length !== 1 ? "s" : ""} confirmed.
-                      </span>
-                    )}
-                    {confirmedPairs.length > 0 && confirmedPairs.length < 4 && (
-                      <span className="ml-1 text-amber-500">(need ≥4)</span>
-                    )}
-                  </span>
-                )}
-              </div>
+              {/* Step-by-step guide */}
+              {(() => {
+                const hasCollections = !!canPickImages;
+                const hasImages = !!srcImageUrl;
+                const enoughPairs = confirmedPairs.length >= 4;
+                const hasComputed = !!computedH;
+
+                let current = 1;
+                if (activeTab === "test") current = 5;
+                else if (hasComputed) current = 5;
+                else if (enoughPairs) current = 4;
+                else if (hasImages) current = 3;
+                else if (hasCollections) current = 2;
+                else current = 1;
+
+                const completed = new Set<number>();
+                if (hasCollections) completed.add(1);
+                if (hasImages) completed.add(2);
+                if (enoughPairs) completed.add(3);
+                if (hasComputed) completed.add(4);
+
+                const pairsLabel = `${confirmedPairs.length}/4 pairs`;
+                const steps: StepDef[] = [
+                  {
+                    id: 1,
+                    label: "Pick collections",
+                    hint: "Choose two different collections above to align (e.g. RGB ↔ Thermal).",
+                  },
+                  {
+                    id: 2,
+                    label: "Load images",
+                    hint: 'Click "Load images" to pull a matching pair. Use "Next images" any time to swap them.',
+                  },
+                  {
+                    id: 3,
+                    label: `Mark point pairs (${pairsLabel})`,
+                    hint: pendingSrc
+                      ? "Now click the matching spot on the RIGHT image to complete the pair."
+                      : pendingTgt
+                      ? "Now click the matching spot on the LEFT image to complete the pair."
+                      : "Click a recognizable spot on one image, then the same spot on the other. Repeat for at least 4 pairs (8–15 from varied scenes is best).",
+                  },
+                  {
+                    id: 4,
+                    label: "Compute calibration",
+                    hint: enoughPairs
+                      ? 'Click "Compute" to fit the alignment. You can keep adding pairs to improve it.'
+                      : `Add ${Math.max(0, 4 - confirmedPairs.length)} more pair${4 - confirmedPairs.length === 1 ? "" : "s"} to enable Compute.`,
+                  },
+                  {
+                    id: 5,
+                    label: "Verify & save",
+                    hint: hasComputed
+                      ? "Hover either image to see the projected crosshair. Open the Test tab to draw strokes, then Save when satisfied."
+                      : "Once computed, hover the images to verify alignment and use the Test tab before saving.",
+                  },
+                ];
+
+                return <StepsBar steps={steps} current={current} completed={completed} />;
+              })()}
 
               {/* Image panels */}
               <div className="flex gap-3 flex-1 min-h-0">
