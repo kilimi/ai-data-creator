@@ -189,7 +189,7 @@ function ImagePanel({
       className={`flex-1 min-w-0 relative rounded-md border-2 cursor-crosshair select-none ${
         isActive ? "border-primary" : "border-border"
       }`}
-      style={{ minHeight: 0, overflow: "hidden" }}
+      style={{ minHeight: 480, overflow: "hidden" }}
       onClick={handleClick}
       onMouseMove={handleMouseMove}
     >
@@ -372,7 +372,7 @@ function TestPanel({ imageUrl, side, label, ownStrokes, projectedStrokes, onStro
       <div
         ref={containerRef}
         className="flex-1 min-h-0 relative overflow-hidden rounded-md border border-border select-none"
-        style={{ cursor: "crosshair" }}
+        style={{ cursor: "crosshair", minHeight: 480 }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
@@ -757,36 +757,28 @@ export function CalibrationDialog({
               )}
 
               {/* Instructions */}
-              <div className="text-xs text-muted-foreground rounded-md bg-muted px-3 py-2 leading-relaxed shrink-0">
+              <div className="text-xs text-muted-foreground rounded-md bg-muted px-3 py-1.5 leading-snug shrink-0 truncate">
                 {computedH ? (
                   <span>
-                    <span className="font-semibold text-cyan-500">Hover over either image</span> to project the corresponding point on the other.
-                    {" "}Switch to the <span className="font-semibold">Test</span> tab to draw and project freehand strokes.
+                    <span className="font-semibold text-cyan-500">Hover either image</span> to project the matching point. Switch to <span className="font-semibold">Test</span> to draw strokes.
                   </span>
                 ) : pendingSrc ? (
-                  <span>
-                    <span className="font-semibold text-amber-500">Click on the target image</span> to match the point you marked on the left.
-                  </span>
+                  <span><span className="font-semibold text-amber-500">Click on the target image</span> to match the point on the left.</span>
                 ) : pendingTgt ? (
-                  <span>
-                    <span className="font-semibold text-amber-500">Click on the source image</span> to match the point you marked on the right.
-                  </span>
+                  <span><span className="font-semibold text-amber-500">Click on the source image</span> to match the point on the right.</span>
                 ) : (
                   <span>
-                    <span className="font-semibold text-primary">Click either image</span> to place a calibration point. Then click the matching spot on the other image to form a pair.
+                    <span className="font-semibold text-primary">Click either image</span> to place a point, then click the matching spot on the other.
                     {confirmedPairs.length > 0 && (
                       <span className="ml-2 text-green-600 dark:text-green-400 font-medium">
                         {confirmedPairs.length} pair{confirmedPairs.length !== 1 ? "s" : ""} confirmed.
                       </span>
                     )}
                     {confirmedPairs.length > 0 && confirmedPairs.length < 4 && (
-                      <span className="ml-1 text-amber-500">(need at least 4 to calibrate)</span>
+                      <span className="ml-1 text-amber-500">(need ≥4)</span>
                     )}
                   </span>
                 )}
-                <span className="block mt-1 text-muted-foreground/80">
-                  ðŸ’¡ Tip: Click "Next images" to load a different pair and add more points (8â€“15 from varied scenes recommended).
-                </span>
               </div>
 
               {/* Image panels */}
