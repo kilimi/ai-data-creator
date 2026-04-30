@@ -798,6 +798,14 @@ export function CalibrationDialog({
                   Tip: 8–15 well-spread point pairs from a few image pairs give
                   the best results.
                 </p>
+                <a
+                  href="/help/collection-calibration"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                >
+                  Read the full guide →
+                </a>
               </div>
             </HelpHint>
           </DialogTitle>
