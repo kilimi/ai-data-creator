@@ -5332,90 +5332,6 @@ const ImageAnnotation = () => {
               onNavigate={(offset) => setImageOffset(offset)}
             />
           </div>
-
-          {/* Image Navigation */}
-          <div className="p-3 bg-card border-t border-border">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToImage(currentImageIndex - 1)}
-                  disabled={currentImageIndex === 0}
-                >
-                  Previous
-                </Button>
-                
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">
-                    {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
-                  </span>
-                  {currentLayerImageNames.length > 0 && (
-                    <span className="text-xs text-primary">
-                      ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
-                    </span>
-                  )}
-                  {currentImageName && (
-                    <span className="text-xs text-muted-foreground/70">
-                      {currentImageName}
-                    </span>
-                  )}
-                </div>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToImage(currentImageIndex + 1)}
-                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
-                >
-                  Next
-                </Button>
-
-                {/* Display Layer Selector — placed next to Next so the layer
-                    being navigated is obvious. Only renders when collections exist. */}
-                {imageCollections.length > 0 && (
-                  <div className="flex items-center gap-2 pl-2 ml-2 border-l border-border">
-                    <span className="text-sm text-muted-foreground">Layer:</span>
-                    <Select value={displayLayer} onValueChange={handleLayerChange}>
-                      <SelectTrigger className="w-48">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {imageCollections.map(collection => (
-                          <SelectItem key={collection.id} value={String(collection.id)}>
-                            {collection.name} ({collection.images.length} images)
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-
-                    {/* Warning for missing image */}
-                    {!displayImage && currentImageName && displayLayer && (
-                      <span className="text-xs text-yellow-500">
-                        Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
-                      </span>
-                    )}
-
-                    {/* Calibration enable/disable toggle */}
-                    {calibrations.length > 0 && displayLayer && (
-                      <button
-                        onClick={() => setCalibrationEnabled(prev => !prev)}
-                        className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
-                          calibrationIsActive && calibrationEnabled
-                            ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
-                            : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
-                        }`}
-                        title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
-                      >
-                        <Crosshair className="h-3 w-3" />
-                        {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-              </div>
             </ResizablePanel>
             {imageCollections.length > 1 && companionPanelOpen && (
               <>
@@ -5452,6 +5368,92 @@ const ImageAnnotation = () => {
               </button>
             )}
           </ResizablePanelGroup>
+
+          {/* Image Navigation — Primary layer Prev/Next, spans full bottom of main area */}
+          <div className="p-3 bg-card border-t border-border">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-4 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToImage(currentImageIndex - 1)}
+                  disabled={currentImageIndex === 0}
+                  aria-label="Previous image (primary layer)"
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">
+                    {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
+                  </span>
+                  {currentLayerImageNames.length > 0 && (
+                    <span className="text-xs text-primary">
+                      ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
+                    </span>
+                  )}
+                  {currentImageName && (
+                    <span className="text-xs text-muted-foreground/70 truncate max-w-[260px]">
+                      {currentImageName}
+                    </span>
+                  )}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToImage(currentImageIndex + 1)}
+                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
+                  aria-label="Next image (primary layer)"
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+
+                {/* Primary layer selector — kept next to Prev/Next so user knows which layer they're navigating */}
+                {imageCollections.length > 0 && (
+                  <div className="flex items-center gap-2 pl-2 ml-2 border-l border-border">
+                    <span className="text-sm text-muted-foreground">Primary layer:</span>
+                    <Select value={displayLayer} onValueChange={handleLayerChange}>
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {imageCollections.map(collection => (
+                          <SelectItem key={collection.id} value={String(collection.id)}>
+                            {collection.name} ({collection.images.length} images)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {!displayImage && currentImageName && displayLayer && (
+                      <span className="text-xs text-yellow-500">
+                        Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
+                      </span>
+                    )}
+
+                    {calibrations.length > 0 && displayLayer && (
+                      <button
+                        onClick={() => setCalibrationEnabled(prev => !prev)}
+                        className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
+                          calibrationIsActive && calibrationEnabled
+                            ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
+                            : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
+                        }`}
+                        title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
+                      >
+                        <Crosshair className="h-3 w-3" />
+                        {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Status Bar */}
           <AnnotationStatusBar
             cursorPosition={cursorImagePosition}
