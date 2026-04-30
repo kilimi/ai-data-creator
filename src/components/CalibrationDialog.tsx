@@ -818,7 +818,7 @@ export function CalibrationDialog({
               </Select>
             </div>
             <div className="space-y-1 min-w-40">
-              <Label className="text-xs">Target collection (right)</Label>
+              <Label className="text-xs flex items-center">Target collection (right)<HelpHint text="The image set shown on the RIGHT. Source annotations will be aligned to this collection." /></Label>
               <Select value={tgtCollId} onValueChange={setTgtCollId}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select..." /></SelectTrigger>
                 <SelectContent>
