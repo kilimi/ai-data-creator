@@ -62,6 +62,7 @@ import {
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
 import { CompanionLayersPanel } from '@/components/annotation/CompanionLayersPanel';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
