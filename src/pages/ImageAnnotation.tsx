@@ -4885,9 +4885,11 @@ const ImageAnnotation = () => {
                 variant={activeTool === 'select' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setActiveTool('select')}
+                title="Select / move (V)"
               >
                 <MousePointer2 className="w-4 h-4 mr-1" />
-                Select
+                <span className="flex-1 text-left">Select</span>
+                <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">V</kbd>
               </Button>
               <Button
                 variant={activeTool === 'polygon' ? 'default' : 'outline'}
@@ -4896,9 +4898,11 @@ const ImageAnnotation = () => {
                   if (!ensureClassForDrawingTools()) return;
                   setActiveTool('polygon');
                 }}
+                title="Polygon — click to add points (P)"
               >
                 <Square className="w-4 h-4 mr-1" />
-                Polygon
+                <span className="flex-1 text-left">Polygon</span>
+                <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">P</kbd>
               </Button>
               <Button
                 variant={activeTool === 'pencil' ? 'default' : 'outline'}
@@ -4907,10 +4911,11 @@ const ImageAnnotation = () => {
                   if (!ensureClassForDrawingTools()) return;
                   setActiveTool('pencil');
                 }}
-                title="Free-hand draw — click and drag to outline a shape"
+                title="Free-hand draw — click and drag to outline a shape (B)"
               >
                 <Pencil className="w-4 h-4 mr-1" />
-                Pencil
+                <span className="flex-1 text-left">Pencil</span>
+                <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">B</kbd>
               </Button>
               <Button
                 variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
@@ -4924,18 +4929,19 @@ const ImageAnnotation = () => {
                 title={
                   isSamProcessing
                     ? 'Processing segmentation...'
-                    : 'Click on image to segment (backend SAM)'
+                    : 'AI Segment — click on image to segment (A)'
                 }
               >
                 {isSamProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                    Processing...
+                    <span className="flex-1 text-left">Processing...</span>
                   </>
                 ) : (
                   <>
                     <Hexagon className="w-4 h-4 mr-1" />
-                    AI Segment
+                    <span className="flex-1 text-left">AI Segment</span>
+                    <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">A</kbd>
                   </>
                 )}
               </Button>
