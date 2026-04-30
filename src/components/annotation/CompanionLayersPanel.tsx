@@ -114,6 +114,7 @@ function CompanionCanvas({
   primaryDims,
   hasCalibration,
   projectId,
+  onMakePrimary,
 }: CompanionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
