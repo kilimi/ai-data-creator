@@ -586,7 +586,7 @@ export function CompanionLayersPanel({
         <div className="flex-1 flex items-center justify-center text-center p-4 text-sm text-muted-foreground">
           <div>
             <Layers className="h-8 w-8 mx-auto mb-2 opacity-40" />
-            <div className="font-medium">No companion layers shown</div>
+            <div className="font-medium">No image collections shown</div>
             <div className="text-xs mt-1">
               Pick collections above to view them side-by-side with shared
               annotations.
