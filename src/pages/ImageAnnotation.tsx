@@ -5534,6 +5534,89 @@ const ImageAnnotation = () => {
               </div>
             )}
 
+            {/* Image adjustments — brightness/contrast/saturation. Display-only,
+                does not modify the source image or saved annotations. */}
+            <div className="absolute top-2 right-2 z-20">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
+                    title="Adjust brightness, contrast, saturation"
+                  >
+                    <Sun className="h-3.5 w-3.5 text-primary" />
+                    Adjust
+                    {(imageBrightness !== 100 || imageContrast !== 100 || imageSaturation !== 100) && (
+                      <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-primary" />
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium text-muted-foreground">Image adjustments</div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-xs px-2"
+                      onClick={() => {
+                        setImageBrightness(100);
+                        setImageContrast(100);
+                        setImageSaturation(100);
+                      }}
+                      disabled={imageBrightness === 100 && imageContrast === 100 && imageSaturation === 100}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>Brightness</span>
+                      <span className="text-muted-foreground tabular-nums">{imageBrightness}%</span>
+                    </div>
+                    <Slider
+                      value={[imageBrightness]}
+                      min={0}
+                      max={200}
+                      step={1}
+                      onValueChange={(v) => setImageBrightness(v[0])}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>Contrast</span>
+                      <span className="text-muted-foreground tabular-nums">{imageContrast}%</span>
+                    </div>
+                    <Slider
+                      value={[imageContrast]}
+                      min={0}
+                      max={200}
+                      step={1}
+                      onValueChange={(v) => setImageContrast(v[0])}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>Saturation</span>
+                      <span className="text-muted-foreground tabular-nums">{imageSaturation}%</span>
+                    </div>
+                    <Slider
+                      value={[imageSaturation]}
+                      min={0}
+                      max={200}
+                      step={1}
+                      onValueChange={(v) => setImageSaturation(v[0])}
+                    />
+                  </div>
+
+                  <div className="text-[10px] text-muted-foreground">
+                    Display-only — does not change the original image or annotations.
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
             {/* Minimap */}
             <AnnotationMinimap
               imageRef={imageRef}
