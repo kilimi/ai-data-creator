@@ -120,6 +120,13 @@ function CompanionCanvas({
     null,
   );
   const [imgLoadError, setImgLoadError] = useState(false);
+  // User-toggleable calibration state for this companion. Defaults to ON
+  // whenever a calibration entry exists between the two collections.
+  const [calibrationOn, setCalibrationOn] = useState<boolean>(hasCalibration);
+  // Re-sync if the underlying calibration availability changes.
+  useEffect(() => {
+    setCalibrationOn(hasCalibration);
+  }, [hasCalibration]);
 
   const corresponding = useMemo(
     () => findCorrespondingImage(collection, imageName, primaryImage),
