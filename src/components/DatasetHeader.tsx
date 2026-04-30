@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Pencil, Trash2, Copy, MoreHorizontal, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { Dataset } from "@/types";
 import { DatasetInfoBar } from "@/components/DatasetInfoBar";
 import { AutoAnnotateModal } from "@/components/AutoAnnotateModal";
+import { HelpHint } from "@/components/ui/help-hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +29,7 @@ interface DatasetHeaderProps {
 
 export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, onDuplicateDataset, projectId, imageCount = 0 }: DatasetHeaderProps) {
   const [isAutoAnnotateOpen, setIsAutoAnnotateOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-3">
@@ -47,6 +49,25 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
           <h1 className="text-2xl font-bold">
             {isLoading ? 'Loading...' : name}
           </h1>
+          {!isLoading && (
+            <HelpHint ariaLabel="What is the Dataset View?" popover>
+              <div className="space-y-2 text-sm">
+                <p className="font-semibold text-foreground">Dataset View</p>
+                <p>
+                  Browse images, group them into collections, run
+                  Auto-Annotate, and launch annotation sessions. Use the
+                  Actions menu to edit, duplicate or delete the dataset.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => navigate("/help/dataset-view")}
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                >
+                  Read the full guide →
+                </button>
+              </div>
+            </HelpHint>
+          )}
         </div>
         
         <div className="flex items-center gap-2">
