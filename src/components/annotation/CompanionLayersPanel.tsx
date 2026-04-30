@@ -533,8 +533,20 @@ export function CompanionLayersPanel({
                 </Button>
               </div>
             )}
-          </PopoverContent>
-        </Popover>
+          </Popover>
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={onClose}
+              title="Close companion panel"
+              aria-label="Close companion panel"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Body */}
