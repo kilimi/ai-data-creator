@@ -3281,22 +3281,19 @@ const ImageAnnotation = () => {
     }
   };
 
-    // Recompute canvas and image scale when panels change or image changes so aspect ratio stays correct
+    // Recompute canvas when a side panel is toggled. We want the image to
+    // grow into freed space (or shrink to fit when a panel reopens), so we
+    // explicitly refit instead of preserving the current zoom.
     useEffect(() => {
-      // If image already loaded, recompute layout to maintain aspect ratio when side panels are hidden/resized
-      // Also check that image is complete to avoid resizing before image is loaded
       if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
-        // Preserve zoom when just resizing panels
-        preserveZoomRef.current = true;
-        
-        // small timeout to let layout settle after panel resize/collapse
+        preserveZoomRef.current = false;
         const t = setTimeout(() => {
-          handleImageResize();
+          handleImageResize(true);
         }, 50);
         return () => clearTimeout(t);
       }
       return undefined;
-      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth]);
+      }, [leftCollapsed, rightCollapsed]);
 
     // Listen for explicit resize-end notifications from resize handlers and toggles
     useEffect(() => {
