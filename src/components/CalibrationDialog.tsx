@@ -284,11 +284,58 @@ function ImagePanel({
             const dp = toDisplay(pt.x, pt.y);
             if (!dp) return null;
             const color = PAIR_COLOURS[pt.colorIdx % PAIR_COLOURS.length];
+            const num = String(pt.colorIdx + 1);
+            const coords = `(${Math.round(pt.x)}, ${Math.round(pt.y)})`;
+            // Label sits above the marker; flip below if too close to top edge
+            const labelAbove = dp.y > 34;
+            const labelY = labelAbove ? dp.y - 16 : dp.y + 16;
+            const numW = num.length * 8 + 12;
+            const coordW = coords.length * 6.5 + 10;
             return (
               <g key={i}>
                 <circle cx={dp.x} cy={dp.y} r={10} fill={color + "55"} stroke={color} strokeWidth={3} />
-                <text x={dp.x} y={dp.y - 13} textAnchor="middle" fill={color} fontSize={11} fontWeight="bold">
-                  {pt.colorIdx + 1}
+                {/* Number pill */}
+                <rect
+                  x={dp.x - numW / 2}
+                  y={labelY - 9}
+                  width={numW}
+                  height={16}
+                  rx={8}
+                  fill={color}
+                  stroke="white"
+                  strokeWidth={1.5}
+                />
+                <text
+                  x={dp.x}
+                  y={labelY + 3}
+                  textAnchor="middle"
+                  fill="white"
+                  fontSize={11}
+                  fontWeight="bold"
+                  style={{ paintOrder: "stroke" }}
+                >
+                  {num}
+                </text>
+                {/* Coordinate chip just under/above the number pill */}
+                <rect
+                  x={dp.x - coordW / 2}
+                  y={labelAbove ? labelY - 26 : labelY + 11}
+                  width={coordW}
+                  height={14}
+                  rx={3}
+                  fill="rgba(0,0,0,0.75)"
+                  stroke={color}
+                  strokeWidth={1}
+                />
+                <text
+                  x={dp.x}
+                  y={labelAbove ? labelY - 16 : labelY + 21}
+                  textAnchor="middle"
+                  fill="white"
+                  fontSize={10}
+                  fontFamily="ui-monospace, monospace"
+                >
+                  {coords}
                 </text>
               </g>
             );
