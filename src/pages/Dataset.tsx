@@ -62,6 +62,23 @@ export default function Dataset() {
   const [isCalibrationDialogOpen, setIsCalibrationDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
+  // Existing calibrations between collections (used to badge calibrated
+  // collection tabs in the dataset view).
+  const [calibrations, setCalibrations] = useState<Array<{
+    id?: number;
+    source_collection_id: number | string;
+    target_collection_id: number | string;
+  }>>([]);
+
+  const refreshCalibrations = async () => {
+    if (!api || !datasetId) return;
+    try {
+      const res = await api.getCalibrations(datasetId);
+      if (res.success && Array.isArray(res.data)) setCalibrations(res.data as any);
+    } catch {
+      /* non-fatal */
+    }
+  };
 
   // Captures which collection tab was active when "Upload Video" was clicked
   // so the backend can drop extracted frames into the same collection.
