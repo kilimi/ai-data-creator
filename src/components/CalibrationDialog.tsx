@@ -877,6 +877,34 @@ export function CalibrationDialog({
 
             {/* â”€â”€ Calibrate tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
             <TabsContent value="calibrate" className="relative flex-1 min-h-0 flex flex-col gap-3 mt-0">
+              {/* Top toolbar — always visible when points exist so it's easy
+                  to wipe the calibration session and start over. */}
+              {confirmedPairs.length > 0 && (
+                <div className="flex items-center justify-between shrink-0 rounded-md border bg-muted/40 px-3 py-2">
+                  <div className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{confirmedPairs.length}</span> point pair{confirmedPairs.length === 1 ? '' : 's'} placed
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
+                    onClick={() => {
+                      setConfirmedPairs([]);
+                      setPendingSrc(null);
+                      setPendingTgt(null);
+                      setValidation(null);
+                      setComputedH(null);
+                      setComputedHInv(null);
+                      setProbeSrc(null);
+                      setProbeTgt(null);
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove all points
+                  </Button>
+                </div>
+              )}
+
               {/* Validation metrics */}
               {validation && (
                 <div className="border rounded-md p-3 bg-muted/50 text-xs space-y-1.5 shrink-0">
@@ -1008,27 +1036,7 @@ export function CalibrationDialog({
                 )}
               </div>
 
-              {/* Floating "Clear all points" button — appears only when points exist; no text overlay */}
-              {confirmedPairs.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Clear all points"
-                  className="absolute right-3 bottom-3 z-10 h-8 w-8 rounded-full bg-card/90 border text-destructive hover:text-destructive hover:bg-card shadow-sm"
-                  onClick={() => {
-                    setConfirmedPairs([]);
-                    setPendingSrc(null);
-                    setPendingTgt(null);
-                    setValidation(null);
-                    setComputedH(null);
-                    setComputedHInv(null);
-                    setProbeSrc(null);
-                    setProbeTgt(null);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              )}
+              {/* Clear-all moved to the top toolbar (above) for visibility. */}
             </TabsContent>
 
             {/* â”€â”€ Test tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
