@@ -189,7 +189,7 @@ function ImagePanel({
       className={`flex-1 min-w-0 relative rounded-md border-2 cursor-crosshair select-none ${
         isActive ? "border-primary" : "border-border"
       }`}
-      style={{ minHeight: 0, overflow: "hidden" }}
+      style={{ minHeight: 480, overflow: "hidden" }}
       onClick={handleClick}
       onMouseMove={handleMouseMove}
     >
