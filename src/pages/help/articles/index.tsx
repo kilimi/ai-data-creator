@@ -7,8 +7,9 @@
  *   3. It will automatically appear in the sidebar and be routable at
  *      `/help/<slug>`.
  */
-import { LucideIcon, Target, BookOpen } from "lucide-react";
+import { LucideIcon, Target, BookOpen, Images } from "lucide-react";
 import { CollectionCalibrationArticle } from "./CollectionCalibrationArticle";
+import { DatasetViewArticle } from "./DatasetViewArticle";
 
 export interface HelpArticle {
   slug: string;
@@ -20,6 +21,14 @@ export interface HelpArticle {
 }
 
 export const helpArticles: HelpArticle[] = [
+  {
+    slug: "dataset-view",
+    title: "Dataset View",
+    description: "Browse images, manage collections, run auto-annotate and dataset actions.",
+    category: "Datasets",
+    icon: Images,
+    Component: DatasetViewArticle,
+  },
   {
     slug: "collection-calibration",
     title: "Collection Calibration",
