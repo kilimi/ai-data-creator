@@ -5433,6 +5433,10 @@ const ImageAnnotation = () => {
                     projectId={projectId ?? null}
                     onSetPrimary={handleLayerChange}
                     onClose={() => setCompanionPanelOpen(false)}
+                    onPrev={() => goToImage(currentImageIndex - 1)}
+                    onNext={() => goToImage(currentImageIndex + 1)}
+                    canPrev={currentImageIndex > 0}
+                    canNext={currentImageIndex < (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
                   />
                 </ResizablePanel>
               </>
