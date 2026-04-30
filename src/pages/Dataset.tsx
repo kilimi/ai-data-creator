@@ -1196,6 +1196,7 @@ export default function Dataset() {
                 onTabDeleteImage={handleTabDeleteImage}
                 onTabUploadImages={handleTabUploadImages}
                 onOpenCalibrationDialog={() => setIsCalibrationDialogOpen(true)}
+                calibrations={calibrations}
               />
             </div>
             <ImageUploadDialog 
