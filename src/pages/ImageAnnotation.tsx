@@ -5415,10 +5415,24 @@ const ImageAnnotation = () => {
                       </li>
                     </ol>
 
-                    <div className="mt-4 flex justify-end">
+                    <div className="mt-4 flex justify-end gap-2">
                       <Button
                         size="sm"
-                        onClick={() => setIsAddingClass(true)}
+                        variant="ghost"
+                        onClick={() => {
+                          setOnboardingDismissed(true);
+                          try { sessionStorage.setItem('annotation-onboarding-dismissed', '1'); } catch {}
+                        }}
+                      >
+                        Just browsing
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setIsAddingClass(true);
+                          setOnboardingDismissed(true);
+                          try { sessionStorage.setItem('annotation-onboarding-dismissed', '1'); } catch {}
+                        }}
                         className="gap-1"
                       >
                         <Plus className="h-4 w-4" />
