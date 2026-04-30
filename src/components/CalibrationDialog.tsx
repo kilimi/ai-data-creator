@@ -975,46 +975,30 @@ export function CalibrationDialog({
                 )}
               </div>
 
-              {/* Confirmed pairs list */}
+              {/* Compact pairs summary — coordinates are shown directly on the markers */}
               {confirmedPairs.length > 0 && (
-                <div className="border rounded-md p-2 max-h-28 overflow-y-auto shrink-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium">
-                      Confirmed pairs ({confirmedPairs.length})
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs text-destructive hover:text-destructive"
-                      onClick={() => {
-                        setConfirmedPairs([]);
-                        setPendingSrc(null);
-                        setPendingTgt(null);
-                        setValidation(null);
-                        setComputedH(null);
-                        setComputedHInv(null);
-                        setProbeSrc(null);
-                        setProbeTgt(null);
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3 mr-1" />
-                      Clear all
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-4 text-xs text-muted-foreground">
-                    <span className="font-medium">Source (px)</span>
-                    <span className="font-medium">Target (px)</span>
-                    {confirmedPairs.map((p, i) => (
-                      <React.Fragment key={i}>
-                        <span style={{ color: PAIR_COLOURS[i % PAIR_COLOURS.length] }}>
-                          #{i + 1} ({Math.round(p.src_x)}, {Math.round(p.src_y)})
-                        </span>
-                        <span style={{ color: PAIR_COLOURS[i % PAIR_COLOURS.length] }}>
-                          ({Math.round(p.tgt_x)}, {Math.round(p.tgt_y)})
-                        </span>
-                      </React.Fragment>
-                    ))}
-                  </div>
+                <div className="flex items-center justify-between rounded-md border bg-card px-2 py-1 shrink-0">
+                  <span className="text-xs font-medium">
+                    {confirmedPairs.length} pair{confirmedPairs.length !== 1 ? "s" : ""} confirmed
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-destructive hover:text-destructive"
+                    onClick={() => {
+                      setConfirmedPairs([]);
+                      setPendingSrc(null);
+                      setPendingTgt(null);
+                      setValidation(null);
+                      setComputedH(null);
+                      setComputedHInv(null);
+                      setProbeSrc(null);
+                      setProbeTgt(null);
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" />
+                    Clear all
+                  </Button>
                 </div>
               )}
             </TabsContent>
