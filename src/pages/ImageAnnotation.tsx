@@ -5303,14 +5303,7 @@ const ImageAnnotation = () => {
               </div>
             </ScrollArea>
           </div>
-          {/* Resize handle at the right edge of left sidebar */}
-          {!leftCollapsed && (
-            <div
-              className="absolute left-[--dummy] top-0 bottom-0 w-2 cursor-col-resize"
-              style={{ left: `calc(${leftWidth}px - 2px)` }}
-              onMouseDown={startResizeLeft}
-            />
-          )}
+          {/* Side panels are no longer resizable — toggle only. */}
         </div>
 
         {/* Floating expand button when left sidebar is collapsed */}
