@@ -2698,6 +2698,8 @@ const ImageAnnotation = () => {
         setActiveTool('select');
       } else if (e.key === 'p' || e.key === 'P') {
         if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('polygon');
+      } else if (e.key === 'b' || e.key === 'B') {
+        if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('pencil');
       } else if (e.key === 'a' || e.key === 'A') {
         if (ensureClassForDrawingTools()) setActiveTool('auto-segment');
       } else if ((e.key === 'r' || e.key === 'R') && !isDrawing) {
