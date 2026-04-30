@@ -280,6 +280,16 @@ const ImageAnnotation = () => {
   const [allImageNames, setAllImageNames] = useState<string[]>([]);
   const [currentLayerImageNames, setCurrentLayerImageNames] = useState<string[]>([]);
   const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
+  // Whether the side-by-side companion layer panel is shown. Persisted per session
+  // so reopening the editor restores the user's preference.
+  const [companionPanelOpen, setCompanionPanelOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('annotation-companion-panel-open') !== 'false';
+    } catch { return true; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem('annotation-companion-panel-open', String(companionPanelOpen)); } catch {}
+  }, [companionPanelOpen]);
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const layerSwitchCounterRef = useRef(0); // Increment on every layer switch to force image remount
   const [isLoading, setIsLoading] = useState(true);
