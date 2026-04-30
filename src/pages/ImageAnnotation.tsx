@@ -5445,10 +5445,10 @@ const ImageAnnotation = () => {
               <button
                 onClick={() => setCompanionPanelOpen(true)}
                 className="absolute top-2 right-2 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
-                title="Show companion layers"
+                title="Show image collections"
               >
                 <Layers className="h-3.5 w-3.5 text-primary" />
-                Companion layers
+                Image collections
               </button>
             )}
           </ResizablePanelGroup>
