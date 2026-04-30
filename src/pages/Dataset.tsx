@@ -1235,6 +1235,7 @@ export default function Dataset() {
             collections={imageCollections}
             onCalibrationSaved={() => {
               toast({ title: "Calibration saved", description: "Collections are now calibrated." });
+              refreshCalibrations();
             }}
           />
         )}
