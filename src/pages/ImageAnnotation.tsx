@@ -2424,6 +2424,19 @@ const ImageAnnotation = () => {
       } else {
         setCurrentPath(prev => [...prev, imageCoords]);
       }
+    } else if (activeTool === 'pencil') {
+      if (!selectedClass) {
+        toast({
+          title: 'No class selected',
+          description: 'Please select a class before drawing annotations',
+          variant: 'destructive'
+        });
+        return;
+      }
+      // Begin a free-hand stroke; points will be sampled on mouse move and
+      // the stroke will be committed as a polygon on mouse up.
+      setIsDrawing(true);
+      setCurrentPath([imageCoords]);
     }
   }, [activeTool, selectedClass, classes.length, isDrawing, screenToImageCoords, findAnnotationAtPoint, startAutoSegment, toast]);
 
