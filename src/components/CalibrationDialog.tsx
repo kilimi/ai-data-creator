@@ -529,6 +529,7 @@ export function CalibrationDialog({
 }: CalibrationDialogProps) {
   const { api } = useApi();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<"calibrate" | "test">("calibrate");
 
