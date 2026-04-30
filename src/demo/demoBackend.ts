@@ -337,9 +337,11 @@ export function shouldEnableDemoMode(): boolean {
   } catch {
     /* ignore */
   }
-  // Default ON when running inside the Lovable preview hostname.
-  if (typeof window !== "undefined" && /lovable\.app$/i.test(window.location.hostname)) {
-    return true;
+  // Default ON when running anywhere except localhost (covers Lovable preview/sandbox/published).
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const isLocal = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    if (!isLocal) return true;
   }
   return false;
 }
