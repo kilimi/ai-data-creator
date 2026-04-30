@@ -38,6 +38,9 @@ interface TabbedImagesContentProps {
   onReorderTabs: (orderedTabIds: string[]) => Promise<void>;
   onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
   onOpenCalibrationDialog?: () => void;
+  /** Existing calibrations between collection pairs — used to badge
+   *  collection tabs that participate in a calibration. */
+  calibrations?: Array<{ source_collection_id: number | string; target_collection_id: number | string }>;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
   selectedImageIndex: number | null;
@@ -68,6 +71,7 @@ export function TabbedImagesContent({
   onReorderTabs,
   onOpenVideoUploadDialog,
   onOpenCalibrationDialog,
+  calibrations = [],
   annotations = [],
   annotationFiles = [],
   selectedImageIndex,
@@ -101,6 +105,22 @@ export function TabbedImagesContent({
   const allImages = imageCollections.flatMap(c => c.images);
   // Images used for modal navigation: only images in the active collection
   const activeCollectionImages = activeCollection ? activeCollection.images : allImages;
+
+  // Map: collection id → list of partner collection names it's calibrated with.
+  const calibrationPartners = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const nameOf = (cid: string) =>
+      imageCollections.find(c => String(c.id) === cid)?.name || `#${cid}`;
+    for (const cal of calibrations) {
+      const a = String(cal.source_collection_id);
+      const b = String(cal.target_collection_id);
+      if (!map.has(a)) map.set(a, []);
+      if (!map.has(b)) map.set(b, []);
+      map.get(a)!.push(nameOf(b));
+      map.get(b)!.push(nameOf(a));
+    }
+    return map;
+  }, [calibrations, imageCollections]);
 
   // Filter paginated images by search query
   const getFilteredPaginatedImages = (collection: ImageCollection) => {
@@ -305,12 +325,26 @@ export function TabbedImagesContent({
                       data-[state=inactive]:hover:bg-accent/50
                       flex items-center gap-2 min-w-0
                     "
+                    title={
+                      calibrationPartners.get(String(collection.id))?.length
+                        ? `Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`
+                        : undefined
+                    }
                   >
                     <FolderOpen className="w-4 h-4 flex-shrink-0" />
                     <span className="truncate">{collection.name}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-background/20">
                       {collection.images.length}
                     </span>
+                    {calibrationPartners.get(String(collection.id))?.length ? (
+                      <span
+                        className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 data-[state=active]:bg-emerald-500/25"
+                        title={`Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`}
+                      >
+                        <Target className="w-2.5 h-2.5" />
+                        {calibrationPartners.get(String(collection.id))!.length}
+                      </span>
+                    ) : null}
                   </TabsTrigger>
                   {imageCollections.length > 1 && (
                     <Button
@@ -338,13 +372,22 @@ export function TabbedImagesContent({
             {imageCollections.length >= 2 && onOpenCalibrationDialog && (
               <div className="flex items-center gap-1">
                 <Button
-                  variant="outline"
+                  variant={calibrations.length > 0 ? "default" : "outline"}
                   onClick={onOpenCalibrationDialog}
-                  className="px-4 py-2.5 rounded-lg hover:bg-accent transition-all duration-200 flex items-center gap-2"
-                  title="Calibrate image collections for alignment"
+                  className="px-4 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2"
+                  title={
+                    calibrations.length > 0
+                      ? `${calibrations.length} calibration${calibrations.length === 1 ? '' : 's'} saved — click to manage`
+                      : "Calibrate image collections for alignment"
+                  }
                 >
                   <Target className="w-4 h-4" />
                   <span className="text-sm font-medium">Calibrate Collections</span>
+                  {calibrations.length > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-emerald-500/20 text-emerald-600 text-[10px] font-semibold border border-emerald-500/30">
+                      {calibrations.length}
+                    </span>
+                  )}
                 </Button>
                 <HelpHint ariaLabel="What is Collection Calibration?" popover>
                   <div className="space-y-2 text-sm">
@@ -386,6 +429,17 @@ export function TabbedImagesContent({
                       <span className="text-sm text-muted-foreground px-2.5 py-1 bg-muted/50 rounded-full border border-border/40">
                         {collection.images.length} {collection.images.length === 1 ? 'image' : 'images'}
                       </span>
+                      {calibrationPartners.get(String(collection.id))?.length ? (
+                        <button
+                          type="button"
+                          onClick={onOpenCalibrationDialog}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors"
+                          title="Open Collection Calibration"
+                        >
+                          <Target className="w-3 h-3" />
+                          Calibrated with {calibrationPartners.get(String(collection.id))!.join(", ")}
+                        </button>
+                      ) : null}
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
