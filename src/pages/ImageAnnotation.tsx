@@ -5165,43 +5165,265 @@ const ImageAnnotation = () => {
           </div>
         )}
 
+
         {/* Main Canvas Area */}
         <div className="flex-1 flex flex-col min-w-0">
-          {imageCollections.length > 1 ? (
-            <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
-              <ResizablePanel defaultSize={70} minSize={30}>
-                <div
-                  ref={containerRef}
-                  className="h-full relative overflow-hidden bg-muted/30 min-w-0"
-                >
-// ... keep existing code (canvas/image/overlays inside the container starting at line 5174 through line 5404)
-                </div>
-              </ResizablePanel>
-              <ResizableHandle withHandle />
-              <ResizablePanel defaultSize={30} minSize={15}>
-                {/* Companion layers — read-only side-by-side view of the same image
-                    from other collections, with shared annotations overlaid. */}
-                <CompanionLayersPanel
-                  collections={imageCollections}
-                  primaryCollectionId={mainLayer || displayLayer}
-                  primaryImage={displayImage || currentImage}
-                  imageName={currentImageName}
-                  annotations={annotations}
-                  calibrations={calibrations}
-                  projectId={projectId ?? null}
-                />
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          ) : (
-            <div className="flex-1 flex min-h-0">
+          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+            <ResizablePanel defaultSize={imageCollections.length > 1 ? 70 : 100} minSize={30}>
               <div
                 ref={containerRef}
-                className="flex-1 relative overflow-hidden bg-muted/30 min-w-0"
+                className="h-full relative overflow-hidden bg-muted/30 min-w-0"
               >
-// ... keep existing code (same canvas/image/overlays content as above)
+            {/**
+             * The canvas must render the bitmap for the *selected display layer*. When a
+             * display layer is active we only show `displayImage` (which was looked up in
+             * that specific layer); falling back to `currentImage` would mean switching
+             * from e.g. "RGB Images" to "Depth" kept showing the RGB bitmap. When no
+             * display layer is set (initial state), we still allow `currentImage` as a
+             * fallback so the canvas isn't blank during bootstrap.
+             */}
+            {(() => {
+              const bitmap = displayLayer ? displayImage : (displayImage || currentImage);
+              return bitmap ? (
+              <>
+                <img
+                  key={`layer-${layerSwitchCounterRef.current}-${displayLayer}`}
+                  ref={imageRef}
+                  src={bitmap.url || ''}
+                  alt={bitmap.fileName || 'Current image'}
+                  className="absolute opacity-0"
+                  onLoad={handleImageLoad}
+                  onError={(e) => {
+                    console.error('Image failed to load:', e);
+                    console.error('Image src:', bitmap.url);
+                  }}
+                  crossOrigin="anonymous"
+                />
+                <canvas
+                  ref={canvasRef}
+                  className={`absolute w-full h-full ${activeTool === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
+                  onMouseDown={handleCanvasMouseDown}
+                  onMouseMove={handleCanvasMouseMove}
+                  onMouseUp={handleCanvasMouseUp}
+                  onDoubleClick={handleCanvasDoubleClick}
+                  onContextMenu={handleCanvasRightClick}
+                />
+                {/* Show loading overlay during layer switching */}
+                {isLayerSwitching && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-10">
+                    <div className="text-center text-white">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
+                      <div className="text-sm">Switching layer...</div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-muted-foreground">
+                  <div className="text-2xl mb-2">📷</div>
+                  {noCorrespondingImage && displayLayer ? (
+                    <>
+                      <div className="text-lg font-medium">No corresponding image found</div>
+                      <div className="text-sm">
+                        Image "{currentImageName}" not found in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
+                      </div>
+                      <div className="text-xs mt-2 text-muted-foreground/70">Switch to a different layer or choose another image</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-lg font-medium">No Image Available</div>
+                      <div className="text-sm">
+                        Image "{currentImageName}" does not exist in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
+                      </div>
+                      <div className="text-xs mt-2 text-muted-foreground/70">Switch to a different layer or navigate to another image</div>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+            })()}
+
+            {/* Drawing Instructions */}
+            {isDrawing && activeTool === 'polygon' && (
+              <div className="absolute top-4 left-4 bg-background/90 backdrop-blur-sm border border-border text-foreground px-4 py-2 rounded-lg text-sm z-10">
+                <div className="flex flex-col gap-1">
+                  <div className="font-semibold">Drawing Polygon ({currentPath.length} points)</div>
+                  <div className="text-xs text-muted-foreground">
+                    • Click to add points
+                    • <strong>Double-click</strong> to finish
+                    • <strong>Right-click</strong> to finish  
+                    • <strong>Enter</strong> to finish
+                    • <strong>Esc</strong> to cancel
+                  </div>
+                  {currentPath.length < 3 && (
+                    <div className="text-xs text-yellow-500">
+                      Need at least 3 points to finish
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Auto-segment preview overlay with accept/cancel controls */}
+            {autoSegmentPreview && (
+              <div className="absolute inset-0 pointer-events-none">
+                {/* show mask image if available */}
+                {autoSegmentPreview.maskDataUrl && (
+                  <img src={autoSegmentPreview.maskDataUrl} alt="mask preview" className="absolute inset-0 w-full h-full object-contain opacity-60 pointer-events-none" />
+                )}
+
+                {/* draw polygon outlines on top using an SVG overlay */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                  {autoSegmentPreview.polygons.map((poly, i) => (
+                    <polyline
+                      key={i}
+                      points={poly.map(p => `${(p.x * imageScale + imageOffset.x).toFixed(2)},${(p.y * imageScale + imageOffset.y).toFixed(2)}`).join(' ')}
+                      fill="none"
+                      stroke="#00FFAA"
+                      strokeWidth={2}
+                    />
+                  ))}
+                </svg>
+
+                {/* Controls - accept/cancel */}
+                <div className="absolute right-6 bottom-6 z-40 pointer-events-auto flex flex-col gap-2 w-64 bg-card/90 backdrop-blur-sm border border-border p-3 rounded-lg">
+                  <p className="text-xs text-muted-foreground">
+                    Left-click: add to mask. Right-click: remove from mask. Add more points to refine. Press Enter to accept.
+                  </p>
+                  <div className="flex gap-2">
+                    <Select value={autoSegmentClassId || ''} onValueChange={(v) => {
+                      const idVal = v || null;
+                      setAutoSegmentClassId(idVal);
+                    }}>
+                      <SelectTrigger className="w-36"><SelectValue placeholder="Class" /></SelectTrigger>
+                      <SelectContent>
+                        {classes.map(c => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex justify-end gap-2 mt-2">
+                    <Button size="sm" onClick={acceptAutoSegment}>Accept</Button>
+                    <Button size="sm" variant="outline" onClick={cancelAutoSegment}>Cancel</Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Minimap */}
+            <AnnotationMinimap
+              imageRef={imageRef}
+              containerRef={containerRef}
+              imageScale={imageScale}
+              imageOffset={imageOffset}
+              onNavigate={(offset) => setImageOffset(offset)}
+            />
+          </div>
+
+          {/* Image Navigation */}
+          <div className="p-3 bg-card border-t border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToImage(currentImageIndex - 1)}
+                  disabled={currentImageIndex === 0}
+                >
+                  Previous
+                </Button>
+                
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">
+                    {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
+                  </span>
+                  {currentLayerImageNames.length > 0 && (
+                    <span className="text-xs text-primary">
+                      ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
+                    </span>
+                  )}
+                  {currentImageName && (
+                    <span className="text-xs text-muted-foreground/70">
+                      {currentImageName}
+                    </span>
+                  )}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToImage(currentImageIndex + 1)}
+                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
+                >
+                  Next
+                </Button>
+              </div>
+
+              {/* Display Layer Selector — always show when at least one collection exists so the current layer is visible and can be switched */}
+              {imageCollections.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">Layer:</span>
+                  <Select value={displayLayer} onValueChange={handleLayerChange}>
+                    <SelectTrigger className="w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {imageCollections.map(collection => (
+                        <SelectItem key={collection.id} value={String(collection.id)}>
+                          {collection.name} ({collection.images.length} images)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Warning for missing image */}
+                  {!displayImage && currentImageName && displayLayer && (
+                    <span className="text-xs text-yellow-500">
+                      Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
+                    </span>
+                  )}
+
+                  {/* Calibration enable/disable toggle — shown whenever a calibration exists between collections */}
+                  {calibrations.length > 0 && displayLayer && (
+                    <button
+                      onClick={() => setCalibrationEnabled(prev => !prev)}
+                      className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
+                        calibrationIsActive && calibrationEnabled
+                          ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
+                          : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
+                      }`}
+                      title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
+                    >
+                      <Crosshair className="h-3 w-3" />
+                      {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
+                    </button>
+                  )}
+                </div>
+              )}
+              </div>
+            </ResizablePanel>
+            {imageCollections.length > 1 && (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={30} minSize={15}>
+                  {/* Companion layers — read-only side-by-side view of the same image
+                      from other collections, with shared annotations overlaid. */}
+                  <CompanionLayersPanel
+                    collections={imageCollections}
+                    primaryCollectionId={mainLayer || displayLayer}
+                    primaryImage={displayImage || currentImage}
+                    imageName={currentImageName}
+                    annotations={annotations}
+                    calibrations={calibrations}
+                    projectId={projectId ?? null}
+                  />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
           {/* Status Bar */}
           <AnnotationStatusBar
             cursorPosition={cursorImagePosition}
