@@ -65,14 +65,17 @@ function buildCollection(
   seedPrefix: string,
   count: number,
   isDefault = false,
+  /** Optional shared filename prefix so companion collections match the primary by filename. */
+  fileNamePrefix?: string,
 ) {
+  const namePrefix = fileNamePrefix ?? seedPrefix;
   const images = Array.from({ length: count }, (_, i) => {
     const id = imgIdCounter++;
     return makeImage(
       id,
       datasetId,
       `${seedPrefix}-${i + 1}`,
-      `${seedPrefix}_${String(i + 1).padStart(3, "0")}.jpg`,
+      `${namePrefix}_${String(i + 1).padStart(3, "0")}.jpg`,
     );
   });
   return {
@@ -92,12 +95,14 @@ function buildCollection(
 const datasetCollections: Record<number, any[]> = {
   1: [
     buildCollection(1, 101, "RGB Images", 0, "city", 12, true),
-    buildCollection(1, 102, "Thermal", 1, "thermal", 12),
+    // Thermal companion shares filenames with RGB ("city_001.jpg" ...)
+    buildCollection(1, 102, "Thermal", 1, "thermal", 12, false, "city"),
   ],
   2: [buildCollection(2, 201, "RGB Images", 0, "street", 18, true)],
   3: [
     buildCollection(3, 301, "RGB Images", 0, "bird", 20, true),
-    buildCollection(3, 302, "Infrared", 1, "ir-bird", 20),
+    // Infrared companion shares filenames with RGB ("bird_001.jpg" ...)
+    buildCollection(3, 302, "Infrared", 1, "ir-bird", 20, false, "bird"),
   ],
   4: [buildCollection(4, 401, "RGB Images", 0, "forest", 16, true)],
   5: [buildCollection(5, 501, "RGB Images", 0, "ocean", 14, true)],
