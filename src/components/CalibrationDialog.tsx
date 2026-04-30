@@ -372,7 +372,7 @@ function TestPanel({ imageUrl, side, label, ownStrokes, projectedStrokes, onStro
       <div
         ref={containerRef}
         className="flex-1 min-h-0 relative overflow-hidden rounded-md border border-border select-none"
-        style={{ cursor: "crosshair" }}
+        style={{ cursor: "crosshair", minHeight: 480 }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
