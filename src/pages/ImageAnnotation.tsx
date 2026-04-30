@@ -2881,6 +2881,22 @@ const ImageAnnotation = () => {
           ctx.lineWidth = 1;
           ctx.stroke();
         });
+      } else if (activeTool === 'pencil' && currentPath.length > 0) {
+        // Render free-hand stroke as a continuous line (no per-point dots)
+        // and softly fill the closed shape so the user can preview the
+        // resulting polygon while drawing.
+        ctx.beginPath();
+        const firstPoint = imageToScreenCoords(currentPath[0].x, currentPath[0].y);
+        ctx.moveTo(firstPoint.x, firstPoint.y);
+        for (let i = 1; i < currentPath.length; i++) {
+          const point = imageToScreenCoords(currentPath[i].x, currentPath[i].y);
+          ctx.lineTo(point.x, point.y);
+        }
+        if (currentPath.length > 2) {
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.stroke();
       }
     }
 
