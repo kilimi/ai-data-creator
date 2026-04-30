@@ -455,7 +455,7 @@ export function CompanionLayersPanel({
       <div className="px-3 py-2 border-b flex items-center justify-between gap-2 bg-card/40">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Layers className="h-4 w-4 text-primary" />
-          Companion layers
+          Image collections
         </div>
         <div className="flex items-center gap-1.5">
           {(onPrev || onNext) && (
@@ -495,10 +495,10 @@ export function CompanionLayersPanel({
             </PopoverTrigger>
           <PopoverContent align="end" className="w-72 p-2">
             <div className="text-xs font-medium text-muted-foreground px-2 pb-1">
-              Choose primary & companion layers
+              Image collections
             </div>
             <div className="text-[10px] text-muted-foreground px-2 pb-2">
-              Radio = primary (editable). Checkbox = shown alongside.
+              Pick which collections to show alongside the primary canvas.
             </div>
             <div className="space-y-1 max-h-72 overflow-auto">
               {collections.map((c) => {
@@ -508,35 +508,29 @@ export function CompanionLayersPanel({
                 return (
                   <div
                     key={id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent"
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded ${
+                      isPrimary ? "bg-muted/40" : "hover:bg-accent"
+                    }`}
                   >
-                    <input
-                      type="radio"
-                      name="primary-layer"
-                      checked={isPrimary}
-                      disabled={!onSetPrimary}
-                      onChange={() => onSetPrimary?.(id)}
-                      className="h-3.5 w-3.5 accent-primary cursor-pointer"
-                      title="Set as primary (editable) layer"
-                    />
-                    <span className="text-sm flex-1 truncate">
-                      {c.name}
-                      {isPrimary && (
-                        <span className="ml-1.5 text-[10px] text-primary font-medium">
+                    {isPrimary ? (
+                      // Primary collection is always shown on the main canvas;
+                      // its checkbox is locked on and labelled accordingly.
+                      <>
+                        <Checkbox checked disabled />
+                        <span className="text-sm flex-1 truncate">
+                          {c.name}
+                        </span>
+                        <span className="text-[10px] text-primary font-medium px-1">
                           primary
                         </span>
-                      )}
-                    </span>
-                    {isPrimary ? (
-                      <span className="text-[10px] text-muted-foreground/60 px-1">
-                        editing
-                      </span>
+                      </>
                     ) : (
-                      <label className="flex items-center gap-1.5 cursor-pointer">
+                      <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
                         <Checkbox
                           checked={checked}
                           onCheckedChange={() => toggle(id)}
                         />
+                        <span className="text-sm flex-1 truncate">{c.name}</span>
                         {checked ? (
                           <Eye className="h-3.5 w-3.5 text-primary" />
                         ) : (
@@ -592,7 +586,7 @@ export function CompanionLayersPanel({
         <div className="flex-1 flex items-center justify-center text-center p-4 text-sm text-muted-foreground">
           <div>
             <Layers className="h-8 w-8 mx-auto mb-2 opacity-40" />
-            <div className="font-medium">No companion layers shown</div>
+            <div className="font-medium">No image collections shown</div>
             <div className="text-xs mt-1">
               Pick collections above to view them side-by-side with shared
               annotations.
