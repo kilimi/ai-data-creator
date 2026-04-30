@@ -321,7 +321,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       if (selectedModel !== 'yolo' && selectedModel !== 'rf-detr') {
         toast({
           title: "Not Implemented",
-          description: `${selectedModel?.toUpperCase()} training is not yet implemented`,
+          description: `${String(selectedModel).toUpperCase()} training is not yet implemented`,
           variant: "destructive",
         });
         setIsTraining(false);
