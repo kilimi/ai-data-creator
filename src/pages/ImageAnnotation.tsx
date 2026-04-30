@@ -2567,12 +2567,28 @@ const ImageAnnotation = () => {
       return;
     }
 
+    // Finalize a free-hand pencil stroke into a polygon annotation.
+    if (isDrawing && activeTool === 'pencil') {
+      if (currentPath.length >= 3) {
+        createAnnotation('polygon', currentPath);
+      } else {
+        toast({
+          title: 'Stroke too short',
+          description: 'Drag to draw a longer shape (need at least 3 points).',
+          variant: 'destructive',
+        });
+      }
+      setIsDrawing(false);
+      setCurrentPath([]);
+      return;
+    }
+
     if (isDragging) {
       setIsDragging(false);
     } else if (isMovingAnnotation) {
       setIsMovingAnnotation(false);
     }
-  }, [isDragging, isMovingAnnotation]);
+  }, [isDragging, isMovingAnnotation, isDrawing, activeTool, currentPath, createAnnotation, toast]);
 
   const handleCanvasDoubleClick = useCallback(() => {
     if (isDrawing && activeTool === 'polygon' && currentPath.length >= 3) {
