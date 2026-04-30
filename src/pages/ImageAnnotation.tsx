@@ -5791,7 +5791,10 @@ const ImageAnnotation = () => {
                 <div className="w-2 h-2 bg-primary rounded-full"></div>
                 <h2 className="text-sm font-semibold">Annotations Panel</h2>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setRightCollapsed(v => !v)}>
+              <Button size="sm" variant="ghost" onClick={() => {
+                setRightCollapsed(v => !v);
+                setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
+              }}>
                 {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
               </Button>
             </div>
