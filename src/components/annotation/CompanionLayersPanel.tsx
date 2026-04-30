@@ -355,6 +355,8 @@ interface CompanionLayersPanelProps {
   /** Calibration entries from the backend. */
   calibrations: any[];
   projectId?: string | null;
+  /** Promote a collection to primary (drives the main canvas). */
+  onSetPrimary?: (collectionId: string) => void;
 }
 
 const STORAGE_KEY = "annotation-companion-selected-v1";
@@ -367,6 +369,7 @@ export function CompanionLayersPanel({
   annotations,
   calibrations,
   projectId,
+  onSetPrimary,
 }: CompanionLayersPanelProps) {
   // Available companions = every collection except the one being annotated
   const available = useMemo(
