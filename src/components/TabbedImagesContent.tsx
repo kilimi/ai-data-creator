@@ -372,13 +372,22 @@ export function TabbedImagesContent({
             {imageCollections.length >= 2 && onOpenCalibrationDialog && (
               <div className="flex items-center gap-1">
                 <Button
-                  variant="outline"
+                  variant={calibrations.length > 0 ? "default" : "outline"}
                   onClick={onOpenCalibrationDialog}
-                  className="px-4 py-2.5 rounded-lg hover:bg-accent transition-all duration-200 flex items-center gap-2"
-                  title="Calibrate image collections for alignment"
+                  className="px-4 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2"
+                  title={
+                    calibrations.length > 0
+                      ? `${calibrations.length} calibration${calibrations.length === 1 ? '' : 's'} saved — click to manage`
+                      : "Calibrate image collections for alignment"
+                  }
                 >
                   <Target className="w-4 h-4" />
                   <span className="text-sm font-medium">Calibrate Collections</span>
+                  {calibrations.length > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-emerald-500/20 text-emerald-600 text-[10px] font-semibold border border-emerald-500/30">
+                      {calibrations.length}
+                    </span>
+                  )}
                 </Button>
                 <HelpHint ariaLabel="What is Collection Calibration?" popover>
                   <div className="space-y-2 text-sm">
