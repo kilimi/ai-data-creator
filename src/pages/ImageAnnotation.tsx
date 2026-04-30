@@ -5649,29 +5649,8 @@ const ImageAnnotation = () => {
               </Button>
             </div>
             
-            {/* Navigation Layer Selector — shown whenever collections exist so the current layer is always visible */}
-            {imageCollections.length > 0 && !rightCollapsed && (
-              <div className="mt-3 p-2 bg-muted rounded border border-border">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs text-muted-foreground">Navigation Layer:</span>
-                </div>
-                <Select value={mainLayer} onValueChange={handleMainLayerChange}>
-                  <SelectTrigger className="w-full h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {imageCollections.map(collection => (
-                      <SelectItem key={collection.id} value={String(collection.id)}>
-                        {collection.name} ({collection.images.length} images)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="text-xs text-primary mt-1">
-                  Controls which images are available for browsing
-                </div>
-              </div>
-            )}
+            {/* Navigation Layer selector removed — primary layer is now
+                controlled from the bottom Image Navigation bar. */}
           </div>
 
           {/* Panel Content */}
