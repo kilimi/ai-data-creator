@@ -368,7 +368,7 @@ const routes: Route[] = [
   {
     method: "GET",
     pattern: /^\/datasets\/(\d+)\/images/,
-    handler: (_u, _i, m) => ({ images: imagesFor(Number(m[1])) }),
+    handler: (_u, _i, m) => imagesFor(Number(m[1])),
   },
   {
     method: "GET",
