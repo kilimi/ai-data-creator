@@ -5403,6 +5403,7 @@ const ImageAnnotation = () => {
                   )}
                 </div>
               )}
+            </div>
               </div>
             </ResizablePanel>
             {imageCollections.length > 1 && (
