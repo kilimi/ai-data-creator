@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical, Crosshair } from "lucide-react";
+import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical, Layers2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -340,7 +340,7 @@ export function TabbedImagesContent({
                 className="px-4 py-2.5 rounded-lg hover:bg-accent transition-all duration-200 flex items-center gap-2"
                 title="Calibrate image collections for alignment"
               >
-                <Crosshair className="w-4 h-4" />
+                <Layers2 className="w-4 h-4" />
                 <span className="text-sm font-medium">Calibrate Collections</span>
               </Button>
             )}
