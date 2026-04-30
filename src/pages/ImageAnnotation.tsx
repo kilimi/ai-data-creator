@@ -5406,7 +5406,7 @@ const ImageAnnotation = () => {
                 from other collections, with shared annotations overlaid. */}
             <CompanionLayersPanel
               collections={imageCollections}
-              primaryCollectionId={mainLayer || (displayLayer ?? '')}
+              primaryCollectionId={mainLayer || displayLayer}
               primaryImage={displayImage || currentImage}
               imageName={currentImageName}
               annotations={annotations}
