@@ -2555,7 +2555,7 @@ const ImageAnnotation = () => {
       
       setMoveOffset(imageCoords);
     }
-  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage]);
+  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage, isDrawing, activeTool]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (isPanningRef.current) {
