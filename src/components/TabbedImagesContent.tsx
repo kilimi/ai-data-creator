@@ -336,15 +336,35 @@ export function TabbedImagesContent({
               <span className="text-sm font-medium">Add Collection</span>
             </Button>
             {imageCollections.length >= 2 && onOpenCalibrationDialog && (
-              <Button
-                variant="outline"
-                onClick={onOpenCalibrationDialog}
-                className="px-4 py-2.5 rounded-lg hover:bg-accent transition-all duration-200 flex items-center gap-2"
-                title="Calibrate image collections for alignment"
-              >
-                <Target className="w-4 h-4" />
-                <span className="text-sm font-medium">Calibrate Collections</span>
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  onClick={onOpenCalibrationDialog}
+                  className="px-4 py-2.5 rounded-lg hover:bg-accent transition-all duration-200 flex items-center gap-2"
+                  title="Calibrate image collections for alignment"
+                >
+                  <Target className="w-4 h-4" />
+                  <span className="text-sm font-medium">Calibrate Collections</span>
+                </Button>
+                <HelpHint ariaLabel="What is Collection Calibration?" popover>
+                  <div className="space-y-2 text-sm">
+                    <p className="font-semibold text-foreground">Collection Calibration</p>
+                    <p>
+                      Aligns two image collections of the same scene captured by
+                      different sensors (e.g. RGB ↔ Thermal). Mark matching point
+                      pairs to project annotations from one collection onto the
+                      other.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => navigate("/help/collection-calibration")}
+                      className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                    >
+                      Read the full guide →
+                    </button>
+                  </div>
+                </HelpHint>
+              </div>
             )}
           </div>
 
