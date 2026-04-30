@@ -458,6 +458,32 @@ export function CompanionLayersPanel({
           Companion layers
         </div>
         <div className="flex items-center gap-1.5">
+          {(onPrev || onNext) && (
+            <div className="flex items-center gap-0.5 mr-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={onPrev}
+                disabled={!onPrev || canPrev === false}
+                title="Previous image"
+                aria-label="Previous image"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={onNext}
+                disabled={!onNext || canNext === false}
+                title="Next image"
+                aria-label="Next image"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 gap-1.5">
