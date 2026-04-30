@@ -6132,14 +6132,7 @@ const ImageAnnotation = () => {
             </Tabs>
           </div>
 
-          {/* Divider / handle for resizing */}
-          {!rightCollapsed && (
-            <div
-              className="absolute right-[--dummy] top-0 bottom-0 w-2 cursor-col-resize"
-              style={{ right: `calc(-2px)` }}
-              onMouseDown={startResize}
-            />
-          )}
+          {/* Side panels are no longer resizable — toggle only. */}
         </div>
 
         {/* Floating expand button when sidebar is collapsed */}
