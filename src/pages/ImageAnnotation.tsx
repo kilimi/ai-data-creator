@@ -5179,7 +5179,7 @@ const ImageAnnotation = () => {
         {/* Main Canvas Area */}
         <div className="flex-1 flex flex-col min-w-0">
           <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
-            <ResizablePanel defaultSize={imageCollections.length > 1 ? 70 : 100} minSize={30}>
+            <ResizablePanel defaultSize={imageCollections.length > 1 && companionPanelOpen ? 70 : 100} minSize={30}>
               <div
                 ref={containerRef}
                 className="h-full relative overflow-hidden bg-muted/30 min-w-0"
