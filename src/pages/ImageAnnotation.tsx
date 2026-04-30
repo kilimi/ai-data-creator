@@ -5376,7 +5376,7 @@ const ImageAnnotation = () => {
             {/* First-run onboarding overlay: shown over the canvas while no
                 classes have been defined. Walks the user through the
                 two-step flow: add classes → then annotate. */}
-            {classes.length === 0 && (
+            {classes.length === 0 && !onboardingDismissed && (
               <div className="absolute inset-0 z-20 pointer-events-none flex items-center justify-center">
                 {/* Soft scrim so the message reads cleanly over any image */}
                 <div className="absolute inset-0 bg-background/60 backdrop-blur-[2px] animate-fade-in" />
