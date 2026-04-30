@@ -860,6 +860,17 @@ export function CalibrationDialog({
                 <Pencil className="h-3.5 w-3.5" />
                 Test
               </TabsTrigger>
+              <span className="self-center inline-flex">
+                <HelpHint
+                  popover
+                  ariaLabel="What do these tabs do?"
+                >
+                  <div className="space-y-1.5">
+                    <p><span className="font-semibold text-foreground">Calibrate</span> — mark matching points on the two images and compute the alignment.</p>
+                    <p><span className="font-semibold text-foreground">Test</span> — draw freehand strokes on either side and watch them project onto the other to verify accuracy.</p>
+                  </div>
+                </HelpHint>
+              </span>
             </TabsList>
 
             {/* â”€â”€ Calibrate tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
