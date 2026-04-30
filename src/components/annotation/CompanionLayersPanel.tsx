@@ -533,6 +533,7 @@ export function CompanionLayersPanel({
                 </Button>
               </div>
             )}
+          </PopoverContent>
           </Popover>
           {onClose && (
             <Button
