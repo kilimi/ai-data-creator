@@ -5025,18 +5025,46 @@ const ImageAnnotation = () => {
 
           {/* Classes */}
           <div className="flex-1 flex flex-col min-h-0">
-            <div className="p-4 border-b border-border">
+            <div className="p-4 border-b border-border relative">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium">Classes</h3>
-                <Button 
-                  size="sm" 
-                  variant="outline"
-                  aria-label="Add new class"
-                  onClick={() => setIsAddingClass(true)}
-                >
-                  <Plus className="w-4 h-4" />
-                </Button>
+                <div className="relative">
+                  {/* Pulsing ring around the + button while no classes exist
+                      to draw the user's eye to the first action. */}
+                  {classes.length === 0 && !isAddingClass && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-0 rounded-md ring-2 ring-primary/60 animate-ping"
+                    />
+                  )}
+                  <Button
+                    size="sm"
+                    variant={classes.length === 0 ? 'default' : 'outline'}
+                    aria-label="Add new class"
+                    onClick={() => setIsAddingClass(true)}
+                    className="relative"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
+
+              {/* First-run hint inline in the Classes panel */}
+              {classes.length === 0 && !isAddingClass && (
+                <div className="mb-3 rounded-md border border-primary/30 bg-primary/5 p-2.5 text-xs text-foreground animate-fade-in">
+                  <div className="flex items-start gap-2">
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-semibold">
+                      1
+                    </span>
+                    <div className="leading-snug">
+                      <div className="font-medium">Add a class to get started</div>
+                      <div className="text-muted-foreground mt-0.5">
+                        Click the <span className="inline-flex items-center"><Plus className="inline h-3 w-3" /></span> button to define your first label, then start annotating.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {isAddingClass && (
                 <div className="flex gap-2 mb-3">
