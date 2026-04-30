@@ -798,6 +798,14 @@ export function CalibrationDialog({
                   Tip: 8–15 well-spread point pairs from a few image pairs give
                   the best results.
                 </p>
+                <a
+                  href="/help/collection-calibration"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                >
+                  Read the full guide →
+                </a>
               </div>
             </HelpHint>
           </DialogTitle>
@@ -807,7 +815,7 @@ export function CalibrationDialog({
           {/* Collection selectors â€” shared between tabs */}
           <div className="flex flex-wrap gap-4 items-end shrink-0">
             <div className="space-y-1 min-w-40">
-              <Label className="text-xs flex items-center">Source collection (left)<HelpHint text="The reference image set shown on the LEFT. Annotations from here will be projected onto the target." /></Label>
+              <Label className="text-xs">Source collection (left)</Label>
               <Select value={srcCollId} onValueChange={setSrcCollId}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select..." /></SelectTrigger>
                 <SelectContent>
@@ -818,7 +826,7 @@ export function CalibrationDialog({
               </Select>
             </div>
             <div className="space-y-1 min-w-40">
-              <Label className="text-xs flex items-center">Target collection (right)<HelpHint text="The image set shown on the RIGHT. Source annotations will be aligned to this collection." /></Label>
+              <Label className="text-xs">Target collection (right)</Label>
               <Select value={tgtCollId} onValueChange={setTgtCollId}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select..." /></SelectTrigger>
                 <SelectContent>
@@ -860,17 +868,6 @@ export function CalibrationDialog({
                 <Pencil className="h-3.5 w-3.5" />
                 Test
               </TabsTrigger>
-              <span className="self-center inline-flex">
-                <HelpHint
-                  popover
-                  ariaLabel="What do these tabs do?"
-                >
-                  <div className="space-y-1.5">
-                    <p><span className="font-semibold text-foreground">Calibrate</span> — mark matching points on the two images and compute the alignment.</p>
-                    <p><span className="font-semibold text-foreground">Test</span> — draw freehand strokes on either side and watch them project onto the other to verify accuracy.</p>
-                  </div>
-                </HelpHint>
-              </span>
             </TabsList>
 
             {/* â”€â”€ Calibrate tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
@@ -1069,17 +1066,7 @@ export function CalibrationDialog({
           </Tabs>
         </div>
 
-        <DialogFooter className="gap-2 shrink-0 pt-2 items-center">
-          <HelpHint
-            popover
-            className="mr-auto"
-            ariaLabel="Calibration actions help"
-          >
-            <div className="space-y-1.5">
-              <p><span className="font-semibold text-foreground">Compute Calibration</span> — fits the alignment from your point pairs and shows a live hover projection. You can keep adding pairs and recompute.</p>
-              <p><span className="font-semibold text-foreground">Save Calibration</span> — stores the alignment with the dataset so future annotations can be projected between the two collections.</p>
-            </div>
-          </HelpHint>
+        <DialogFooter className="gap-2 shrink-0 pt-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
             variant="secondary"

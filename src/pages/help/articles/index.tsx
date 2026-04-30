@@ -1,0 +1,34 @@
+/**
+ * Help article registry.
+ *
+ * To add a new article:
+ *   1. Create a component under `src/pages/help/articles/`.
+ *   2. Append an entry to `helpArticles` below.
+ *   3. It will automatically appear in the sidebar and be routable at
+ *      `/help/<slug>`.
+ */
+import { LucideIcon, Target, BookOpen } from "lucide-react";
+import { CollectionCalibrationArticle } from "./CollectionCalibrationArticle";
+
+export interface HelpArticle {
+  slug: string;
+  title: string;
+  description: string;
+  category: string;
+  icon: LucideIcon;
+  Component: React.ComponentType;
+}
+
+export const helpArticles: HelpArticle[] = [
+  {
+    slug: "collection-calibration",
+    title: "Collection Calibration",
+    description: "Align two image collections (e.g. RGB ↔ Thermal) using point pairs.",
+    category: "Datasets",
+    icon: Target,
+    Component: CollectionCalibrationArticle,
+  },
+  // Add more articles here — they will show up in the sidebar automatically.
+];
+
+export const placeholderIcon = BookOpen;
