@@ -2760,6 +2760,13 @@ const ImageAnnotation = () => {
 
     // Draw image with proper scaling and offset
     if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
+      // Apply display adjustments (brightness/contrast/saturation) only to
+      // the bitmap, not to overlays drawn afterwards.
+      const needsFilter =
+        imageBrightness !== 100 || imageContrast !== 100 || imageSaturation !== 100;
+      if (needsFilter) {
+        ctx.filter = `brightness(${imageBrightness}%) contrast(${imageContrast}%) saturate(${imageSaturation}%)`;
+      }
       ctx.drawImage(
         imageRef.current,
         imageOffset.x,
@@ -2767,6 +2774,9 @@ const ImageAnnotation = () => {
         imageRef.current.naturalWidth * imageScale,
         imageRef.current.naturalHeight * imageScale
       );
+      if (needsFilter) {
+        ctx.filter = 'none';
+      }
     }
 
     // Annotation coordinate transform: when calibration is active, annotation points are in
