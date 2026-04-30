@@ -291,21 +291,48 @@ function CompanionCanvas({
 function CompanionHeader({
   name,
   count,
+  hasCalibration,
+  calibrationOn,
+  onToggleCalibration,
 }: {
   name: string;
   count?: number;
+  hasCalibration?: boolean;
+  calibrationOn?: boolean;
+  onToggleCalibration?: () => void;
 }) {
   return (
-    <div className="px-3 py-2 border-b bg-card/60 flex items-center justify-between">
+    <div className="px-3 py-2 border-b bg-card/60 flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 min-w-0">
         <div className="w-2 h-2 rounded-full bg-primary shrink-0" />
         <span className="text-sm font-semibold truncate">{name}</span>
       </div>
-      {typeof count === "number" && (
-        <span className="text-[10px] text-muted-foreground">
-          {count} {count === 1 ? "image" : "images"}
-        </span>
-      )}
+      <div className="flex items-center gap-2 shrink-0">
+        {hasCalibration && onToggleCalibration && (
+          <button
+            type="button"
+            onClick={onToggleCalibration}
+            className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
+              calibrationOn
+                ? "text-primary bg-primary/10 border-primary/30 hover:bg-primary/20"
+                : "text-muted-foreground bg-muted border-border hover:bg-muted/80"
+            }`}
+            title={
+              calibrationOn
+                ? "Calibration is ON — click to disable"
+                : "Calibration is OFF — click to enable"
+            }
+          >
+            <Crosshair className="h-3 w-3" />
+            {calibrationOn ? "Calibration ON" : "Calibration OFF"}
+          </button>
+        )}
+        {typeof count === "number" && (
+          <span className="text-[10px] text-muted-foreground">
+            {count} {count === 1 ? "image" : "images"}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
