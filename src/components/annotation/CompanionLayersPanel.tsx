@@ -446,15 +446,16 @@ export function CompanionLayersPanel({
           <Layers className="h-4 w-4 text-primary" />
           Companion layers
         </div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5">
-              {selected.length === 0
-                ? "Show layers"
-                : `${selected.length} shown`}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </Button>
-          </PopoverTrigger>
+        <div className="flex items-center gap-1.5">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                {selected.length === 0
+                  ? "Show layers"
+                  : `${selected.length} shown`}
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
           <PopoverContent align="end" className="w-72 p-2">
             <div className="text-xs font-medium text-muted-foreground px-2 pb-1">
               Choose primary & companion layers
