@@ -220,6 +220,7 @@ function CompanionCanvas({
         onToggleCalibration={
           hasCalibration ? () => setCalibrationOn((v) => !v) : undefined
         }
+        onMakePrimary={onMakePrimary}
       />
 
       {/* Resolution-mismatch warning — shown whenever dims differ AND calibration
