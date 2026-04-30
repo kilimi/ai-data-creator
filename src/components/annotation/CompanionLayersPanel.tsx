@@ -513,32 +513,23 @@ export function CompanionLayersPanel({
                       isPrimary ? "bg-muted/40" : "hover:bg-accent"
                     }`}
                   >
-                    {isPrimary ? (
-                      // Primary collection is always shown on the main canvas;
-                      // its checkbox is locked on and labelled accordingly.
-                      <>
-                        <Checkbox checked disabled />
-                        <span className="text-sm flex-1 truncate">
-                          {c.name}
-                        </span>
+                    <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggle(id)}
+                      />
+                      <span className="text-sm flex-1 truncate">{c.name}</span>
+                      {isPrimary && (
                         <span className="text-[10px] text-primary font-medium px-1">
                           primary
                         </span>
-                      </>
-                    ) : (
-                      <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => toggle(id)}
-                        />
-                        <span className="text-sm flex-1 truncate">{c.name}</span>
-                        {checked ? (
-                          <Eye className="h-3.5 w-3.5 text-primary" />
-                        ) : (
-                          <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
-                        )}
-                      </label>
-                    )}
+                      )}
+                      {checked ? (
+                        <Eye className="h-3.5 w-3.5 text-primary" />
+                      ) : (
+                        <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
+                      )}
+                    </label>
                   </div>
                 );
               })}
