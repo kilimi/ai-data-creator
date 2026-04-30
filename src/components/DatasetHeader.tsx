@@ -29,6 +29,7 @@ interface DatasetHeaderProps {
 
 export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, onDuplicateDataset, projectId, imageCount = 0 }: DatasetHeaderProps) {
   const [isAutoAnnotateOpen, setIsAutoAnnotateOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-3">
