@@ -429,6 +429,17 @@ export function TabbedImagesContent({
                       <span className="text-sm text-muted-foreground px-2.5 py-1 bg-muted/50 rounded-full border border-border/40">
                         {collection.images.length} {collection.images.length === 1 ? 'image' : 'images'}
                       </span>
+                      {calibrationPartners.get(String(collection.id))?.length ? (
+                        <button
+                          type="button"
+                          onClick={onOpenCalibrationDialog}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors"
+                          title="Open Collection Calibration"
+                        >
+                          <Target className="w-3 h-3" />
+                          Calibrated with {calibrationPartners.get(String(collection.id))!.join(", ")}
+                        </button>
+                      ) : null}
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
