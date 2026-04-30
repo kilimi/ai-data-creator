@@ -109,6 +109,29 @@ function imagesFor(datasetId: number) {
   return cols.flatMap((c) => c.images);
 }
 
+function datasetWithPreview(dataset: any) {
+  const firstImage = imagesFor(dataset.id)[0];
+  return {
+    ...dataset,
+    thumbnailUrl: firstImage?.thumbnailUrl,
+    logo_url: firstImage?.thumbnailUrl,
+  };
+}
+
+function projectById(projectId: number) {
+  const project = store.projects.find((p) => p.id === projectId);
+  if (!project) return null;
+  const datasets = store.datasets
+    .filter((d) => d.project_id === projectId)
+    .map(datasetWithPreview);
+  return {
+    ...project,
+    datasets,
+    dataset_count: datasets.length,
+    dataset_groups: project.dataset_groups || [],
+  };
+}
+
 const store = {
   nextProjectId: 4,
   nextDatasetId: 7,
@@ -266,17 +289,42 @@ const routes: Route[] = [
   {
     method: "GET",
     pattern: /^\/projects\/?($|\?)/,
-    handler: () => store.projects,
+    handler: () => store.projects.map((project) => projectById(project.id)),
+  },
+  // Project datasets page endpoints
+  {
+    method: "GET",
+    pattern: /^\/projects\/(\d+)\/datasets\/list/,
+    handler: (_u, _i, m) => ({
+      success: true,
+      data: store.datasets
+        .filter((d) => d.project_id === Number(m[1]))
+        .map(datasetWithPreview),
+    }),
+  },
+  {
+    method: "GET",
+    pattern: /^\/projects\/(\d+)\/dataset-groups\/?($|\?)/,
+    handler: (_u, _i, m) => ({
+      success: true,
+      data: (projectById(Number(m[1]))?.dataset_groups || []),
+    }),
+  },
+  {
+    method: "GET",
+    pattern: /^\/projects\/(\d+)\/summary\/?($|\?)/,
+    handler: (_u, _i, m) => projectById(Number(m[1])),
+  },
+  {
+    method: "GET",
+    pattern: /^\/projects\/(\d+)\/sidebar-counts\/?($|\?)/,
+    handler: () => ({ models: 2, evaluations: 1, exports: 0, pipelines: 0 }),
   },
   // Project by id
   {
     method: "GET",
     pattern: /^\/projects\/(\d+)\/?($|\?)/,
-    handler: (_u, _i, m) => {
-      const id = Number(m[1]);
-      const p = store.projects.find((x) => x.id === id);
-      return p || null;
-    },
+    handler: (_u, _i, m) => projectById(Number(m[1])),
   },
   // Create project
   {
@@ -304,7 +352,7 @@ const routes: Route[] = [
   {
     method: "GET",
     pattern: /^\/datasets\/?($|\?)/,
-    handler: () => store.datasets,
+    handler: () => store.datasets.map(datasetWithPreview),
   },
   // Dataset by id
   {
@@ -312,7 +360,8 @@ const routes: Route[] = [
     pattern: /^\/datasets\/(\d+)\/?($|\?)/,
     handler: (_u, _i, m) => {
       const id = Number(m[1]);
-      return store.datasets.find((d) => d.id === id) || null;
+      const dataset = store.datasets.find((d) => d.id === id);
+      return dataset ? datasetWithPreview(dataset) : null;
     },
   },
   // Dataset images / collections / annotations
