@@ -382,6 +382,16 @@ const ImageAnnotation = () => {
   // Class management
   const [newClassName, setNewClassName] = useState('');
   const [isAddingClass, setIsAddingClass] = useState(false);
+  // Dismiss state for the "Let's get you annotating" first-run overlay.
+  // Persisted per-dataset in sessionStorage so it stays hidden while the
+  // user browses, but returns in a fresh session.
+  const [onboardingDismissed, setOnboardingDismissed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('annotation-onboarding-dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [editingClassName, setEditingClassName] = useState('');
   // Auto-segment preview state
