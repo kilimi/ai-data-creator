@@ -69,6 +69,7 @@ export function ResizableDatasetLayout({
   onRemoveImageTab,
   onReorderImageTabs,
   onOpenCalibrationDialog,
+  calibrations = [],
   paginatedImages,
   totalPages,
   annotations = [],
