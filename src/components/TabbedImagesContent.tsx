@@ -106,6 +106,22 @@ export function TabbedImagesContent({
   // Images used for modal navigation: only images in the active collection
   const activeCollectionImages = activeCollection ? activeCollection.images : allImages;
 
+  // Map: collection id → list of partner collection names it's calibrated with.
+  const calibrationPartners = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const nameOf = (cid: string) =>
+      imageCollections.find(c => String(c.id) === cid)?.name || `#${cid}`;
+    for (const cal of calibrations) {
+      const a = String(cal.source_collection_id);
+      const b = String(cal.target_collection_id);
+      if (!map.has(a)) map.set(a, []);
+      if (!map.has(b)) map.set(b, []);
+      map.get(a)!.push(nameOf(b));
+      map.get(b)!.push(nameOf(a));
+    }
+    return map;
+  }, [calibrations, imageCollections]);
+
   // Filter paginated images by search query
   const getFilteredPaginatedImages = (collection: ImageCollection) => {
     if (!imageSearchQuery.trim()) return collection.paginatedImages;
