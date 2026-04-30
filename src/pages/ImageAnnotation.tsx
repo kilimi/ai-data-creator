@@ -62,6 +62,7 @@ import {
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
 import { CompanionLayersPanel } from '@/components/annotation/CompanionLayersPanel';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
@@ -5164,13 +5165,15 @@ const ImageAnnotation = () => {
           </div>
         )}
 
+
         {/* Main Canvas Area */}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 flex min-h-0">
-          <div 
-            ref={containerRef}
-            className="flex-1 relative overflow-hidden bg-muted/30 min-w-0"
-          >
+          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+            <ResizablePanel defaultSize={imageCollections.length > 1 ? 70 : 100} minSize={30}>
+              <div
+                ref={containerRef}
+                className="h-full relative overflow-hidden bg-muted/30 min-w-0"
+              >
             {/**
              * The canvas must render the bitmap for the *selected display layer*. When a
              * display layer is active we only show `displayImage` (which was looked up in
@@ -5400,21 +5403,27 @@ const ImageAnnotation = () => {
                   )}
                 </div>
               )}
-            </div>
-          </div>
-            {/* Companion layers — read-only side-by-side view of the same image
-                from other collections, with shared annotations overlaid. */}
-            <CompanionLayersPanel
-              collections={imageCollections}
-              primaryCollectionId={mainLayer || displayLayer}
-              primaryImage={displayImage || currentImage}
-              imageName={currentImageName}
-              annotations={annotations}
-              calibrations={calibrations}
-              projectId={projectId ?? null}
-            />
-          </div>
-
+              </div>
+            </ResizablePanel>
+            {imageCollections.length > 1 && (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel defaultSize={30} minSize={15}>
+                  {/* Companion layers — read-only side-by-side view of the same image
+                      from other collections, with shared annotations overlaid. */}
+                  <CompanionLayersPanel
+                    collections={imageCollections}
+                    primaryCollectionId={mainLayer || displayLayer}
+                    primaryImage={displayImage || currentImage}
+                    imageName={currentImageName}
+                    annotations={annotations}
+                    calibrations={calibrations}
+                    projectId={projectId ?? null}
+                  />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
           {/* Status Bar */}
           <AnnotationStatusBar
             cursorPosition={cursorImagePosition}
