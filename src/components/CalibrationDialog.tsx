@@ -789,7 +789,7 @@ export function CalibrationDialog({
             <div className="space-y-1 min-w-40">
               <Label className="text-xs">Source collection (left)</Label>
               <Select value={srcCollId} onValueChange={setSrcCollId}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selectâ€¦" /></SelectTrigger>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select..." /></SelectTrigger>
                 <SelectContent>
                   {collectionsWithImages.map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
@@ -800,7 +800,7 @@ export function CalibrationDialog({
             <div className="space-y-1 min-w-40">
               <Label className="text-xs">Target collection (right)</Label>
               <Select value={tgtCollId} onValueChange={setTgtCollId}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selectâ€¦" /></SelectTrigger>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select..." /></SelectTrigger>
                 <SelectContent>
                   {collectionsWithImages.filter((c) => String(c.id) !== srcCollId).map((c) => (
                     <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
