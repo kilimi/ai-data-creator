@@ -25,6 +25,8 @@ import {
   Eye,
   EyeOff,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Crosshair,
   X,
 } from "lucide-react";
