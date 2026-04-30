@@ -61,6 +61,7 @@ import {
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
+import { CompanionLayersPanel } from '@/components/annotation/CompanionLayersPanel';
 import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
