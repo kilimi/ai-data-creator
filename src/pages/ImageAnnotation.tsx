@@ -5333,9 +5333,8 @@ const ImageAnnotation = () => {
             />
           </div>
 
-          {/* Image Navigation moved out of ResizablePanel — see below */}
-          {false && (
-          <div className="p-3 bg-card border-t border-border">
+          {/* Image Navigation (moved below — spans full main area) */}
+          <div style={{display:'none'}}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <Button
