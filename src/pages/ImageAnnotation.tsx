@@ -3281,22 +3281,19 @@ const ImageAnnotation = () => {
     }
   };
 
-    // Recompute canvas and image scale when panels change or image changes so aspect ratio stays correct
+    // Recompute canvas when a side panel is toggled. We want the image to
+    // grow into freed space (or shrink to fit when a panel reopens), so we
+    // explicitly refit instead of preserving the current zoom.
     useEffect(() => {
-      // If image already loaded, recompute layout to maintain aspect ratio when side panels are hidden/resized
-      // Also check that image is complete to avoid resizing before image is loaded
       if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
-        // Preserve zoom when just resizing panels
-        preserveZoomRef.current = true;
-        
-        // small timeout to let layout settle after panel resize/collapse
+        preserveZoomRef.current = false;
         const t = setTimeout(() => {
-          handleImageResize();
+          handleImageResize(true);
         }, 50);
         return () => clearTimeout(t);
       }
       return undefined;
-      }, [leftCollapsed, rightCollapsed, leftWidth, rightWidth]);
+      }, [leftCollapsed, rightCollapsed]);
 
     // Listen for explicit resize-end notifications from resize handlers and toggles
     useEffect(() => {
@@ -4917,7 +4914,10 @@ const ImageAnnotation = () => {
           <div className="p-2 border-b border-border flex items-center justify-between">
             <div className="text-sm font-medium">Tools</div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={() => setLeftCollapsed(v => !v)}>
+              <Button size="sm" variant="ghost" onClick={() => {
+                setLeftCollapsed(v => !v);
+                setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
+              }}>
                 {leftCollapsed ? <ChevronRight className="w-4 h-4"/> : <ChevronLeft className="w-4 h-4"/>}
               </Button>
             </div>
@@ -5303,14 +5303,7 @@ const ImageAnnotation = () => {
               </div>
             </ScrollArea>
           </div>
-          {/* Resize handle at the right edge of left sidebar */}
-          {!leftCollapsed && (
-            <div
-              className="absolute left-[--dummy] top-0 bottom-0 w-2 cursor-col-resize"
-              style={{ left: `calc(${leftWidth}px - 2px)` }}
-              onMouseDown={startResizeLeft}
-            />
-          )}
+          {/* Side panels are no longer resizable — toggle only. */}
         </div>
 
         {/* Floating expand button when left sidebar is collapsed */}
@@ -5795,7 +5788,10 @@ const ImageAnnotation = () => {
                 <div className="w-2 h-2 bg-primary rounded-full"></div>
                 <h2 className="text-sm font-semibold">Annotations Panel</h2>
               </div>
-              <Button size="sm" variant="ghost" onClick={() => setRightCollapsed(v => !v)}>
+              <Button size="sm" variant="ghost" onClick={() => {
+                setRightCollapsed(v => !v);
+                setTimeout(() => { try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {} }, 20);
+              }}>
                 {rightCollapsed ? <ChevronLeft className="w-4 h-4"/> : <ChevronRight className="w-4 h-4"/>}
               </Button>
             </div>
@@ -6139,14 +6135,7 @@ const ImageAnnotation = () => {
             </Tabs>
           </div>
 
-          {/* Divider / handle for resizing */}
-          {!rightCollapsed && (
-            <div
-              className="absolute right-[--dummy] top-0 bottom-0 w-2 cursor-col-resize"
-              style={{ right: `calc(-2px)` }}
-              onMouseDown={startResize}
-            />
-          )}
+          {/* Side panels are no longer resizable — toggle only. */}
         </div>
 
         {/* Floating expand button when sidebar is collapsed */}
