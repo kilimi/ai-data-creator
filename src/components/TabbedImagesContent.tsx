@@ -38,6 +38,9 @@ interface TabbedImagesContentProps {
   onReorderTabs: (orderedTabIds: string[]) => Promise<void>;
   onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
   onOpenCalibrationDialog?: () => void;
+  /** Existing calibrations between collection pairs — used to badge
+   *  collection tabs that participate in a calibration. */
+  calibrations?: Array<{ source_collection_id: number | string; target_collection_id: number | string }>;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
   selectedImageIndex: number | null;
