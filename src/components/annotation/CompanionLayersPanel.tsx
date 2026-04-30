@@ -394,6 +394,10 @@ export function CompanionLayersPanel({
   projectId,
   onSetPrimary,
   onClose,
+  onPrev,
+  onNext,
+  canPrev,
+  canNext,
 }: CompanionLayersPanelProps) {
   // Available companions = every collection except the one being annotated
   const available = useMemo(
