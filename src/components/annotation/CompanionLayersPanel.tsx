@@ -26,6 +26,7 @@ import {
   EyeOff,
   ChevronDown,
   Crosshair,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -372,6 +373,8 @@ interface CompanionLayersPanelProps {
   projectId?: string | null;
   /** Promote a collection to primary (drives the main canvas). */
   onSetPrimary?: (collectionId: string) => void;
+  /** Called when the user clicks the X to close the entire companion panel. */
+  onClose?: () => void;
 }
 
 const STORAGE_KEY = "annotation-companion-selected-v1";
@@ -385,6 +388,7 @@ export function CompanionLayersPanel({
   calibrations,
   projectId,
   onSetPrimary,
+  onClose,
 }: CompanionLayersPanelProps) {
   // Available companions = every collection except the one being annotated
   const available = useMemo(
@@ -442,15 +446,16 @@ export function CompanionLayersPanel({
           <Layers className="h-4 w-4 text-primary" />
           Companion layers
         </div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-8 gap-1.5">
-              {selected.length === 0
-                ? "Show layers"
-                : `${selected.length} shown`}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </Button>
-          </PopoverTrigger>
+        <div className="flex items-center gap-1.5">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                {selected.length === 0
+                  ? "Show layers"
+                  : `${selected.length} shown`}
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
           <PopoverContent align="end" className="w-72 p-2">
             <div className="text-xs font-medium text-muted-foreground px-2 pb-1">
               Choose primary & companion layers
@@ -529,7 +534,20 @@ export function CompanionLayersPanel({
               </div>
             )}
           </PopoverContent>
-        </Popover>
+          </Popover>
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0"
+              onClick={onClose}
+              title="Close companion panel"
+              aria-label="Close companion panel"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Body */}

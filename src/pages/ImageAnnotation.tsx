@@ -280,6 +280,16 @@ const ImageAnnotation = () => {
   const [allImageNames, setAllImageNames] = useState<string[]>([]);
   const [currentLayerImageNames, setCurrentLayerImageNames] = useState<string[]>([]);
   const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
+  // Whether the side-by-side companion layer panel is shown. Persisted per session
+  // so reopening the editor restores the user's preference.
+  const [companionPanelOpen, setCompanionPanelOpen] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('annotation-companion-panel-open') !== 'false';
+    } catch { return true; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem('annotation-companion-panel-open', String(companionPanelOpen)); } catch {}
+  }, [companionPanelOpen]);
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const layerSwitchCounterRef = useRef(0); // Increment on every layer switch to force image remount
   const [isLoading, setIsLoading] = useState(true);
@@ -5168,8 +5178,8 @@ const ImageAnnotation = () => {
 
         {/* Main Canvas Area */}
         <div className="flex-1 flex flex-col min-w-0">
-          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
-            <ResizablePanel defaultSize={imageCollections.length > 1 ? 70 : 100} minSize={30}>
+          <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0 relative">
+            <ResizablePanel defaultSize={imageCollections.length > 1 && companionPanelOpen ? 70 : 100} minSize={30}>
               <div
                 ref={containerRef}
                 className="h-full relative overflow-hidden bg-muted/30 min-w-0"
@@ -5407,7 +5417,7 @@ const ImageAnnotation = () => {
             </div>
               </div>
             </ResizablePanel>
-            {imageCollections.length > 1 && (
+            {imageCollections.length > 1 && companionPanelOpen && (
               <>
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={30} minSize={15}>
@@ -5422,9 +5432,20 @@ const ImageAnnotation = () => {
                     calibrations={calibrations}
                     projectId={projectId ?? null}
                     onSetPrimary={handleLayerChange}
+                    onClose={() => setCompanionPanelOpen(false)}
                   />
                 </ResizablePanel>
               </>
+            )}
+            {imageCollections.length > 1 && !companionPanelOpen && (
+              <button
+                onClick={() => setCompanionPanelOpen(true)}
+                className="absolute top-2 right-2 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
+                title="Show companion layers"
+              >
+                <Layers className="h-3.5 w-3.5 text-primary" />
+                Companion layers
+              </button>
             )}
           </ResizablePanelGroup>
           {/* Status Bar */}
