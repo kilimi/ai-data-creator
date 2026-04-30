@@ -297,6 +297,7 @@ function CompanionHeader({
   hasCalibration,
   calibrationOn,
   onToggleCalibration,
+  onMakePrimary,
 }: {
   name: string;
   count?: number;
