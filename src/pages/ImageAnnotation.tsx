@@ -61,6 +61,7 @@ import {
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
+import { CompanionLayersPanel } from '@/components/annotation/CompanionLayersPanel';
 import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
@@ -5164,10 +5165,11 @@ const ImageAnnotation = () => {
         )}
 
         {/* Main Canvas Area */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex min-h-0">
           <div 
             ref={containerRef}
-            className="flex-1 relative overflow-hidden bg-muted/30"
+            className="flex-1 relative overflow-hidden bg-muted/30 min-w-0"
           >
             {/**
              * The canvas must render the bitmap for the *selected display layer*. When a
@@ -5399,6 +5401,18 @@ const ImageAnnotation = () => {
                 </div>
               )}
             </div>
+          </div>
+            {/* Companion layers — read-only side-by-side view of the same image
+                from other collections, with shared annotations overlaid. */}
+            <CompanionLayersPanel
+              collections={imageCollections}
+              primaryCollectionId={mainLayer || displayLayer}
+              primaryImage={displayImage || currentImage}
+              imageName={currentImageName}
+              annotations={annotations}
+              calibrations={calibrations}
+              projectId={projectId ?? null}
+            />
           </div>
 
           {/* Status Bar */}
