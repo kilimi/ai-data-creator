@@ -355,13 +355,12 @@ export function TabbedImagesContent({
                       pairs to project annotations from one collection onto the
                       other.
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => navigate("/help/collection-calibration")}
+                    <Link
+                      to="/help/collection-calibration"
                       className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
                     >
                       Read the full guide →
-                    </button>
+                    </Link>
                   </div>
                 </HelpHint>
               </div>
