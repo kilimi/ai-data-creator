@@ -58,13 +58,12 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
                   Auto-Annotate, and launch annotation sessions. Use the
                   Actions menu to edit, duplicate or delete the dataset.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => navigate("/help/dataset-view")}
+                <Link
+                  to="/help/dataset-view"
                   className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
                 >
                   Read the full guide →
-                </button>
+                </Link>
               </div>
             </HelpHint>
           )}
