@@ -1069,20 +1069,30 @@ export function CalibrationDialog({
           </Tabs>
         </div>
 
-        <DialogFooter className="gap-2 shrink-0 pt-2">
+        <DialogFooter className="gap-2 shrink-0 pt-2 items-center">
+          <HelpHint
+            popover
+            className="mr-auto"
+            ariaLabel="Calibration actions help"
+          >
+            <div className="space-y-1.5">
+              <p><span className="font-semibold text-foreground">Compute Calibration</span> — fits the alignment from your point pairs and shows a live hover projection. You can keep adding pairs and recompute.</p>
+              <p><span className="font-semibold text-foreground">Save Calibration</span> — stores the alignment with the dataset so future annotations can be projected between the two collections.</p>
+            </div>
+          </HelpHint>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
             variant="secondary"
             onClick={handleComputeCalibration}
             disabled={isComputing || confirmedPairs.length < 4 || !srcCollId || !tgtCollId}
           >
-            {isComputing ? "Computingâ€¦" : "Compute Calibration"}
+            {isComputing ? "Computing..." : "Compute Calibration"}
           </Button>
           <Button
             onClick={handleSave}
             disabled={isSaving || confirmedPairs.length < 4 || !srcCollId || !tgtCollId}
           >
-            {isSaving ? "Savingâ€¦" : "Save Calibration"}
+            {isSaving ? "Saving..." : "Save Calibration"}
           </Button>
         </DialogFooter>
       </DialogContent>
