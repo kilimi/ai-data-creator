@@ -567,6 +567,11 @@ export function CompanionLayersPanel({
                     primaryDims={primaryDims}
                     hasCalibration={calibrated}
                     projectId={projectId}
+                    onMakePrimary={
+                      onSetPrimary
+                        ? () => onSetPrimary(String(c.id))
+                        : undefined
+                    }
                   />
                 </ResizablePanel>
               </React.Fragment>
