@@ -4899,6 +4899,18 @@ const ImageAnnotation = () => {
                 Polygon
               </Button>
               <Button
+                variant={activeTool === 'pencil' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (!ensureClassForDrawingTools()) return;
+                  setActiveTool('pencil');
+                }}
+                title="Free-hand draw — click and drag to outline a shape"
+              >
+                <Pencil className="w-4 h-4 mr-1" />
+                Pencil
+              </Button>
+              <Button
                 variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => {
