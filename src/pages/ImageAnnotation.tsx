@@ -5411,7 +5411,7 @@ const ImageAnnotation = () => {
               imageName={currentImageName}
               annotations={annotations}
               calibrations={calibrations}
-              projectId={effectiveProjectId}
+              projectId={projectId ?? null}
             />
           </div>
 
