@@ -296,6 +296,11 @@ const ImageAnnotation = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
+  // Display adjustments applied to the primary canvas image (does NOT
+  // alter the source pixels — only the on-screen rendering via ctx.filter).
+  const [imageBrightness, setImageBrightness] = useState(100); // %
+  const [imageContrast, setImageContrast] = useState(100);     // %
+  const [imageSaturation, setImageSaturation] = useState(100); // %
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
