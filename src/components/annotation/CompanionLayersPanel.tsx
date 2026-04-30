@@ -372,6 +372,8 @@ interface CompanionLayersPanelProps {
   projectId?: string | null;
   /** Promote a collection to primary (drives the main canvas). */
   onSetPrimary?: (collectionId: string) => void;
+  /** Called when the user clicks the X to close the entire companion panel. */
+  onClose?: () => void;
 }
 
 const STORAGE_KEY = "annotation-companion-selected-v1";
