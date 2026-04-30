@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical, Crosshair } from "lucide-react";
+import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical, Layers2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
