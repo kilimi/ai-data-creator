@@ -71,6 +71,7 @@ export function TabbedImagesContent({
   onReorderTabs,
   onOpenVideoUploadDialog,
   onOpenCalibrationDialog,
+  calibrations = [],
   annotations = [],
   annotationFiles = [],
   selectedImageIndex,
