@@ -5360,49 +5360,50 @@ const ImageAnnotation = () => {
                 >
                   Next
                 </Button>
+
+                {/* Display Layer Selector — placed next to Next so the layer
+                    being navigated is obvious. Only renders when collections exist. */}
+                {imageCollections.length > 0 && (
+                  <div className="flex items-center gap-2 pl-2 ml-2 border-l border-border">
+                    <span className="text-sm text-muted-foreground">Layer:</span>
+                    <Select value={displayLayer} onValueChange={handleLayerChange}>
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {imageCollections.map(collection => (
+                          <SelectItem key={collection.id} value={String(collection.id)}>
+                            {collection.name} ({collection.images.length} images)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {/* Warning for missing image */}
+                    {!displayImage && currentImageName && displayLayer && (
+                      <span className="text-xs text-yellow-500">
+                        Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
+                      </span>
+                    )}
+
+                    {/* Calibration enable/disable toggle */}
+                    {calibrations.length > 0 && displayLayer && (
+                      <button
+                        onClick={() => setCalibrationEnabled(prev => !prev)}
+                        className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
+                          calibrationIsActive && calibrationEnabled
+                            ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
+                            : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
+                        }`}
+                        title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
+                      >
+                        <Crosshair className="h-3 w-3" />
+                        {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-
-              {/* Display Layer Selector — always show when at least one collection exists so the current layer is visible and can be switched */}
-              {imageCollections.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Layer:</span>
-                  <Select value={displayLayer} onValueChange={handleLayerChange}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {imageCollections.map(collection => (
-                        <SelectItem key={collection.id} value={String(collection.id)}>
-                          {collection.name} ({collection.images.length} images)
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  {/* Warning for missing image */}
-                  {!displayImage && currentImageName && displayLayer && (
-                    <span className="text-xs text-yellow-500">
-                      Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
-                    </span>
-                  )}
-
-                  {/* Calibration enable/disable toggle — shown whenever a calibration exists between collections */}
-                  {calibrations.length > 0 && displayLayer && (
-                    <button
-                      onClick={() => setCalibrationEnabled(prev => !prev)}
-                      className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
-                        calibrationIsActive && calibrationEnabled
-                          ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
-                          : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
-                      }`}
-                      title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
-                    >
-                      <Crosshair className="h-3 w-3" />
-                      {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
-                    </button>
-                  )}
-                </div>
-              )}
             </div>
               </div>
             </ResizablePanel>
