@@ -33,6 +33,7 @@ import { useApi } from "@/hooks/use-api";
 import { ImageCollection } from "@/types";
 import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight, Target } from "lucide-react";
 import { HelpHint } from "@/components/ui/help-hint";
+import { useNavigate } from "react-router-dom";
 
 // ---------------------------------------------------------------------------
 // Stepper — shows the 5-step calibration flow with the current step highlighted
@@ -528,6 +529,7 @@ export function CalibrationDialog({
 }: CalibrationDialogProps) {
   const { api } = useApi();
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<"calibrate" | "test">("calibrate");
 
@@ -800,9 +802,12 @@ export function CalibrationDialog({
                 </p>
                 <a
                   href="/help/collection-calibration"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onOpenChange(false);
+                    navigate("/help/collection-calibration");
+                  }}
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium cursor-pointer"
                 >
                   Read the full guide →
                 </a>
