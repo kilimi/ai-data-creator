@@ -5417,7 +5417,7 @@ const ImageAnnotation = () => {
             </div>
               </div>
             </ResizablePanel>
-            {imageCollections.length > 1 && (
+            {imageCollections.length > 1 && companionPanelOpen && (
               <>
                 <ResizableHandle withHandle />
                 <ResizablePanel defaultSize={30} minSize={15}>
@@ -5432,9 +5432,20 @@ const ImageAnnotation = () => {
                     calibrations={calibrations}
                     projectId={projectId ?? null}
                     onSetPrimary={handleLayerChange}
+                    onClose={() => setCompanionPanelOpen(false)}
                   />
                 </ResizablePanel>
               </>
+            )}
+            {imageCollections.length > 1 && !companionPanelOpen && (
+              <button
+                onClick={() => setCompanionPanelOpen(true)}
+                className="absolute top-2 right-2 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
+                title="Show companion layers"
+              >
+                <Layers className="h-3.5 w-3.5 text-primary" />
+                Companion layers
+              </button>
             )}
           </ResizablePanelGroup>
           {/* Status Bar */}
