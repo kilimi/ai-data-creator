@@ -202,10 +202,20 @@ function CompanionCanvas({
 
   return (
     <div className="h-full flex flex-col bg-muted/20">
-      <CompanionHeader name={collection.name} count={collection.images.length} />
+      <CompanionHeader
+        name={collection.name}
+        count={collection.images.length}
+        hasCalibration={hasCalibration}
+        calibrationOn={calibrationOn}
+        onToggleCalibration={
+          hasCalibration ? () => setCalibrationOn((v) => !v) : undefined
+        }
+      />
 
-      {/* Resolution-mismatch warning */}
-      {dimsMismatch && !hasCalibration && (
+      {/* Resolution-mismatch warning — shown whenever dims differ AND calibration
+          is not actively compensating (either no calibration available, or user
+          toggled it off via the header chip). */}
+      {dimsMismatch && !(hasCalibration && calibrationOn) && (
         <div className="m-2 p-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 text-xs flex items-start gap-2">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-yellow-600 dark:text-yellow-400 shrink-0" />
           <div className="space-y-1">
@@ -214,24 +224,24 @@ function CompanionCanvas({
             </div>
             <div className="text-muted-foreground">
               {primaryDims!.width}×{primaryDims!.height} vs {imgDims!.width}×
-              {imgDims!.height}. Annotations are drawn in pixel space — to align
-              them across collections you need to{" "}
-              <Link
-                to="/help/collection-calibration"
-                className="text-primary hover:underline font-medium"
-              >
-                calibrate
-              </Link>{" "}
-              the two collections.
+              {imgDims!.height}.{" "}
+              {hasCalibration ? (
+                <>Calibration is available — turn it on in the header to align overlays.</>
+              ) : (
+                <>
+                  Annotations are drawn in pixel space — to align them across
+                  collections you need to{" "}
+                  <Link
+                    to="/help/collection-calibration"
+                    className="text-primary hover:underline font-medium"
+                  >
+                    calibrate
+                  </Link>{" "}
+                  the two collections.
+                </>
+              )}
             </div>
           </div>
-        </div>
-      )}
-      {dimsMismatch && hasCalibration && (
-        <div className="m-2 p-2 rounded-md border border-blue-500/40 bg-blue-500/10 text-xs text-muted-foreground">
-          Different resolution — calibration is saved for this pair, but
-          companion overlays here are drawn in raw pixel space (read-only
-          preview). Open the dataset's Calibration tool to project annotations.
         </div>
       )}
 
