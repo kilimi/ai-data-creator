@@ -196,7 +196,7 @@ function CompanionCanvas({
   if (!corresponding) {
     return (
       <div className="h-full flex flex-col">
-        <CompanionHeader name={collection.name} />
+        <CompanionHeader name={collection.name} onMakePrimary={onMakePrimary} />
         <div className="flex-1 flex items-center justify-center text-center text-sm text-muted-foreground p-4">
           <div>
             <div className="text-2xl mb-2">📷</div>
