@@ -31,7 +31,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { ImageCollection } from "@/types";
-import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight } from "lucide-react";
+import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight, Layers2 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Stepper — shows the 5-step calibration flow with the current step highlighted
