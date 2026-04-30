@@ -2447,6 +2447,21 @@ const ImageAnnotation = () => {
     const imageCoords = screenToImageCoords(e.clientX, e.clientY);
     setCursorImagePosition(imageCoords);
 
+    // Free-hand pencil: while the mouse is down and pencil is the active
+    // tool, sample points along the cursor path. We thin the stream so we
+    // don't store an excessive number of nearly-identical points.
+    if (isDrawing && activeTool === 'pencil') {
+      setCurrentPath(prev => {
+        if (prev.length === 0) return [imageCoords];
+        const last = prev[prev.length - 1];
+        const dx = imageCoords.x - last.x;
+        const dy = imageCoords.y - last.y;
+        if (dx * dx + dy * dy < 4) return prev; // ~2px min spacing in image coords
+        return [...prev, imageCoords];
+      });
+      return;
+    }
+
     // Handle panning (middle button or space+drag)
     if (isPanningRef.current) {
       const deltaX = e.clientX - panStartRef.current.x;
