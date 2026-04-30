@@ -519,11 +519,6 @@ export function CompanionLayersPanel({
                         onCheckedChange={() => toggle(id)}
                       />
                       <span className="text-sm flex-1 truncate">{c.name}</span>
-                      {isPrimary && (
-                        <span className="text-[10px] text-primary font-medium px-1">
-                          primary
-                        </span>
-                      )}
                       {checked ? (
                         <Eye className="h-3.5 w-3.5 text-primary" />
                       ) : (
