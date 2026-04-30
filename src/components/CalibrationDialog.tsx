@@ -843,7 +843,7 @@ export function CalibrationDialog({
             </TabsList>
 
             {/* â”€â”€ Calibrate tab â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-            <TabsContent value="calibrate" className="flex-1 min-h-0 flex flex-col gap-3 mt-0">
+            <TabsContent value="calibrate" className="relative flex-1 min-h-0 flex flex-col gap-3 mt-0">
               {/* Validation metrics */}
               {validation && (
                 <div className="border rounded-md p-3 bg-muted/50 text-xs space-y-1.5 shrink-0">
@@ -975,31 +975,26 @@ export function CalibrationDialog({
                 )}
               </div>
 
-              {/* Compact pairs summary — coordinates are shown directly on the markers */}
+              {/* Floating "Clear all points" button — appears only when points exist; no text overlay */}
               {confirmedPairs.length > 0 && (
-                <div className="flex items-center justify-between rounded-md border bg-card px-2 py-1 shrink-0">
-                  <span className="text-xs font-medium">
-                    {confirmedPairs.length} pair{confirmedPairs.length !== 1 ? "s" : ""} confirmed
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-xs text-destructive hover:text-destructive"
-                    onClick={() => {
-                      setConfirmedPairs([]);
-                      setPendingSrc(null);
-                      setPendingTgt(null);
-                      setValidation(null);
-                      setComputedH(null);
-                      setComputedHInv(null);
-                      setProbeSrc(null);
-                      setProbeTgt(null);
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1" />
-                    Clear all
-                  </Button>
-                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Clear all points"
+                  className="absolute right-3 bottom-3 z-10 h-8 w-8 rounded-full bg-card/90 border text-destructive hover:text-destructive hover:bg-card shadow-sm"
+                  onClick={() => {
+                    setConfirmedPairs([]);
+                    setPendingSrc(null);
+                    setPendingTgt(null);
+                    setValidation(null);
+                    setComputedH(null);
+                    setComputedHInv(null);
+                    setProbeSrc(null);
+                    setProbeTgt(null);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
               )}
             </TabsContent>
 
