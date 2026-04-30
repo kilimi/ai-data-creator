@@ -103,6 +103,7 @@ interface CompanionCanvasProps {
   primaryDims: { width: number; height: number } | null;
   hasCalibration: boolean;
   projectId?: string | null;
+  onMakePrimary?: () => void;
 }
 
 function CompanionCanvas({
