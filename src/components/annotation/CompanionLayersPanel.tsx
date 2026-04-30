@@ -436,30 +436,58 @@ export function CompanionLayersPanel({
               <ChevronDown className="h-3.5 w-3.5" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-64 p-2">
-            <div className="text-xs font-medium text-muted-foreground px-2 pb-2">
-              Show alongside the main canvas
+          <PopoverContent align="end" className="w-72 p-2">
+            <div className="text-xs font-medium text-muted-foreground px-2 pb-1">
+              Choose primary & companion layers
+            </div>
+            <div className="text-[10px] text-muted-foreground px-2 pb-2">
+              Radio = primary (editable). Checkbox = shown alongside.
             </div>
             <div className="space-y-1 max-h-72 overflow-auto">
-              {available.map((c) => {
+              {collections.map((c) => {
                 const id = String(c.id);
+                const isPrimary = String(primaryCollectionId) === id;
                 const checked = selectedIds.includes(id);
                 return (
-                  <label
+                  <div
                     key={id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer"
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent"
                   >
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() => toggle(id)}
+                    <input
+                      type="radio"
+                      name="primary-layer"
+                      checked={isPrimary}
+                      disabled={!onSetPrimary}
+                      onChange={() => onSetPrimary?.(id)}
+                      className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                      title="Set as primary (editable) layer"
                     />
-                    <span className="text-sm flex-1 truncate">{c.name}</span>
-                    {checked ? (
-                      <Eye className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-sm flex-1 truncate">
+                      {c.name}
+                      {isPrimary && (
+                        <span className="ml-1.5 text-[10px] text-primary font-medium">
+                          primary
+                        </span>
+                      )}
+                    </span>
+                    {isPrimary ? (
+                      <span className="text-[10px] text-muted-foreground/60 px-1">
+                        editing
+                      </span>
                     ) : (
-                      <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={() => toggle(id)}
+                        />
+                        {checked ? (
+                          <Eye className="h-3.5 w-3.5 text-primary" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
+                        )}
+                      </label>
                     )}
-                  </label>
+                  </div>
                 );
               })}
             </div>
