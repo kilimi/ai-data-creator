@@ -802,9 +802,12 @@ export function CalibrationDialog({
                 </p>
                 <a
                   href="/help/collection-calibration"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onOpenChange(false);
+                    navigate("/help/collection-calibration");
+                  }}
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium cursor-pointer"
                 >
                   Read the full guide →
                 </a>
