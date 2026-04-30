@@ -20,6 +20,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Slider } from '@/components/ui/slider';
 import {
   Dialog,
   DialogContent,
@@ -296,6 +297,11 @@ const ImageAnnotation = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
+  // Display adjustments applied to the primary canvas image (does NOT
+  // alter the source pixels — only the on-screen rendering via ctx.filter).
+  const [imageBrightness, setImageBrightness] = useState(100); // %
+  const [imageContrast, setImageContrast] = useState(100);     // %
+  const [imageSaturation, setImageSaturation] = useState(100); // %
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
@@ -2755,6 +2761,13 @@ const ImageAnnotation = () => {
 
     // Draw image with proper scaling and offset
     if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
+      // Apply display adjustments (brightness/contrast/saturation) only to
+      // the bitmap, not to overlays drawn afterwards.
+      const needsFilter =
+        imageBrightness !== 100 || imageContrast !== 100 || imageSaturation !== 100;
+      if (needsFilter) {
+        ctx.filter = `brightness(${imageBrightness}%) contrast(${imageContrast}%) saturate(${imageSaturation}%)`;
+      }
       ctx.drawImage(
         imageRef.current,
         imageOffset.x,
@@ -2762,6 +2775,9 @@ const ImageAnnotation = () => {
         imageRef.current.naturalWidth * imageScale,
         imageRef.current.naturalHeight * imageScale
       );
+      if (needsFilter) {
+        ctx.filter = 'none';
+      }
     }
 
     // Annotation coordinate transform: when calibration is active, annotation points are in
@@ -2928,7 +2944,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, annotationLayerId, imageCollections]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
@@ -5518,6 +5534,89 @@ const ImageAnnotation = () => {
               </div>
             )}
 
+            {/* Image adjustments — brightness/contrast/saturation. Display-only,
+                does not modify the source image or saved annotations. */}
+            <div className="absolute top-2 right-2 z-20">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
+                    title="Adjust brightness, contrast, saturation"
+                  >
+                    <Sun className="h-3.5 w-3.5 text-primary" />
+                    Adjust
+                    {(imageBrightness !== 100 || imageContrast !== 100 || imageSaturation !== 100) && (
+                      <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-primary" />
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-72 p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium text-muted-foreground">Image adjustments</div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-xs px-2"
+                      onClick={() => {
+                        setImageBrightness(100);
+                        setImageContrast(100);
+                        setImageSaturation(100);
+                      }}
+                      disabled={imageBrightness === 100 && imageContrast === 100 && imageSaturation === 100}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>Brightness</span>
+                      <span className="text-muted-foreground tabular-nums">{imageBrightness}%</span>
+                    </div>
+                    <Slider
+                      value={[imageBrightness]}
+                      min={0}
+                      max={200}
+                      step={1}
+                      onValueChange={(v) => setImageBrightness(v[0])}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>Contrast</span>
+                      <span className="text-muted-foreground tabular-nums">{imageContrast}%</span>
+                    </div>
+                    <Slider
+                      value={[imageContrast]}
+                      min={0}
+                      max={200}
+                      step={1}
+                      onValueChange={(v) => setImageContrast(v[0])}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span>Saturation</span>
+                      <span className="text-muted-foreground tabular-nums">{imageSaturation}%</span>
+                    </div>
+                    <Slider
+                      value={[imageSaturation]}
+                      min={0}
+                      max={200}
+                      step={1}
+                      onValueChange={(v) => setImageSaturation(v[0])}
+                    />
+                  </div>
+
+                  <div className="text-[10px] text-muted-foreground">
+                    Display-only — does not change the original image or annotations.
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+
             {/* Minimap */}
             <AnnotationMinimap
               imageRef={imageRef}
@@ -5555,7 +5654,7 @@ const ImageAnnotation = () => {
             {imageCollections.length > 1 && !companionPanelOpen && (
               <button
                 onClick={() => setCompanionPanelOpen(true)}
-                className="absolute top-2 right-2 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
+                className="absolute top-2 right-24 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
                 title="Show image collections"
               >
                 <Layers className="h-3.5 w-3.5 text-primary" />
