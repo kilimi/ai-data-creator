@@ -5654,7 +5654,7 @@ const ImageAnnotation = () => {
             {imageCollections.length > 1 && !companionPanelOpen && (
               <button
                 onClick={() => setCompanionPanelOpen(true)}
-                className="absolute top-2 right-2 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
+                className="absolute top-2 right-24 z-20 inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 border border-border bg-card/90 backdrop-blur-sm hover:bg-accent shadow-sm"
                 title="Show image collections"
               >
                 <Layers className="h-3.5 w-3.5 text-primary" />
