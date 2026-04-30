@@ -31,7 +31,74 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { ImageCollection } from "@/types";
-import { Crosshair, RefreshCw, Trash2, Pencil } from "lucide-react";
+import { Crosshair, RefreshCw, Trash2, Pencil, Check, ChevronRight } from "lucide-react";
+
+// ---------------------------------------------------------------------------
+// Stepper — shows the 5-step calibration flow with the current step highlighted
+// ---------------------------------------------------------------------------
+
+interface StepDef {
+  id: number;
+  label: string;
+  hint: string;
+}
+
+function StepsBar({
+  steps,
+  current,
+  completed,
+}: {
+  steps: StepDef[];
+  current: number;
+  completed: Set<number>;
+}) {
+  const active = steps.find((s) => s.id === current);
+  return (
+    <div className="shrink-0 rounded-md border bg-card">
+      <div className="flex items-stretch overflow-x-auto">
+        {steps.map((step, i) => {
+          const isDone = completed.has(step.id);
+          const isCurrent = step.id === current;
+          return (
+            <React.Fragment key={step.id}>
+              <div
+                className={`flex items-center gap-2 px-3 py-2 text-xs whitespace-nowrap ${
+                  isCurrent
+                    ? "text-foreground font-semibold"
+                    : isDone
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground/60"
+                }`}
+              >
+                <span
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                    isCurrent
+                      ? "bg-primary text-primary-foreground ring-2 ring-primary/30"
+                      : isDone
+                      ? "bg-primary/20 text-primary"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {isDone ? <Check className="h-3 w-3" /> : step.id}
+                </span>
+                <span>{step.label}</span>
+              </div>
+              {i < steps.length - 1 && (
+                <ChevronRight className="h-3 w-3 self-center text-muted-foreground/40" />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {active && (
+        <div className="border-t px-3 py-1.5 text-xs text-muted-foreground bg-muted/40">
+          <span className="font-medium text-foreground">Step {active.id}:</span>{" "}
+          {active.hint}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -756,30 +823,66 @@ export function CalibrationDialog({
                 </div>
               )}
 
-              {/* Instructions */}
-              <div className="text-xs text-muted-foreground rounded-md bg-muted px-3 py-1.5 leading-snug shrink-0 truncate">
-                {computedH ? (
-                  <span>
-                    <span className="font-semibold text-cyan-500">Hover either image</span> to project the matching point. Switch to <span className="font-semibold">Test</span> to draw strokes.
-                  </span>
-                ) : pendingSrc ? (
-                  <span><span className="font-semibold text-amber-500">Click on the target image</span> to match the point on the left.</span>
-                ) : pendingTgt ? (
-                  <span><span className="font-semibold text-amber-500">Click on the source image</span> to match the point on the right.</span>
-                ) : (
-                  <span>
-                    <span className="font-semibold text-primary">Click either image</span> to place a point, then click the matching spot on the other.
-                    {confirmedPairs.length > 0 && (
-                      <span className="ml-2 text-green-600 dark:text-green-400 font-medium">
-                        {confirmedPairs.length} pair{confirmedPairs.length !== 1 ? "s" : ""} confirmed.
-                      </span>
-                    )}
-                    {confirmedPairs.length > 0 && confirmedPairs.length < 4 && (
-                      <span className="ml-1 text-amber-500">(need ≥4)</span>
-                    )}
-                  </span>
-                )}
-              </div>
+              {/* Step-by-step guide */}
+              {(() => {
+                const hasCollections = !!canPickImages;
+                const hasImages = !!srcImageUrl;
+                const enoughPairs = confirmedPairs.length >= 4;
+                const hasComputed = !!computedH;
+
+                let current = 1;
+                if (activeTab === "test") current = 5;
+                else if (hasComputed) current = 5;
+                else if (enoughPairs) current = 4;
+                else if (hasImages) current = 3;
+                else if (hasCollections) current = 2;
+                else current = 1;
+
+                const completed = new Set<number>();
+                if (hasCollections) completed.add(1);
+                if (hasImages) completed.add(2);
+                if (enoughPairs) completed.add(3);
+                if (hasComputed) completed.add(4);
+
+                const pairsLabel = `${confirmedPairs.length}/4 pairs`;
+                const steps: StepDef[] = [
+                  {
+                    id: 1,
+                    label: "Pick collections",
+                    hint: "Choose two different collections above to align (e.g. RGB ↔ Thermal).",
+                  },
+                  {
+                    id: 2,
+                    label: "Load images",
+                    hint: 'Click "Load images" to pull a matching pair. Use "Next images" any time to swap them.',
+                  },
+                  {
+                    id: 3,
+                    label: `Mark point pairs (${pairsLabel})`,
+                    hint: pendingSrc
+                      ? "Now click the matching spot on the RIGHT image to complete the pair."
+                      : pendingTgt
+                      ? "Now click the matching spot on the LEFT image to complete the pair."
+                      : "Click a recognizable spot on one image, then the same spot on the other. Repeat for at least 4 pairs (8–15 from varied scenes is best).",
+                  },
+                  {
+                    id: 4,
+                    label: "Compute calibration",
+                    hint: enoughPairs
+                      ? 'Click "Compute" to fit the alignment. You can keep adding pairs to improve it.'
+                      : `Add ${Math.max(0, 4 - confirmedPairs.length)} more pair${4 - confirmedPairs.length === 1 ? "" : "s"} to enable Compute.`,
+                  },
+                  {
+                    id: 5,
+                    label: "Verify & save",
+                    hint: hasComputed
+                      ? "Hover either image to see the projected crosshair. Open the Test tab to draw strokes, then Save when satisfied."
+                      : "Once computed, hover the images to verify alignment and use the Test tab before saving.",
+                  },
+                ];
+
+                return <StepsBar steps={steps} current={current} completed={completed} />;
+              })()}
 
               {/* Image panels */}
               <div className="flex gap-3 flex-1 min-h-0">
