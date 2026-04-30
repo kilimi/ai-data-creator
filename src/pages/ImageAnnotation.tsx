@@ -3195,6 +3195,25 @@ const ImageAnnotation = () => {
     });
   };
 
+  // Schedule a redraw, retrying for a few frames in case the image bitmap
+  // isn't ready yet (e.g. mid-resize, after a layer swap, or right after a
+  // panel resize where layout is still settling). This prevents the canvas
+  // from staying blank when the inline redraw call hits the early-return
+  // guards inside redrawCanvas (image not complete / no naturalWidth yet).
+  const scheduleRedraw = useCallback((attemptsLeft = 6) => {
+    requestAnimationFrame(() => {
+      const img = imageRef.current;
+      const ready = !!(img && img.complete && img.naturalWidth > 0);
+      if (ready) {
+        redrawCanvas();
+        // One more pass next frame to cover any state that just settled.
+        requestAnimationFrame(() => redrawCanvas());
+        return;
+      }
+      if (attemptsLeft > 0) scheduleRedraw(attemptsLeft - 1);
+    });
+  }, [redrawCanvas]);
+
   const handleImageResize = (forceRefit = false) => {
     if (!imageRef.current || !canvasRef.current || !containerRef.current) return;
 
@@ -3205,6 +3224,13 @@ const ImageAnnotation = () => {
     // Set canvas size to match container
     const containerRect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
+
+    // Guard against zero-sized container during transient resize states.
+    // Drawing into a 0×0 canvas would just clear the visible bitmap and leave it blank.
+    if (containerRect.width <= 0 || containerRect.height <= 0) {
+      scheduleRedraw();
+      return;
+    }
     
     // Set canvas internal size with device pixel ratio
     canvas.width = containerRect.width * dpr;
@@ -3236,28 +3262,22 @@ const ImageAnnotation = () => {
         x: (containerRect.width - scaledWidth) / 2,
         y: (containerRect.height - scaledHeight) / 2
       });
-      // Don't call redrawCanvas here - let the useEffect handle it when state updates
-      // This prevents race conditions where we draw before imageScale/imageOffset are updated
-      // Clear layer switching state - useEffect will handle redraw when scale/offset update
+      // The scale/offset state changes will trigger the redraw useEffect, but
+      // we also schedule retried redraws as a safety net (image may not be
+      // 'complete' on the first frame after a layer switch).
       requestAnimationFrame(() => {
         setIsLayerSwitching(false);
-        // For layer switching, force one more redraw after overlay is gone to ensure visibility
-        if (isLayerSwitching) {
-          requestAnimationFrame(() => redrawCanvas());
-        }
       });
+      scheduleRedraw();
     } else {
-      // When preserving zoom, keep the current offset - don't recenter
-      // Just update the canvas size, redraw will happen via useEffect when needed
-      // Force a redraw since we're not changing scale/offset (so useEffect won't trigger)
+      // Preserve zoom: state isn't changing, so the redraw useEffect won't fire.
+      // We must trigger the redraw ourselves — and retry until the image is
+      // actually ready, otherwise the just-resized (and therefore cleared)
+      // canvas will stay blank until the user navigates Next/Back.
       requestAnimationFrame(() => {
-        redrawCanvas();
         setIsLayerSwitching(false);
-        // Force another redraw after overlay is removed to ensure image is visible
-        requestAnimationFrame(() => {
-          redrawCanvas();
-        });
       });
+      scheduleRedraw();
     }
   };
 
