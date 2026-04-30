@@ -325,12 +325,26 @@ export function TabbedImagesContent({
                       data-[state=inactive]:hover:bg-accent/50
                       flex items-center gap-2 min-w-0
                     "
+                    title={
+                      calibrationPartners.get(String(collection.id))?.length
+                        ? `Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`
+                        : undefined
+                    }
                   >
                     <FolderOpen className="w-4 h-4 flex-shrink-0" />
                     <span className="truncate">{collection.name}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-background/20">
                       {collection.images.length}
                     </span>
+                    {calibrationPartners.get(String(collection.id))?.length ? (
+                      <span
+                        className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 data-[state=active]:bg-emerald-500/25"
+                        title={`Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`}
+                      >
+                        <Target className="w-2.5 h-2.5" />
+                        {calibrationPartners.get(String(collection.id))!.length}
+                      </span>
+                    ) : null}
                   </TabsTrigger>
                   {imageCollections.length > 1 && (
                     <Button
