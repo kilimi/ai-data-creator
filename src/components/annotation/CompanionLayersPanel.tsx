@@ -401,11 +401,12 @@ export function CompanionLayersPanel({
   canPrev,
   canNext,
 }: CompanionLayersPanelProps) {
-  // Available companions = every collection except the one being annotated
+  // All collections are toggleable in the picker — including the primary,
+  // which the user may want to also see in the companion view alongside
+  // other layers (e.g. keep RGB visible while editing on RGB).
   const available = useMemo(
-    () =>
-      collections.filter((c) => String(c.id) !== String(primaryCollectionId)),
-    [collections, primaryCollectionId],
+    () => collections,
+    [collections],
   );
 
   // Persist selection across navigations within a session
