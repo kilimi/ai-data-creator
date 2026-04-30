@@ -455,7 +455,7 @@ export function CompanionLayersPanel({
       <div className="px-3 py-2 border-b flex items-center justify-between gap-2 bg-card/40">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Layers className="h-4 w-4 text-primary" />
-          Companion layers
+          Image collections
         </div>
         <div className="flex items-center gap-1.5">
           {(onPrev || onNext) && (
