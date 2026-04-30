@@ -303,6 +303,7 @@ function CompanionHeader({
   hasCalibration?: boolean;
   calibrationOn?: boolean;
   onToggleCalibration?: () => void;
+  onMakePrimary?: () => void;
 }) {
   return (
     <div className="px-3 py-2 border-b bg-card/60 flex items-center justify-between gap-2">
@@ -311,6 +312,16 @@ function CompanionHeader({
         <span className="text-sm font-semibold truncate">{name}</span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {onMakePrimary && (
+          <button
+            type="button"
+            onClick={onMakePrimary}
+            className="inline-flex items-center gap-1 text-[10px] font-medium rounded-md px-2 py-0.5 whitespace-nowrap border border-border text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            title="Make this the primary (editable) layer"
+          >
+            Make primary
+          </button>
+        )}
         {hasCalibration && onToggleCalibration && (
           <button
             type="button"
