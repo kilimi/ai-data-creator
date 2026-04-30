@@ -26,6 +26,7 @@ const ApiSettings = lazy(() =>
   import("./pages/ApiSettings").then((m) => ({ default: m.ApiSettings })),
 );
 const NotFound = lazy(() => import("./pages/NotFound"));
+const HelpPage = lazy(() => import("./pages/help/HelpPage"));
 
 function RouteFallback() {
   return (
@@ -87,6 +88,8 @@ const App = () => (
                 <Route path="/datasets/:id/annotate/classification" element={<Classification />} />
                 <Route path="/datasets/:id/annotate/segmentation" element={<ImageAnnotation />} />
                 <Route path="/settings" element={<ApiSettings />} />
+                <Route path="/help" element={<HelpPage />} />
+                <Route path="/help/:slug" element={<HelpPage />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
