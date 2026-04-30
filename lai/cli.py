@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import lai
+from lai.paths import _candidate_repo_root, bundle_data_dir, get_bundle_root
+from lai.uninstall import run_uninstall
+from lai.wizard import run_wizard
+
+
+def _guided_setup_done(root: Path) -> bool:
+    """True if .env exists and was written with LAI_DATA_DIR (scripts/install.sh)."""
+    p = root / ".env"
+    if not p.is_file():
+        return False
+    try:
+        for line in p.read_text().splitlines():
+            s = line.strip()
+            if s.startswith("#") or not s:
+                continue
+            if s.startswith("LAI_DATA_DIR=") and s.split("=", 1)[1].strip():
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _hint_guided_install(root: Path) -> None:
+    if _guided_setup_done(root):
+        return
+    print(
+        "Tip: guided setup not done yet. Run one of:\n"
+        "  lai install-gui   # browser wizard on http://127.0.0.1:...\n"
+        "  lai install       # terminal (incl. SAM 3 checkpoint prompt)\n"
+        "Then: lai up",
+        file=sys.stderr,
+    )
+
+
+def _run(cmd: list[str], cwd: Path) -> int:
+    print(f"+ cd {cwd} && {' '.join(cmd)}", file=sys.stderr)
+    p = subprocess.run(cmd, cwd=cwd)
+    return p.returncode
+
+
+def _find_bash() -> str | None:
+    for name in ("bash",):
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def cmd_doctor(_: argparse.Namespace) -> int:
+    root = get_bundle_root()
+    print(f"lai {lai.__version__}")
+    print(f"bundle root: {root}")
+    print(f"editable/source checkout: {_candidate_repo_root() is not None}")
+    cached = bundle_data_dir()
+    print(f"cache dir (PyPI installs): {cached}")
+    if shutil.which("docker"):
+        subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"], check=False)
+    else:
+        print("docker: not found", file=sys.stderr)
+    if shutil.which("docker"):
+        subprocess.run(["docker", "compose", "version"], check=False)
+    if _guided_setup_done(root):
+        print("guided setup: yes (.env has LAI_DATA_DIR)")
+    else:
+        print("guided setup: no — run: lai install")
+    env_p = root / ".env"
+    if env_p.is_file():
+        try:
+            raw = env_p.read_text()
+            if "COMPOSE_FILE=" not in raw and (root / "docker-compose.code-mount.yml").is_file():
+                print(
+                    "compose: .env has no COMPOSE_FILE — host backend bind may be off. "
+                    "Re-run: lai install   (sets docker-compose.code-mount.yml + LAI_REPO_ROOT)",
+                    file=sys.stderr,
+                )
+        except OSError:
+            pass
+    return 0
+
+
+def cmd_bundle_path(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    print(root)
+    return 0
+
+
+def cmd_install(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    bash = _find_bash()
+    if not bash:
+        print(
+            "bash is required to run scripts/install.sh. On Windows, use Git Bash or WSL.",
+            file=sys.stderr,
+        )
+        return 1
+    script = root / "scripts" / "install.sh"
+    if not script.is_file():
+        print(f"Missing {script}", file=sys.stderr)
+        return 1
+    cmd = [bash, str(script)]
+    if ns.yes:
+        cmd.append("--yes")
+    if getattr(ns, "bind_code", False):
+        cmd.append("--bind-code")
+    elif getattr(ns, "no_bind_code", False):
+        cmd.append("--no-bind-code")
+    return _run(cmd, root)
+
+
+def cmd_install_gui(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    return run_wizard(root, open_browser=not ns.no_browser)
+
+
+def cmd_up(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    _hint_guided_install(root)
+    extra = ns.docker_compose_args or []
+    cmd = ["docker", "compose", "up", "-d"]
+    if ns.build:
+        cmd.append("--build")
+    cmd.extend(extra)
+    return _run(cmd, root)
+
+
+def cmd_down(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    extra = ns.docker_compose_args or []
+    return _run(["docker", "compose", "down", *extra], root)
+
+
+def cmd_compose(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    args = ns.docker_compose_args or []
+    if not args:
+        print("Usage: lai compose -- <docker compose args>", file=sys.stderr)
+        return 2
+    return _run(["docker", "compose", *args], root)
+
+
+def cmd_sync(ns: argparse.Namespace) -> int:
+    """Re-download bundle (PyPI / cache layout only)."""
+    if _candidate_repo_root() is not None:
+        print("Using local git checkout; nothing to sync. git pull the repo instead.", file=sys.stderr)
+        return 0
+    get_bundle_root(force_download=True)
+    print(f"Bundle refreshed under {bundle_data_dir()}")
+    return 0
+
+
+def cmd_uninstall(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    return run_uninstall(
+        root,
+        assume_yes=ns.yes,
+        keep_env=ns.keep_env,
+        skip_compose_down=ns.no_down,
+        no_rmi=ns.no_rmi,
+        include_pip_bundle=ns.include_pip_bundle,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = argv if argv is not None else sys.argv[1:]
+    p = argparse.ArgumentParser(
+        prog="lai",
+        description="LAI stack via Docker Compose (needs Docker + Compose 2.24+). "
+        "pip install only adds this CLI — run `lai install` once for guided setup, then `lai up`.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Typical first run:\n  pip install -e .   # or: pip install lai\n  lai install-gui  # browser wizard (or: lai install in terminal)\n  lai up\n\nRemove data:  lai uninstall  (type DELETE to confirm)",
+    )
+    p.add_argument("--version", action="version", version=f"lai {lai.__version__}")
+
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("doctor", help="Show version, bundle path, and Docker info")
+    sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser("bundle-path", help="Print directory containing docker-compose.yml")
+    sp.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force re-download when using a cached PyPI bundle",
+    )
+    sp.set_defaults(func=cmd_bundle_path)
+
+    sp = sub.add_parser("install", help="Run guided install in the terminal (writes .env, checks Docker)")
+    sp.add_argument("-y", "--yes", action="store_true", help="Non-interactive (see scripts/install.sh)")
+    bind_group = sp.add_mutually_exclusive_group()
+    bind_group.add_argument(
+        "--bind-code",
+        action="store_true",
+        help="Mount host backend over /app (default; sets COMPOSE_FILE with docker-compose.code-mount.yml)",
+    )
+    bind_group.add_argument(
+        "--no-bind-code",
+        action="store_true",
+        help="Use only the backend image for /app (no host bind; pre-built images)",
+    )
+    sp.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Re-download app bundle before installing (cached PyPI layout only)",
+    )
+    sp.set_defaults(func=cmd_install)
+
+    sp = sub.add_parser(
+        "install-gui",
+        help="Browser wizard on 127.0.0.1: data folder, web port, pretrained Docker models, SAM 3; then lai up",
+    )
+    sp.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Only print the URL (for remote/headless)",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_install_gui)
+
+    sp = sub.add_parser("up", help="docker compose up -d (use --build to rebuild images)")
+    sp.add_argument(
+        "--build",
+        action="store_true",
+        help="Build images before starting containers (docker compose up --build)",
+    )
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose",
+    )
+    sp.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Re-download bundle first (cached PyPI layout only)",
+    )
+    sp.set_defaults(func=cmd_up)
+
+    sp = sub.add_parser("down", help="docker compose down")
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_down)
+
+    sp = sub.add_parser("compose", help="Run docker compose with arbitrary arguments")
+    sp.add_argument(
+        "docker_compose_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments after -- are passed to docker compose",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_compose)
+
+    sp = sub.add_parser(
+        "sync",
+        help="Re-download application files (only for pip installs without a local repo)",
+    )
+    sp.set_defaults(func=cmd_sync)
+
+    sp = sub.add_parser(
+        "uninstall",
+        help="Stop stack, docker compose down --rmi all, delete data dir + .env (type DELETE to confirm)",
+    )
+    sp.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip confirmation (for scripts)",
+    )
+    sp.add_argument(
+        "--keep-env",
+        action="store_true",
+        help="Keep .env (only remove data directory)",
+    )
+    sp.add_argument(
+        "--no-down",
+        action="store_true",
+        help="Do not run docker compose down",
+    )
+    sp.add_argument(
+        "--no-rmi",
+        action="store_true",
+        help="Run docker compose down without removing images (--rmi all is the default)",
+    )
+    sp.add_argument(
+        "--include-pip-bundle",
+        action="store_true",
+        help="Also remove ~/.local/share/lai/app (PyPI-downloaded copy of the repo)",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_uninstall)
+
+    ns = p.parse_args(argv)
+    if ns.cmd == "compose" and ns.docker_compose_args and ns.docker_compose_args[0] == "--":
+        ns.docker_compose_args = ns.docker_compose_args[1:]
+    return int(ns.func(ns))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

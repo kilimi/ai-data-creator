@@ -35,7 +35,12 @@ RUN pip install --default-timeout=1000 --retries 5 fiftyone>=0.23.0
 COPY . .
 
 # Pre-download Ultralytics foundation models (Auto-Annotate / Convert Model) so they are available offline
+# LAI_PRETRAINED_MODELS: all | minimal | comma list (see app.foundation_models)
+ARG LAI_PRETRAINED_MODELS=all
+ARG LAI_DEPTH_MODELS=all
 ENV HOME=/app
+ENV LAI_PRETRAINED_MODELS=${LAI_PRETRAINED_MODELS}
+ENV LAI_DEPTH_MODELS=${LAI_DEPTH_MODELS}
 RUN python scripts/download_ultralytics_models.py
 
 # Pre-download Depth-Anything models for depth estimation

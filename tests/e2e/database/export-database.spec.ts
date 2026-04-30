@@ -2,55 +2,58 @@ import { test, expect, Page } from '@playwright/test';
 import path from 'path';
 import { getDatabaseInfo } from '../../test-helpers';
 
+// Run tests serially to avoid parallel project creation conflicts
+test.describe.configure({ mode: 'serial' });
+
+// Helper to get project ID from API (newest match)
+async function getProjectId(page: Page, projectName: string): Promise<number> {
+  return page.evaluate(async (name) => {
+    const r = await fetch('http://localhost:9999/projects');
+    const projects = await r.json();
+    const sorted = [...projects].sort((a: any, b: any) => b.id - a.id);
+    const p = sorted.find((p: any) => p.name === name);
+    return p ? p.id : 0;
+  }, projectName);
+}
+
 // Helper function to create a test project
-async function createTestProject(page: Page, projectName: string) {
-  await page.goto('/');
-  await page.click('text=New Project');
-  await expect(page).toHaveURL('/projects/new');
-  
-  // Fill minimal project info
+async function createTestProject(page: Page, projectName: string): Promise<number> {
+  await page.goto('/projects/new');
   await page.fill('input#name', projectName);
-  
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for navigation back to home page
   await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Wait for the project to appear
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
+  return getProjectId(page, projectName);
 }
 
 // Helper function to create a test dataset
-async function createTestDataset(page: Page, projectName: string, datasetName: string) {
-  // Navigate to the project detail page
-  await page.goto('/');
+async function createTestDataset(page: Page, projectId: number, datasetName: string) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   
-  // Open Create dropdown and click Dataset
   const createButton = page.locator('button:has-text("Create")').first();
   await createButton.click();
   await page.waitForTimeout(500);
   await page.getByRole('menuitem', { name: 'Dataset', exact: true }).click();
   await page.waitForURL('**/projects/new/dataset', { timeout: 10000 });
   
-  // Fill dataset form
   await page.fill('input[placeholder*="Vehicle Detection"]', datasetName);
-  
-  // Submit
   await page.click('button[type="submit"]:has-text("Create Dataset")');
   await page.waitForLoadState('networkidle', { timeout: 20000 });
 }
 
 // Helper function to navigate to Settings page
 async function navigateToSettings(page: Page) {
-  await page.goto('/api-settings');
-  await expect(page).toHaveURL('/api-settings', { timeout: 10000 });
+  await page.goto('/settings');
+  await expect(page).toHaveURL('/settings', { timeout: 10000 });
   await page.waitForLoadState('networkidle');
+  // Navigate to the "Data Management" tab where Export Database button lives
+  const dataTab = page.getByRole('tab', { name: /data/i });
+  if (await dataTab.isVisible({ timeout: 3000 })) {
+    await dataTab.click();
+    await page.waitForTimeout(500);
+  }
 }
 
 // Helper function to open export dialog
@@ -70,14 +73,16 @@ test.describe('Database Export', () => {
   const testProjectName2 = `Export Test Project 2 ${timestamp}`;
   const testDatasetName1 = `Test Dataset 1 ${timestamp}`;
   const testDatasetName2 = `Test Dataset 2 ${timestamp}`;
+  let projectId1: number;
+  let projectId2: number;
   
   test.beforeEach(async ({ page }) => {
     // Create test projects and datasets
-    await createTestProject(page, testProjectName1);
-    await createTestDataset(page, testProjectName1, testDatasetName1);
+    projectId1 = await createTestProject(page, testProjectName1);
+    await createTestDataset(page, projectId1, testDatasetName1);
     
-    await createTestProject(page, testProjectName2);
-    await createTestDataset(page, testProjectName2, testDatasetName2);
+    projectId2 = await createTestProject(page, testProjectName2);
+    await createTestDataset(page, projectId2, testDatasetName2);
     
     // Navigate to settings
     await navigateToSettings(page);
@@ -192,8 +197,8 @@ test.describe('Database Export', () => {
     await page.waitForTimeout(300);
     
     // Verify rsync commands with absolute paths are visible
-    await expect(page.locator('text=/home/lulu/projects/ai-data-creator/backend/projects/')).toBeVisible();
-    await expect(page.locator('text=/home/lulu/projects/ai-data-creator/backend/data/')).toBeVisible();
+    await expect(page.locator('text=/path/to/lai/backend/projects/')).toBeVisible();
+    await expect(page.locator('text=/path/to/lai/backend/data/')).toBeVisible();
     
     // Click on Windows commands
     const windowsButton = page.locator('button:has-text("Windows PowerShell Commands")');
@@ -229,9 +234,9 @@ test.describe('Database Export', () => {
     // Wait for download to complete (progress UI may be too fast to observe)
     const download = await downloadPromise;
     
-    // Verify download filename (format: ai_data_creator_backup_YYYYMMDD_HHMMSS.json)
+    // Verify download filename (format: lai_backup_YYYYMMDD_HHMMSS.json)
     const filename = download.suggestedFilename();
-    expect(filename).toMatch(/ai_data_creator_backup_.*\.json/);
+    expect(filename).toMatch(/lai_backup_.*\.json/);
     
     // Verify file was downloaded (optional - check file size > 0)
     const downloadPath = await download.path();
@@ -262,7 +267,7 @@ test.describe('Database Export', () => {
     const download = await downloadPromise;
     
     // Verify the export completed successfully by checking the filename
-    expect(download.suggestedFilename()).toMatch(/ai_data_creator_backup_.*\.json$/);
+    expect(download.suggestedFilename()).toMatch(/lai_backup_.*\.json$/);
     
     // Verify file was downloaded
     const downloadPath = await download.path();
@@ -349,7 +354,7 @@ test.describe('Database Export', () => {
 test.describe('Database Export - Edge Cases', () => {
   test('should show appropriate message for large datasets', async ({ page }) => {
     // Navigate to settings
-    await page.goto('/api-settings');
+    await page.goto('/settings');
     await page.waitForLoadState('networkidle');
     
     // Get database info
@@ -376,7 +381,7 @@ test.describe('Database Export - Edge Cases', () => {
 
   test('should handle export with no data selected gracefully', async ({ page }) => {
     // Navigate to settings
-    await page.goto('/api-settings');
+    await page.goto('/settings');
     await page.waitForLoadState('networkidle');
     
     // Open export dialog

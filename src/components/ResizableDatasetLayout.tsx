@@ -26,12 +26,14 @@ interface ResizableDatasetLayoutProps {
   onPageChange: (page: number) => void;
   onTabPageChange?: (tabId: string, page: number) => void; // NEW: for tabbed pagination
   onOpenUploadDialog: () => void;
-  onOpenVideoUploadDialog?: () => void;
+  onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onTabDeleteImage?: (tabId: string, imageId: string) => Promise<void>; // NEW: for tabbed image deletion
   onTabUploadImages?: (tabId: string, files: File[]) => Promise<void>; // NEW: for tabbed image upload
   onAddImageTab?: (tabName: string) => void; // NEW: for adding new tabs
   onRemoveImageTab?: (tabId: string) => void; // NEW: for removing tabs
+  onReorderImageTabs?: (orderedTabIds: string[]) => Promise<void>; // NEW: for drag-and-drop tab ordering
+  onOpenCalibrationDialog?: () => void; // NEW: for calibration dialog
   paginatedImages: Image[];
   totalPages: number;
   annotations?: AnnotationSample[];
@@ -64,6 +66,8 @@ export function ResizableDatasetLayout({
   onTabUploadImages,
   onAddImageTab,
   onRemoveImageTab,
+  onReorderImageTabs,
+  onOpenCalibrationDialog,
   paginatedImages,
   totalPages,
   annotations = [],
@@ -95,7 +99,7 @@ export function ResizableDatasetLayout({
   const renderImagesSection = () => (
     <ScrollArea className="h-full w-full">
       <div className="p-6">
-        {useTabbedImages && imageCollections && imageCollections.length > 0 && imageCollections.some(c => c.images?.length > 0) ? (
+        {useTabbedImages && imageCollections && imageCollections.length > 0 ? (
           <TabbedImagesContent
             id={id}
             projectId={projectId}
@@ -109,7 +113,9 @@ export function ResizableDatasetLayout({
             onUploadImages={onTabUploadImages || (() => Promise.resolve())}
             onAddTab={onAddImageTab || (() => {})}
             onRemoveTab={onRemoveImageTab || (() => {})}
+            onReorderTabs={onReorderImageTabs || (async () => {})}
             onOpenVideoUploadDialog={onOpenVideoUploadDialog}
+            onOpenCalibrationDialog={onOpenCalibrationDialog}
             annotations={annotations}
             annotationFiles={annotationFiles}
             selectedImageIndex={selectedImageIndex}
@@ -154,6 +160,7 @@ export function ResizableDatasetLayout({
           showAllAnnotationsOnGrid
           // Pass the dataset images
           images={imagesMemo}
+          imageCollections={imageCollections}
           // Pass current page image IDs for smart annotation loading
           currentPageImageIds={paginatedImages.map(img => img.id)}
         />

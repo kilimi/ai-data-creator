@@ -268,8 +268,8 @@ export class ApiClient {
   // Projects endpoints
   
   async getProjects(): Promise<ApiResponse<Project[]>> {
-    // Omit base64 project logos on the list endpoint (can be huge; cards use placeholder).
-    return this.request<Project[]>('/projects/?include_images=false');
+    // Row logos are 200×200 JPEG data URLs from the API; needed for ProjectCard / dataset avatars.
+    return this.request<Project[]>('/projects/?include_images=true');
   }
 
   async getProject(
@@ -277,7 +277,8 @@ export class ApiClient {
     options?: { includeImages?: boolean; includeDatasetAnnotationFiles?: boolean },
   ): Promise<ApiResponse<Project>> {
     const params = new URLSearchParams();
-    if (options?.includeImages) {
+    // Default true: single-project views need logo_url / dataset thumbnails on cards.
+    if (options?.includeImages !== false) {
       params.set('include_images', 'true');
     }
     if (options?.includeDatasetAnnotationFiles) {
@@ -443,20 +444,134 @@ export class ApiClient {
     });
   }
 
-  /** Upload a video; backend extracts frames and adds them as dataset images. */
-  async uploadVideoExtract(
+  /**
+   * Upload a video; backend extracts frames and adds them as dataset images.
+   *
+   * Uses XMLHttpRequest (not fetch) so we can report upload progress for
+   * large video files. Browsers don't emit upload-progress events from the
+   * Fetch API, so for any request where we want a progress bar we have to
+   * fall back to XHR. `onProgress` is optional; when omitted this behaves
+   * like a normal request.
+   *
+   * `jobId`, when provided, is also sent as a form field so the backend can
+   * publish extraction progress keyed by this id; the caller can then poll
+   * `/video-extract/progress/{jobId}` to drive a server-side progress bar.
+   */
+  uploadVideoExtract(
     datasetId: string | number,
     videoFile: File,
-    params: { interval_seconds: number; max_frames: number }
+    params: { interval_seconds: number; max_frames: number; collection_id?: string | number; sequential_names?: boolean; resize_width?: number; resize_height?: number },
+    onProgress?: (progress: {
+      loaded: number;
+      total: number;
+      percent: number;
+      lengthComputable: boolean;
+    }) => void,
+    jobId?: string
   ): Promise<ApiResponse<{ uploaded: number; images: any[] }>> {
     const form = new FormData();
     form.append('video', videoFile);
     form.append('interval_seconds', String(params.interval_seconds));
     form.append('max_frames', String(params.max_frames));
-    return this.request<{ uploaded: number; images: any[] }>(`/datasets/${datasetId}/video-extract`, {
-      method: 'POST',
-      body: form
+    if (params.collection_id !== undefined && params.collection_id !== null && params.collection_id !== '') {
+      form.append('collection_id', String(params.collection_id));
+    }
+    if (params.sequential_names) {
+      form.append('sequential_names', 'true');
+    }
+    if (params.resize_width && params.resize_width > 0) {
+      form.append('resize_width', String(params.resize_width));
+    }
+    if (params.resize_height && params.resize_height > 0) {
+      form.append('resize_height', String(params.resize_height));
+    }
+    if (jobId) form.append('job_id', jobId);
+
+    const url = `${this.config.baseUrl}/datasets/${datasetId}/video-extract`;
+
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      // Match the fetch-based client: don't send cookies (avoids CORS issues
+      // with dev origins).
+      xhr.withCredentials = false;
+
+      if (onProgress) {
+        xhr.upload.onprogress = (event) => {
+          const total = event.total || videoFile.size || 0;
+          const loaded = event.loaded || 0;
+          const percent = total > 0 ? Math.min(100, (loaded / total) * 100) : 0;
+          onProgress({
+            loaded,
+            total,
+            percent,
+            lengthComputable: event.lengthComputable,
+          });
+        };
+        xhr.upload.onloadend = () => {
+          // Upload finished; server is now processing. Pin bar at 100 so UI
+          // can switch to an indeterminate "extracting..." state if desired.
+          onProgress({
+            loaded: videoFile.size,
+            total: videoFile.size,
+            percent: 100,
+            lengthComputable: true,
+          });
+        };
+      }
+
+      const finish = (resp: ApiResponse<{ uploaded: number; images: any[] }>) => {
+        resolve(resp);
+      };
+
+      xhr.onload = () => {
+        const status = xhr.status;
+        const raw = xhr.responseText || '';
+        let body: any = null;
+        try {
+          body = raw ? JSON.parse(raw) : null;
+        } catch {
+          body = null;
+        }
+        if (status >= 200 && status < 300) {
+          // Backend returns the payload directly; wrap in ApiResponse shape.
+          finish({ success: true, data: body as { uploaded: number; images: any[] } });
+        } else {
+          const message =
+            (body && (body.detail || body.message)) ||
+            `Upload failed with status ${status}`;
+          finish({ success: false, error: String(message) } as ApiResponse<any>);
+        }
+      };
+
+      xhr.onerror = () => {
+        finish({ success: false, error: 'Network error during upload' } as ApiResponse<any>);
+      };
+      xhr.onabort = () => {
+        finish({ success: false, error: 'Upload aborted' } as ApiResponse<any>);
+      };
+      xhr.ontimeout = () => {
+        finish({ success: false, error: 'Upload timed out' } as ApiResponse<any>);
+      };
+
+      xhr.send(form);
     });
+  }
+
+  /** Poll server-side progress for an in-flight video extraction job. */
+  async getVideoExtractProgress(
+    datasetId: string | number,
+    jobId: string
+  ): Promise<ApiResponse<{
+    job_id: string;
+    stage: 'unknown' | 'starting' | 'receiving' | 'extracting' | 'saving' | 'done' | 'error';
+    extracted: number;
+    total: number;
+    percent: number;
+    uploaded?: number;
+    error?: string;
+  }>> {
+    return this.request(`/datasets/${datasetId}/video-extract/progress/${encodeURIComponent(jobId)}`);
   }
 
   async getImages(datasetId: string | number): Promise<ApiResponse<Image[]>> {
@@ -658,6 +773,29 @@ export class ApiClient {
     const endpoint = `/datasets/${datasetId}/annotations/${annotationFileId}/data${queryString ? `?${queryString}` : ''}`;
     
     return this.request(endpoint);
+  }
+
+  async getImageAnnotations(
+    datasetId: string | number,
+    annotationFileId: string,
+    imageFilename: string
+  ): Promise<ApiResponse<{
+    annotations: Array<{
+      id: number;
+      className: string;
+      color: string;
+      segmentation: number[];
+      bbox: number[] | null;
+      area: number | null;
+      confidence: number | null;
+    }>;
+    imageWidth: number;
+    imageHeight: number;
+    imageFilename: string;
+    imageId: number;
+  }>> {
+    const qs = new URLSearchParams({ image_filename: imageFilename }).toString();
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/image-annotations?${qs}`);
   }
 
   async getAnnotationClasses(
@@ -961,12 +1099,18 @@ export class ApiClient {
 
   async viewAnnotationsInFiftyOne(
     datasetId: string | number,
-    annotationFileIds: string[]
+    annotationFileIds: string[],
+    options?: { imageCollectionId?: number }
   ): Promise<ApiResponse<{ message: string; url?: string }>> {
     return this.request(`/datasets/${datasetId}/annotations/view-fiftyone`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ annotation_file_ids: annotationFileIds })
+      body: JSON.stringify({
+        annotation_file_ids: annotationFileIds,
+        ...(options?.imageCollectionId != null && !Number.isNaN(options.imageCollectionId)
+          ? { image_collection_id: options.imageCollectionId }
+          : {}),
+      }),
     });
   }
 
@@ -1107,7 +1251,7 @@ export class ApiClient {
       // Get filename from response headers or use default
       const contentDisposition = response.headers.get('Content-Disposition');
       const filename = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1] || 
-                     `ai_data_creator_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.json`;
+                     `lai_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.json`;
       
       if (onProgress) onProgress(98);
 
@@ -1174,6 +1318,8 @@ export class ApiClient {
     success: boolean;
     task_id: number;
     message: string;
+    weights_download_expected?: boolean;
+    weights_download_notice?: string | null;
     task: {
       id: number;
       name: string;
@@ -1219,6 +1365,8 @@ export class ApiClient {
     success: boolean;
     task_id: number;
     message: string;
+    weights_download_expected?: boolean;
+    weights_download_notice?: string | null;
     task: {
       id: number;
       name: string;
@@ -1352,7 +1500,7 @@ export class ApiClient {
       // Get filename from response headers or use default
       const contentDisposition = response.headers.get('Content-Disposition');
       const filename = contentDisposition?.match(/filename="?([^"]+)"?/)?.[1] || 
-                     `ai_data_creator_full_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.zip`;
+                     `lai_full_backup_${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}.zip`;
       
       if (onProgress) onProgress(98);
 
@@ -1473,6 +1621,36 @@ export class ApiClient {
     memory_total_mb: number;
   }>> {
     return this.request('/system/gpu', { method: 'GET' });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Calibration endpoints
+  // ---------------------------------------------------------------------------
+
+  async getCalibrations(datasetId: string | number): Promise<ApiResponse<any[]>> {
+    return this.request<any[]>(`/datasets/${datasetId}/calibrations`);
+  }
+
+  async saveCalibration(
+    datasetId: string | number,
+    sourceCollectionId: number,
+    targetCollectionId: number,
+    pointPairs: Array<{ src_x: number; src_y: number; tgt_x: number; tgt_y: number }>,
+  ): Promise<ApiResponse<any>> {
+    return this.request(`/datasets/${datasetId}/calibrations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        source_collection_id: sourceCollectionId,
+        target_collection_id: targetCollectionId,
+        point_pairs: pointPairs,
+      }),
+    });
+  }
+
+  async deleteCalibration(datasetId: string | number, calibrationId: number): Promise<ApiResponse<any>> {
+    return this.request(`/datasets/${datasetId}/calibrations/${calibrationId}`, {
+      method: 'DELETE',
+    });
   }
 }
 

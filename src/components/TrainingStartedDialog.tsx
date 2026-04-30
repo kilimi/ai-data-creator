@@ -14,9 +14,9 @@ import {
   Database, 
   Timer, 
   Activity,
-  ExternalLink,
   Copy,
-  Check
+  Check,
+  Download
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +27,8 @@ interface TrainingStartedDialogProps {
   modelName: string;
   datasetsCount: number;
   epochs: number;
+  /** Shown when base weights are not in the local cache and will be fetched when training runs */
+  weightsDownloadNotice?: string;
 }
 
 export function TrainingStartedDialog({
@@ -36,6 +38,7 @@ export function TrainingStartedDialog({
   modelName,
   datasetsCount,
   epochs,
+  weightsDownloadNotice,
 }: TrainingStartedDialogProps) {
   const [showSuccess, setShowSuccess] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -122,6 +125,17 @@ export function TrainingStartedDialog({
               {taskId}
             </code>
           </div>
+
+          {weightsDownloadNotice ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left">
+              <div className="flex items-start gap-2">
+                <Download className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-950/90 dark:text-amber-100/90 leading-relaxed">
+                  {weightsDownloadNotice}
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           {/* Training Details Grid */}
           <div className="grid grid-cols-3 gap-3">

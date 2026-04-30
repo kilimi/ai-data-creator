@@ -16,7 +16,7 @@ interface ImagesGridProps {
   images: Image[];
   imageSize: number;
   onOpenUploadDialog: () => void;
-  onOpenVideoUploadDialog?: () => void;
+  onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onImageClick?: (image: Image) => void;
   annotations?: AnnotationSample[];
@@ -185,7 +185,7 @@ export function ImagesGrid({
             <ImageIcon className="w-4 h-4" />
             Upload Images
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={onOpenVideoUploadDialog} className="gap-2">
+          <DropdownMenuItem onClick={() => onOpenVideoUploadDialog?.()} className="gap-2">
             <Video className="w-4 h-4" />
             Upload Video
           </DropdownMenuItem>

@@ -711,7 +711,7 @@ export const ApiSettings = () => {
                                   <ul className="text-xs text-muted-foreground space-y-1 ml-4 list-disc">
                                     <li><code className="bg-muted px-1 py-0.5 rounded">/home/user/backups</code></li>
                                     <li><code className="bg-muted px-1 py-0.5 rounded">/mnt/external-drive/backups</code></li>
-                                    <li><code className="bg-muted px-1 py-0.5 rounded">/var/backups/ai-data-creator</code></li>
+                                    <li><code className="bg-muted px-1 py-0.5 rounded">/var/backups/lai</code></li>
                                   </ul>
                                 </div>
                               </div>

@@ -12,25 +12,13 @@ import os
 
 from ..database import get_db
 from ..models import Task, Dataset, AnnotationFile
+from ..foundation_models import pretrained_yolo_catalog
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Pre-trained YOLO models available in Ultralytics
-PRETRAINED_MODELS = {
-    # YOLO11 Detection
-    "yolo11n.pt": {"name": "YOLO11n", "type": "detection", "classes": 80},
-    "yolo11s.pt": {"name": "YOLO11s", "type": "detection", "classes": 80},
-    "yolo11m.pt": {"name": "YOLO11m", "type": "detection", "classes": 80},
-    "yolo11l.pt": {"name": "YOLO11l", "type": "detection", "classes": 80},
-    "yolo11x.pt": {"name": "YOLO11x", "type": "detection", "classes": 80},
-    # YOLO11 Segmentation
-    "yolo11n-seg.pt": {"name": "YOLO11n-seg", "type": "segmentation", "classes": 80},
-    "yolo11s-seg.pt": {"name": "YOLO11s-seg", "type": "segmentation", "classes": 80},
-    "yolo11m-seg.pt": {"name": "YOLO11m-seg", "type": "segmentation", "classes": 80},
-    "yolo11l-seg.pt": {"name": "YOLO11l-seg", "type": "segmentation", "classes": 80},
-    "yolo11x-seg.pt": {"name": "YOLO11x-seg", "type": "segmentation", "classes": 80},
-}
+# Pre-trained YOLO models (same matrix as Auto-Annotate / Docker pre-download)
+PRETRAINED_MODELS = pretrained_yolo_catalog()
 
 # COCO class names
 COCO_CLASSES = [

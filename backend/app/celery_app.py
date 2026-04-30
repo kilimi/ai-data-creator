@@ -10,7 +10,7 @@ REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
 
 # Create Celery app
 celery_app = Celery(
-    'ai_data_creator',
+    'lai',
     broker=REDIS_URL,
     backend=REDIS_URL,
     include=['app.tasks.training_tasks', 'app.tasks.yolo_training', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks', 'app.tasks.export_tasks', 'app.tasks.depth_estimation_tasks', 'app.tasks.auto_annotation_tasks']

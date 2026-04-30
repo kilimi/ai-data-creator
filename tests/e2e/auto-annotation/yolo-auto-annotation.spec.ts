@@ -54,8 +54,9 @@ test.describe('YOLO Auto-Annotation', () => {
         const startButton = page.locator('button:has-text("Start Annotation")');
         await expect(startButton).toBeEnabled({ timeout: 3000 });
         
-        // Click Start Annotation and wait for API call
-        await startButton.click();
+        // Click Start Annotation and wait for API call (scroll into view first as it may be in a modal)
+        await startButton.scrollIntoViewIfNeeded();
+        await startButton.evaluate((btn: HTMLButtonElement) => btn.click());
         
         // Wait for the API request and response
         const request = await requestPromise;

@@ -56,7 +56,8 @@ import {
   AlertCircle,
   Hexagon,
   Sun,
-  Moon
+  Moon,
+  Crosshair
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
@@ -65,6 +66,7 @@ import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG } from '@/config/api';
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
 
 // Annotation types
@@ -99,6 +101,51 @@ const DEFAULT_COLORS = [
   '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D2B4DE'
 ];
 
+/** Names that indicate a depth/auxiliary layer — avoid defaulting the display to these. */
+function isDepthLikeCollectionName(name: string): boolean {
+  const n = name.toLowerCase();
+  return /\bdepth\b/.test(n) || n.includes('depth map') || n.includes('depth-map');
+}
+
+/** Prefer an RGB/color layer for segmentation; otherwise use backend-default or first ordered layer. */
+function pickPreferredRgbCollection(collections: ImageCollection[]): ImageCollection | undefined {
+  if (collections.length === 0) return undefined;
+  const rgbLike = (n: string) => {
+    const s = n.toLowerCase();
+    return s.includes('rgb') || s.includes('color') || s.includes('visible') || s.includes('original');
+  };
+  const byName = collections.find(c => rgbLike(c.name) && !isDepthLikeCollectionName(c.name));
+  if (byName) return byName;
+  const byDefault = collections.find(c => c.is_default === true && !isDepthLikeCollectionName(c.name));
+  if (byDefault) return byDefault;
+  // If no RGB-like layer exists, lock to the first layer as ordered by backend.
+  return collections[0];
+}
+
+function baseNameNoExt(fileName: string): string {
+  if (!fileName.includes('.')) return fileName.toLowerCase();
+  return fileName.slice(0, fileName.lastIndexOf('.')).toLowerCase();
+}
+
+/** Match the same frame across layers: exact name, same basename, then shared groupId. */
+function findCorrespondingImageInCollection(
+  collection: ImageCollection,
+  imageName: string,
+  referenceImage: Image | null
+): Image | null {
+  const exact = collection.images.find(img => img.fileName === imageName);
+  if (exact) return exact;
+  const targetBase = baseNameNoExt(imageName);
+  const byBase = collection.images.find(img => baseNameNoExt(img.fileName ?? '') === targetBase);
+  if (byBase) return byBase;
+  if (referenceImage?.groupId) {
+    const gid = referenceImage.groupId;
+    const byGroup = collection.images.find(img => img.groupId && img.groupId === gid);
+    if (byGroup) return byGroup;
+  }
+  return null;
+}
+
 // Helper function to calculate polygon area similar to OpenCV's contourArea
 // This uses the same mathematical approach as cv2.contourArea() in altitude_plant_resolution.py
 // Using the Green's theorem / Shoelace formula which OpenCV also uses internally
@@ -129,6 +176,55 @@ const formatArea = (area: number): string => {
     return `${(area / 1000000).toFixed(1)}M px²`;
   }
 };
+
+/**
+ * Match dataset image names (API `fileName`) to COCO `images[].file_name`.
+ * Mismatches here cause empty canvas while API statistics still show counts.
+ */
+function findCocoImageForDatasetName(
+  cocoImages: Array<{ id?: unknown; file_name?: string | null; width?: number; height?: number }> | undefined,
+  datasetFileName: string
+): { id?: unknown; file_name?: string | null; width?: number; height?: number } | undefined {
+  if (!cocoImages?.length || !datasetFileName) return undefined;
+
+  const exact = cocoImages.find((img) => img.file_name === datasetFileName);
+  if (exact) return exact;
+
+  const lower = datasetFileName.toLowerCase();
+  const byLower = cocoImages.find((img) => (img.file_name || '').toLowerCase() === lower);
+  if (byLower) return byLower;
+
+  const leaf = (s: string) => s.replace(/^.*[/\\]/, '');
+
+  const dsLeaf = leaf(datasetFileName);
+  const byLeaf = cocoImages.find((img) => leaf(img.file_name || '') === dsLeaf);
+  if (byLeaf) return byLeaf;
+
+  const byLeafCI = cocoImages.find(
+    (img) => leaf(img.file_name || '').toLowerCase() === dsLeaf.toLowerCase()
+  );
+  if (byLeafCI) return byLeafCI;
+
+  const baseNoExt = (s: string) => {
+    const x = leaf(s);
+    const d = x.lastIndexOf('.');
+    return d > 0 ? x.slice(0, d) : x;
+  };
+  const dsBase = baseNoExt(datasetFileName).toLowerCase();
+  return cocoImages.find((img) => baseNoExt(img.file_name || '').toLowerCase() === dsBase);
+}
+
+/**
+ * Apply a 3×3 homography matrix H to a 2D point.
+ * H is stored row-major as [[h00,h01,h02],[h10,h11,h12],[h20,h21,h22]].
+ */
+function applyHomography(H: number[][], x: number, y: number): { x: number; y: number } {
+  const w = H[2][0] * x + H[2][1] * y + H[2][2];
+  return {
+    x: (H[0][0] * x + H[0][1] * y + H[0][2]) / w,
+    y: (H[1][0] * x + H[1][1] * y + H[1][2]) / w,
+  };
+}
 
 const ImageAnnotation = () => {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
@@ -168,6 +264,17 @@ const ImageAnnotation = () => {
   const [currentImage, setCurrentImage] = useState<Image | null>(null);
   const [displayImage, setDisplayImage] = useState<Image | null>(null);
   const [noCorrespondingImage, setNoCorrespondingImage] = useState(false);
+  // Explicit annotation coordinate layer: when set to a collection id, annotation
+  // coordinates are stored in that layer's pixel space and remapped for display/input.
+  // Empty string = off (default — no cross-layer scaling).
+  const [annotationLayerId, setAnnotationLayerId] = useState<string>('');
+  // true only when the display layer is the *target* of a calibration and annotation coords
+  // are being remapped via homography from source (annotation) space → display (target) space.
+  const [calibrationIsActive, setCalibrationIsActive] = useState(false);
+  // User-controlled toggle to enable/disable calibration transform
+  const [calibrationEnabled, setCalibrationEnabled] = useState(true);
+  // Calibrations loaded from backend (homography-based collection pairs)
+  const [calibrations, setCalibrations] = useState<any[]>([]);
   const [allImageNames, setAllImageNames] = useState<string[]>([]);
   const [currentLayerImageNames, setCurrentLayerImageNames] = useState<string[]>([]);
   const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
@@ -240,6 +347,10 @@ const ImageAnnotation = () => {
   const leftStartXRef = useRef(0);
   const leftStartWidthRef = useRef(0);
   const lastLoadedImageRef = useRef<string>(''); // Use ref instead of state to avoid re-renders
+  // Always-current image name ref so stale useCallback closures can still access the latest value
+  const currentImageNameRef = useRef<string>('');
+  // Always-current load function ref so stale callbacks can call the latest version
+  const loadAnnotationsForImageRef = useRef<((name: string) => Promise<void>) | null>(null);
   // COCO image dimensions (file_name -> { width, height }) so we can scale loaded coords to actual image space
   const cocoImageDimensionsRef = useRef<Record<string, { width: number; height: number }>>({});
   const [isDrawing, setIsDrawing] = useState(false);
@@ -453,10 +564,16 @@ const ImageAnnotation = () => {
       return;
     }
 
+    const sa = annotScaleToAnnotRef.current;
     const newAnns: AnnotationShape[] = autoSegmentPreview.polygons.map(poly => ({
       id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
       type: 'polygon',
-      points: poly,
+      // SAM polygons arrive in display-image pixel space — convert to annotation space.
+      points: calibHDisplayToAnnotRef.current
+        ? poly.map(p => applyHomography(calibHDisplayToAnnotRef.current!, p.x, p.y))
+        : (sa.x !== 1 || sa.y !== 1)
+          ? poly.map(p => ({ x: p.x * sa.x, y: p.y * sa.y }))
+          : poly,
       label: classObj.name,
       color: classObj.color,
       visible: true
@@ -466,11 +583,13 @@ const ImageAnnotation = () => {
       const updated = [...prev, ...newAnns];
       const storageKey = `annotations_${id}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(updated));
-      // Also save image dimensions so they can be used when saving annotation file
-      const nw = imageRef.current?.naturalWidth;
-      const nh = imageRef.current?.naturalHeight;
-      if (nw && nh) {
-        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify({ width: nw, height: nh }));
+      // Save annotation-layer dims (same logic as createAnnotation)
+      const annotDims = annotLayerDimsRef.current;
+      const saveDims = annotDims
+        ? { width: annotDims.width, height: annotDims.height }
+        : { width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 };
+      if (saveDims.width && saveDims.height) {
+        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify(saveDims));
       }
       return updated;
     });
@@ -593,6 +712,37 @@ const ImageAnnotation = () => {
 
   useEffect(() => { scaleRef.current = imageScale; }, [imageScale]);
   useEffect(() => { offsetRef.current = imageOffset; }, [imageOffset]);
+
+  // Annotation-layer scale refs — updated by effect so callbacks never have stale values.
+  // annotLayerDimsRef  : pixel dimensions of the designated annotation coordinate space.
+  // annotScaleToAnnotRef: multiply display-space coords × these to get annotation-space coords.
+  const annotLayerDimsRef = useRef<{ width: number; height: number } | null>(null);
+  const annotScaleToAnnotRef = useRef({ x: 1, y: 1 });
+  // Homography refs — populated when a calibration is active.
+  // calibHDisplayToAnnotRef: H maps display-image pixel → annotation-storage pixel (display→annot).
+  // calibHAnnotToDisplayRef: H^-1 maps annotation-storage pixel → display-image pixel (annot→display).
+  const calibHDisplayToAnnotRef = useRef<number[][] | null>(null);
+  const calibHAnnotToDisplayRef = useRef<number[][] | null>(null);
+
+  useEffect(() => {
+    if (!annotationLayerId || !displayImage) {
+      annotLayerDimsRef.current = null;
+      annotScaleToAnnotRef.current = { x: 1, y: 1 };
+      return;
+    }
+    const annotColl = imageCollections.find(c => String(c.id) === annotationLayerId);
+    const annotImg = annotColl?.images.find(i => i.fileName === currentImageName);
+    if (annotImg && annotImg.width > 0 && annotImg.height > 0 && displayImage.width > 0 && displayImage.height > 0) {
+      annotLayerDimsRef.current = { width: annotImg.width, height: annotImg.height };
+      annotScaleToAnnotRef.current = {
+        x: annotImg.width / displayImage.width,
+        y: annotImg.height / displayImage.height,
+      };
+    } else {
+      annotLayerDimsRef.current = null;
+      annotScaleToAnnotRef.current = { x: 1, y: 1 };
+    }
+  }, [annotationLayerId, currentImageName, imageCollections, displayImage]);
 
   const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
@@ -730,6 +880,11 @@ const ImageAnnotation = () => {
     }
   };
 
+  // Keep currentImageNameRef always up-to-date so stale callbacks can access the latest image name
+  useEffect(() => {
+    currentImageNameRef.current = currentImageName;
+  }, [currentImageName]);
+
   // Load images on mount
   useEffect(() => {
     const loadImagesEffect = async () => {
@@ -773,35 +928,43 @@ const ImageAnnotation = () => {
           const uniqueNames = Array.from(allNames).sort();
           setAllImageNames(uniqueNames);
           
-          // Check if a specific collection ID was provided in URL (to restrict navigation)
-          const urlCollectionId = searchParams.get('collectionId');
+          // Check if a specific collection ID was provided in URL (to restrict navigation).
+          const urlCollectionId = annotationId ? null : searchParams.get('collectionId');
           let defaultCollection: ImageCollection | undefined;
           
           if (urlCollectionId) {
-            // Use the collection specified in URL
-            defaultCollection = collectionsResponse.data.find(c => c.id === urlCollectionId);
+            defaultCollection = collectionsResponse.data.find(c => String(c.id) === String(urlCollectionId));
             if (defaultCollection) {
               console.log('Using collection from URL:', defaultCollection.name);
             } else {
               console.warn('Collection from URL not found:', urlCollectionId);
             }
           }
-          
-          // Fallback: prefer RGB Images or first collection
+
+          // Respect the user-chosen collection order persisted in the DB
+          // (image_collections.position, set via drag-to-reorder on the Dataset
+          // page). The backend already returns collections ordered by position,
+          // so the first one is whatever the user put at the top — don't second-guess
+          // that with a hard-coded RGB preference here.
           if (!defaultCollection) {
-            defaultCollection = collectionsResponse.data.find(c => c.name.toLowerCase().includes('rgb')) ||
-                                     collectionsResponse.data[0];
+            defaultCollection = collectionsResponse.data[0];
           }
           
           if (defaultCollection) {
-            setDisplayLayer(defaultCollection.id);
-            setMainLayer(defaultCollection.id); // Set main layer (controls which images are available for navigation)
+            setDisplayLayer(String(defaultCollection.id));
+            setMainLayer(String(defaultCollection.id)); // Set main layer (controls which images are available for navigation)
           }
           
-          if (uniqueNames.length > 0) {
-            setCurrentImageName(uniqueNames[0]);
-            updateCurrentImages(uniqueNames[0], defaultCollection?.id || '', collectionsResponse.data);
-            loadAnnotationsForImage(uniqueNames[0]);
+          // Start from an image that exists in the preferred (RGB) layer so display + annotations align
+          const initialNames =
+            defaultCollection && defaultCollection.images.length > 0
+              ? defaultCollection.images.map(img => img.fileName).sort()
+              : uniqueNames;
+          if (initialNames.length > 0) {
+            const firstName = initialNames[0];
+            setCurrentImageName(firstName);
+            updateCurrentImages(firstName, defaultCollection ? String(defaultCollection.id) : '', collectionsResponse.data);
+            loadAnnotationsForImage(firstName);
           }
           
           const navCount = urlCollectionId && defaultCollection 
@@ -860,23 +1023,104 @@ const ImageAnnotation = () => {
     loadImagesEffect();
   }, [id, api, toast]);
 
-  // Update images when index or layer changes
+  // Fetch calibrations for this dataset once api + id are ready
+  useEffect(() => {
+    if (!id || !api) return;
+    api.getCalibrations(id).then(res => {
+      if (res.success && res.data) {
+        setCalibrations(res.data);
+      }
+    }).catch(() => { /* non-fatal */ });
+  }, [id, api]);
+
+  // Auto-set annotationLayerId + homography refs when displayLayer or calibrations change.
+  // Annotations coordinate space tracking: when annotations are created/saved, we store
+  // which collection they were created in. When switching display layers, we check if
+  // annotations exist for the current image and determine correct transformation.
+  useEffect(() => {
+    if (!displayLayer || calibrations.length === 0 || !calibrationEnabled) {
+      calibHDisplayToAnnotRef.current = null;
+      calibHAnnotToDisplayRef.current = null;
+      setCalibrationIsActive(false);
+      // Don't reset annotationLayerId - it might be set from stored annotations
+      return;
+    }
+
+    // Check if annotations exist for current image and which collection they're from
+    const storageKey = `annotations_${id}_${currentImageName}_collection`;
+    const storedAnnotationLayerId = localStorage.getItem(storageKey);
+    
+    // If we have stored annotation layer and it's different from display layer,
+    // we need to apply calibration transform
+    const annotCollectionId = storedAnnotationLayerId || annotationLayerId;
+    
+    if (!annotCollectionId || annotCollectionId === displayLayer) {
+      // No calibration needed - viewing same layer as annotations, or no annotations
+      calibHDisplayToAnnotRef.current = null;
+      calibHAnnotToDisplayRef.current = null;
+      setCalibrationIsActive(false);
+      if (storedAnnotationLayerId) {
+        setAnnotationLayerId(storedAnnotationLayerId);
+      }
+      return;
+    }
+
+    // Find calibration between annotation layer and display layer
+    const cal = calibrations.find(
+      c => (String(c.source_collection_id) === annotCollectionId && String(c.target_collection_id) === displayLayer) ||
+           (String(c.target_collection_id) === annotCollectionId && String(c.source_collection_id) === displayLayer),
+    );
+
+    if (!cal) {
+      // No calibration exists between these layers
+      calibHDisplayToAnnotRef.current = null;
+      calibHAnnotToDisplayRef.current = null;
+      setCalibrationIsActive(false);
+      if (storedAnnotationLayerId) {
+        setAnnotationLayerId(storedAnnotationLayerId);
+      }
+      return;
+    }
+
+    // Determine correct homography direction: annotCollection → displayLayer
+    const annotIsSource = String(cal.source_collection_id) === annotCollectionId;
+    
+    if (annotIsSource) {
+      // Annotations are in source space, displaying target
+      // H maps source(annot) → target(display); H_inv maps target(display) → source(annot)
+      calibHAnnotToDisplayRef.current = cal.homography;      // annot(source) → display(target)
+      calibHDisplayToAnnotRef.current = cal.homography_inv;  // display(target) → annot(source)
+    } else {
+      // Annotations are in target space, displaying source
+      // Need to use inverse mapping
+      calibHAnnotToDisplayRef.current = cal.homography_inv;  // annot(target) → display(source)
+      calibHDisplayToAnnotRef.current = cal.homography;      // display(source) → annot(target)
+    }
+    
+    setCalibrationIsActive(true);
+    setAnnotationLayerId(annotCollectionId);
+  }, [displayLayer, calibrations, id, currentImageName, annotationLayerId, calibrationEnabled]);
+
+  // Update images when index or layer changes (including display layer only — must refresh display bitmap)
   useEffect(() => {
     // Skip during initial load to prevent flickering
     if (isInitialLoad) return;
-    
-    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+
+    const mainLayerCollection = imageCollections.find(c => String(c.id) === String(mainLayer));
+    const imageList =
+      mainLayerCollection && mainLayerCollection.images.length > 0
+        ? mainLayerCollection.images.map(img => img.fileName).sort()
+        : allImageNames;
     if (imageList.length > 0 && currentImageIndex < imageList.length) {
       const imageName = imageList[currentImageIndex];
-      
-      // Only update if the image name actually changed
+
       if (imageName !== currentImageName) {
         setCurrentImageName(imageName);
-        updateCurrentImages(imageName, displayLayer, imageCollections);
         loadAnnotationsForImage(imageName);
       }
+      updateCurrentImages(imageName, displayLayer, imageCollections);
     }
-  }, [currentImageIndex, allImageNames, currentLayerImageNames, displayLayer, imageCollections, isInitialLoad]);
+  }, [currentImageIndex, allImageNames, mainLayer, displayLayer, imageCollections, isInitialLoad]);
 
 
   // Update current index when layer changes to maintain the same image if possible
@@ -895,357 +1139,190 @@ const ImageAnnotation = () => {
     }
   }, [currentLayerImageNames, isInitialLoad]);
 
-  // Create default "unknown" class if no classes exist after initial load
-  useEffect(() => {
-    // Only run after initial load completes and only if no annotationId (new annotation)
-    if (isInitialLoad || annotationId) return;
-    
-    // If no classes exist, create a default "unknown" class
-    if (classes.length === 0) {
-      const defaultClass: AnnotationClass = {
-        id: `class_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: 'unknown',
-        color: DEFAULT_COLORS[0],
-        visible: true,
-        count: 0
-      };
-      
-      setClasses([defaultClass]);
-      setSelectedClass(defaultClass.id);
-      
-      console.log('[ImageAnnotation] Created default "unknown" class for new annotation');
-    }
-  }, [isInitialLoad, annotationId, classes.length]);
 
   const updateCurrentImages = (imageName: string, layerId: string, collections: ImageCollection[]) => {
-    // Find RGB collection for annotations priority
-    const rgbCollection = collections.find(c => c.name.toLowerCase().includes('rgb'));
+    const preferredRgb = pickPreferredRgbCollection(collections);
     let foundCurrentImage: Image | null = null;
-    
-    // Priority 1: Try to find in RGB collection for annotations
-    if (rgbCollection) {
-      foundCurrentImage = rgbCollection.images.find(img => img.fileName === imageName) || null;
+
+    if (preferredRgb) {
+      foundCurrentImage = preferredRgb.images.find(img => img.fileName === imageName) || null;
     }
-    
-    // Priority 2: If not in RGB, find in any collection for annotations
+
     if (!foundCurrentImage) {
       for (const collection of collections) {
-        const img = collection.images.find(img => img.fileName === imageName);
+        const img = collection.images.find(i => i.fileName === imageName);
         if (img) {
           foundCurrentImage = img;
           break;
         }
       }
     }
-    
+
     setCurrentImage(foundCurrentImage);
-    
-    // Set navigation based on main layer (usually RGB)
-    const mainLayerCollection = collections.find(c => c.id === mainLayer);
+
+    const mainLayerCollection = collections.find(c => String(c.id) === String(mainLayer));
     if (mainLayerCollection) {
       const mainLayerImageNames = mainLayerCollection.images.map(img => img.fileName).sort();
-      setCurrentLayerImageNames(mainLayerImageNames);
+      setCurrentLayerImageNames(prev => {
+        if (
+          prev.length === mainLayerImageNames.length &&
+          prev.every((n, i) => n === mainLayerImageNames[i])
+        ) {
+          return prev;
+        }
+        return mainLayerImageNames;
+      });
     } else {
-      setCurrentLayerImageNames([]);
+      setCurrentLayerImageNames(prev => (prev.length === 0 ? prev : []));
     }
-    
-    // Find the image with this name in the display layer (exact match, or same base name e.g. depth layer has photo.png for photo.jpg)
-    const displayCollection = collections.find(c => c.id === layerId);
-    let foundDisplayImage: Image | null = null;
+
+    const displayCollection = collections.find(c => String(c.id) === String(layerId));
+    let matchedInLayer: Image | null = null;
+    if (displayCollection) {
+      matchedInLayer = findCorrespondingImageInCollection(displayCollection, imageName, foundCurrentImage);
+    }
+
+    // When an explicit display layer is selected, the canvas must show that layer's
+    // bitmap. If no corresponding image exists in the selected layer, keep displayImage
+    // null so the "No corresponding image" UI can surface instead of silently falling
+    // back to the RGB/reference image — that fallback made layer switching appear broken
+    // because the user saw the same bitmap regardless of which layer was picked.
+    const displayPixel: Image | null = displayCollection
+      ? (matchedInLayer ?? null)
+      : (foundCurrentImage ?? null);
 
     if (displayCollection) {
-      foundDisplayImage = displayCollection.images.find(img => img.fileName === imageName) || null;
-      if (!foundDisplayImage) {
-        const baseName = imageName.includes('.') ? imageName.slice(0, imageName.lastIndexOf('.')) : imageName;
-        foundDisplayImage = displayCollection.images.find(img => {
-          const imgBase = img.fileName?.includes('.') ? img.fileName.slice(0, img.fileName.lastIndexOf('.')) : (img.fileName ?? '');
-          return imgBase === baseName;
-        }) || null;
-      }
-      if (!foundDisplayImage) {
-        setDisplayImage(null);
-        setNoCorrespondingImage(true);
-        return;
-      }
+      setNoCorrespondingImage(matchedInLayer === null);
+    } else {
       setNoCorrespondingImage(false);
     }
 
-    // If no specific layer selected, or displayCollection undefined, fall back to current image
-    if (!foundDisplayImage) {
-      foundDisplayImage = foundCurrentImage;
-    }
-
-    setDisplayImage(foundDisplayImage);
+    setDisplayImage(displayPixel);
   };
 
   const loadAnnotationsForImage = async (imageName: string) => {
-    console.log('Loading annotations for image:', imageName, '(last loaded:', lastLoadedImageRef.current, ')');
-    
-    // Only skip if it's the same image AND we already have annotations loaded
+    console.log('[loadAnnotations] image:', imageName, 'last:', lastLoadedImageRef.current);
+
     if (imageName === lastLoadedImageRef.current && annotations.length > 0) {
-      console.log('Annotations already loaded for:', imageName);
       return;
     }
-    
     lastLoadedImageRef.current = imageName;
-    
+
+    // --- PATH A: Editing an existing annotation file → load from DB API ---
+    if (annotationId && api && id) {
+      try {
+        const storageKey = `annotations_${id}_${imageName}`;
+        const cached = localStorage.getItem(storageKey);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached) as AnnotationShape[];
+            if (parsed.length > 0) {
+              const classColorMap: { [name: string]: string } = {};
+              classes.forEach(c => { classColorMap[c.name] = c.color; });
+              setAnnotations(parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a));
+              console.log(`[loadAnnotations] ${parsed.length} from localStorage cache`);
+              return;
+            }
+          } catch { /* fall through */ }
+        }
+
+        const resp = await api.getImageAnnotations(id, annotationId, imageName);
+        if (resp.success && resp.data) {
+          const { annotations: apiAnns, imageWidth, imageHeight } = resp.data;
+          cocoImageDimensionsRef.current[imageName] = { width: imageWidth, height: imageHeight };
+
+          const imageAnnotations: AnnotationShape[] = [];
+          for (const ann of apiAnns) {
+            const seg = ann.segmentation;
+            if (!seg || seg.length < 6) continue;
+            const points: Point[] = [];
+            for (let i = 0; i < seg.length; i += 2) {
+              const x = seg[i], y = seg[i + 1];
+              if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) continue;
+              points.push({ x: Math.max(0, Math.min(x, imageWidth - 1)), y: Math.max(0, Math.min(y, imageHeight - 1)) });
+            }
+            if (points.length >= 3) {
+              imageAnnotations.push({
+                id: `annotation_${ann.id}`,
+                type: 'polygon',
+                points,
+                label: ann.className,
+                color: ann.color || DEFAULT_COLORS[0],
+                visible: true,
+              });
+            }
+          }
+
+          setAnnotations(imageAnnotations);
+          console.log(`[loadAnnotations] ${imageAnnotations.length} from API for ${imageName}`);
+
+          if (imageAnnotations.length > 0) {
+            safeLocalStorageSet(storageKey, JSON.stringify(imageAnnotations));
+            safeLocalStorageSet(`annotations_${id}_${imageName}_dims`, JSON.stringify({ width: imageWidth, height: imageHeight }));
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn('[loadAnnotations] API load failed, falling back:', err);
+      }
+    }
+
+    // --- PATH B: New annotation session (no annotationId) → localStorage only ---
     try {
-      // Try to load from localStorage first using image name (so annotations are shared across layers)
       const storageKey = `annotations_${id}_${imageName}`;
-      let savedAnnotations = localStorage.getItem(storageKey);
-      
-      // If found in localStorage, validate the coordinates aren't corrupted and restore reference dimensions
-      if (savedAnnotations) {
-        try {
-          const parsedAnnotations = JSON.parse(savedAnnotations);
-          // Restore reference dimensions so drawing scales correctly when current image size differs (e.g. different image in dataset)
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved) as AnnotationShape[];
+        if (parsed.length > 0) {
+          const classColorMap: { [name: string]: string } = {};
+          classes.forEach(c => { classColorMap[c.name] = c.color; });
+          setAnnotations(parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a));
           const dimsKey = `annotations_${id}_${imageName}_dims`;
           const savedDims = localStorage.getItem(dimsKey);
           if (savedDims) {
             try {
-              const dims = JSON.parse(savedDims) as { width: number; height: number };
-              if (dims.width > 0 && dims.height > 0) {
-                cocoImageDimensionsRef.current[imageName] = { width: dims.width, height: dims.height };
-              }
-            } catch (_) { /* ignore */ }
+              const dims = JSON.parse(savedDims);
+              if (dims.width > 0 && dims.height > 0) cocoImageDimensionsRef.current[imageName] = dims;
+            } catch { /* ignore */ }
           }
-          // Check if coordinates are abnormally large (corrupted data)
-          let hasCorruptedData = false;
-          if (parsedAnnotations.length > 0 && parsedAnnotations[0].points && parsedAnnotations[0].points.length > 0) {
-            const firstPoint = parsedAnnotations[0].points[0];
-            if (firstPoint.x > 10000 || firstPoint.y > 10000) {
-              console.warn(`Detected corrupted data in localStorage for ${imageName}, clearing and reloading from sessionStorage`);
-              hasCorruptedData = true;
-              localStorage.removeItem(storageKey);
-              savedAnnotations = null;
-            }
-          }
-        } catch (e) {
-          console.error('Error validating cached annotations:', e);
-          localStorage.removeItem(storageKey);
-          savedAnnotations = null;
-        }
-      }
-      
-      // If not in localStorage, try to load from sessionStorage COCO data
-      if (!savedAnnotations) {
-        try {
-          const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
-          if (annotationFileRef) {
-            const fileData = JSON.parse(annotationFileRef);
-            const cocoData = fileData.cocoData;
-            
-            // Find annotations for this specific image from COCO data
-            if (cocoData.images && cocoData.annotations && cocoData.categories) {
-              const imageIdToFilename: { [id: string]: string } = {};
-              cocoData.images.forEach((img: any) => {
-                imageIdToFilename[img.id.toString()] = img.file_name;
-              });
-              
-              const categoryIdToName: { [id: string]: string } = {};
-              const categoryIdToColor: { [id: string]: string } = {};
-              
-              // Load or create classes first
-              const existingClasses = classes.length > 0 ? classes : (JSON.parse(localStorage.getItem(`classes_${id}`) || '[]') as AnnotationClass[]);
-              const classColorMap: { [name: string]: string } = {};
-              existingClasses.forEach(c => {
-                classColorMap[c.name] = c.color;
-              });
-              
-              cocoData.categories.forEach((cat: any, idx: number) => {
-                if (cat.id != null && cat.name) {
-                  categoryIdToName[cat.id.toString()] = cat.name;
-                  // Use existing class color if available, otherwise use default color
-                  categoryIdToColor[cat.id.toString()] = classColorMap[cat.name] || DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
-                }
-              });
-              
-              // Find image ID for this image name
-              const imageEntry = cocoData.images.find((img: any) => img.file_name === imageName);
-              if (imageEntry) {
-                const imageAnnotations: AnnotationShape[] = [];
-                
-                cocoData.annotations.forEach((annotation: any) => {
-                  if (annotation.image_id === imageEntry.id) {
-                    // Handle null category_id
-                    if (annotation.category_id == null) {
-                      console.warn(`Skipping annotation for ${imageName}: null category_id`);
-                      return;
-                    }
-                    const className = categoryIdToName[annotation.category_id.toString()];
-                    
-                    if (className && annotation.segmentation && annotation.segmentation.length > 0) {
-                      const raw = annotation.segmentation;
-                      const segmentation: number[] = Array.isArray(raw[0]) ? (raw[0] as number[]) : (raw as number[]);
-                      if (segmentation.length >= 6) {
-                        const points: Point[] = [];
-                        
-                        // Detect if coordinates are abnormally large (backend conversion error)
-                        // Normal image coords should be < 10000 pixels
-                        const firstX = segmentation[0];
-                        const firstY = segmentation[1];
-                        const isAbnormallyLarge = firstX > 10000 || firstY > 10000;
-                        
-                        // If abnormally large, they were likely already pixel coords that got
-                        // multiplied by width/height again. Divide by image dimensions to fix.
-                        const scaleFactor = isAbnormallyLarge && imageEntry.width && imageEntry.height
-                          ? { x: imageEntry.width, y: imageEntry.height }
-                          : { x: 1, y: 1 };
-                        
-                        if (isAbnormallyLarge) {
-                          console.warn(`Detected abnormally large coordinates for ${imageName}, applying correction factor:`, scaleFactor);
-                        }
-                        
-                        for (let i = 0; i < segmentation.length; i += 2) {
-                          let x = segmentation[i] / scaleFactor.x;
-                          let y = segmentation[i + 1] / scaleFactor.y;
-                          
-                          // Filter out invalid coordinates (negative or NaN)
-                          if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
-                            continue;
-                          }
-                          
-                          // Clamp to image bounds if we have image dimensions
-                          if (imageEntry.width && imageEntry.height) {
-                            x = Math.max(0, Math.min(x, imageEntry.width - 1));
-                            y = Math.max(0, Math.min(y, imageEntry.height - 1));
-                          }
-                          
-                          points.push({ x, y });
-                        }
-                        
-                        // Only add annotation if we have at least 3 valid points
-                        if (points.length >= 3) {
-                          const color = categoryIdToColor[annotation.category_id.toString()] || DEFAULT_COLORS[0];
-                          imageAnnotations.push({
-                            id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                            type: 'polygon',
-                            points,
-                            label: className,
-                            color: color,
-                            visible: true
-                          });
-                        } else {
-                          console.warn(`Skipping annotation for ${imageName}: insufficient valid points (${points.length} < 3)`);
-                        }
-                      }
-                    }
-                  }
-                });
-                
-                if (imageAnnotations.length > 0) {
-                  setAnnotations(imageAnnotations);
-                  
-                  // When editing existing file (annotationId) use localStorage; new session only uses current state/loaded data
-                  const existingFromStorage = annotationId ? (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [] : [];
-                  const baseClasses = classes.length > 0 ? classes : (existingClasses.length > 0 ? existingClasses : existingFromStorage);
-                  const classNames = new Set(baseClasses.map(c => c.name));
-                  const newClasses = [...baseClasses];
-                  
-                  imageAnnotations.forEach((ann) => {
-                    if (!classNames.has(ann.label)) {
-                      classNames.add(ann.label);
-                      newClasses.push({
-                        id: `class_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                        name: ann.label,
-                        color: ann.color,
-                        visible: true,
-                        count: 0
-                      });
-                    }
-                  });
-                  
-                  // Update class counts (only for current image)
-                  const countsByName: { [name: string]: number } = {};
-                  imageAnnotations.forEach((a: any) => {
-                    countsByName[a.label] = (countsByName[a.label] || 0) + 1;
-                  });
-                  
-                  const updatedClasses = newClasses.map(c => ({ ...c, count: countsByName[c.name] || 0 }));
-                  setClasses(updatedClasses);
-                  saveGlobalClasses(updatedClasses);
-                  
-                  console.log(`Loaded ${imageAnnotations.length} annotations for ${imageName} from sessionStorage`);
-                  return;
-                }
-              }
-            }
-          }
-        } catch (sessionError) {
-          console.warn('Could not load from sessionStorage:', sessionError);
-        }
-      }
-      
-      if (savedAnnotations) {
-        const parsedAnnotations = JSON.parse(savedAnnotations);
-        
-        // If parsedAnnotations is an empty array, this means annotations were deleted
-        // Set empty state and return early to prevent loading from sessionStorage
-        if (parsedAnnotations.length === 0) {
-          setAnnotations([]);
-          console.log(`No annotations for ${imageName} (explicitly deleted or never annotated)`);
           return;
         }
-        
-        // Sync annotation colors with current in-memory class colors
-        // (user may have changed class colors since these were saved)
-        const classColorMap: { [name: string]: string } = {};
-        classes.forEach(c => { classColorMap[c.name] = c.color; });
-        const colorSyncedAnnotations = parsedAnnotations.map((a: any) => 
-          classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a
-        );
-        setAnnotations(colorSyncedAnnotations);
-
-        // Recompute class counts from loaded annotations so the left classes
-        // reflect the actual annotations currently loaded in the image.
-        // Build updated classes list deterministically so we can persist it immediately
-        const countsByName: { [name: string]: number } = {};
-        parsedAnnotations.forEach((a: any) => {
-          countsByName[a.label] = (countsByName[a.label] || 0) + 1;
-        });
-
-        // When editing an existing file (annotationId), merge with localStorage classes; new session stays class-scoped to current annotations
-        const existingFromStorage = annotationId ? (JSON.parse(localStorage.getItem(`classes_${id}`) || 'null') as any[]) || [] : [];
-        const existing = classes.length > 0 ? classes : existingFromStorage;
-        const merged: AnnotationClass[] = [...existing];
-        Object.keys(countsByName).forEach(name => {
-          if (!merged.find(c => c.name === name)) {
-            merged.push({
-              id: `class_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
-              name,
-              color: DEFAULT_COLORS[merged.length % DEFAULT_COLORS.length],
-              visible: true,
-              count: countsByName[name] || 0
-            });
-          }
-        });
-
-        // Update counts for merged classes (only for current image)
-        // Keep all classes but update counts based on current image annotations
-        const updatedClasses = merged.map(c => ({ 
-          ...c, 
-          count: countsByName[c.name] || 0  // Count only for current image
-        }));
-        setClasses(updatedClasses);
-        saveGlobalClasses(updatedClasses);
-
-      } else {
-        // No saved annotations for this image, clear current ones
-        setAnnotations([]);
-        // Only load global classes when editing an existing annotation file; new session stays empty
-        if (annotationId) loadGlobalClasses();
-        setSelectedAnnotation(null);
       }
-      
-      // Don't clear selection if we just loaded annotations - let the user keep their selection
-      // Only clear if there was an error or no annotations
-    } catch (error) {
-      console.error('Error loading annotations:', error);
       setAnnotations([]);
       if (annotationId) loadGlobalClasses();
-      setSelectedAnnotation(null);
+    } catch (error) {
+      console.error('[loadAnnotations] error:', error);
+      setAnnotations([]);
+      if (annotationId) loadGlobalClasses();
     }
   };
+
+  // Keep refs in sync so stale useCallback closures always access the latest values
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  loadAnnotationsForImageRef.current = loadAnnotationsForImage;
+
+  // Helper: Save annotations to localStorage with collection tracking
+  const saveAnnotationsToLocalStorage = useCallback((
+    imageName: string,
+    annotations: AnnotationShape[],
+    dims?: { width: number; height: number }
+  ) => {
+    if (!id || !imageName) return;
+    
+    const storageKey = `annotations_${id}_${imageName}`;
+    safeLocalStorageSet(storageKey, JSON.stringify(annotations));
+    
+    // Save which collection these annotations were created in
+    const currentCollection = displayLayer || mainLayer;
+    if (currentCollection) {
+      safeLocalStorageSet(`annotations_${id}_${imageName}_collection`, currentCollection);
+    }
+    
+    // Save dimensions if provided
+    if (dims && dims.width > 0 && dims.height > 0) {
+      safeLocalStorageSet(`annotations_${id}_${imageName}_dims`, JSON.stringify(dims));
+    }
+  }, [id, displayLayer, mainLayer]);
 
   // Global statistics across all saved annotation files (all images)
   const [globalStats, setGlobalStats] = useState<{ [className: string]: number }>({});
@@ -1265,12 +1342,30 @@ const ImageAnnotation = () => {
             setGlobalStats(counts);
             setGlobalAvgAreas({});
             
-            // CRITICAL: Update classes state with actual counts from database
-            // This ensures the UI displays correct counts after saving
-            setClasses(prev => prev.map(c => ({
-              ...c,
-              count: counts[c.name] ?? 0
-            })));
+            // Sync class counts with API. If classes aren't loaded yet, prev.map would clear the list — rebuild from API instead.
+            const apiClasses = response.data.classes;
+            setClasses((prev) => {
+              if (prev.length === 0) {
+                const built = apiClasses.map((c, idx) => ({
+                  id: `class_${c.categoryId ?? idx}_${String(c.className).replace(/\W+/g, '_')}`,
+                  name: c.className,
+                  color: c.color || DEFAULT_COLORS[idx % DEFAULT_COLORS.length],
+                  visible: true,
+                  count: c.count ?? 0,
+                }));
+                try {
+                  const globalClassesKey = `classes_${id}`;
+                  localStorage.setItem(globalClassesKey, JSON.stringify(built));
+                } catch {
+                  /* ignore */
+                }
+                return built;
+              }
+              return prev.map((c) => ({
+                ...c,
+                count: counts[c.name] ?? 0,
+              }));
+            });
             
             return;
           }
@@ -1394,9 +1489,12 @@ const ImageAnnotation = () => {
               if (!key || !key.startsWith(prefix)) continue;
               const imageName = key.substring(prefix.length);
               if (!imageName) continue;
-              const imageId = imageFileNameToId[imageName];
-              if (imageId == null) continue;
-              const imgIdStr = imageId.toString();
+              const cocoImg =
+                imageFileNameToId[imageName] != null
+                  ? { id: imageFileNameToId[imageName] }
+                  : findCocoImageForDatasetName(cocoData.images, imageName);
+              if (cocoImg == null || cocoImg.id == null) continue;
+              const imgIdStr = cocoImg.id.toString();
               const cocoImgCounts = cocoCountsByImage[imgIdStr] || {};
               const cocoImgAreas = cocoAreasByImage[imgIdStr] || {};
               Object.keys(cocoImgCounts).forEach(cn => {
@@ -1511,7 +1609,7 @@ const ImageAnnotation = () => {
       toast({ title: 'Select a class', description: 'Choose a class for the applied annotations', variant: 'destructive' });
       return;
     }
-    const mainColl = imageCollections.find((c) => c.id === mainLayer);
+    const mainColl = imageCollections.find((c) => String(c.id) === mainLayer);
     if (!mainColl || mainColl.images.length === 0) {
       toast({ title: 'No images', description: 'No images in the current layer', variant: 'destructive' });
       return;
@@ -1897,7 +1995,7 @@ const ImageAnnotation = () => {
       let loadedCount = 0;
       
       imageNames.forEach((imageName: string) => {
-        const imageEntry = cocoData.images.find((img: any) => img.file_name === imageName);
+        const imageEntry = findCocoImageForDatasetName(cocoData.images, imageName);
         if (!imageEntry) return;
         
         const imageAnnotations: AnnotationShape[] = [];
@@ -1910,7 +2008,7 @@ const ImageAnnotation = () => {
         });
         
         cocoData.annotations.forEach((annotation: any) => {
-          if (annotation.image_id === imageEntry.id) {
+          if (String(annotation.image_id) === String(imageEntry.id)) {
             // Handle null category_id
             if (annotation.category_id == null) {
               console.warn(`Skipping annotation for ${imageName}: null category_id`);
@@ -1978,9 +2076,10 @@ const ImageAnnotation = () => {
       
       console.log(`Pre-loaded annotations for ${loadedCount} images`);
       
-      // Load annotations for current image if it exists in the data
-      if (currentImageName) {
-        loadAnnotationsForImage(currentImageName);
+      // Load annotations for current image — use refs so stale closures always see the latest values
+      const latestImageName = currentImageNameRef.current || currentImageName;
+      if (latestImageName && loadAnnotationsForImageRef.current) {
+        loadAnnotationsForImageRef.current(latestImageName);
       }
       
       // Recompute global stats and wait for it to complete
@@ -2001,7 +2100,7 @@ const ImageAnnotation = () => {
       });
       return false;
     }
-  }, [id, api, currentImageName, computeGlobalStats, toast]);
+  }, [id, api, computeGlobalStats, toast]);
 
   // Load from annotation file if annotationId is provided
   useEffect(() => {
@@ -2049,74 +2148,25 @@ const ImageAnnotation = () => {
     }
   }, [annotationId, isLoading, loadFromAnnotationFile, id]);
 
-  // Fix: Load annotations for current image when both annotation file is loaded AND currentImageName is set
-  // This handles the case where annotation file loads before currentImageName is set
+  // Ensure annotations are loaded for current image when editing an existing annotation file.
+  // Uses a ref to prevent infinite retries: once we've attempted a load for a given image, don't retry.
+  const attemptedLoadRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!annotationId || !currentImageName || isLoading) {
-      console.log('[Fix] Skipping - conditions not met:', { annotationId: !!annotationId, currentImageName: !!currentImageName, isLoading });
-      return;
-    }
+    if (!annotationId || !currentImageName || isLoading) return;
+    if (annotations.length > 0 && lastLoadedImageRef.current === currentImageName) return;
+    if (attemptedLoadRef.current === currentImageName) return;
+    attemptedLoadRef.current = currentImageName;
 
-    // Check if annotation file is loaded in sessionStorage
-    const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
-    if (!annotationFileRef) {
-      console.log('[Fix] Annotation file not in sessionStorage yet');
-      return; // Annotation file not loaded yet
-    }
-
-    // Check if annotations are already loaded for this image
-    if (lastLoadedImageRef.current === currentImageName && annotations.length > 0) {
-      console.log('[Fix] Annotations already loaded for:', currentImageName);
-      return; // Already loaded
-    }
-
-    // Load annotations for the current image
-    console.log('[Fix] Loading annotations for current image after annotation file loaded:', {
-      currentImageName,
-      hasAnnotationFile: !!annotationFileRef,
-      lastLoaded: lastLoadedImageRef.current,
-      currentAnnotationsCount: annotations.length
-    });
-    
-    // Use a small timeout to ensure all state is settled
     const timeoutId = setTimeout(() => {
-      loadAnnotationsForImage(currentImageName);
-    }, 300);
-    
+      console.log('[AnnotationLoader] loading from API for:', currentImageName);
+      loadAnnotationsForImageRef.current?.(currentImageName);
+    }, 150);
     return () => clearTimeout(timeoutId);
-  }, [annotationId, currentImageName, isLoading, id, annotations.length, loadAnnotationsForImage]);
-
-  // Second fix: When currentImageName is set (even during initial load) and annotation file exists, load annotations
-  // This handles the case where currentImageName is set after annotation file loads
+  }, [annotationId, currentImageName, isLoading, id]);
+  // Reset the attempted-load guard when image changes so navigating to another image works
   useEffect(() => {
-    if (!currentImageName || !annotationId) {
-      return;
-    }
-
-    // Check if annotation file is loaded
-    const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
-    if (!annotationFileRef) {
-      return;
-    }
-
-    // Check if annotations are already loaded
-    if (lastLoadedImageRef.current === currentImageName && annotations.length > 0) {
-      return;
-    }
-
-    // Load annotations with a delay to ensure state is settled
-    const timeoutId = setTimeout(() => {
-      console.log('[Fix2] Loading annotations when currentImageName set:', {
-        currentImageName,
-        isLoading,
-        isInitialLoad,
-        hasAnnotationFile: !!annotationFileRef
-      });
-      loadAnnotationsForImage(currentImageName);
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [currentImageName, annotationId, id, annotations.length, loadAnnotationsForImage]);
+    attemptedLoadRef.current = null;
+  }, [currentImageName]);
 
   const hasAnyAnnotations = Object.values(globalStats).reduce((s, v) => s + v, 0) > 0;
   // If globalStats is empty, check localStorage for any annotations entries as a fallback
@@ -2201,9 +2251,19 @@ const ImageAnnotation = () => {
 
   // Find annotation at given point (x,y are in natural image space)
   const findAnnotationAtPoint = useCallback((x: number, y: number): AnnotationShape | null => {
-    // Convert to annotation space when loaded from COCO with different dimensions
+    // Convert click coords from display space to annotation storage space
     let qx = x, qy = y;
-    if (currentImage?.fileName && imageRef.current) {
+    const sa = annotScaleToAnnotRef.current;
+    if (calibHDisplayToAnnotRef.current) {
+      const pt = applyHomography(calibHDisplayToAnnotRef.current, x, y);
+      qx = pt.x;
+      qy = pt.y;
+    } else if (sa.x !== 1 || sa.y !== 1) {
+      // Annotation layer is set — use its scale factor
+      qx = x * sa.x;
+      qy = y * sa.y;
+    } else if (currentImage?.fileName && imageRef.current) {
+      // COCO fallback: remap if annotation dims differ from display dims
       const cocoDims = cocoImageDimensionsRef.current[currentImage.fileName];
       const nw = imageRef.current.naturalWidth;
       const nh = imageRef.current.naturalHeight;
@@ -2231,10 +2291,19 @@ const ImageAnnotation = () => {
     const classObj = classes.find(c => c.id === selectedClass);
     if (!classObj) return;
 
+    // Convert display-space points to annotation-storage space.
+    // Prefer homography when calibration is active, fall back to uniform scale.
+    const sa = annotScaleToAnnotRef.current;
+    const finalPoints = calibHDisplayToAnnotRef.current
+      ? points.map(p => applyHomography(calibHDisplayToAnnotRef.current!, p.x, p.y))
+      : (sa.x !== 1 || sa.y !== 1)
+        ? points.map(p => ({ x: p.x * sa.x, y: p.y * sa.y }))
+        : points;
+
     const newAnnotation: AnnotationShape = {
       id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       type,
-      points,
+      points: finalPoints,
       label: classObj.name,
       color: classObj.color,
       visible: true
@@ -2242,14 +2311,12 @@ const ImageAnnotation = () => {
 
     setAnnotations(prev => {
       const updated = [...prev, newAnnotation];
-      // Auto-save to localStorage using image name (and reference dimensions for correct scale on edit)
-      const storageKey = `annotations_${id}_${currentImageName}`;
-      safeLocalStorageSet(storageKey, JSON.stringify(updated));
-      const nw = imageRef.current?.naturalWidth;
-      const nh = imageRef.current?.naturalHeight;
-      if (nw && nh) {
-        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify({ width: nw, height: nh }));
-      }
+      // Auto-save to localStorage with collection tracking
+      const annotDims = annotLayerDimsRef.current;
+      const saveDims = annotDims
+        ? { width: annotDims.width, height: annotDims.height }
+        : { width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 };
+      saveAnnotationsToLocalStorage(currentImageName, updated, saveDims);
       return updated;
     });
     
@@ -2377,8 +2444,25 @@ const ImageAnnotation = () => {
       const imageCoords = screenToImageCoords(e.clientX, e.clientY);
       let deltaX = imageCoords.x - moveOffset.x;
       let deltaY = imageCoords.y - moveOffset.y;
-      // When annotation points are in COCO space, scale delta to COCO space
-      if (currentImage?.fileName && imageRef.current) {
+      // Scale delta to annotation storage space.
+      // When calibration is active, approximate using the local scale at image centre.
+      const sa = annotScaleToAnnotRef.current;
+      if (calibHDisplayToAnnotRef.current) {
+        const H = calibHDisplayToAnnotRef.current;
+        const nw = imageRef.current?.naturalWidth ?? 500;
+        const nh = imageRef.current?.naturalHeight ?? 400;
+        const cx = nw / 2, cy = nh / 2;
+        const p1 = applyHomography(H, cx, cy);
+        const p2 = applyHomography(H, cx + 1, cy);
+        const p3 = applyHomography(H, cx, cy + 1);
+        deltaX *= (p2.x - p1.x);
+        deltaY *= (p3.y - p1.y);
+      } else if (sa.x !== 1 || sa.y !== 1) {
+        // Annotation layer set — use its scale factor
+        deltaX *= sa.x;
+        deltaY *= sa.y;
+      } else if (currentImage?.fileName && imageRef.current) {
+        // COCO fallback
         const cocoDims = cocoImageDimensionsRef.current[currentImage.fileName];
         const nw = imageRef.current.naturalWidth;
         const nh = imageRef.current.naturalHeight;
@@ -2420,7 +2504,10 @@ const ImageAnnotation = () => {
             }
             return ann;
           });
-          safeLocalStorageSet(storageKey, JSON.stringify(updatedAnnotations));
+          const saveDims = imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+            ? { width: imageRef.current.naturalWidth, height: imageRef.current.naturalHeight }
+            : undefined;
+          saveAnnotationsToLocalStorage(currentImageName, updatedAnnotations, saveDims);
           setHasUnsavedChanges(true);
         }
       }, 100);
@@ -2515,6 +2602,20 @@ const ImageAnnotation = () => {
     });
   }, [toast]);
 
+  /** Polygon and AI Segment need at least one class so annotations have a label */
+  const ensureClassForDrawingTools = useCallback((): boolean => {
+    if (classes.length === 0) {
+      // Use Sonner (not Radix useToast): same z-index as App Toaster, stays above annotation canvas/overlays (z-100)
+      sonnerToast.error('Add a class first', {
+        description:
+          'Create at least one class in the Classes section before using Polygon or AI Segment.',
+        duration: 6000,
+      });
+      return false;
+    }
+    return true;
+  }, [classes.length]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
     const isInputFocused = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
@@ -2539,14 +2640,14 @@ const ImageAnnotation = () => {
       if (e.key === 'v' || e.key === 'V') {
         setActiveTool('select');
       } else if (e.key === 'p' || e.key === 'P') {
-        if (!isDrawing) setActiveTool('polygon');
+        if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('polygon');
       } else if (e.key === 'a' || e.key === 'A') {
-        setActiveTool('auto-segment');
+        if (ensureClassForDrawingTools()) setActiveTool('auto-segment');
       } else if ((e.key === 'r' || e.key === 'R') && !isDrawing) {
         resetZoomAndPan();
       }
     }
-  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment]);
+  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment, ensureClassForDrawingTools]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -2594,22 +2695,37 @@ const ImageAnnotation = () => {
       );
     }
 
-    // When drawing, annotations.points are in COCO image space (the space they were annotated in)
-    // We need to scale to natural image space if dimensions differ
+    // Annotation coordinate transform: when calibration is active, annotation points are in
+    // the annotation-storage collection space and must be mapped back to display image space
+    // via the inverse homography before being projected to screen coordinates.
+    // Without calibration, fall back to uniform scale or COCO dimension remapping.
     const naturalW = imageRef.current?.naturalWidth ?? 0;
     const naturalH = imageRef.current?.naturalHeight ?? 0;
-    const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
-    
-    // Only scale if we have COCO dimensions AND they differ from natural dimensions
-    const needScale = cocoDims && naturalW > 0 && naturalH > 0 && cocoDims.width > 0 && cocoDims.height > 0 &&
-      (cocoDims.width !== naturalW || cocoDims.height !== naturalH);
-    const scaleX = needScale ? naturalW / cocoDims!.width : 1;
-    const scaleY = needScale ? naturalH / cocoDims!.height : 1;
-    
-    // Helper to convert annotation coordinates to screen coordinates
-    // annotation.points are in COCO space, scale to natural, then to screen
-    const annotationToScreen = (px: number, py: number) =>
-      imageToScreenCoords(px * scaleX, py * scaleY);
+
+    // annot-storage pixel → display image pixel
+    const annotToDisplayPx = (px: number, py: number): { x: number; y: number } => {
+      if (calibHAnnotToDisplayRef.current) {
+        return applyHomography(calibHAnnotToDisplayRef.current, px, py);
+      }
+      if (annotationLayerId && naturalW > 0 && naturalH > 0) {
+        const annotColl = imageCollections.find(c => String(c.id) === annotationLayerId);
+        const annotImg = annotColl?.images.find(i => i.fileName === currentImage?.fileName);
+        if (annotImg && annotImg.width > 0 && annotImg.height > 0) {
+          return { x: px * naturalW / annotImg.width, y: py * naturalH / annotImg.height };
+        }
+      }
+      const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
+      if (cocoDims && naturalW > 0 && naturalH > 0 && cocoDims.width > 0 && cocoDims.height > 0 &&
+          (cocoDims.width !== naturalW || cocoDims.height !== naturalH)) {
+        return { x: px * naturalW / cocoDims.width, y: py * naturalH / cocoDims.height };
+      }
+      return { x: px, y: py };
+    };
+
+    const annotationToScreen = (px: number, py: number) => {
+      const disp = annotToDisplayPx(px, py);
+      return imageToScreenCoords(disp.x, disp.y);
+    };
 
     // Debug: log all annotations and their visibility
     const visibleCount = annotations.filter(a => a.visible).length;
@@ -2727,7 +2843,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, annotationLayerId, imageCollections]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
@@ -2788,8 +2904,7 @@ const ImageAnnotation = () => {
       setAnnotations(prev => {
         const updated = prev.filter(a => a.label !== classToDelete.name);
         if (currentImageName) {
-          const storageKey = `annotations_${id}_${currentImageName}`;
-          safeLocalStorageSet(storageKey, JSON.stringify(updated));
+          saveAnnotationsToLocalStorage(currentImageName, updated);
         }
         return updated;
       });
@@ -2881,8 +2996,10 @@ const ImageAnnotation = () => {
         a.label === oldName ? { ...a, label: newName } : a
       );
       if (currentImageName) {
-        const storageKey = `annotations_${id}_${currentImageName}`;
-        safeLocalStorageSet(storageKey, JSON.stringify(updated));
+        const saveDims = imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+          ? { width: imageRef.current.naturalWidth, height: imageRef.current.naturalHeight }
+          : undefined;
+        saveAnnotationsToLocalStorage(currentImageName, updated, saveDims);
       }
       return updated;
     });
@@ -2971,11 +3088,13 @@ const ImageAnnotation = () => {
     // Use requestAnimationFrame to ensure DOM has settled before calculating sizes
     // This prevents "weird" initial rendering where container dimensions might still be stabilizing
     requestAnimationFrame(() => {
-      handleImageResize();
+      // Always force a refit when a new image source has loaded, regardless of any
+      // resize-listener timers that may have re-set preserveZoomRef in the meantime.
+      handleImageResize(true);
     });
   };
 
-  const handleImageResize = () => {
+  const handleImageResize = (forceRefit = false) => {
     if (!imageRef.current || !canvasRef.current || !containerRef.current) return;
 
     const img = imageRef.current;
@@ -3006,7 +3125,7 @@ const ImageAnnotation = () => {
     const fitToContainerScale = Math.min(scaleX, scaleY);
 
     // Only reset zoom if this is initial load, we're explicitly not preserving zoom, AND we're not preventing reset due to panning
-    if (!preserveZoomRef.current && !preventZoomResetRef.current) {
+    if (forceRefit || (!preserveZoomRef.current && !preventZoomResetRef.current)) {
       setImageScale(fitToContainerScale);
       // Center image in container for new images
       const scaledWidth = img.naturalWidth * fitToContainerScale;
@@ -3188,13 +3307,10 @@ const ImageAnnotation = () => {
       });
       
       // persist (and keep reference dimensions in sync)
-      const storageKey = `annotations_${id}_${currentImageName}`;
-      safeLocalStorageSet(storageKey, JSON.stringify(updated));
-      const nw = imageRef.current?.naturalWidth;
-      const nh = imageRef.current?.naturalHeight;
-      if (nw && nh) {
-        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify({ width: nw, height: nh }));
-      }
+      const saveDims = imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+        ? { width: imageRef.current.naturalWidth, height: imageRef.current.naturalHeight }
+        : undefined;
+      saveAnnotationsToLocalStorage(currentImageName!, updated, saveDims);
       return updated;
     });
 
@@ -3718,7 +3834,7 @@ const ImageAnnotation = () => {
             
             if (cocoData && cocoData.annotations && cocoData.images) {
               // Find the image ID for this image name
-              const imageEntry = cocoData.images.find((img: any) => img.file_name === currentImageName);
+              const imageEntry = findCocoImageForDatasetName(cocoData.images, currentImageName);
               if (imageEntry) {
                 // Update categories to include all current classes
                 const existingCategoryNames = new Set(cocoData.categories?.map((c: any) => c.name) || []);
@@ -4022,7 +4138,7 @@ const ImageAnnotation = () => {
         
         if (cocoData && cocoData.annotations && cocoData.images) {
           // Find the image ID for this image name
-          const imageEntry = cocoData.images.find((img: any) => img.file_name === currentImageName);
+          const imageEntry = findCocoImageForDatasetName(cocoData.images, currentImageName);
           if (imageEntry) {
             // Remove all annotations for this image from COCO data
             cocoData.annotations = cocoData.annotations.filter((ann: any) => ann.image_id !== imageEntry.id);
@@ -4414,62 +4530,40 @@ const ImageAnnotation = () => {
 
   const handleLayerChange = (layerId: string) => {
     setIsLayerSwitching(true);
-    setDisplayLayer(layerId);
-    // Increment counter to force image remount and onLoad to fire
     layerSwitchCounterRef.current += 1;
-    
-    // When layer changes, update the display image to show the current image name in the new layer
-    if (imageCollections.length === 0) {
-      setIsLayerSwitching(false);
-      return;
-    }
-
-    const displayCollection = imageCollections.find(c => c.id === layerId);
-
-    if (!displayCollection) {
-      setIsLayerSwitching(false);
-      return;
-    }
-
-    // Try to find same filename in the new layer, or same base name (e.g. depth layer: photo.png for photo.jpg)
-    let newDisplayImage = displayCollection.images.find(img => img.fileName === currentImageName) || null;
-    if (!newDisplayImage && currentImageName) {
-      const baseName = currentImageName.includes('.') ? currentImageName.slice(0, currentImageName.lastIndexOf('.')) : currentImageName;
-      newDisplayImage = displayCollection.images.find(img => {
-        const imgBase = img.fileName?.includes('.') ? img.fileName.slice(0, img.fileName.lastIndexOf('.')) : (img.fileName ?? '');
-        return imgBase === baseName;
-      }) || null;
-    }
-
-    // Use setTimeout to batch the state updates and reduce flickering
+    preserveZoomRef.current = false;
+    preventZoomResetRef.current = false;
+    setDisplayLayer(layerId);
+    // Display bitmap + noCorrespondingImage are synced in the effect that calls updateCurrentImages when displayLayer changes
+    // Force a refit after layer switch to ensure proper image sizing
     setTimeout(() => {
-      if (!newDisplayImage) {
-        // Image doesn't exist in this layer - set both states atomically to prevent flickering
-        setDisplayImage(null);
-        setNoCorrespondingImage(true);
-        setIsLayerSwitching(false); // No image to load, clear switching state immediately
-        // Don't change currentImageName or currentImageIndex - maintain navigation position
-      } else {
-        // Image exists in this layer - set both states atomically
-        setDisplayImage(newDisplayImage);
-        setNoCorrespondingImage(false);
-        // Ensure annotations for that name are loaded
-        loadAnnotationsForImage(currentImageName);
-        // Note: isLayerSwitching will be cleared by handleImageLoad when the new image loads
+      // Ensure zoom isn't preserved from previous layer
+      preserveZoomRef.current = false;
+      preventZoomResetRef.current = false;
+      // Force refit to fit new layer's image dimensions
+      if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
+        handleImageResize(true);
       }
-      
-      // Debounce the redraw to prevent multiple rapid calls during state updates
-      setTimeout(() => {
-        try { window.dispatchEvent(new Event('annotation-panel-resize-end')); } catch (err) {}
-      }, 10);
-    }, 50); // Small delay to batch updates
+    }, 50);
   };
+
+  // If layer switch leaves nothing to load (no img onLoad), clear the switching overlay.
+  // Covers two cases: (1) no image at all, and (2) an explicit display layer was picked
+  // but the current image doesn't exist in that layer — in both cases the <img> element
+  // is unmounted, so handleImageLoad never fires and the overlay would otherwise be stuck.
+  useEffect(() => {
+    if (!isLayerSwitching) return;
+    const hasBitmap = displayLayer ? !!displayImage : !!(displayImage || currentImage);
+    if (!hasBitmap) {
+      setIsLayerSwitching(false);
+    }
+  }, [isLayerSwitching, displayImage, currentImage, displayLayer]);
 
   const handleMainLayerChange = (layerId: string) => {
     setMainLayer(layerId);
     
     // Update the navigation list to use the new main layer
-    const mainLayerCollection = imageCollections.find(c => c.id === layerId);
+    const mainLayerCollection = imageCollections.find(c => String(c.id) === String(layerId));
     if (mainLayerCollection) {
       const mainLayerImageNames = mainLayerCollection.images.map(img => img.fileName).sort();
       setCurrentLayerImageNames(mainLayerImageNames);
@@ -4723,7 +4817,10 @@ const ImageAnnotation = () => {
               <Button
                 variant={activeTool === 'polygon' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setActiveTool('polygon')}
+                onClick={() => {
+                  if (!ensureClassForDrawingTools()) return;
+                  setActiveTool('polygon');
+                }}
               >
                 <Square className="w-4 h-4 mr-1" />
                 Polygon
@@ -4732,14 +4829,13 @@ const ImageAnnotation = () => {
                 variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => {
+                  if (!ensureClassForDrawingTools()) return;
                   setActiveTool('auto-segment');
                   setSamPoints([]);
                 }}
-                disabled={isSamProcessing || classes.length === 0}
+                disabled={isSamProcessing}
                 title={
-                  classes.length === 0
-                    ? 'Add at least one class first'
-                    : isSamProcessing
+                  isSamProcessing
                     ? 'Processing segmentation...'
                     : 'Click on image to segment (backend SAM)'
                 }
@@ -4773,8 +4869,12 @@ const ImageAnnotation = () => {
               <Select
                 value={segmentModel}
                 onValueChange={(v: 'sam2' | 'sam3') => setSegmentModel(v)}
+                disabled={classes.length === 0}
               >
-                <SelectTrigger className="h-8 text-xs bg-muted border-border mt-1">
+                <SelectTrigger
+                  className="h-8 text-xs bg-muted border-border mt-1"
+                  title={classes.length === 0 ? 'Add at least one class first' : undefined}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -4782,7 +4882,11 @@ const ImageAnnotation = () => {
                   <SelectItem
                     value="sam3"
                     disabled={!sam3Available}
-                    title={!sam3Available ? 'SAM 3 not loaded: add backend/sam_service/models/sam3.pt or HF_TOKEN' : undefined}
+                    title={
+                      !sam3Available
+                        ? 'SAM 3: set SAM3_MODELS_HOST_PATH + SAM3_CHECKPOINT_FILENAME in .env (run lai install), or SAM3_ALLOW_HF_DOWNLOAD=true + HF_TOKEN'
+                        : undefined
+                    }
                   >
                     SAM 3 (point / text){!sam3Available ? ' — not available' : ''}
                   </SelectItem>
@@ -4810,7 +4914,7 @@ const ImageAnnotation = () => {
                       isApplyingAllImages ||
                       !segmentTextPrompt.trim() ||
                       !selectedClass ||
-                      imageCollections.find((c) => c.id === mainLayer)?.images.length === 0
+                      imageCollections.find((c) => String(c.id) === mainLayer)?.images.length === 0
                     }
                     onClick={applySam3OnAllImages}
                     title="Run SAM 3 text segmentation on every image in the current layer and add annotations for the selected class"
@@ -4842,6 +4946,7 @@ const ImageAnnotation = () => {
                 <Button 
                   size="sm" 
                   variant="outline"
+                  aria-label="Add new class"
                   onClick={() => setIsAddingClass(true)}
                 >
                   <Plus className="w-4 h-4" />
@@ -5064,18 +5169,28 @@ const ImageAnnotation = () => {
             ref={containerRef}
             className="flex-1 relative overflow-hidden bg-muted/30"
           >
-            {(displayImage || currentImage) ? (
+            {/**
+             * The canvas must render the bitmap for the *selected display layer*. When a
+             * display layer is active we only show `displayImage` (which was looked up in
+             * that specific layer); falling back to `currentImage` would mean switching
+             * from e.g. "RGB Images" to "Depth" kept showing the RGB bitmap. When no
+             * display layer is set (initial state), we still allow `currentImage` as a
+             * fallback so the canvas isn't blank during bootstrap.
+             */}
+            {(() => {
+              const bitmap = displayLayer ? displayImage : (displayImage || currentImage);
+              return bitmap ? (
               <>
                 <img
-                  key={`layer-${layerSwitchCounterRef.current}-${displayLayer}-${(displayImage || currentImage)?.url || 'no-image'}`}
+                  key={`layer-${layerSwitchCounterRef.current}-${displayLayer}`}
                   ref={imageRef}
-                  src={(displayImage || currentImage)?.url || ''}
-                  alt={(displayImage || currentImage)?.fileName || 'Current image'}
+                  src={bitmap.url || ''}
+                  alt={bitmap.fileName || 'Current image'}
                   className="absolute opacity-0"
                   onLoad={handleImageLoad}
                   onError={(e) => {
                     console.error('Image failed to load:', e);
-                    console.error('Image src:', (displayImage || currentImage)?.url);
+                    console.error('Image src:', bitmap.url);
                   }}
                   crossOrigin="anonymous"
                 />
@@ -5106,7 +5221,7 @@ const ImageAnnotation = () => {
                     <>
                       <div className="text-lg font-medium">No corresponding image found</div>
                       <div className="text-sm">
-                        Image "{currentImageName}" not found in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
+                        Image "{currentImageName}" not found in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
                       </div>
                       <div className="text-xs mt-2 text-muted-foreground/70">Switch to a different layer or choose another image</div>
                     </>
@@ -5114,14 +5229,15 @@ const ImageAnnotation = () => {
                     <>
                       <div className="text-lg font-medium">No Image Available</div>
                       <div className="text-sm">
-                        Image "{currentImageName}" does not exist in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
+                        Image "{currentImageName}" does not exist in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
                       </div>
                       <div className="text-xs mt-2 text-muted-foreground/70">Switch to a different layer or navigate to another image</div>
                     </>
                   )}
                 </div>
               </div>
-            )}
+            );
+            })()}
 
             {/* Drawing Instructions */}
             {isDrawing && activeTool === 'polygon' && (
@@ -5221,7 +5337,7 @@ const ImageAnnotation = () => {
                   </span>
                   {currentLayerImageNames.length > 0 && (
                     <span className="text-xs text-primary">
-                      ({imageCollections.find(c => c.id === mainLayer)?.name || 'layer'})
+                      ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
                     </span>
                   )}
                   {currentImageName && (
@@ -5241,8 +5357,8 @@ const ImageAnnotation = () => {
                 </Button>
               </div>
 
-              {/* Display Layer Selector */}
-              {imageCollections.length > 1 && (
+              {/* Display Layer Selector — always show when at least one collection exists so the current layer is visible and can be switched */}
+              {imageCollections.length > 0 && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">Layer:</span>
                   <Select value={displayLayer} onValueChange={handleLayerChange}>
@@ -5251,7 +5367,7 @@ const ImageAnnotation = () => {
                     </SelectTrigger>
                     <SelectContent>
                       {imageCollections.map(collection => (
-                        <SelectItem key={collection.id} value={collection.id}>
+                        <SelectItem key={collection.id} value={String(collection.id)}>
                           {collection.name} ({collection.images.length} images)
                         </SelectItem>
                       ))}
@@ -5261,8 +5377,24 @@ const ImageAnnotation = () => {
                   {/* Warning for missing image */}
                   {!displayImage && currentImageName && displayLayer && (
                     <span className="text-xs text-yellow-500">
-                      Image "{currentImageName}" not available in {imageCollections.find(c => c.id === displayLayer)?.name || 'this layer'}
+                      Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
                     </span>
+                  )}
+
+                  {/* Calibration enable/disable toggle — shown whenever a calibration exists between collections */}
+                  {calibrations.length > 0 && displayLayer && (
+                    <button
+                      onClick={() => setCalibrationEnabled(prev => !prev)}
+                      className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
+                        calibrationIsActive && calibrationEnabled
+                          ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
+                          : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
+                      }`}
+                      title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
+                    >
+                      <Crosshair className="h-3 w-3" />
+                      {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
+                    </button>
                   )}
                 </div>
               )}
@@ -5301,8 +5433,8 @@ const ImageAnnotation = () => {
               </Button>
             </div>
             
-            {/* Navigation Layer Selector */}
-            {imageCollections.length > 1 && !rightCollapsed && (
+            {/* Navigation Layer Selector — shown whenever collections exist so the current layer is always visible */}
+            {imageCollections.length > 0 && !rightCollapsed && (
               <div className="mt-3 p-2 bg-muted rounded border border-border">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xs text-muted-foreground">Navigation Layer:</span>
@@ -5313,7 +5445,7 @@ const ImageAnnotation = () => {
                   </SelectTrigger>
                   <SelectContent>
                     {imageCollections.map(collection => (
-                      <SelectItem key={collection.id} value={collection.id}>
+                      <SelectItem key={collection.id} value={String(collection.id)}>
                         {collection.name} ({collection.images.length} images)
                       </SelectItem>
                     ))}

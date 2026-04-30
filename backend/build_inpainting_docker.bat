@@ -2,7 +2,7 @@
 echo Building Inpainting Docker Image...
 echo.
 
-cd /d "e:\projects\ai-data-creator\backend"
+cd /d "e:\projects\lai\backend"
 
 echo Choose a Dockerfile version:
 echo 1. Standard version (Dockerfile.inpainting.stable) - RECOMMENDED
@@ -13,16 +13,16 @@ set /p choice="Enter your choice (1-2): "
 
 if "%choice%"=="1" (
     echo Building with stable, proven compatible versions...
-    docker build -f Dockerfile.inpainting.stable -t ai-data-creator-inpainting:stable .
-    set image_name=ai-data-creator-inpainting:stable
+    docker build -f Dockerfile.inpainting.stable -t lai-inpainting:stable .
+    set image_name=lai-inpainting:stable
 ) else if "%choice%"=="2" (
     echo Building with original Dockerfile...
-    docker build -f python_scripts\data\inpainting\Dockerfile -t ai-data-creator-inpainting:latest .
-    set image_name=ai-data-creator-inpainting:latest
+    docker build -f python_scripts\data\inpainting\Dockerfile -t lai-inpainting:latest .
+    set image_name=lai-inpainting:latest
 ) else (
     echo Invalid choice. Building stable version by default...
-    docker build -f Dockerfile.inpainting.stable -t ai-data-creator-inpainting:stable .
-    set image_name=ai-data-creator-inpainting:stable
+    docker build -f Dockerfile.inpainting.stable -t lai-inpainting:stable .
+    set image_name=lai-inpainting:stable
 )
 
 if %errorlevel% equ 0 (

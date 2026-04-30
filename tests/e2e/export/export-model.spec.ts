@@ -1,11 +1,8 @@
 import { test, expect, Page } from '@playwright/test';
-import { clearDatabase } from '../../test-helpers';
 
 // Helper: Create test project
 async function createTestProject(page: Page, projectName: string) {
-  await page.goto('/');
-  await page.click('text=New Project');
-  await expect(page).toHaveURL('/projects/new');
+  await page.goto('/projects/new');
   await page.fill('input#name', projectName);
   await page.click('button[type="submit"]:has-text("Create")');
   await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
@@ -14,12 +11,10 @@ async function createTestProject(page: Page, projectName: string) {
 }
 
 // Helper: Create test dataset
-async function createTestDataset(page: Page, projectName: string, datasetName: string): Promise<number> {
-  await page.goto('/');
+async function createTestDataset(page: Page, projectId: number, datasetName: string): Promise<number> {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   
   const createButton = page.locator('button:has-text("Create")').first();
   await createButton.click();
@@ -29,30 +24,16 @@ async function createTestDataset(page: Page, projectName: string, datasetName: s
   
   await page.fill('input[placeholder*="Vehicle Detection"]', datasetName);
   await page.click('button[type="submit"]:has-text("Create")');
-  await page.waitForTimeout(2000);
-  
-  // Wait to be redirected back to project page
-  await page.waitForURL(/\/projects\/\d+/, { timeout: 10000 });
-  await page.waitForLoadState('networkidle');
-  
-  // Get the project ID from the URL
-  const projectId = parseInt(page.url().match(/\/projects\/(\d+)/)?.[1] || '0');
-  if (!projectId) {
-    console.error('Could not extract project ID from URL:', page.url());
-    return 0;
-  }
+  await page.waitForLoadState('networkidle', { timeout: 20000 });
   
   // Get the dataset ID from the project's datasets
-  const datasetId = await page.evaluate(async ({ projectId, datasetName }) => {
-    const response = await fetch(`http://localhost:9999/projects/${projectId}`);
+  const datasetId = await page.evaluate(async ({ pid, name }) => {
+    const response = await fetch(`http://localhost:9999/projects/${pid}`);
     const result = await response.json();
-    if (!result || !result.datasets) {
-      console.error('Failed to fetch project:', result);
-      return 0;
-    }
-    const dataset = result.datasets.find((d: any) => d.name === datasetName);
+    if (!result || !result.datasets) return 0;
+    const dataset = result.datasets.find((d: any) => d.name === name);
     return dataset ? dataset.id : 0;
-  }, { projectId, datasetName });
+  }, { pid: projectId, name: datasetName });
   
   return datasetId;
 }
@@ -106,8 +87,6 @@ test.describe('Model Export Functionality', () => {
   let datasetId: number;
 
   test.beforeEach(async ({ page }) => {
-    // Clear database before each test
-    await clearDatabase(page);
     // Generate unique names
     const timestamp = Date.now();
     projectName = `Export Test Project ${timestamp}`;
@@ -121,7 +100,7 @@ test.describe('Model Export Functionality', () => {
     expect(projectId).toBeGreaterThan(0);
     
     // Create test dataset
-    datasetId = await createTestDataset(page, projectName, datasetName);
+    datasetId = await createTestDataset(page, projectId, datasetName);
     expect(datasetId).toBeGreaterThan(0);
     
     // Upload test image
@@ -165,8 +144,8 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal to open - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText('Export a trained YOLO model')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/Export a YOLO model to ONNX/i)).toBeVisible();
   });
 
   test('should show available models in export modal', async ({ page }) => {
@@ -180,7 +159,7 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
     
     // Check if model selection dropdown is visible
     const modelSelect = page.locator('select, [role="combobox"]').first();
@@ -205,7 +184,7 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
     
     // Check if ONNX Export Parameters section is visible
     await expect(page.getByText('ONNX Export Parameters')).toBeVisible({ timeout: 5000 });
@@ -231,7 +210,7 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
     
     // Find and check FP16 checkbox - wait for it to be visible
     const fp16Checkbox = page.locator('input[type="checkbox"][id="half"]');
@@ -264,7 +243,7 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
     
     // Find image size input - wait for it to be visible
     const imgszInput = page.locator('input[id="imgsz"]');
@@ -286,7 +265,7 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
     
     // Configure all parameters - wait for each to be visible
     const halfCheckbox = page.locator('input[type="checkbox"][id="half"]');
@@ -333,7 +312,7 @@ test.describe('Model Export Functionality', () => {
     await createButton.click();
     
     // Wait for modal - use more specific selector
-    await expect(page.getByRole('heading', { name: 'Export Model' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Convert Model to ONNX' })).toBeVisible({ timeout: 5000 });
     
     // Try to click export button without selecting a model
     const exportButton = page.locator('button:has-text("Start Export")');
@@ -374,6 +353,6 @@ test.describe('Model Export Functionality', () => {
     // This test would verify that export parameters are stored in task metadata
     // This would require checking the API response or task details
     // For now, we'll just verify the page loads correctly
-    await expect(page.getByText('Model Exports')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Model Conversions')).toBeVisible({ timeout: 5000 });
   });
 });

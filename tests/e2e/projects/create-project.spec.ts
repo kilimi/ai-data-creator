@@ -1,11 +1,16 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { clearDatabase, verifyDatabaseIsEmpty } from '../../test-helpers';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Helper function to navigate to create project page
 async function navigateToCreateProject(page: Page) {
   await page.goto('/');
-  await page.click('text=New Project');
+  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
+  await expect(newProjectLink).toBeVisible();
+  await newProjectLink.click();
   await expect(page).toHaveURL('/projects/new');
 }
 

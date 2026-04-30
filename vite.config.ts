@@ -40,7 +40,9 @@ const wasmPlugin = () => ({
 });
 
 // https://vitejs.dev/config/
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  const { componentTagger } = await import("lovable-tagger");
+  
   return {
     server: {
       host: "::",
@@ -59,21 +61,27 @@ export default defineConfig(async () => {
     plugins: [
       react(),
       wasmPlugin(),
-    ],
+      mode === 'development' &&
+      componentTagger(),
+    ].filter(Boolean),
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
       },
+      // Avoid duplicate React; splitting @radix-ui into its own chunk caused runtime
+      // "Cannot read properties of undefined (reading 'forwardRef')" in production builds.
+      dedupe: ["react", "react-dom"],
     },
     build: {
       chunkSizeWarningLimit: 1700,
       rollupOptions: {
         output: {
           manualChunks: (id: string) => {
-            if (id.includes('node_modules/onnxruntime-web')) return 'onnx';
-            if (id.includes('node_modules/jszip')) return 'jszip';
-            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom') || id.includes('node_modules/react-router')) return 'vendor';
-            if (id.includes('@radix-ui')) return 'ui';
+            if (id.includes("node_modules/onnxruntime-web")) return "onnx";
+            if (id.includes("node_modules/jszip")) return "jszip";
+            // One vendor chunk for all other node_modules so React is never undefined in
+            // auto-split shared chunks (e.g. ui-*.js) — fixes forwardRef runtime errors.
+            if (id.includes("node_modules/")) return "vendor";
           },
           // Ensure WASM files are treated as assets
           assetFileNames: (assetInfo: any) => {
@@ -84,6 +92,13 @@ export default defineConfig(async () => {
           },
         },
       },
+    },
+    test: {
+      environment: "jsdom",
+      globals: true,
+      setupFiles: "./src/test/setup.ts",
+      include: ["src/**/*.{test,spec}.{ts,tsx}"],
+      exclude: ["tests/**", "node_modules/**", "dist/**"],
     },
   };
 });

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
-from sqlalchemy import or_
+from pydantic import BaseModel
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -22,6 +23,9 @@ from ..schemas import (
 )
 
 router = APIRouter()
+
+class ReorderCollectionsRequest(BaseModel):
+    ordered_collection_ids: List[int]
 
 
 def _base_name(filename: str) -> str:
@@ -69,7 +73,8 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
             dataset_id=dataset_id,
             name="RGB Images",
             description="Default image collection",
-            is_default=True
+            is_default=True,
+            position=0,
         )
         db.add(default_collection)
         db.commit()
@@ -87,7 +92,7 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
     
     collections = db.query(ImageCollection).filter(
         ImageCollection.dataset_id == dataset_id
-    ).order_by(ImageCollection.is_default.desc(), ImageCollection.created_at.asc()).all()
+    ).order_by(ImageCollection.position.asc(), ImageCollection.created_at.asc()).all()
     
     # For default collection: include all dataset images (assigned to default OR unassigned) so nothing is missing when re-entering
     default_collection_id = default_collection.id if default_collection else None
@@ -124,6 +129,7 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
             "name": collection.name,
             "description": collection.description,
             "is_default": collection.is_default,
+            "position": collection.position,
             "created_at": collection.created_at,
             "updated_at": collection.updated_at,
             "image_count": len(images_list),
@@ -157,7 +163,10 @@ def create_image_collection(
         dataset_id=dataset_id,
         name=collection_data.name,
         description=collection_data.description,
-        is_default=collection_data.is_default
+        is_default=collection_data.is_default,
+        position=(db.query(func.coalesce(func.max(ImageCollection.position), -1))
+                    .filter(ImageCollection.dataset_id == dataset_id)
+                    .scalar() or -1) + 1,
     )
     
     db.add(collection)
@@ -182,7 +191,14 @@ def delete_image_collection(
         raise HTTPException(status_code=404, detail="Collection not found")
 
     if collection.is_default:
-        raise HTTPException(status_code=400, detail="Cannot delete default collection")
+        # Promote another collection to default before deleting this one
+        other = db.query(ImageCollection).filter(
+            ImageCollection.dataset_id == dataset_id,
+            ImageCollection.id != collection_id,
+        ).order_by(ImageCollection.position.asc(), ImageCollection.created_at.asc()).first()
+        if other:
+            other.is_default = True
+        # If there is no other collection, we still allow deletion (dataset will have no collections)
 
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
     if not dataset:
@@ -225,6 +241,40 @@ def delete_image_collection(
     db.commit()
 
     return {"message": "Collection and all its images deleted successfully"}
+
+
+@router.put("/datasets/{dataset_id}/image-collections/reorder")
+def reorder_image_collections(
+    dataset_id: int,
+    payload: ReorderCollectionsRequest,
+    db: Session = Depends(get_db)
+):
+    """Persist left-to-right order of image collections for a dataset."""
+    ids = payload.ordered_collection_ids or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="ordered_collection_ids is required")
+
+    collections = db.query(ImageCollection).filter(ImageCollection.dataset_id == dataset_id).all()
+    if not collections:
+        raise HTTPException(status_code=404, detail="No collections found for dataset")
+
+    existing_ids = {c.id for c in collections}
+    requested_ids = set(ids)
+    if requested_ids != existing_ids:
+        raise HTTPException(status_code=400, detail="ordered_collection_ids must include all dataset collections exactly once")
+
+    seen = set()
+    for cid in ids:
+        if cid in seen:
+            raise HTTPException(status_code=400, detail="ordered_collection_ids contains duplicates")
+        seen.add(cid)
+
+    by_id = {c.id: c for c in collections}
+    for idx, cid in enumerate(ids):
+        by_id[cid].position = idx
+
+    db.commit()
+    return {"message": "Collections reordered successfully"}
 
 @router.post("/datasets/{dataset_id}/image-collections/{collection_id}/images")
 async def upload_images_to_collection(
@@ -568,7 +618,8 @@ def initialize_default_collection(dataset_id: int, db: Session = Depends(get_db)
         dataset_id=dataset_id,
         name="RGB Images",
         description="Default image collection",
-        is_default=True
+        is_default=True,
+        position=0,
     )
     db.add(default_collection)
     db.commit()

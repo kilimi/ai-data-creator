@@ -25,10 +25,10 @@ ground_truth_paths = [
 ]
 
 image_dirs = [
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\33\\images",
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\34\\images",
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\35\\images",
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\36\\images",                                         
+    "E:\\projects\\lai\\backend\\projects\\4\\33\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\34\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\35\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\36\\images",                                         
 ]
 
 # Paths to 4 prediction files in COCO format
@@ -47,10 +47,10 @@ ground_truth_paths_or = [
 ]
 
 image_dirs_or = [
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\37\\images",
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\38\\images",
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\39\\images",
-    "E:\\projects\\ai-data-creator\\backend\\projects\\4\\40\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\37\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\38\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\39\\images",
+    "E:\\projects\\lai\\backend\\projects\\4\\40\\images",
 ]
 
 prediction_paths_or = [

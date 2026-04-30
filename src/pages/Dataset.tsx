@@ -9,6 +9,7 @@ import { VideoUploadDialog } from "@/components/VideoUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
+import { CalibrationDialog } from "@/components/CalibrationDialog";
 import { AnnotationSample, processCOCOAnnotations } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
@@ -42,11 +43,40 @@ export default function Dataset() {
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isVideoUploadDialogOpen, setIsVideoUploadDialogOpen] = useState(false);
   const [isVideoUploading, setIsVideoUploading] = useState(false);
+  const [videoUploadPercent, setVideoUploadPercent] = useState(0);
+  const [videoUploadedBytes, setVideoUploadedBytes] = useState(0);
+  const [videoTotalBytes, setVideoTotalBytes] = useState(0);
+  const [videoServerStage, setVideoServerStage] = useState<
+    'idle' | 'uploading' | 'receiving' | 'extracting' | 'saving' | 'done' | 'error'
+  >('idle');
+  const [videoServerPercent, setVideoServerPercent] = useState(0);
+  const [videoFramesExtracted, setVideoFramesExtracted] = useState(0);
+  const [videoFramesExpected, setVideoFramesExpected] = useState(0);
+  // Target collection captured when the user clicked "Upload Video" from a
+  // specific tab. `null` means no tab context (fall back to default on server).
+  const [videoTargetCollectionId, setVideoTargetCollectionId] = useState<string | number | null>(null);
+  const [videoTargetCollectionName, setVideoTargetCollectionName] = useState<string>("");
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [collectionToDelete, setCollectionToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [isCalibrationDialogOpen, setIsCalibrationDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
+
+  // Captures which collection tab was active when "Upload Video" was clicked
+  // so the backend can drop extracted frames into the same collection.
+  const handleOpenVideoUploadDialog = (collectionId?: string | number) => {
+    if (collectionId !== undefined && collectionId !== null && collectionId !== '') {
+      setVideoTargetCollectionId(collectionId);
+      const collection = imageCollections.find(c => String(c.id) === String(collectionId));
+      setVideoTargetCollectionName(collection?.name || "");
+    } else {
+      setVideoTargetCollectionId(null);
+      setVideoTargetCollectionName("");
+    }
+    setIsVideoUploadDialogOpen(true);
+  };
+
   const [useTabbedImages, setUseTabbedImages] = useState(true); // Feature flag for tabbed images
   const [currentPage, setCurrentPage] = useState(1);
   const [datasetProjectId, setDatasetProjectId] = useState<string | null>(null);
@@ -207,7 +237,7 @@ export default function Dataset() {
   };
 
   const handleRemoveImageTab = (collectionId: string): void => {
-    const collection = imageCollections.find(c => c.id === collectionId);
+    const collection = imageCollections.find(c => String(c.id) === String(collectionId));
     if (!collection) return;
     setCollectionToDelete({ id: collectionId, name: collection.name });
   };
@@ -239,6 +269,27 @@ export default function Dataset() {
       }
       return collection;
     }));
+  };
+
+  const handleReorderImageTabs = async (orderedTabIds: string[]): Promise<void> => {
+    if (!datasetId) return;
+    try {
+      await imageCollectionsApi.reorderImageCollections(
+        datasetId,
+        orderedTabIds.map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id))
+      );
+      await loadImageCollections();
+      toast({
+        title: "Layer order updated",
+        description: "Image layers were reordered successfully.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to reorder image layers",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleTabDeleteImage = async (collectionId: string, imageId: string): Promise<void> => {
@@ -589,6 +640,9 @@ export default function Dataset() {
         });
       }
 
+      // Reload image collections so tabs reflect newly uploaded images (default collection gets them)
+      await loadImageCollections();
+
       // Create final success message
       let successMessage = `Successfully processed ${totalFiles} images in ${totalChunks} chunks`;
       if (totalOverwritten > 0) {
@@ -626,12 +680,82 @@ export default function Dataset() {
 
   const handleVideoUpload = async (
     file: File,
-    params: { interval_seconds: number; max_frames: number }
+    params: { interval_seconds: number; max_frames: number; sequential_names: boolean; resize_width: number; resize_height: number }
   ) => {
     if (!api || !id) return;
     setIsVideoUploading(true);
+    setVideoUploadPercent(0);
+    setVideoUploadedBytes(0);
+    setVideoTotalBytes(file.size);
+    setVideoServerStage('uploading');
+    setVideoServerPercent(0);
+    setVideoFramesExtracted(0);
+    setVideoFramesExpected(0);
+
+    // Client-generated id so the backend can publish per-job progress that
+    // we can poll while the main POST is still in flight. Using crypto if
+    // available, otherwise a cheap Math.random fallback — collisions are fine
+    // because the job dies with the request.
+    const jobId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `job_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const stopPolling = () => {
+      if (pollTimer !== null) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    // Poll the server for extraction progress once the browser is done
+    // shipping bytes. The polling keeps running until stopPolling() is called
+    // in the finally block below.
+    const startPolling = () => {
+      if (pollTimer !== null) return;
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await api.getVideoExtractProgress(id, jobId);
+          if (!res.success || !res.data) return;
+          const { stage, percent, extracted, total } = res.data;
+          if (stage === 'unknown') return;
+          if (stage === 'extracting' || stage === 'saving' || stage === 'receiving') {
+            setVideoServerStage(stage);
+            setVideoServerPercent(percent);
+            setVideoFramesExtracted(extracted);
+            setVideoFramesExpected(total);
+          } else if (stage === 'done') {
+            setVideoServerStage('done');
+            setVideoServerPercent(100);
+            setVideoFramesExtracted(extracted);
+            setVideoFramesExpected(extracted);
+            stopPolling();
+          } else if (stage === 'error') {
+            setVideoServerStage('error');
+            stopPolling();
+          }
+        } catch {
+          // Transient poll failures are non-fatal — the main request still
+          // drives the final outcome.
+        }
+      }, 500);
+    };
+
     try {
-      const response = await api.uploadVideoExtract(id, file, params);
+      const response = await api.uploadVideoExtract(id, file, {
+        ...params,
+        collection_id: videoTargetCollectionId ?? undefined,
+      }, (p) => {
+        setVideoUploadPercent(p.percent);
+        setVideoUploadedBytes(p.loaded);
+        setVideoTotalBytes(p.total || file.size);
+        if (p.percent >= 100) {
+          // Upload finished — server is now decoding; start polling.
+          setVideoServerStage(prev => (prev === 'uploading' ? 'receiving' : prev));
+          startPolling();
+        }
+      }, jobId);
       if (response.success && response.data) {
         const data = response.data as { uploaded?: number; images?: any[] };
         const uploaded = data.uploaded ?? (data as any).images?.length ?? 0;
@@ -656,7 +780,15 @@ export default function Dataset() {
         variant: "destructive",
       });
     } finally {
+      stopPolling();
       setIsVideoUploading(false);
+      setVideoUploadPercent(0);
+      setVideoUploadedBytes(0);
+      setVideoTotalBytes(0);
+      setVideoServerStage('idle');
+      setVideoServerPercent(0);
+      setVideoFramesExtracted(0);
+      setVideoFramesExpected(0);
     }
   };
 
@@ -1027,7 +1159,7 @@ export default function Dataset() {
                 onSliderPositionChange={updateSliderPosition}
                 onPageChange={setCurrentPage}
                 onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
-                onOpenVideoUploadDialog={() => setIsVideoUploadDialogOpen(true)}
+                onOpenVideoUploadDialog={handleOpenVideoUploadDialog}
                 onDeleteImage={handleDeleteImage}
                 paginatedImages={paginatedImages}
                 totalPages={totalPages}
@@ -1041,9 +1173,11 @@ export default function Dataset() {
                 imageCollections={imageCollections}
                 onAddImageTab={handleAddImageTab}
                 onRemoveImageTab={handleRemoveImageTab}
+                onReorderImageTabs={handleReorderImageTabs}
                 onTabPageChange={handleTabPageChange}
                 onTabDeleteImage={handleTabDeleteImage}
                 onTabUploadImages={handleTabUploadImages}
+                onOpenCalibrationDialog={() => setIsCalibrationDialogOpen(true)}
               />
             </div>
             <ImageUploadDialog 
@@ -1056,6 +1190,14 @@ export default function Dataset() {
           onOpenChange={setIsVideoUploadDialogOpen}
           onSubmit={handleVideoUpload}
           isUploading={isVideoUploading}
+          uploadProgress={videoUploadPercent}
+          uploadedBytes={videoUploadedBytes}
+          totalBytes={videoTotalBytes}
+          serverStage={videoServerStage}
+          serverPercent={videoServerPercent}
+          framesExtracted={videoFramesExtracted}
+          framesExpected={videoFramesExpected}
+          targetCollectionName={videoTargetCollectionName}
         />
         {dataset && (
           <EditDatasetDialog
@@ -1063,6 +1205,18 @@ export default function Dataset() {
             open={isEditDialogOpen}
             onOpenChange={setIsEditDialogOpen}
             onDatasetUpdated={handleDatasetUpdated}
+          />
+        )}
+
+        {datasetId && (
+          <CalibrationDialog
+            open={isCalibrationDialogOpen}
+            onOpenChange={setIsCalibrationDialogOpen}
+            datasetId={datasetId}
+            collections={imageCollections}
+            onCalibrationSaved={() => {
+              toast({ title: "Calibration saved", description: "Collections are now calibrated." });
+            }}
           />
         )}
 

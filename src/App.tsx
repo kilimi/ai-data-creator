@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ExportProvider } from "@/contexts/ExportContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
@@ -17,7 +17,6 @@ const ProjectDatasets = lazy(() => import("./pages/ProjectDatasets"));
 const ProjectModels = lazy(() => import("./pages/ProjectModels"));
 const ProjectEvaluations = lazy(() => import("./pages/ProjectEvaluations"));
 const ProjectExports = lazy(() => import("./pages/ProjectExports"));
-const ProjectPipelines = lazy(() => import("./pages/ProjectPipelines"));
 const EditDataset = lazy(() => import("./pages/EditDataset"));
 const Dataset = lazy(() => import("@/pages/Dataset"));
 const ImageAnnotation = lazy(() => import("./pages/ImageAnnotation"));
@@ -65,7 +64,7 @@ const App = () => (
                   <Route index element={<ProjectDatasets />} />
                   <Route path="datasets" element={<ProjectDatasets />} />
                   <Route path="models" element={<ProjectModels />} />
-                  <Route path="pipelines" element={<ProjectPipelines />} />
+                  <Route path="pipelines" element={<Navigate to=".." replace />} />
                   <Route path="evaluations" element={<ProjectEvaluations />} />
                   <Route path="exports" element={<ProjectExports />} />
                 </Route>

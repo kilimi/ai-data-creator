@@ -31,7 +31,7 @@ export function EditProjectDialog({ project, open, onOpenChange, onProjectUpdate
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>(project.tags || []);
   const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string | undefined>(project.logo_url);
+  const [logoPreview, setLogoPreview] = useState<string | undefined>(project.logo_url || project.thumbnailUrl);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tagInputRef = useRef<HTMLInputElement>(null);

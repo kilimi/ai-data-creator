@@ -11,7 +11,12 @@ const SEED_FILE = path.join(process.cwd(), 'tests', '.seed-segmentation.json');
  * for the segmentation e2e spec so it does not need to create them (avoids 404 race).
  */
 async function globalSetup(_config: FullConfig) {
-  const browser = await chromium.launch();
+  const customChromiumPath = process.env.PLAYWRIGHT_CHROMIUM_PATH;
+  const launchOptions =
+    customChromiumPath && fs.existsSync(customChromiumPath)
+      ? { executablePath: customChromiumPath }
+      : undefined;
+  const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage();
 
   try {

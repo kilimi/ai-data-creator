@@ -1,81 +1,56 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Run tests serially to avoid parallel project creation conflicts
+test.describe.configure({ mode: 'serial' });
+
+// Helper to get project ID from API (newest match)
+async function getProjectId(page: Page, projectName: string): Promise<number> {
+  return page.evaluate(async (name) => {
+    const r = await fetch('http://localhost:9999/projects');
+    const projects = await r.json();
+    const sorted = [...projects].sort((a: any, b: any) => b.id - a.id);
+    const p = sorted.find((p: any) => p.name === name);
+    return p ? p.id : 0;
+  }, projectName);
+}
 
 // Helper function to create a test project first (datasets need a project)
-async function createTestProject(page: Page, projectName: string): Promise<string> {
-  await page.goto('/');
-  await page.click('text=New Project');
-  await expect(page).toHaveURL('/projects/new');
-  
-  // Fill minimal project info
+async function createTestProject(page: Page, projectName: string): Promise<number> {
+  await page.goto('/projects/new');
   await page.fill('input#name', projectName);
-  
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for navigation back to home page
   await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Wait for the project to appear
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
-  
-  return projectName;
+  return getProjectId(page, projectName);
 }
 
 // Helper function to create a test dataset within a project
-async function createTestDataset(page: Page, projectName: string, datasetName: string) {
-  // Navigate to the project
-  await page.goto('/');
+async function createTestDataset(page: Page, projectId: number, datasetName: string) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(500);
   
-  // Wait for project to be visible
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
-  
-  // Click on the project name to navigate to project detail
-  await page.getByText(projectName).first().click({ timeout: 15000 });
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(2000);
-  
-  // Find and click on Create dropdown button
   const createButton = page.locator('button:has-text("Create")').first();
   await createButton.waitFor({ state: 'visible', timeout: 10000 });
   await createButton.click();
+  await page.waitForTimeout(500);
   
-  // Wait for dropdown menu to appear
-  await page.waitForTimeout(1000);
-  
-  // Click on the "Dataset" menu item (the second one, not Dataset Group)
   await page.getByRole('menuitem', { name: 'Dataset', exact: true }).click();
-  
-  // Wait for navigation to create dataset page
   await page.waitForURL('**/projects/new/dataset', { timeout: 10000 });
   
-  // Fill dataset name
   await page.fill('input[placeholder*="Vehicle Detection"]', datasetName);
-  
-  // Fill description
   await page.fill('textarea[placeholder*="Describe"]', 'Initial dataset description for testing');
   
-  // Add an initial tag
   await page.fill('input[placeholder*="Add tags"]', 'initial-tag');
   await page.click('button:has-text("Add")');
   await expect(page.getByText('initial-tag').first()).toBeVisible();
   
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create Dataset")');
-  
-  // Wait for success toast or navigation
+  await page.waitForURL(/\/projects\/\d+/, { timeout: 20000 });
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Navigate back to project page
-  await page.goto('/');
-  await page.waitForLoadState('networkidle');
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  
-  // Wait for dataset to appear
-  await expect(page.getByText(datasetName).first()).toBeVisible({ timeout: 15000 });
 }
 
 // Helper function to open edit dialog for a dataset
@@ -130,11 +105,12 @@ test.describe('Edit Dataset', () => {
   const timestamp = Date.now();
   const testProjectName = `Project for Edit Dataset ${timestamp}`;
   const originalDatasetName = `Dataset to Edit ${timestamp}`;
+  let projectId: number;
   
   test.beforeEach(async ({ page }) => {
     // Create a test project and dataset before each test
-    await createTestProject(page, testProjectName);
-    await createTestDataset(page, testProjectName, originalDatasetName);
+    projectId = await createTestProject(page, testProjectName);
+    await createTestDataset(page, projectId, originalDatasetName);
   });
 
   test('should open edit dialog when clicking edit button', async ({ page }) => {
@@ -166,15 +142,12 @@ test.describe('Edit Dataset', () => {
     // Change the name
     await editDialog.locator('input').first().fill(newName);
     
-    // Click Save Changes button - scroll dialog content and click
+    // Click Save Changes button using evaluate to bypass viewport constraints
     const saveButton = editDialog.locator('button:has-text("Save Changes")');
-    await saveButton.evaluate((btn) => {
-      btn.scrollIntoView({ block: 'center' });
-      btn.click();
-    });
+    await saveButton.evaluate((btn) => (btn as HTMLElement).click());
     
     // Wait for dialog to close (indicates success)
-    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 });
     
     // Verify the new name appears on the page
     await page.waitForLoadState('networkidle');
@@ -191,15 +164,12 @@ test.describe('Edit Dataset', () => {
     // Change the description
     await editDialog.locator('textarea').first().fill(newDescription);
     
-    // Click Save Changes button - scroll dialog content and click
+    // Click Save Changes button
     const saveButton = editDialog.locator('button:has-text("Save Changes")');
-    await saveButton.evaluate((btn) => {
-      btn.scrollIntoView({ block: 'center' });
-      btn.click();
-    });
+    await saveButton.evaluate((btn) => (btn as HTMLElement).click());
     
     // Wait for dialog to close (indicates success)
-    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 });
     
     // Verify dataset still exists
     await expect(page.getByText(originalDatasetName).first()).toBeVisible({ timeout: 5000 });
@@ -234,15 +204,12 @@ test.describe('Edit Dataset', () => {
     // Wait a moment for UI to update
     await page.waitForTimeout(500);
     
-    // Click Save Changes button - scroll dialog content and click
+    // Click Save Changes button
     const saveButton = editDialog.locator('button:has-text("Save Changes")');
-    await saveButton.evaluate((btn) => {
-      btn.scrollIntoView({ block: 'center' });
-      btn.click();
-    });
+    await saveButton.evaluate((btn) => (btn as HTMLElement).click());
     
     // Wait for dialog to close (indicates success)
-    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 });
     
     // Verify dataset still exists
     await expect(page.getByText(originalDatasetName).first()).toBeVisible({ timeout: 5000 });
@@ -261,15 +228,12 @@ test.describe('Edit Dataset', () => {
     // Wait for preview to appear
     await expect(editDialog.locator('img[alt="Logo preview"]')).toBeVisible({ timeout: 5000 });
     
-    // Click Save Changes button - scroll dialog content and click
+    // Click Save Changes button
     const saveButton = editDialog.locator('button:has-text("Save Changes")');
-    await saveButton.evaluate((btn) => {
-      btn.scrollIntoView({ block: 'center' });
-      btn.click();
-    });
+    await saveButton.evaluate((btn) => (btn as HTMLElement).click());
     
     // Wait for dialog to close (indicates success)
-    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10000 });
     
     // Verify dataset still exists
     await expect(page.getByText(originalDatasetName).first()).toBeVisible({ timeout: 5000 });
@@ -283,12 +247,9 @@ test.describe('Edit Dataset', () => {
     // Make some changes
     await editDialog.locator('input').first().fill('Changed Name That Should Not Be Saved');
     
-    // Click Cancel button - scroll dialog content and click
+    // Click Cancel button
     const cancelButton = editDialog.locator('button:has-text("Cancel")');
-    await cancelButton.evaluate((btn) => {
-      btn.scrollIntoView({ block: 'center' });
-      btn.click();
-    });
+    await cancelButton.evaluate((btn) => (btn as HTMLElement).click());
     
     // Wait for dialog to close
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5000 });

@@ -1,58 +1,55 @@
 import { test, expect, Page } from '@playwright/test';
 
+// Run tests serially to avoid parallel project creation conflicts
+test.describe.configure({ mode: 'serial' });
+
 // Increase timeout for all tests in this file
 test.setTimeout(60000);
 
+// Helper to get project ID from API (newest match)
+async function getProjectId(page: Page, projectName: string): Promise<number> {
+  return page.evaluate(async (name) => {
+    const r = await fetch('http://localhost:9999/projects');
+    const projects = await r.json();
+    const sorted = [...projects].sort((a: any, b: any) => b.id - a.id);
+    const p = sorted.find((p: any) => p.name === name);
+    return p ? p.id : 0;
+  }, projectName);
+}
+
+// Helper to get dataset ID from API
+async function getDatasetId(page: Page, projectId: number, datasetName: string): Promise<number> {
+  return page.evaluate(async ({ pid, dname }) => {
+    const r = await fetch(`http://localhost:9999/projects/${pid}`);
+    const p = await r.json();
+    const d = p.datasets?.find((d: any) => d.name === dname);
+    return d ? d.id : 0;
+  }, { pid: projectId, dname: datasetName });
+}
+
 // Helper function to create a test project first (datasets need a project)
-async function createTestProject(page: Page, projectName: string): Promise<string> {
-  await page.goto('/');
-  await page.click('text=New Project');
-  await expect(page).toHaveURL('/projects/new');
-  
-  // Fill minimal project info
+async function createTestProject(page: Page, projectName: string): Promise<number> {
+  await page.goto('/projects/new');
   await page.fill('input#name', projectName);
-  
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for navigation back to home page
   await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Wait for the project to appear
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
-  
-  return projectName;
+  return getProjectId(page, projectName);
 }
 
 // Helper function to create a test dataset within a project
-async function createTestDataset(page: Page, projectName: string, datasetName: string) {
-  // Navigate to the project
-  await page.goto('/');
+async function createTestDataset(page: Page, projectId: number, datasetName: string) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
-  
-  // Click on the project name to navigate to project detail
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
-  
-  // Find and click on Create dropdown button
-  const createButton = page.locator('button:has-text("Create")').first();
-  await createButton.click();
-  
-  // Wait for dropdown menu to appear
   await page.waitForTimeout(500);
   
-  // Click on the "Dataset" menu item
+  const createButton = page.locator('button:has-text("Create")').first();
+  await createButton.click();
+  await page.waitForTimeout(500);
   await page.getByRole('menuitem', { name: 'Dataset', exact: true }).click();
-  
-  // Wait for navigation to create dataset page
   await page.waitForURL('**/projects/new/dataset', { timeout: 10000 });
   
-  // Fill dataset name
   await page.fill('input[placeholder*="Vehicle Detection"]', datasetName);
-  
-  // Fill description
   await page.fill('textarea[placeholder*="Describe"]', 'Test dataset for duplication testing');
   
   // Add tags
@@ -60,60 +57,39 @@ async function createTestDataset(page: Page, projectName: string, datasetName: s
   await page.click('button:has-text("Add")');
   await expect(page.getByText('test-tag').first()).toBeVisible();
   
-  // Add a second tag
   await page.fill('input[placeholder*="Add tags"]', 'another-tag');
   await page.click('button:has-text("Add")');
   await expect(page.getByText('another-tag').first()).toBeVisible();
   
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create Dataset")');
-  
-  // Wait for success
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  return datasetName;
 }
 
 // Helper to navigate to a specific dataset's detail page
-async function navigateToDatasetDetail(page: Page, projectName: string, datasetName: string) {
-  await page.goto('/');
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(500);
-  
-  // Click on the project - use force to handle animations
-  const projectLink = page.getByText(projectName).first();
-  await projectLink.waitFor({ state: 'visible', timeout: 10000 });
-  await projectLink.click({ force: true });
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1500);
-  
-  // Click on the dataset - use force to handle animations
-  const datasetLink = page.getByText(datasetName).first();
-  await datasetLink.waitFor({ state: 'visible', timeout: 10000 });
-  await datasetLink.click({ force: true });
+async function navigateToDatasetDetail(page: Page, projectId: number, datasetName: string) {
+  const datasetId = await getDatasetId(page, projectId, datasetName);
+  if (!datasetId) throw new Error(`Dataset not found: ${datasetName}`);
+  await page.goto(`/projects/${projectId}/datasets/${datasetId}`);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
 }
 
 // Helper to navigate to project datasets page
-async function navigateToProjectDatasets(page: Page, projectName: string) {
-  await page.goto('/');
+async function navigateToProjectDatasets(page: Page, projectId: number) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(500);
-  
-  // Click on the project
-  const projectLink = page.getByText(projectName).first();
-  await projectLink.waitFor({ state: 'visible', timeout: 10000 });
-  await projectLink.click({ force: true });
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
 }
 
-// Helper to duplicate dataset using button on dataset detail page
+// Helper to duplicate dataset using the Actions dropdown on dataset detail page
 async function duplicateDatasetFromDetailPage(page: Page) {
-  const duplicateButton = page.locator('button:has-text("Duplicate Dataset")');
-  await expect(duplicateButton).toBeVisible({ timeout: 10000 });
-  await duplicateButton.click();
+  // Open the Actions dropdown
+  const actionsButton = page.locator('button:has-text("Actions")');
+  await expect(actionsButton).toBeVisible({ timeout: 10000 });
+  await actionsButton.click();
+  await page.waitForTimeout(300);
+  // Click the Duplicate Dataset menu item
+  await page.getByRole('menuitem', { name: 'Duplicate Dataset' }).click();
 }
 
 // Helper to wait for duplication to complete
@@ -127,22 +103,20 @@ test.describe('Duplicate Dataset', () => {
   const timestamp = Date.now();
   const testProjectName = `Project for Duplicate Test ${timestamp}`;
   const testDatasetName = `Dataset to Duplicate ${timestamp}`;
+  let projectId: number;
   
   test.beforeEach(async ({ page }) => {
     // Create a test project and dataset before each test
-    await createTestProject(page, testProjectName);
-    await createTestDataset(page, testProjectName, testDatasetName);
+    projectId = await createTestProject(page, testProjectName);
+    await createTestDataset(page, projectId, testDatasetName);
     
-    // Navigate to project detail to see the dataset
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-    await page.getByText(testProjectName).first().click();
-    await page.waitForLoadState('networkidle');
+    // Navigate to project datasets page
+    await navigateToProjectDatasets(page, projectId);
   });
 
   test('should show duplication started notification when duplicating from detail page', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Click on "Duplicate Dataset" button
     await duplicateDatasetFromDetailPage(page);
@@ -163,7 +137,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should navigate to project datasets page after duplication completes', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Click on "Duplicate Dataset" button
     await duplicateDatasetFromDetailPage(page);
@@ -184,7 +158,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should preserve dataset name with (Copy) suffix after duplication', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Duplicate the dataset
     await duplicateDatasetFromDetailPage(page);
@@ -193,7 +167,7 @@ test.describe('Duplicate Dataset', () => {
     await waitForDuplicationComplete(page);
     
     // Navigate to project datasets if not already there
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     
     // Verify the duplicated dataset has "(Copy)" in the name
     await expect(page.getByText(`${testDatasetName} (Copy)`).first()).toBeVisible({ timeout: 10000 });
@@ -202,7 +176,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should preserve dataset description after duplication', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Duplicate the dataset
     await duplicateDatasetFromDetailPage(page);
@@ -211,7 +185,7 @@ test.describe('Duplicate Dataset', () => {
     await waitForDuplicationComplete(page);
     
     // Navigate to the duplicated dataset
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     const copyLink = page.getByText(`${testDatasetName} (Copy)`).first();
     await copyLink.waitFor({ state: 'visible', timeout: 15000 });
     await copyLink.click();
@@ -219,8 +193,9 @@ test.describe('Duplicate Dataset', () => {
     await page.waitForTimeout(1000);
     
     // Open edit dialog to verify description is preserved
-    const editButton = page.locator('button:has-text("Edit Dataset")');
-    await editButton.click();
+    const actionsBtn1 = page.locator('button:has-text("Actions")');
+    await actionsBtn1.click();
+    await page.getByRole('menuitem', { name: 'Edit Dataset' }).click();
     await page.waitForTimeout(500);
     
     // Check the description in the edit dialog
@@ -231,7 +206,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should preserve all dataset tags after duplication', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Duplicate the dataset
     await duplicateDatasetFromDetailPage(page);
@@ -240,7 +215,7 @@ test.describe('Duplicate Dataset', () => {
     await waitForDuplicationComplete(page);
     
     // Navigate to the duplicated dataset
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     const copyLink = page.getByText(`${testDatasetName} (Copy)`).first();
     await copyLink.waitFor({ state: 'visible', timeout: 15000 });
     await copyLink.click();
@@ -248,8 +223,9 @@ test.describe('Duplicate Dataset', () => {
     await page.waitForTimeout(1000);
     
     // Open edit dialog to verify tags are preserved
-    const editButton = page.locator('button:has-text("Edit Dataset")');
-    await editButton.click();
+    const actionsBtn2 = page.locator('button:has-text("Actions")');
+    await actionsBtn2.click();
+    await page.getByRole('menuitem', { name: 'Edit Dataset' }).click();
     await page.waitForTimeout(500);
     
     // Check both tags are present in the edit dialog
@@ -261,7 +237,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should create independent copy that can be edited separately', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Duplicate the dataset
     await duplicateDatasetFromDetailPage(page);
@@ -270,7 +246,7 @@ test.describe('Duplicate Dataset', () => {
     await waitForDuplicationComplete(page);
     
     // Navigate to project to verify both datasets exist
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     
     // Both original and copy should be visible in the project
     await expect(page.getByText(testDatasetName).first()).toBeVisible({ timeout: 10000 });
@@ -283,8 +259,9 @@ test.describe('Duplicate Dataset', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
     
-    const editButton = page.locator('button:has-text("Edit Dataset")');
-    await editButton.click();
+    const actionsBtn3 = page.locator('button:has-text("Actions")');
+    await actionsBtn3.click();
+    await page.getByRole('menuitem', { name: 'Edit Dataset' }).click();
     await page.waitForTimeout(500);
     
     // Change the description
@@ -298,13 +275,11 @@ test.describe('Duplicate Dataset', () => {
     await page.waitForTimeout(1000);
     
     // Navigate back to original dataset and verify its description is unchanged
-    await navigateToProjectDatasets(page, testProjectName);
-    await page.getByText(testDatasetName).first().click();
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
-    const originalEditButton = page.locator('button:has-text("Edit Dataset")');
-    await originalEditButton.click();
+    const actionsBtn4 = page.locator('button:has-text("Actions")');
+    await actionsBtn4.click();
+    await page.getByRole('menuitem', { name: 'Edit Dataset' }).click();
     await page.waitForTimeout(500);
     
     const originalDescriptionField = page.locator('textarea').first();
@@ -314,7 +289,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should duplicate dataset from 3-dot menu on dataset card', async ({ page }) => {
     // Navigate to project datasets page
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     
     // Wait for dataset cards to load
     await page.waitForTimeout(1500);
@@ -353,24 +328,26 @@ test.describe('Duplicate Dataset', () => {
   });
 
   test('should show duplicate button only on dataset detail page', async ({ page }) => {
-    // On project page, "Duplicate Dataset" button (the full button, not menu item) should not be visible
-    await navigateToProjectDatasets(page, testProjectName);
-    await expect(page.locator('button:has-text("Duplicate Dataset")')).not.toBeVisible();
-    console.log('✓ Duplicate Dataset button not visible on project page');
+    // On project page, "Actions" dropdown with Duplicate Dataset should not be visible
+    await navigateToProjectDatasets(page, projectId);
+    await expect(page.locator('button:has-text("Actions")')).not.toBeVisible();
+    console.log('✓ Actions button not visible on project page');
     
     // Navigate to dataset detail
-    await page.getByText(testDatasetName).first().click();
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
-    // Now duplicate button should be visible
-    await expect(page.locator('button:has-text("Duplicate Dataset")')).toBeVisible({ timeout: 10000 });
-    console.log('✓ Duplicate Dataset button visible on dataset detail page');
+    // Now Actions dropdown should be visible with Duplicate Dataset option
+    const actionsButton = page.locator('button:has-text("Actions")');
+    await expect(actionsButton).toBeVisible({ timeout: 10000 });
+    await actionsButton.click();
+    await expect(page.getByRole('menuitem', { name: 'Duplicate Dataset' })).toBeVisible({ timeout: 5000 });
+    await page.keyboard.press('Escape'); // Close dropdown
+    console.log('✓ Duplicate Dataset option visible in Actions dropdown on dataset detail page');
   });
 
   test('duplicated dataset should have same project association', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Duplicate the dataset
     await duplicateDatasetFromDetailPage(page);
@@ -379,7 +356,7 @@ test.describe('Duplicate Dataset', () => {
     await waitForDuplicationComplete(page);
     
     // Navigate to project
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     
     // Both datasets should be under the same project
     await expect(page.getByText(testDatasetName).first()).toBeVisible({ timeout: 10000 });
@@ -389,7 +366,7 @@ test.describe('Duplicate Dataset', () => {
 
   test('should show success notification when duplication completes', async ({ page }) => {
     // Navigate to dataset detail
-    await navigateToDatasetDetail(page, testProjectName, testDatasetName);
+    await navigateToDatasetDetail(page, projectId, testDatasetName);
     
     // Duplicate the dataset
     await duplicateDatasetFromDetailPage(page);

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon } from "lucide-react";
+import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical, Crosshair } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,7 +34,9 @@ interface TabbedImagesContentProps {
   onUploadImages: (tabId: string, files: File[]) => Promise<void>;
   onAddTab: (tabName: string) => void;
   onRemoveTab: (tabId: string) => void;
-  onOpenVideoUploadDialog?: () => void;
+  onReorderTabs: (orderedTabIds: string[]) => Promise<void>;
+  onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
+  onOpenCalibrationDialog?: () => void;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
   selectedImageIndex: number | null;
@@ -62,13 +64,15 @@ export function TabbedImagesContent({
   onUploadImages,
   onAddTab,
   onRemoveTab,
+  onReorderTabs,
   onOpenVideoUploadDialog,
+  onOpenCalibrationDialog,
   annotations = [],
   annotationFiles = [],
   selectedImageIndex,
   setSelectedImageIndex,
 }: TabbedImagesContentProps) {
-  const [activeTab, setActiveTab] = useState(imageCollections.length > 0 ? imageCollections[0].id : "");
+  const [activeTab, setActiveTab] = useState(imageCollections.length > 0 ? String(imageCollections[0].id) : "");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedClickedImage, setSelectedClickedImage] = useState<Image | null>(null);
   const [isAnnotationChoiceModalOpen, setIsAnnotationChoiceModalOpen] = useState(false);
@@ -82,15 +86,16 @@ export function TabbedImagesContent({
   const [totalChunks, setTotalChunks] = useState(0);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [imageSearchQuery, setImageSearchQuery] = useState("");
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 
   // Update active tab if collections change
   useEffect(() => {
-    if (imageCollections.length > 0 && !imageCollections.find(c => c.id === activeTab)) {
-      setActiveTab(imageCollections[0].id);
+    if (imageCollections.length > 0 && !imageCollections.find(c => String(c.id) === String(activeTab))) {
+      setActiveTab(String(imageCollections[0].id));
     }
   }, [imageCollections, activeTab]);
 
-  const activeCollection = imageCollections.find(c => c.id === activeTab);
+  const activeCollection = imageCollections.find(c => String(c.id) === String(activeTab));
   const allImages = imageCollections.flatMap(c => c.images);
   // Images used for modal navigation: only images in the active collection
   const activeCollectionImages = activeCollection ? activeCollection.images : allImages;
@@ -132,8 +137,21 @@ export function TabbedImagesContent({
     onRemoveTab(tabId);
   };
 
+  const handleTabDrop = async (targetTabId: string) => {
+    if (!draggingTabId || draggingTabId === targetTabId) return;
+    const orderedIds = imageCollections.map(c => String(c.id));
+    const from = orderedIds.indexOf(draggingTabId);
+    const to = orderedIds.indexOf(String(targetTabId));
+    if (from === -1 || to === -1) return;
+    const next = [...orderedIds];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    setDraggingTabId(null);
+    await onReorderTabs(next);
+  };
+
   const handleUploadClick = (tabId: string) => {
-    const collection = imageCollections.find(c => c.id === tabId);
+    const collection = imageCollections.find(c => String(c.id) === String(tabId));
     setUploadingTabId(tabId);
     setUploadingTabName(collection?.name || "Collection");
     setIsUploadDialogOpen(true);
@@ -242,11 +260,44 @@ export function TabbedImagesContent({
           <div className="flex items-center gap-3 mb-4">
             <TabsList className="bg-muted/50 rounded-lg p-1 border border-border/50 h-auto">
               {imageCollections.map((collection) => (
-                <div key={collection.id} className="relative group">
+                <div
+                  key={collection.id}
+                  className={`relative group ${
+                    draggingTabId && draggingTabId !== String(collection.id)
+                      ? 'outline-dashed outline-1 outline-primary/40 rounded-md'
+                      : ''
+                  } ${draggingTabId === String(collection.id) ? 'opacity-60' : ''}`}
+                  onDragOver={(e) => {
+                    if (draggingTabId && draggingTabId !== String(collection.id)) {
+                      e.preventDefault();
+                      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    void handleTabDrop(String(collection.id));
+                  }}
+                >
+                  <div
+                    draggable
+                    onDragStart={(e) => {
+                      setDraggingTabId(String(collection.id));
+                      // Firefox requires dataTransfer.setData for the drag to be recognised
+                      if (e.dataTransfer) {
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', String(collection.id));
+                      }
+                    }}
+                    onDragEnd={() => setDraggingTabId(null)}
+                    className="absolute left-1 top-1/2 -translate-y-1/2 z-10 cursor-grab active:cursor-grabbing text-muted-foreground/70 hover:text-foreground"
+                    title="Drag to reorder layer"
+                  >
+                    <GripVertical className="w-3.5 h-3.5" />
+                  </div>
                   <TabsTrigger 
-                    value={collection.id}
+                    value={String(collection.id)}
                     className="
-                      relative px-5 py-2.5 rounded-md text-sm font-medium transition-all duration-200
+                      relative pl-6 pr-5 py-2.5 rounded-md text-sm font-medium transition-all duration-200
                       data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-lg
                       data-[state=inactive]:text-muted-foreground data-[state=inactive]:hover:text-foreground
                       data-[state=inactive]:hover:bg-accent/50
@@ -282,6 +333,17 @@ export function TabbedImagesContent({
               <Plus className="w-4 h-4" />
               <span className="text-sm font-medium">Add Collection</span>
             </Button>
+            {imageCollections.length >= 2 && onOpenCalibrationDialog && (
+              <Button
+                variant="outline"
+                onClick={onOpenCalibrationDialog}
+                className="px-4 py-2.5 rounded-lg hover:bg-accent transition-all duration-200 flex items-center gap-2"
+                title="Calibrate image collections for alignment"
+              >
+                <Crosshair className="w-4 h-4" />
+                <span className="text-sm font-medium">Calibrate Collections</span>
+              </Button>
+            )}
           </div>
 
           {imageCollections.map((collection) => {
@@ -291,7 +353,7 @@ export function TabbedImagesContent({
               : collection.images.length;
 
             return (
-              <TabsContent key={collection.id} value={collection.id} className="mt-0 space-y-4">
+              <TabsContent key={collection.id} value={String(collection.id)} className="mt-0 space-y-4">
                 {/* Collection Header */}
                 <div className="bg-card/60 rounded-xl p-4 border border-border/40">
                   <div className="flex justify-between items-center">
@@ -318,7 +380,10 @@ export function TabbedImagesContent({
                           Upload Images
                         </DropdownMenuItem>
                         {onOpenVideoUploadDialog && (
-                          <DropdownMenuItem onClick={onOpenVideoUploadDialog} className="gap-2">
+                          <DropdownMenuItem
+                            onClick={() => onOpenVideoUploadDialog(collection.id)}
+                            className="gap-2"
+                          >
                             <Video className="w-4 h-4" />
                             Upload Video
                           </DropdownMenuItem>
@@ -376,7 +441,11 @@ export function TabbedImagesContent({
                           images={filteredImages}
                           imageSize={imageSize}
                           onOpenUploadDialog={() => handleUploadClick(collection.id)}
-                          onOpenVideoUploadDialog={onOpenVideoUploadDialog}
+                          onOpenVideoUploadDialog={
+                            onOpenVideoUploadDialog
+                              ? () => onOpenVideoUploadDialog(collection.id)
+                              : undefined
+                          }
                           onDeleteImage={(imageId) => onDeleteImage(collection.id, imageId)}
                           onImageClick={handleImageClick}
                           annotations={annotationsWithFileName}

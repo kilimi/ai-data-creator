@@ -66,6 +66,10 @@ export interface Image {
 export interface ImageCollection {
   id: string;
   name: string;
+  /** When true, backend default collection (e.g. RGB Images). */
+  is_default?: boolean;
+  /** Left-to-right layer order persisted in backend. */
+  position?: number;
   images: Image[];
   currentPage: number;
   totalPages: number;
@@ -90,22 +94,9 @@ export interface Category {
   color: string;
 }
 
-export type StatsTimeframe = 'day' | 'week' | 'month' | 'year';
-
 export interface DatasetFormValues {
   name: string;
   description: string;
   type?: "classification" | "segmentation" | "panomatic";
   tags?: string[];
-}
-
-export interface DatasetStats {
-  imageCount: number;
-  annotationCount: number;
-  categoriesCount: number;
-  recentActivity: {
-    date: string;
-    imagesAdded: number;
-    annotationsAdded: number;
-  }[];
 }

@@ -6,8 +6,8 @@ echo "🚀 Optimizing Database Performance in Docker..."
 echo "=============================================="
 
 # Check if Docker container is running
-if ! docker ps | grep -q "ai-data-creator"; then
-    echo "❌ Docker container 'ai-data-creator' is not running!"
+if ! docker ps | grep -q "lai-backend"; then
+    echo "❌ Docker container 'lai-backend' is not running!"
     echo "Please start the container first with: docker-compose up -d"
     exit 1
 fi
@@ -16,7 +16,7 @@ echo "✅ Docker container is running"
 
 # Run the database optimization script inside the container
 echo "📊 Running database performance analysis and optimization..."
-docker exec -it ai-data-creator-backend-1 python add_database_indexes.py
+docker exec -it lai-backend-1 python add_database_indexes.py
 
 if [ $? -eq 0 ]; then
     echo "✅ Database optimization completed successfully!"
@@ -36,5 +36,5 @@ if [ $? -eq 0 ]; then
 else
     echo "❌ Database optimization failed!"
     echo "Check the Docker logs for more details:"
-    echo "   docker logs ai-data-creator-backend-1"
+    echo "   docker logs lai-backend-1"
 fi

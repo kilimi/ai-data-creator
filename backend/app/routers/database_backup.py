@@ -221,7 +221,7 @@ async def export_database(
                 raise
         
         # Create filename
-        filename = f"ai_data_creator_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"lai_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
         
         # Use StreamingResponse with chunked encoding
         return StreamingResponse(
@@ -317,7 +317,7 @@ async def export_database_with_files(
             logger.info(f"Created ZIP file with size: {zip_size} bytes")
             
             # Create filename
-            filename = f"ai_data_creator_full_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+            filename = f"lai_full_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
             
             # Reset buffer for streaming
             zip_buffer = io.BytesIO(zip_content)

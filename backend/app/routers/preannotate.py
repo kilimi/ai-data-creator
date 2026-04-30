@@ -15,6 +15,11 @@ import logging
 
 from .. import models, schemas
 from ..database import get_db
+from ..model_weights_presence import (
+    WEIGHTS_DOWNLOAD_NOTICE,
+    is_depth_onnx_cached,
+    is_foundation_yolo_cached,
+)
 
 # Create logger for this module
 logger = logging.getLogger(__name__)
@@ -736,11 +741,19 @@ async def start_preannotate(
             
             logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
             message = f"Auto-annotation started with {model_name}"
-        
+
+        weights_cached = (
+            is_depth_onnx_cached(model_size, environment)
+            if is_depth_estimation
+            else is_foundation_yolo_cached(model_name, task_type)
+        )
+
         return {
             "success": True,
             "task_id": task.id,
             "message": message,
+            "weights_download_expected": not weights_cached,
+            "weights_download_notice": None if weights_cached else WEIGHTS_DOWNLOAD_NOTICE,
             "task": {
                 "id": task.id,
                 "name": task.name,

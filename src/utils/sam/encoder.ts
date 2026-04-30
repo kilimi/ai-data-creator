@@ -22,6 +22,8 @@ export class SAMEncoder {
       throw new Error('Encoder not initialized. Call init() first.');
     }
 
+    console.log('[SAM] Starting image encoding');
+
     // Convert to ImageData if needed (with downsampling for large images)
     let imageData: ImageData;
     let originalWidth: number;
@@ -96,6 +98,8 @@ export class SAMEncoder {
 
     // Cache the encoding
     this.cache.set(imageId, encoding);
+
+    console.log('[SAM] encoding complete');
 
     return encoding;
   }

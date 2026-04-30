@@ -53,23 +53,76 @@ except Exception as e:
 
 app = Flask(__name__)
 
-# Log SAM 3 checkpoint path at startup (volume mount: backend/sam_service/models -> /models/sam3)
-_sam3_path = os.environ.get("SAM3_CHECKPOINT_PATH", "").strip() or None
-if _sam3_path:
-    _exists = os.path.isfile(_sam3_path)
-    print(f"[SAM3] SAM3_CHECKPOINT_PATH={_sam3_path}, exists={_exists}")
-    if not _exists:
-        print("[SAM3] Put sam3.pt in backend/sam_service/models/sam3.pt and run compose from backend/")
-else:
-    print("[SAM3] SAM3_CHECKPOINT_PATH not set")
-
 MAX_INFER_SIZE = int(os.environ.get("SAM_MAX_SIZE", "1024"))
 DEFAULT_MODEL_ID = os.environ.get("SAM2_MODEL_ID", "facebook/sam2.1-hiera-small")
 POINT_BOX_PADDING = int(os.environ.get("SAM3_POINT_BOX_PADDING", "10"))
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None or v.strip() == "":
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Default False: installers must place sam3.pt locally; set SAM3_ALLOW_HF_DOWNLOAD=true to load from Hugging Face instead.
+SAM3_ALLOW_HF_DOWNLOAD = _env_bool("SAM3_ALLOW_HF_DOWNLOAD", False)
+
+
+def _sam3_checkpoint_path() -> str | None:
+    p = os.environ.get("SAM3_CHECKPOINT_PATH", "").strip()
+    return p or None
+
+
+def _sam3_local_checkpoint_ok() -> bool:
+    p = _sam3_checkpoint_path()
+    return bool(p and os.path.isfile(p))
+
+
+def sam3_ready_for_api() -> bool:
+    """True if SAM 3 can be used (health + /segment/ready/sam3). Requires local weights unless HF download is allowed."""
+    if not SAM3_AVAILABLE:
+        return False
+    if _sam3_local_checkpoint_ok():
+        return True
+    return SAM3_ALLOW_HF_DOWNLOAD
+
+
+# Log SAM 3 checkpoint at startup (host folder from SAM3_MODELS_HOST_PATH -> /models/sam3)
+_sam3_path = _sam3_checkpoint_path()
+if _sam3_path:
+    _exists = os.path.isfile(_sam3_path)
+    print(f"[SAM3] SAM3_CHECKPOINT_PATH={_sam3_path}, exists={_exists}")
+    if not _exists:
+        print("[SAM3] Local weights missing — SAM 3 disabled until you add the checkpoint (see install / README).")
+        if not SAM3_ALLOW_HF_DOWNLOAD:
+            print("[SAM3] Hugging Face download is disabled (SAM3_ALLOW_HF_DOWNLOAD not true).")
+        else:
+            print("[SAM3] SAM3_ALLOW_HF_DOWNLOAD=true — will try Hugging Face on first SAM 3 request.")
+else:
+    print("[SAM3] SAM3_CHECKPOINT_PATH not set")
+print(f"[SAM3] SAM3_ALLOW_HF_DOWNLOAD={SAM3_ALLOW_HF_DOWNLOAD}, ready_for_api={sam3_ready_for_api()}")
+
+
 def _get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """
+    Inference device for SAM weights.
+
+    build_sam2 defaults to device='cuda'. from_pretrained must receive ``device`` or the
+    model is always placed on CUDA — breaking CPU-only / broken-GPU Docker setups.
+
+    Set SAM_FORCE_CPU=1 to always use CPU (e.g. no NVIDIA Container Toolkit).
+    """
+    if _env_bool("SAM_FORCE_CPU", False):
+        return torch.device("cpu")
+    try:
+        if not torch.cuda.is_available():
+            return torch.device("cpu")
+        torch.zeros(1, device="cuda")
+        return torch.device("cuda")
+    except Exception as e:
+        print(f"[SAM] CUDA not usable ({e!r}); using CPU.")
+        return torch.device("cpu")
 
 
 # ---------- SAM 2 ----------
@@ -79,8 +132,8 @@ def _load_sam2_predictor():
         return SAM_PREDICTOR
     device = _get_device()
     print(f"[SAM2] Loading model {DEFAULT_MODEL_ID} on {device}...")
-    SAM_PREDICTOR = SAM2ImagePredictor.from_pretrained(DEFAULT_MODEL_ID)
-    SAM_PREDICTOR.model.to(device)
+    # Must pass device: build_sam2_hf -> build_sam2(..., device="cuda") by default
+    SAM_PREDICTOR = SAM2ImagePredictor.from_pretrained(DEFAULT_MODEL_ID, device=device)
     print("[SAM2] Model loaded.")
     return SAM_PREDICTOR
 
@@ -91,18 +144,23 @@ def _load_sam3_model():
     if SAM3_MODEL is not None:
         return SAM3_MODEL, SAM3_PROCESSOR
     device = _get_device()
-    raw_path = os.environ.get("SAM3_CHECKPOINT_PATH", "").strip() or None
+    raw_path = _sam3_checkpoint_path()
     if raw_path and os.path.isfile(raw_path):
         checkpoint_path = raw_path
         load_from_hf = False
         print("[SAM3] Loading from local checkpoint:", checkpoint_path)
-    else:
+    elif SAM3_ALLOW_HF_DOWNLOAD:
         checkpoint_path = None
         load_from_hf = True
         if raw_path:
-            print("[SAM3] Checkpoint not found at", raw_path, "- downloading from HF")
+            print("[SAM3] Checkpoint not found at", raw_path, "- downloading from HF (SAM3_ALLOW_HF_DOWNLOAD=true)")
         else:
-            print("[SAM3] Loading from Hugging Face (set SAM3_CHECKPOINT_PATH for local)")
+            print("[SAM3] Loading from Hugging Face (no local SAM3_CHECKPOINT_PATH)")
+    else:
+        raise FileNotFoundError(
+            "SAM 3 weights not found. Place the checkpoint at the path in SAM3_CHECKPOINT_PATH "
+            "(set SAM3_MODELS_HOST_PATH + SAM3_CHECKPOINT_FILENAME in .env, or use install), or set SAM3_ALLOW_HF_DOWNLOAD=true to download from Hugging Face."
+        )
     print("[SAM3] Loading on", device, "...")
     SAM3_MODEL = _build_sam3_image_model(checkpoint_path=checkpoint_path, load_from_HF=load_from_hf)
     SAM3_MODEL.to(device)
@@ -135,7 +193,7 @@ def health():
     return jsonify({
         "status": "ok",
         "sam_available": SAM_AVAILABLE,
-        "sam3_available": SAM3_AVAILABLE,
+        "sam3_available": sam3_ready_for_api(),
     }), 200
 
 
@@ -229,7 +287,15 @@ def _segment_sam3(data):
     if not SAM3_AVAILABLE:
         return jsonify({
             "error": "SAM 3 not available",
-            "detail": "SAM 3 could not be loaded (check logs and HF token or SAM3_CHECKPOINT_PATH).",
+            "detail": "SAM 3 Python package failed to load (see sam_service logs).",
+        }), 503
+    if not sam3_ready_for_api():
+        return jsonify({
+            "error": "SAM 3 not available",
+            "detail": (
+                "Provide local SAM 3 weights (SAM3_MODELS_HOST_PATH + SAM3_CHECKPOINT_FILENAME in .env), "
+                "or set SAM3_ALLOW_HF_DOWNLOAD=true (and HF_TOKEN if required) to load from Hugging Face."
+            ),
         }), 503
 
     try:

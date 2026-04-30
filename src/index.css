@@ -227,6 +227,12 @@
   }
 }
 
+@keyframes slide {
+  0%   { transform: translateX(-150%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(150%); }
+}
+
 .animate-fade-up {
   animation: fade-up 0.6s ease-out forwards;
   opacity: 0;

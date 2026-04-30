@@ -13,8 +13,10 @@ test('navigate to create project page', async ({ page }) => {
   
   console.log('On home page');
   
-  // Click the "New Project" button
-  await page.click('text=New Project');
+  // Click the visible "New Project" action in main content (sidebar has another offscreen copy)
+  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
+  await expect(newProjectLink).toBeVisible();
+  await newProjectLink.click();
   
   console.log('Clicked New Project button');
   
@@ -29,7 +31,7 @@ test('navigate to create project page', async ({ page }) => {
   console.log('URL verification passed');
   
   // Verify the page title/heading
-  await expect(page.locator('h3:has-text("New LAI Project")')).toBeVisible();
+  await expect(page.getByText('New LAI Project')).toBeVisible();
   
   console.log('Page heading found - navigation successful!');
 });

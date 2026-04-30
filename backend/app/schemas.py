@@ -109,6 +109,7 @@ class ImageCollectionCreate(ImageCollectionBase):
 class ImageCollection(ImageCollectionBase):
     id: int
     dataset_id: int
+    position: int = 0
     created_at: datetime
     updated_at: datetime
     image_count: int = 0

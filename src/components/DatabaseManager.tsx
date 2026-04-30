@@ -700,7 +700,7 @@ export function DatabaseManager({
                                     className="h-7"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      navigator.clipboard.writeText("rsync -av /home/lulu/projects/ai-data-creator/backend/projects/ /destination/projects/\nrsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/");
+                                      navigator.clipboard.writeText("rsync -av /path/to/lai/backend/projects/ /destination/projects/\nrsync -av /path/to/lai/backend/data/ /destination/data/");
                                       setCopiedCommand("linux");
                                       setTimeout(() => setCopiedCommand(null), 2000);
                                     }}
@@ -720,8 +720,8 @@ export function DatabaseManager({
                                   </Button>
                                 </div>
                                 <pre className="p-3 text-xs font-mono overflow-x-auto max-h-32 overflow-y-auto">
-rsync -av /home/lulu/projects/ai-data-creator/backend/projects/ /destination/projects/
-rsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/</pre>
+rsync -av /path/to/lai/backend/projects/ /destination/projects/
+rsync -av /path/to/lai/backend/data/ /destination/data/</pre>
                               </div>
                             </div>
                           </CollapsibleContent>
@@ -749,7 +749,7 @@ rsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/</
                                     className="h-7"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      navigator.clipboard.writeText("Copy-Item -Recurse C:\\home\\lulu\\projects\\ai-data-creator\\backend\\projects\\ C:\\destination\\projects\\\nCopy-Item -Recurse C:\\home\\lulu\\projects\\ai-data-creator\\backend\\data\\ C:\\destination\\data\\");
+                                      navigator.clipboard.writeText("Copy-Item -Recurse C:\\path\\to\\lai\\backend\\projects\\ C:\\destination\\projects\\\nCopy-Item -Recurse C:\\path\\to\\lai\\backend\\data\\ C:\\destination\\data\\");
                                       setCopiedCommand("windows");
                                       setTimeout(() => setCopiedCommand(null), 2000);
                                     }}
@@ -769,8 +769,8 @@ rsync -av /home/lulu/projects/ai-data-creator/backend/data/ /destination/data/</
                                   </Button>
                                 </div>
                                 <pre className="p-3 text-xs font-mono overflow-x-auto max-h-32 overflow-y-auto">
-Copy-Item -Recurse C:\home\lulu\projects\ai-data-creator\backend\projects\ C:\destination\projects\
-Copy-Item -Recurse C:\home\lulu\projects\ai-data-creator\backend\data\ C:\destination\data\</pre>
+Copy-Item -Recurse C:\path\to\lai\backend\projects\ C:\destination\projects\
+Copy-Item -Recurse C:\path\to\lai\backend\data\ C:\destination\data\</pre>
                               </div>
                             </div>
                           </CollapsibleContent>

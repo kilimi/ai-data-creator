@@ -371,7 +371,9 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     };
     
     fetchData();
-  }, [id, toast]);
+    // projectId must be included: short URL /datasets/:id/edit redirects to /projects/:pid/datasets/:id/edit
+    // and returns before loading annotations; without projectId in deps the effect never re-runs after redirect.
+  }, [id, projectId, toast, navigate, api]);
 
   // Load class statistics from same API as Dataset Annotations view so numbers match
   const selectedAnnotationId = selectedAnnotation?.id;

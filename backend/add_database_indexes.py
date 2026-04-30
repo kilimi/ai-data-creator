@@ -204,6 +204,50 @@ def add_performance_indexes():
             "table": "annotation_files",
             "columns": ["dataset_id", "type"],
             "sql": "CREATE INDEX IF NOT EXISTS idx_annotation_files_dataset_type ON annotation_files(dataset_id, type)"
+        },
+
+        # Composite indexes matching SQLAlchemy model __table_args__ (for existing databases)
+        {
+            "name": "idx_image_dataset_filename",
+            "table": "images",
+            "columns": ["dataset_id", "file_name"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_image_dataset_filename ON images(dataset_id, file_name)"
+        },
+        {
+            "name": "idx_image_dataset_collection",
+            "table": "images",
+            "columns": ["dataset_id", "collection_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_image_dataset_collection ON images(dataset_id, collection_id)"
+        },
+        {
+            "name": "idx_ann_file_image",
+            "table": "annotations",
+            "columns": ["annotation_file_id", "image_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_ann_file_image ON annotations(annotation_file_id, image_id)"
+        },
+        {
+            "name": "idx_ann_file_category",
+            "table": "annotations",
+            "columns": ["annotation_file_id", "category"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_ann_file_category ON annotations(annotation_file_id, category)"
+        },
+        {
+            "name": "idx_ann_dataset",
+            "table": "annotations",
+            "columns": ["dataset_id", "annotation_file_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_ann_dataset ON annotations(dataset_id, annotation_file_id)"
+        },
+        {
+            "name": "idx_anncls_file_classname",
+            "table": "annotation_classes",
+            "columns": ["annotation_file_id", "class_name"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_anncls_file_classname ON annotation_classes(annotation_file_id, class_name)"
+        },
+        {
+            "name": "idx_afi_file_datasetimg",
+            "table": "annotation_file_images",
+            "columns": ["annotation_file_id", "dataset_image_id"],
+            "sql": "CREATE INDEX IF NOT EXISTS idx_afi_file_datasetimg ON annotation_file_images(annotation_file_id, dataset_image_id)"
         }
     ]
     

@@ -8,10 +8,62 @@ from datetime import datetime
 import numpy as np
 
 from ..database import get_db
-from ..models import Dataset, AnnotationFile, Annotation, AnnotationClass, Image, AnnotationFileImage
+from ..models import Dataset, AnnotationFile, Annotation, AnnotationClass, Image, AnnotationFileImage, ImageCollection
 from ..database import SessionLocal
 
 router = APIRouter()
+
+
+def resolve_dataset_image_by_filename(
+    db: Session, dataset_id: int, file_name: str
+) -> Optional[Image]:
+    """
+    Deterministically resolve a dataset image from a bare filename.
+
+    Since the image-collections feature landed, multiple `images` rows can share
+    the same `file_name` in a single dataset (one per collection, e.g. RGB + Depth).
+    Previously callers used ``.filter(...).first()`` with no ordering, so save and
+    load paths could resolve to *different* rows — annotations would be written
+    against one collection's image and read back against another, making them
+    appear lost on reload.
+
+    We canonicalise to the dataset's default collection (the "source" images,
+    typically RGB). If there is no default collection or no match there we fall
+    back to the oldest matching image by id, which is stable across processes.
+    """
+    if not file_name:
+        return None
+
+    default_collection = (
+        db.query(ImageCollection)
+        .filter(
+            ImageCollection.dataset_id == dataset_id,
+            ImageCollection.is_default.is_(True),
+        )
+        .order_by(ImageCollection.id.asc())
+        .first()
+    )
+
+    if default_collection is not None:
+        image = (
+            db.query(Image)
+            .filter(
+                Image.dataset_id == dataset_id,
+                Image.file_name == file_name,
+                Image.collection_id == default_collection.id,
+            )
+            .order_by(Image.id.asc())
+            .first()
+        )
+        if image is not None:
+            return image
+
+    return (
+        db.query(Image)
+        .filter(Image.dataset_id == dataset_id, Image.file_name == file_name)
+        .order_by(Image.id.asc())
+        .first()
+    )
 
 
 def validate_and_normalize_segmentation(
@@ -537,13 +589,55 @@ async def save_annotations_direct(
     db.commit()
     
     try:
-        # Create image name to ID mapping
-        image_mapping = {}
-        dataset_images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        # Create image name to ID mapping.
+        #
+        # IMPORTANT: multiple `images` rows can share the same `file_name` in one
+        # dataset (one per image-collection). Naively doing `mapping[fn] = img`
+        # for each row would let the last-iterated row win, so annotations get
+        # saved against an arbitrary collection's image — and the load path,
+        # which uses a different ordering, would miss them. Use the same
+        # deterministic resolver as the load path so the two cannot disagree.
+        image_mapping: Dict[str, Image] = {}
+        default_collection = (
+            db.query(ImageCollection)
+            .filter(
+                ImageCollection.dataset_id == dataset_id,
+                ImageCollection.is_default.is_(True),
+            )
+            .order_by(ImageCollection.id.asc())
+            .first()
+        )
+        default_collection_id = default_collection.id if default_collection else None
+
+        dataset_images = (
+            db.query(Image)
+            .filter(Image.dataset_id == dataset_id)
+            .order_by(Image.id.asc())
+            .all()
+        )
         for img in dataset_images:
-            image_mapping[img.file_name] = img
+            if not img.file_name:
+                continue
             base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
-            image_mapping[base_name] = img
+
+            for key in (img.file_name, base_name):
+                existing = image_mapping.get(key)
+                if existing is None:
+                    image_mapping[key] = img
+                    continue
+                # Prefer the default collection's row; otherwise keep the oldest id.
+                existing_is_default = (
+                    default_collection_id is not None
+                    and existing.collection_id == default_collection_id
+                )
+                new_is_default = (
+                    default_collection_id is not None
+                    and img.collection_id == default_collection_id
+                )
+                if new_is_default and not existing_is_default:
+                    image_mapping[key] = img
+                elif new_is_default == existing_is_default and img.id < existing.id:
+                    image_mapping[key] = img
         
         # Process categories
         category_mapping = {}
@@ -790,6 +884,68 @@ async def get_annotation_data(
                 "total": total_count,
                 "pages": (total_count + limit - 1) // limit
             }
+        }
+    }
+
+
+@router.get("/datasets/{dataset_id}/annotations/{annotation_file_id}/image-annotations")
+async def get_annotations_for_image(
+    dataset_id: int,
+    annotation_file_id: str,
+    image_filename: str = Query(..., description="Image filename (e.g. photo.png)"),
+    db: Session = Depends(get_db)
+):
+    """Return all annotations for a single image inside an annotation file (by filename)."""
+    annotation_file = db.query(AnnotationFile).filter(
+        and_(AnnotationFile.id == annotation_file_id, AnnotationFile.dataset_id == dataset_id)
+    ).first()
+    if not annotation_file:
+        raise HTTPException(status_code=404, detail="Annotation file not found")
+
+    # Use the shared resolver so this matches exactly the row the save paths wrote to.
+    image = resolve_dataset_image_by_filename(db, dataset_id, image_filename)
+    if not image:
+        raise HTTPException(status_code=404, detail=f"Image '{image_filename}' not found in dataset")
+
+    annotations = db.query(Annotation).filter(
+        and_(
+            Annotation.annotation_file_id == annotation_file_id,
+            Annotation.image_id == image.id,
+        )
+    ).all()
+
+    cls_rows = db.query(AnnotationClass).filter(
+        AnnotationClass.annotation_file_id == annotation_file_id
+    ).all()
+    cls_map = {c.category_id: {"name": c.class_name, "color": c.color or "#ea384c"} for c in cls_rows}
+
+    result = []
+    for ann in annotations:
+        cls_info = cls_map.get(ann.category_id, {"name": ann.category or "unknown", "color": "#ea384c"})
+        seg = ann.segmentation
+        if seg and isinstance(seg, list) and len(seg) > 0:
+            first = seg[0]
+            flat = seg if isinstance(first, (int, float)) else (first if isinstance(first, list) else seg)
+        else:
+            flat = []
+        result.append({
+            "id": ann.id,
+            "className": cls_info["name"],
+            "color": cls_info["color"],
+            "segmentation": flat,
+            "bbox": ann.bbox,
+            "area": ann.area,
+            "confidence": ann.confidence,
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "annotations": result,
+            "imageWidth": image.width or 1,
+            "imageHeight": image.height or 1,
+            "imageFilename": image.file_name,
+            "imageId": image.id,
         }
     }
 
@@ -1064,14 +1220,33 @@ def process_coco_annotation_file_task(
             task.progress = 30
             db.commit()
         
-        # Create image name to ID mapping
+        # Create image name to ID mapping. Scope to the dataset's default
+        # collection so we don't attach annotations to depth/other derived
+        # collections that share filenames with the source images. Matches the
+        # resolver used elsewhere (see resolve_dataset_image_by_filename).
         image_mapping = {}
-        dataset_images = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id).all()
+        default_collection = (
+            db.query(ImageCollection)
+            .filter(
+                ImageCollection.dataset_id == annotation_file.dataset_id,
+                ImageCollection.is_default.is_(True),
+            )
+            .order_by(ImageCollection.id.asc())
+            .first()
+        )
+        base_img_query = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id)
+        if default_collection is not None:
+            dataset_images = base_img_query.filter(
+                Image.collection_id == default_collection.id
+            ).order_by(Image.id.asc()).all()
+        else:
+            dataset_images = base_img_query.order_by(Image.id.asc()).all()
         for img in dataset_images:
-            image_mapping[img.file_name] = img.id
-            # Also try without extension
+            if not img.file_name:
+                continue
+            image_mapping.setdefault(img.file_name, img.id)
             base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
-            image_mapping[base_name] = img.id
+            image_mapping.setdefault(base_name, img.id)
         
         # Process COCO images and create mapping
         coco_image_mapping = {}

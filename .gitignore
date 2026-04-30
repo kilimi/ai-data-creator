@@ -9,13 +9,27 @@ lerna-debug.log*
 backend_debug.log
 backend/backups/
 node_modules
+
+# Local Docker / data (compose defaults)
+.lai-data/
+.lai/
+
+# Never commit a virtualenv inside the `lai` Python package directory
+lai/bin/
+lai/lib/
+lai/include/
+lai/lib64/
+lai/pyvenv.cfg
+lai/share/
+
 dist
 dist-ssr
 *.local
 *.onnx
 *.pt
 *.engine
-# Editor directories and files
+
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -25,22 +39,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
-# Visual Studio Code/Visual Studio files
 .vs/
 *.vsidx
 *.wsuo
 
 # Python
-.pyc
 *.pyc
 __pycache__/
 *.pyo
 *.pyd
 .Python
-env/
 .env
 .env.*
+.venv/
 venv/
 ENV/
 env.bak/
@@ -51,9 +62,8 @@ htmlcov/
 .tox/
 .nox/
 .cache
-pytest_cache/
 
-# Backend specific
+# Backend runtime data & caches
 backend/data/
 backend/projects/
 backend/sam_service/models/*.pt
@@ -62,87 +72,42 @@ backend/app/__pycache__/
 backend/app/routers/__pycache__/
 backend/*.db
 backend/*.sqlite*
+backend/ai_models/
+backend/static/*
+backend/runs/*
+backend/python_scripts/data/
+
 *.db
 *.sqlite*
+*.sqlite
+*.sqlite3
+*.db-journal
 
-# Temporary files and backups
+# Temp
 *.tmp
 *.temp
 *.bak
 *.backup
 *~
-.DS_Store?
 Thumbs.db
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 
-# Database files
-*.sqlite
-*.sqlite3
-*.db-journal
-
-# Docker volumes and data
+# Docker local overrides
 docker-compose.override.yml
 
-# IDE and editor files
-.vscode/settings.json
-.vscode/launch.json
-.vscode/tasks.json
-.vscode/c_cpp_properties.json
-.vscode/*.code-workspace
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Application specific
+# App uploads (if created at repo root)
 /projects/
 annotations/
 augmented_datasets/
 uploads/
 temp_uploads/
 
-# Test coverage
+# Coverage / CI artifacts
 coverage/
 .nyc_output/
 *.lcov
 
-# Build artifacts
+# Build
 build/
+*.egg-info/
 out/
 .next/
-.nuxt/
-.vuepress/dist/
-
-# Lock files (uncomment if you want to ignore them)
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-bun.lockb
-
-.vs
-
-*.md
-ai-data-creator/
-convert_scripts/*.md
-convert_scripts/*.txt
-convert_scripts/*.json
-
-*.pt
-*.json
-backend/ai_models/
-backend/static/*
-backend/runs/*
-.sh
-
-backend/python_scripts/data/
-backend/python_scripts/*/
-backend/python_scripts/*.json
-backend/python_scripts/*.csv
-

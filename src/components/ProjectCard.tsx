@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useState, memo } from "react";
+import { useState } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { createApiClient } from "@/utils/api";
 import { API_CONFIG } from "@/config/api";
@@ -40,7 +40,8 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectCardProps) {
-  const imageLoaded = useImageLoad(project.logo_url);
+  const projectCover = project.logo_url || project.thumbnailUrl;
+  const { isLoaded: imageLoaded } = useImageLoad(projectCover);
   const [isHovered, setIsHovered] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -130,13 +131,13 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
       >
         <CardHeader className="p-0 flex-shrink-0">
           <div className="relative h-44 w-full overflow-hidden">
-            {project.logo_url ? (
+            {projectCover ? (
               <>
                 {!imageLoaded && (
                   <div className="absolute inset-0 bg-muted animate-pulse" />
                 )}
                 <img
-                  src={project.logo_url}
+                  src={projectCover}
                   alt={project.name}
                   loading="lazy"
                   decoding="async"
@@ -353,6 +354,3 @@ export function ProjectCardSkeleton() {
     </Card>
   );
 }
-
-// Optimize with React.memo to prevent unnecessary re-renders
-export const MemoizedProjectCard = memo(ProjectCard);

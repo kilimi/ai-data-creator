@@ -1,10 +1,15 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Helper function to create a test project first (datasets need a project)
 async function createTestProject(page: Page, projectName: string) {
   await page.goto('/');
-  await page.click('text=New Project');
+  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
+  await expect(newProjectLink).toBeVisible();
+  await newProjectLink.click();
   await expect(page).toHaveURL('/projects/new');
   
   // Fill minimal project info
@@ -27,8 +32,10 @@ async function navigateToCreateDataset(page: Page, projectName: string) {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   
-  // Click on the project name to navigate to project detail
-  await page.getByText(projectName).first().click();
+  // Click the visible project card link in main content (sidebar has offscreen duplicate labels)
+  const projectLink = page.locator('main').getByRole('link', { name: projectName }).first();
+  await expect(projectLink).toBeVisible({ timeout: 15000 });
+  await projectLink.click();
   
   // Wait for project page to load
   await page.waitForLoadState('networkidle');

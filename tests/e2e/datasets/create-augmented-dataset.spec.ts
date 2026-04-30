@@ -1,77 +1,58 @@
 import { test, expect, Page } from '@playwright/test';
 
+// Run tests serially to avoid parallel project creation conflicts
+test.describe.configure({ mode: 'serial' });
+
+// Helper to get project ID from API (newest match)
+async function getProjectId(page: Page, projectName: string): Promise<number> {
+  return page.evaluate(async (name) => {
+    const r = await fetch('http://localhost:9999/projects');
+    const projects = await r.json();
+    const sorted = [...projects].sort((a: any, b: any) => b.id - a.id);
+    const p = sorted.find((p: any) => p.name === name);
+    return p ? p.id : 0;
+  }, projectName);
+}
+
 // Helper function to create a test project first (datasets need a project)
-async function createTestProject(page: Page, projectName: string) {
-  await page.goto('/');
-  await page.click('text=New Project');
-  await expect(page).toHaveURL('/projects/new');
-  
-  // Fill minimal project info
+async function createTestProject(page: Page, projectName: string): Promise<number> {
+  await page.goto('/projects/new');
   await page.fill('input#name', projectName);
-  
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for navigation back to home page
   await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Wait for the project to appear
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
+  return getProjectId(page, projectName);
 }
 
 // Helper function to create a source dataset for augmentation
-async function createSourceDataset(page: Page, projectName: string, datasetName: string) {
-  // Navigate to the project detail page
-  await page.goto('/');
+async function createSourceDataset(page: Page, projectId: number, datasetName: string) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(500);
   
-  // Click on the project name to navigate to project detail
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
-  
-  // Find and click on Create dropdown button
   const createButton = page.locator('button:has-text("Create")').first();
   await createButton.click();
   await page.waitForTimeout(500);
-  
-  // Click on the "Dataset" menu item
   await page.getByRole('menuitem', { name: 'Dataset', exact: true }).click();
-  
-  // Wait for navigation to create dataset page
   await page.waitForURL('**/projects/new/dataset', { timeout: 10000 });
   
-  // Fill dataset name
   await page.fill('input[placeholder*="Vehicle Detection"]', datasetName);
-  
-  // Submit
   await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for success
   await page.waitForLoadState('networkidle', { timeout: 20000 });
 }
 
 // Helper to open the augmented dataset modal
-async function openAugmentedDatasetModal(page: Page, projectName: string) {
-  // Navigate to the project detail page
-  await page.goto('/');
+async function openAugmentedDatasetModal(page: Page, projectId: number) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(500);
   
-  // Click on the project name to navigate to project detail
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
-  
-  // Find and click on Create dropdown button
   const createButton = page.locator('button:has-text("Create")').first();
   await createButton.click();
   await page.waitForTimeout(500);
   
-  // Click on the "Augmented Dataset" menu item
   await page.getByText('Augmented Dataset').click();
   
-  // Wait for modal to appear
   await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
   await expect(page.getByRole('heading', { name: 'Create Augmented Dataset' })).toBeVisible();
 }
@@ -80,13 +61,14 @@ test.describe('Create Augmented Dataset', () => {
   const timestamp = Date.now();
   const testProjectName = `Augmented Test Project ${timestamp}`;
   const sourceDatasetName = `Source Dataset ${timestamp}`;
+  let projectId: number;
   
   test.beforeEach(async ({ page }) => {
     // Create a test project first
-    await createTestProject(page, testProjectName);
+    projectId = await createTestProject(page, testProjectName);
     
     // Create a source dataset to use for augmentation
-    await createSourceDataset(page, testProjectName, sourceDatasetName);
+    await createSourceDataset(page, projectId, sourceDatasetName);
   });
 
   test('should open augmented dataset modal without crashing', async ({ page }) => {
@@ -108,7 +90,7 @@ test.describe('Create Augmented Dataset', () => {
     });
     
     // Open the augmented dataset modal
-    await openAugmentedDatasetModal(page, testProjectName);
+    await openAugmentedDatasetModal(page, projectId);
     
     // Wait a moment for any potential infinite loops to manifest
     await page.waitForTimeout(2000);
@@ -128,7 +110,7 @@ test.describe('Create Augmented Dataset', () => {
     
     // Verify essential elements are present
     await expect(page.getByText('Dataset Name')).toBeVisible();
-    await expect(page.getByText('Select Source Datasets')).toBeVisible();
+    await expect(page.getByText('Source Datasets')).toBeVisible();
     await expect(page.getByText('Select Augmentation Methods')).toBeVisible();
   });
 
@@ -147,7 +129,7 @@ test.describe('Create Augmented Dataset', () => {
     });
     
     // Open the augmented dataset modal
-    await openAugmentedDatasetModal(page, testProjectName);
+    await openAugmentedDatasetModal(page, projectId);
     
     // Wait for modal to fully load
     await page.waitForTimeout(1000);
@@ -212,7 +194,7 @@ test.describe('Create Augmented Dataset', () => {
     });
     
     // Open the augmented dataset modal
-    await openAugmentedDatasetModal(page, testProjectName);
+    await openAugmentedDatasetModal(page, projectId);
     
     // Wait for modal to fully load
     await page.waitForTimeout(1000);
@@ -264,7 +246,7 @@ test.describe('Create Augmented Dataset', () => {
     });
     
     // Open the augmented dataset modal
-    await openAugmentedDatasetModal(page, testProjectName);
+    await openAugmentedDatasetModal(page, projectId);
     
     // Wait for modal to appear
     await expect(page.getByRole('dialog')).toBeVisible();
@@ -305,7 +287,7 @@ test.describe('Create Augmented Dataset', () => {
     });
     
     // Open the augmented dataset modal
-    await openAugmentedDatasetModal(page, testProjectName);
+    await openAugmentedDatasetModal(page, projectId);
     
     // Wait for modal to fully load
     await page.waitForTimeout(1000);

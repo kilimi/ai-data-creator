@@ -5,7 +5,7 @@ import { Navbar } from "@/components/Navbar";
 import { ProjectBreadcrumb } from '@/components/ProjectBreadcrumb';
 import { ProjectContext } from '@/hooks/use-project-context';
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Database, Brain, Activity, Loader2, Download, Workflow } from "lucide-react";
+import { ArrowLeft, Database, Brain, Activity, Loader2, Download } from "lucide-react";
 import { createApiClient } from '@/utils/api';
 import { getApiBaseUrl } from '@/config/api';
 import { Project } from '@/types';
@@ -59,7 +59,6 @@ export function ProjectLayout() {
   const [loading, setLoading] = useState(true);
   const [datasetCount, setDatasetCount] = useState(0);
   const [modelsCount, setModelsCount] = useState<number | undefined>(undefined);
-  const [pipelinesCount, setPipelinesCount] = useState<number | undefined>(undefined);
   const [evaluationsCount, setEvaluationsCount] = useState<number | undefined>(undefined);
   const [exportsCount, setExportsCount] = useState<number | undefined>(undefined);
   const mountedRef = useRef(true);
@@ -85,13 +84,11 @@ export function ProjectLayout() {
       setModelsCount(res.data.models);
       setEvaluationsCount(res.data.evaluations);
       setExportsCount(res.data.exports);
-      setPipelinesCount(res.data.pipelines);
     }).catch(() => {
       if (mountedRef.current) {
         setModelsCount(0);
         setEvaluationsCount(0);
         setExportsCount(0);
-        setPipelinesCount(0);
       }
     });
 
@@ -114,7 +111,6 @@ export function ProjectLayout() {
   const getActiveSection = () => {
     const path = location.pathname;
     if (path.includes('/models')) return 'models';
-    if (path.includes('/pipelines')) return 'pipelines';
     if (path.includes('/evaluations')) return 'evaluations';
     if (path.includes('/exports')) return 'exports';
     return 'datasets';
@@ -179,13 +175,6 @@ export function ProjectLayout() {
                   label="Models"
                   count={modelsCount}
                   isActive={activeSection === 'models'}
-                />
-                <NavItem
-                  to={`/projects/${id}/pipelines`}
-                  icon={<Workflow className="h-5 w-5" />}
-                  label="Pipelines"
-                  count={pipelinesCount}
-                  isActive={activeSection === 'pipelines'}
                 />
                 <NavItem
                   to={`/projects/${id}/evaluations`}

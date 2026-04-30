@@ -27,7 +27,7 @@ interface ImagesTabContentProps {
   onImageSizeChange: (value: number[]) => void;
   onPageChange: (page: number) => void;
   onOpenUploadDialog: () => void;
-  onOpenVideoUploadDialog?: () => void;
+  onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onImageClick?: (image: Image) => void;
   paginatedImages: Image[];
@@ -178,7 +178,7 @@ export function ImagesTabContent({
                 Upload Images
               </DropdownMenuItem>
               {onOpenVideoUploadDialog && (
-                <DropdownMenuItem onClick={onOpenVideoUploadDialog} className="gap-2">
+                <DropdownMenuItem onClick={() => onOpenVideoUploadDialog()} className="gap-2">
                   <Video className="w-4 h-4" />
                   Upload Video
                 </DropdownMenuItem>

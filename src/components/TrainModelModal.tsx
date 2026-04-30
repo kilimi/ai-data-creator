@@ -33,7 +33,6 @@ import {
 import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info } from "lucide-react";
 import { Dataset, DatasetGroup } from "@/types";
 import { YoloSettingsDialog } from "./YoloSettingsDialog";
-import { MaskRCNNSettingsDialog } from "./MaskRCNNSettingsDialog";
 import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
@@ -70,9 +69,30 @@ interface DatasetSelection {
 }
 
 interface ModelConfig {
-  type: 'yolo' | 'mask-rcnn' | 'rf-detr';
+  type: 'yolo' | 'rf-detr';
   settings: any;
 }
+
+/** Per-architecture sizes — aligned with install/foundation_models and AutoAnnotateModal. */
+const YOLO_TRAIN_SIZES: Record<string, string[]> = {
+  yolo11: ['n', 's', 'm', 'l', 'x'],
+  yolo26: ['n', 's', 'm', 'l', 'x'],
+  yolo_nas: ['s', 'm', 'l'],
+};
+
+const YOLO_VERSION_LABEL: Record<string, string> = {
+  yolo11: 'YOLOv11',
+  yolo26: 'YOLO26',
+  yolo_nas: 'YOLO-NAS',
+};
+
+const LABEL_FOR_SIZE: Record<string, string> = {
+  n: 'Nano',
+  s: 'Small',
+  m: 'Medium',
+  l: 'Large',
+  x: 'X-Large',
+};
 
 export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId }: TrainModelModalProps) {
   const { api } = useApi();
@@ -81,7 +101,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
   const [modelSettings, setModelSettings] = useState<any>({});
   const [showYoloSettings, setShowYoloSettings] = useState(false);
-  const [showMaskRCNNSettings, setShowMaskRCNNSettings] = useState(false);
   const [showRFDETRSettings, setShowRFDETRSettings] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
   const [showClassDialog, setShowClassDialog] = useState(false);
@@ -90,12 +109,28 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
   // Training started dialog state
   const [showTrainingStarted, setShowTrainingStarted] = useState(false);
-  const [trainingInfo, setTrainingInfo] = useState({
+  const [trainingInfo, setTrainingInfo] = useState<{
+    taskId: string;
+    modelName: string;
+    datasetsCount: number;
+    epochs: number;
+    weightsDownloadNotice?: string;
+  }>({
     taskId: '',
     modelName: '',
     datasetsCount: 0,
     epochs: 0
   });
+
+  const yoloVersion = modelSettings.version || 'yolo11';
+  const allowedYoloSizes = YOLO_TRAIN_SIZES[yoloVersion] || YOLO_TRAIN_SIZES.yolo11;
+  useEffect(() => {
+    const allowed = YOLO_TRAIN_SIZES[modelSettings.version || 'yolo11'] || YOLO_TRAIN_SIZES.yolo11;
+    const sz = modelSettings.size || 'n';
+    if (!allowed.includes(sz)) {
+      setModelSettings((prev: any) => ({ ...prev, size: allowed[0] }));
+    }
+  }, [modelSettings.version, modelSettings.size]);
 
   // Dataset settings
   const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
@@ -374,14 +409,27 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       if (response.success && (responseData.task_id || responseData.success)) {
         const taskId = responseData.task_id;
         console.log('Training started successfully. Task ID:', taskId);
-        
+
+        const downloadNotice =
+          responseData.weights_download_expected && responseData.weights_download_notice
+            ? responseData.weights_download_notice
+            : undefined;
+
         // Show training started dialog
         setTrainingInfo({
           taskId: taskId || 'unknown',
           modelName: modelName,
           datasetsCount: selectedDatasets.length,
-          epochs: modelSettings.epochs || 100
+          epochs: modelSettings.epochs || 100,
+          weightsDownloadNotice: downloadNotice
         });
+
+        if (downloadNotice) {
+          toast({
+            title: "Model weights will be downloaded",
+            description: downloadNotice,
+          });
+        }
         
         onOpenChange(false);
         setShowTrainingStarted(true);
@@ -756,8 +804,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             <div className="space-y-4">
               <Label className="text-base font-medium">Model Selection</Label>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* YOLO */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* YOLO — same families as install-time pretrained weights (YOLO11 / YOLO26 / YOLO-NAS) */}
                 <Card className={`cursor-pointer transition-all ${selectedModel === 'yolo' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
                   onClick={() => { setSelectedModel('yolo'); if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: 'yolo11', size: 'n', task: 'segmentation' })); }}
                 >
@@ -766,24 +814,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                       <h4 className="font-medium">YOLO</h4>
                       {selectedModel === 'yolo' && <Check className="h-4 w-4 text-primary" />}
                     </div>
-                    <p className="text-xs text-muted-foreground">Fast object detection & segmentation</p>
+                    <p className="text-xs text-muted-foreground">YOLO11, YOLO26, YOLO-NAS — detection, segmentation, classification</p>
                   </CardContent>
                 </Card>
 
-                {/* Mask R-CNN */}
-                <Card className={`cursor-pointer transition-all ${selectedModel === 'mask-rcnn' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
-                  onClick={() => { setSelectedModel('mask-rcnn'); if (!modelSettings.backbone) setModelSettings((prev: any) => ({ ...prev, backbone: 'resnet50', fpn: true, epochs: 100, learningRate: 0.001 })); }}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-1">
-                      <h4 className="font-medium">Mask R-CNN</h4>
-                      {selectedModel === 'mask-rcnn' && <Check className="h-4 w-4 text-primary" />}
-                    </div>
-                    <p className="text-xs text-muted-foreground">Instance segmentation</p>
-                  </CardContent>
-                </Card>
-
-                {/* RF-DETR */}
+                {/* RF-DETR — matches rtdetr in install / foundation_models */}
                 <Card className={`cursor-pointer transition-all ${selectedModel === 'rf-detr' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
                   onClick={() => { setSelectedModel('rf-detr'); if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 300, batchSize: 16 })); }}
                 >
@@ -817,12 +852,9 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <Select value={modelSettings.version || 'yolo11'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, version: v }))}>
                           <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
                           <SelectContent className="bg-background border shadow-md z-[70]">
-                            <SelectItem value="yolo5">YOLOv5</SelectItem>
-                            <SelectItem value="yolo8">YOLOv8</SelectItem>
-                            <SelectItem value="yolo9">YOLOv9</SelectItem>
-                            <SelectItem value="yolo10">YOLOv10</SelectItem>
                             <SelectItem value="yolo11">YOLOv11</SelectItem>
                             <SelectItem value="yolo26">YOLO26</SelectItem>
+                            <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -831,11 +863,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <Select value={modelSettings.size || 'n'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, size: v }))}>
                           <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
                           <SelectContent className="bg-background border shadow-md z-[70]">
-                            <SelectItem value="n">Nano</SelectItem>
-                            <SelectItem value="s">Small</SelectItem>
-                            <SelectItem value="m">Medium</SelectItem>
-                            <SelectItem value="l">Large</SelectItem>
-                            <SelectItem value="x">X-Large</SelectItem>
+                            {allowedYoloSizes.map((sz) => (
+                              <SelectItem key={sz} value={sz}>
+                                {LABEL_FOR_SIZE[sz] ?? sz}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -871,55 +903,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                       <div className="space-y-1">
                         <Label className="text-xs">Patience</Label>
                         <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.patience || 50} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, patience: Number(e.target.value) }))} min={1} />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {selectedModel === 'mask-rcnn' && (
-                <Card className="border-primary/30">
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Settings className="h-4 w-4" /> Mask R-CNN Configuration
-                      </CardTitle>
-                      <Button size="sm" variant="outline" onClick={() => setShowMaskRCNNSettings(true)}>
-                        <Settings className="h-3 w-3 mr-1" /> All Settings
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Backbone</Label>
-                        <Select value={modelSettings.backbone || 'resnet50'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, backbone: v }))}>
-                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
-                          <SelectContent className="bg-background border shadow-md z-[70]">
-                            <SelectItem value="resnet50">ResNet-50</SelectItem>
-                            <SelectItem value="resnet101">ResNet-101</SelectItem>
-                            <SelectItem value="resnext50">ResNeXt-50</SelectItem>
-                            <SelectItem value="resnext101">ResNeXt-101</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Epochs</Label>
-                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 100} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Learning Rate</Label>
-                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.learningRate || 0.001} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, learningRate: Number(e.target.value) }))} step={0.0001} min={0.0001} />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">FPN</Label>
-                        <Select value={modelSettings.fpn !== false ? 'true' : 'false'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, fpn: v === 'true' }))}>
-                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
-                          <SelectContent className="bg-background border shadow-md z-[70]">
-                            <SelectItem value="true">Enabled</SelectItem>
-                            <SelectItem value="false">Disabled</SelectItem>
-                          </SelectContent>
-                        </Select>
                       </div>
                     </div>
                   </CardContent>
@@ -1056,8 +1039,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <div>
                           <span className="text-muted-foreground text-xs">Model</span>
                           <p className="font-medium">
-                            {selectedModel === 'yolo' && `YOLO ${(modelSettings.version || 'v11').toUpperCase()} - ${(modelSettings.size || 'n').toUpperCase()}`}
-                            {selectedModel === 'mask-rcnn' && `Mask R-CNN (${modelSettings.backbone || 'resnet50'})`}
+                            {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
                             {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
                           </p>
                         </div>
@@ -1089,7 +1071,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         )}
                         <div>
                           <span className="text-muted-foreground text-xs">Learning Rate</span>
-                          <p className="font-medium">{modelSettings.learningRate || (selectedModel === 'mask-rcnn' ? 0.001 : 0.01)}</p>
+                          <p className="font-medium">{modelSettings.learningRate ?? (selectedModel === 'rf-detr' ? 0.0001 : 0.01)}</p>
                         </div>
                         {saveToWandb && (
                           <div>
@@ -1144,13 +1126,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         onOpenChange={setShowYoloSettings}
         onSettingsUpdate={handleModelSettingsUpdate}
       />
-      
-      <MaskRCNNSettingsDialog
-        open={showMaskRCNNSettings}
-        onOpenChange={setShowMaskRCNNSettings}
-        onSettingsUpdate={handleModelSettingsUpdate}
-      />
-      
+
       <RFDETRSettingsDialog
         open={showRFDETRSettings}
         onOpenChange={setShowRFDETRSettings}
@@ -1208,6 +1184,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         modelName={trainingInfo.modelName}
         datasetsCount={trainingInfo.datasetsCount}
         epochs={trainingInfo.epochs}
+        weightsDownloadNotice={trainingInfo.weightsDownloadNotice}
       />
     </>
   );

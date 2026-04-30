@@ -237,15 +237,14 @@ def read_projects_names_only(db: Session = Depends(get_db)):
 @router.get("/projects/{project_id}/datasets/list")
 def list_project_datasets(
     project_id: int,
-    include_thumbnails: bool = False,
+    include_thumbnails: bool = True,
     db: Session = Depends(get_db),
 ):
     """
     Lightweight datasets for grid/list views: metadata + counts + one preview image URL each.
 
-    By default, base64 thumbnails stored on the dataset row are omitted (large JSON).
-    Preview uses the first image (min id) per dataset via two small SQL queries — no full table scans.
-    Set include_thumbnails=true to embed optimized base64 thumbnails when present.
+    Row thumbnails / dataset logos are stored as optimized ~200×200 JPEG data URLs — included by default.
+    Set include_thumbnails=false to omit base64 (smaller JSON; cards fall back to first image preview only).
     """
     from sqlalchemy import func
     from sqlalchemy.orm import load_only
@@ -498,15 +497,15 @@ def get_project_sidebar_counts(project_id: int, db: Session = Depends(get_db)):
 @router.get("/projects/{project_id}", response_model=schemas.Project)
 def read_project(
     project_id: int,
-    include_images: bool = False,
+    include_images: bool = True,
     include_dataset_annotation_files: bool = False,
     db: Session = Depends(get_db),
 ):
     """
     Get a single project by ID with all its datasets.
 
-    By default, base64 encoded logo/thumbnail images are excluded to reduce response size.
-    Set include_images=true to include them.
+    Row logos and dataset thumbnails are optimized JPEG data URLs (~200×200); included by default.
+    Set include_images=false to omit base64 and shrink the JSON.
 
     By default, per-dataset annotation_files lists are omitted (empty arrays). Loading every
     AnnotationFile row for large projects makes this endpoint very slow and huge; UIs that

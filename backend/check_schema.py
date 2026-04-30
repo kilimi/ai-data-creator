@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.sql import text
 
 def check_schema():
-    db_url = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@postgres:5432/ai_data_creator')
+    db_url = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@postgres:5432/lai_db')
     engine = create_engine(db_url)
 
     with engine.connect() as conn:

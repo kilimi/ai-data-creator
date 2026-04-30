@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tests
+        run: npx vitest run --coverage
+
+      - name: Print coverage summary
+        run: |
+          echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          node -e "
+            const c = require('./coverage/coverage-summary.json').total;
+            const badge = (pct) => pct >= 80 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
+            const lines = [
+              '| Metric | Coverage |',
+              '|--------|----------|',
+              \`| Statements | \${badge(c.statements.pct)} \${c.statements.pct}% (\${c.statements.covered}/\${c.statements.total}) |\`,
+              \`| Branches   | \${badge(c.branches.pct)} \${c.branches.pct}% (\${c.branches.covered}/\${c.branches.total}) |\`,
+              \`| Functions  | \${badge(c.functions.pct)} \${c.functions.pct}% (\${c.functions.covered}/\${c.functions.total}) |\`,
+              \`| Lines      | \${badge(c.lines.pct)} \${c.lines.pct}% (\${c.lines.covered}/\${c.lines.total}) |\`,
+            ];
+            console.log(lines.join('\n'));
+          " >> "$GITHUB_STEP_SUMMARY"

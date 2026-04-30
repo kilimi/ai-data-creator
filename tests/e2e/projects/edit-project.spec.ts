@@ -1,10 +1,15 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Helper function to create a test project
 async function createTestProject(page: Page, projectName: string) {
   await page.goto('/');
-  await page.click('text=New Project');
+  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
+  await expect(newProjectLink).toBeVisible();
+  await newProjectLink.click();
   await expect(page).toHaveURL('/projects/new');
   
   // Fill minimal project info
@@ -141,7 +146,7 @@ test.describe('Edit Project', () => {
     await expect(page.locator('text=Edit Project')).not.toBeVisible({ timeout: 5000 });
     
     // Click refresh button to reload projects list
-    await page.click('button[title="Refresh projects"]');
+    await page.click('button[title="Refresh"]');
     await page.waitForTimeout(2000);
     
     // Verify the new name appears on the page
@@ -283,7 +288,7 @@ test.describe('Edit Project', () => {
     await expect(page.locator('text=Edit Project')).not.toBeVisible({ timeout: 5000 });
     
     // Click refresh to see the updated name
-    await page.click('button[title="Refresh projects"]');
+    await page.click('button[title="Refresh"]');
     await page.waitForTimeout(1000);
     
     // Verify the updated project name is visible
@@ -368,7 +373,9 @@ test.describe('Edit Project', () => {
     // Create another project
     const otherProjectName = 'Other Project Should Not Change';
     await page.goto('/');
-    await page.click('text=New Project');
+    const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
+    await expect(newProjectLink).toBeVisible();
+    await newProjectLink.click();
     await page.fill('input#name', otherProjectName);
     await page.click('button[type="submit"]:has-text("Create")');
     await expect(page).toHaveURL('/', { timeout: 10000 });

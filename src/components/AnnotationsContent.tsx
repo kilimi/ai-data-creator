@@ -18,8 +18,11 @@ import { AnnotationTagsDialog } from "./AnnotationTagsDialog";
 import { AnnotationFilters } from "./AnnotationFilters";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Image } from "@/types";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Image, ImageCollection } from "@/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { useRef } from "react";
 import { MergeClassesDialog } from "./MergeClassesDialog";
 
@@ -31,8 +34,25 @@ interface AnnotationsContentProps {
   onImportAnnotations?: (files: File[]) => void;
   showAllAnnotationsOnGrid?: boolean;
   images?: Image[];
-  
+  /** Image collections (layers) for FiftyOne / viewer — pass from dataset page when using tabbed images */
+  imageCollections?: ImageCollection[];
+
   currentPageImageIds?: string[]; // NEW: Current page image IDs
+}
+
+// Prefer RGB / default color layer over depth when opening FiftyOne
+function pickDefaultFiftyOneCollectionId(collections: ImageCollection[]): string {
+  if (collections.length === 0) return '';
+  const depthLike = (name: string) => /\bdepth\b/i.test(name) || /depth map/i.test(name);
+  const byDefault = collections.find((c) => c.is_default && !depthLike(c.name));
+  if (byDefault) return String(byDefault.id);
+  const byRgb = collections.find(
+    (c) => /rgb|color|visible|original/i.test(c.name) && !depthLike(c.name)
+  );
+  if (byRgb) return String(byRgb.id);
+  const nonDepth = collections.find((c) => !depthLike(c.name));
+  if (nonDepth) return String(nonDepth.id);
+  return String(collections[0].id);
 }
 
 // Normalize segmentation: backend may store as flat array [x,y,x,y,...] instead of [[x,y,x,y,...]]
@@ -198,6 +218,7 @@ export function AnnotationsContent({
   onImportAnnotations,
   showAllAnnotationsOnGrid = false, // NEW PROP
   images = [], // NEW PROP
+  imageCollections = [],
   
   currentPageImageIds = [] // NEW
 }: AnnotationsContentProps) {
@@ -221,7 +242,7 @@ export function AnnotationsContent({
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
-  const [downloadImagesDialog, setDownloadImagesDialog] = useState<{ isOpen: boolean; annotationId: string; categories: Array<{ id: number; name: string }> }>({ isOpen: false, annotationId: '', categories: [] });
+  const [downloadImagesDialog, setDownloadImagesDialog] = useState<{ isOpen: boolean; annotationId: string; categories: Array<{ id: number; name: string }>; selectedCategory: string | null; selectedCollectionIds: string[] }>({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] });
   
   // New state for smart annotation loading
   const [loadingAnnotations, setLoadingAnnotations] = useState<Set<string>>(new Set());
@@ -265,6 +286,7 @@ export function AnnotationsContent({
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [fiftyOneDialogOpen, setFiftyOneDialogOpen] = useState(false);
   const [selectedForFiftyOne, setSelectedForFiftyOne] = useState<Set<string>>(new Set());
+  const [fiftyOneImageCollectionId, setFiftyOneImageCollectionId] = useState<string>('');
   const [launchingFiftyOne, setLaunchingFiftyOne] = useState(false);
 
   // Smart annotation loading for current page
@@ -918,10 +940,23 @@ export function AnnotationsContent({
   };
 
   const handleOpenFiftyOne = async () => {
+    if (!id?.trim()) {
+      toast({
+        title: "Cannot open FiftyOne",
+        description: "Dataset is not loaded yet.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (selectedForFiftyOne.size === 0 || !api) return;
     setLaunchingFiftyOne(true);
     try {
-      const response = await api.viewAnnotationsInFiftyOne(id, Array.from(selectedForFiftyOne));
+      const colParsed = fiftyOneImageCollectionId ? parseInt(fiftyOneImageCollectionId, 10) : NaN;
+      const response = await api.viewAnnotationsInFiftyOne(
+        id,
+        Array.from(selectedForFiftyOne),
+        Number.isFinite(colParsed) ? { imageCollectionId: colParsed } : undefined
+      );
       if (response.success && response.data) {
         const msg = response.data.message ?? "FiftyOne is starting. Open the URL to view annotations as predictions.";
         toast({ title: "FiftyOne", description: msg });
@@ -2400,7 +2435,9 @@ export function AnnotationsContent({
         setDownloadImagesDialog({
           isOpen: true,
           annotationId: file.id,
-          categories: cocoData.categories
+          categories: cocoData.categories,
+          selectedCategory: null,
+          selectedCollectionIds: [],
         });
 
       } else {
@@ -2462,62 +2499,69 @@ export function AnnotationsContent({
           description: `No images have the class "${className}".`,
           variant: "destructive",
         });
-        setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [] });
+        setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] });
         return;
       }
 
-      // Get filenames for these image IDs
-      const imageFilenames: string[] = [];
+      const emptyDlgState = { isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] };
+
+      // Get filenames with this class
+      const targetFileNames = new Set<string>();
       cocoData.images.forEach((img: any) => {
-        if (imageIdsWithClass.has(img.id)) {
-          imageFilenames.push(img.file_name);
-        }
+        if (imageIdsWithClass.has(img.id)) targetFileNames.add(img.file_name);
       });
 
-      // Create a mapping from filename to actual image URL
-      const filenameToImageUrl: { [filename: string]: string } = {};
-      images.forEach(img => {
-        filenameToImageUrl[img.fileName] = img.url;
-      });
+      // Determine collections to download from
+      const { selectedCollectionIds } = downloadImagesDialog;
+      const collectionsToUse =
+        imageCollections.length > 1 && selectedCollectionIds.length > 0
+          ? imageCollections.filter(c => selectedCollectionIds.includes(String(c.id)))
+          : imageCollections.length > 0
+          ? imageCollections
+          : null;
+      const useCollectionFolders = collectionsToUse && collectionsToUse.length > 1;
 
-      // Download images as zip
       toast({
         title: "Downloading images...",
-        description: `Preparing ${imageFilenames.length} images for download...`,
+        description: `Preparing images for download...`,
       });
 
-      // Create a zip file using JSZip
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
-
-      // Fetch each image and add to zip
       let successCount = 0;
       let failCount = 0;
 
-      for (const filename of imageFilenames) {
-        try {
-          // Get the actual image URL from the loaded images
-          const imageUrl = filenameToImageUrl[filename];
-          
-          if (!imageUrl) {
-            console.warn(`No URL found for ${filename}`);
-            failCount++;
-            continue;
+      if (collectionsToUse && collectionsToUse.length > 0) {
+        for (const collection of collectionsToUse) {
+          const folderName = useCollectionFolders
+            ? collection.name.replace(/[/\\?%*:|"<>]/g, '_')
+            : null;
+          for (const filename of targetFileNames) {
+            const img = collection.images.find(i => i.fileName === filename);
+            if (!img) continue;
+            try {
+              const response = await fetch(img.url);
+              if (!response.ok) { failCount++; continue; }
+              const blob = await response.blob();
+              zip.file(folderName ? `${folderName}/${filename}` : filename, blob);
+              successCount++;
+            } catch { failCount++; }
           }
-          
-          const response = await fetch(imageUrl);
-          if (!response.ok) {
-            console.warn(`Failed to fetch ${filename} from ${imageUrl}`);
-            failCount++;
-            continue;
-          }
-
-          const blob = await response.blob();
-          zip.file(filename, blob);
-          successCount++;
-        } catch (error) {
-          console.error(`Error fetching ${filename}:`, error);
-          failCount++;
+        }
+      } else {
+        // Fallback: use flat images list
+        const filenameToUrl: Record<string, string> = {};
+        images.forEach(img => { filenameToUrl[img.fileName] = img.url; });
+        for (const filename of targetFileNames) {
+          const imageUrl = filenameToUrl[filename];
+          if (!imageUrl) { failCount++; continue; }
+          try {
+            const response = await fetch(imageUrl);
+            if (!response.ok) { failCount++; continue; }
+            const blob = await response.blob();
+            zip.file(filename, blob);
+            successCount++;
+          } catch { failCount++; }
         }
       }
 
@@ -2525,10 +2569,7 @@ export function AnnotationsContent({
         throw new Error('Failed to download any images. Make sure images are loaded in the dataset.');
       }
 
-      // Generate zip file
       const zipBlob = await zip.generateAsync({ type: 'blob' });
-      
-      // Download zip file
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement('a');
       link.href = url;
@@ -2543,7 +2584,7 @@ export function AnnotationsContent({
         description: `Downloaded ${successCount} images${failCount > 0 ? ` (${failCount} failed)` : ''}.`,
       });
 
-      setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [] });
+      setDownloadImagesDialog(emptyDlgState);
 
     } catch (error) {
       console.error('Error downloading images:', error);
@@ -4433,6 +4474,11 @@ export function AnnotationsContent({
             variant="outline"
             onClick={() => {
               setSelectedForFiftyOne(new Set());
+              if (imageCollections.length > 0) {
+                setFiftyOneImageCollectionId(pickDefaultFiftyOneCollectionId(imageCollections));
+              } else {
+                setFiftyOneImageCollectionId('');
+              }
               setFiftyOneDialogOpen(true);
             }}
             disabled={filteredAnnotationFiles.length === 0}
@@ -5088,31 +5134,93 @@ export function AnnotationsContent({
         }
         
         {/* Download Images Dialog */}
-        <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [] })}>
+        <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] })}>
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Download Images by Class</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
-              <p className="text-sm text-muted-foreground">
-                Select a class to download all images that have that classification:
-              </p>
-              <ScrollArea className="max-h-96">
-                <div className="space-y-2">
-                  {downloadImagesDialog.categories.map((category) => (
-                    <Button
-                      key={category.id}
-                      variant="outline"
-                      className="w-full justify-start"
-                      onClick={() => handleDownloadImagesByClass(category.name)}
-                    >
-                      <Tag className="h-4 w-4 mr-2" />
-                      {category.name}
-                    </Button>
-                  ))}
+              {/* Step 1: Category selection */}
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Select class:</p>
+                <ScrollArea className="max-h-48">
+                  <div className="space-y-1.5 pr-1">
+                    {downloadImagesDialog.categories.map((category) => {
+                      const isSelected = downloadImagesDialog.selectedCategory === category.name;
+                      return (
+                        <Button
+                          key={category.id}
+                          variant={isSelected ? "default" : "outline"}
+                          className="w-full justify-start"
+                          onClick={() =>
+                            setDownloadImagesDialog(prev => ({ ...prev, selectedCategory: category.name }))
+                          }
+                        >
+                          <Tag className="h-4 w-4 mr-2" />
+                          {category.name}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {/* Step 2: Collection selection (only when multiple collections exist) */}
+              {imageCollections.length > 1 && (
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">Select image collections:</p>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {imageCollections.map((collection) => {
+                      const collId = String(collection.id);
+                      const checked = downloadImagesDialog.selectedCollectionIds.includes(collId);
+                      return (
+                        <label
+                          key={collId}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted cursor-pointer select-none"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(v) =>
+                              setDownloadImagesDialog(prev => ({
+                                ...prev,
+                                selectedCollectionIds: v
+                                  ? [...prev.selectedCollectionIds, collId]
+                                  : prev.selectedCollectionIds.filter(i => i !== collId),
+                              }))
+                            }
+                          />
+                          <span className="text-sm">{collection.name}</span>
+                          <span className="text-xs text-muted-foreground ml-auto">{collection.images.length} images</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Each collection will be placed in a separate folder in the ZIP.</p>
                 </div>
-              </ScrollArea>
+              )}
             </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] })}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={
+                  !downloadImagesDialog.selectedCategory ||
+                  (imageCollections.length > 1 && downloadImagesDialog.selectedCollectionIds.length === 0)
+                }
+                onClick={() => {
+                  if (downloadImagesDialog.selectedCategory) {
+                    handleDownloadImagesByClass(downloadImagesDialog.selectedCategory);
+                  }
+                }}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
         
@@ -5301,6 +5409,31 @@ export function AnnotationsContent({
           <p className="text-sm text-muted-foreground mb-3">
             Select annotation files to view as predictions in FiftyOne. Each file will appear as a separate predictions field.
           </p>
+          {imageCollections.length > 0 && (
+            <div className="mb-3 space-y-0.5">
+              <Label htmlFor="fiftyone-layer" className="text-xs text-muted-foreground">
+                Image layer (raster shown in FiftyOne)
+              </Label>
+              <Select
+                value={fiftyOneImageCollectionId || pickDefaultFiftyOneCollectionId(imageCollections)}
+                onValueChange={setFiftyOneImageCollectionId}
+              >
+                <SelectTrigger id="fiftyone-layer" className="w-full">
+                  <SelectValue placeholder="Select layer" />
+                </SelectTrigger>
+                <SelectContent>
+                  {imageCollections.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Defaults to RGB / main color layer. Choose depth or another layer to match that raster; boxes are mapped to the selected layer when possible.
+              </p>
+            </div>
+          )}
           <ScrollArea className="max-h-[280px] rounded-md border p-2">
             <div className="space-y-2">
               {annotationFiles.map((file) => (

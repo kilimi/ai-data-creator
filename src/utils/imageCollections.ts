@@ -1,6 +1,5 @@
 import { ImageCollection } from '@/types';
-
-const API_BASE = process.env.NODE_ENV === 'development' ? 'http://localhost:9999' : '';
+import { getApiBaseUrl } from '@/config/api';
 
 export interface ImageCollectionData {
   id: number;
@@ -8,6 +7,7 @@ export interface ImageCollectionData {
   name: string;
   description?: string;
   is_default: boolean;
+  position?: number;
   created_at: string;
   updated_at: string;
   image_count: number;
@@ -29,7 +29,7 @@ export interface ImageCollectionData {
 export const imageCollectionsApi = {
   // Get all image collections for a dataset
   async getImageCollections(datasetId: string): Promise<ImageCollectionData[]> {
-    const response = await fetch(`${API_BASE}/datasets/${datasetId}/image-collections`);
+    const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/image-collections`);
     if (!response.ok) {
       throw new Error(`Failed to fetch image collections: ${response.statusText}`);
     }
@@ -42,7 +42,7 @@ export const imageCollectionsApi = {
     description?: string; 
     is_default?: boolean 
   }): Promise<ImageCollectionData> {
-    const response = await fetch(`${API_BASE}/datasets/${datasetId}/image-collections`, {
+    const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/image-collections`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -62,7 +62,7 @@ export const imageCollectionsApi = {
 
   // Delete an image collection
   async deleteImageCollection(datasetId: string, collectionId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/datasets/${datasetId}/image-collections/${collectionId}`, {
+    const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/image-collections/${collectionId}`, {
       method: 'DELETE',
     });
     
@@ -83,7 +83,7 @@ export const imageCollectionsApi = {
       formData.append('files', file);
     });
 
-    const response = await fetch(`${API_BASE}/datasets/${datasetId}/image-collections/${collectionId}/images`, {
+    const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/image-collections/${collectionId}/images`, {
       method: 'POST',
       body: formData,
     });
@@ -142,7 +142,7 @@ export const imageCollectionsApi = {
 
   // Move an image to a different collection
   async moveImageToCollection(imageId: string, collectionId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/images/${imageId}/collection`, {
+    const response = await fetch(`${getApiBaseUrl()}/images/${imageId}/collection`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -156,9 +156,24 @@ export const imageCollectionsApi = {
     }
   },
 
+  async reorderImageCollections(datasetId: string, orderedCollectionIds: number[]): Promise<void> {
+    const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/image-collections/reorder`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ordered_collection_ids: orderedCollectionIds }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || 'Failed to reorder image collections');
+    }
+  },
+
   // Initialize default collection for existing datasets
   async initializeDefaultCollection(datasetId: string): Promise<void> {
-    const response = await fetch(`${API_BASE}/datasets/${datasetId}/image-collections/initialize`, {
+    const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/image-collections/initialize`, {
       method: 'POST',
     });
     
@@ -197,6 +212,8 @@ export function convertToFrontendImageCollection(
   return {
     id: String(backendCollection.id),
     name: backendCollection.name,
+    is_default: backendCollection.is_default,
+    position: backendCollection.position ?? 0,
     images,
     currentPage,
     totalPages,

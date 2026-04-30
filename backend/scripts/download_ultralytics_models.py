@@ -1,46 +1,45 @@
 #!/usr/bin/env python3
 """
-Download all Ultralytics foundation models used by Auto-Annotate and Convert Model.
-Run during Docker build so models are available offline.
-Copies each model to /app/models/ so export and preannotate can load by path.
-Uses same arch/size combinations as the frontend (ExportModelModal, AutoAnnotateModal).
+Download Ultralytics foundation models for Auto-Annotate / export (offline use).
+
+Subset is controlled by LAI_PRETRAINED_MODELS (see app.foundation_models.resolve_ultralytics_pretrained_spec).
+Default: all models in the matrix. Run during Docker build.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
+
+# Allow imports when run as script before app is on path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.foundation_models import resolve_ultralytics_pretrained_spec
 
 MODELS_DIR = Path("/app/models")
 
 
 def main() -> None:
+    spec = os.environ.get("LAI_PRETRAINED_MODELS", "all")
+    models_to_download = resolve_ultralytics_pretrained_spec(spec)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not models_to_download:
+        print(
+            f"LAI_PRETRAINED_MODELS={spec!r} → bake no .pt into image. "
+            "Weights download on demand when you train or auto-annotate (needs network).",
+            flush=True,
+        )
+        return
+
     try:
         from ultralytics import YOLO
     except ImportError:
         print("ultralytics not installed, skipping model download", file=sys.stderr)
         return
 
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Same arch/size matrix as frontend: YOLO_ARCHS + YOLO_SIZES
-    arch_sizes: list[tuple[str, str]] = [
-        ("yolo11", "n"), ("yolo11", "s"), ("yolo11", "m"), ("yolo11", "l"), ("yolo11", "x"),
-        ("yolo26", "n"), ("yolo26", "s"), ("yolo26", "m"), ("yolo26", "l"), ("yolo26", "x"),
-        ("yolo_nas", "s"), ("yolo_nas", "m"), ("yolo_nas", "l"),
-        ("rtdetr", "l"), ("rtdetr", "x"),
-    ]
-    # Task types: detect (no suffix), segment (-seg), classify (-cls)
-    suffixes = ["", "-seg", "-cls"]
-
-    models_to_download: list[str] = []
-    for arch, size in arch_sizes:
-        base = f"{arch}{size}"
-        for suf in suffixes:
-            name = f"{base}{suf}.pt" if suf else f"{base}.pt"
-            models_to_download.append(name)
-
-    print(f"Downloading {len(models_to_download)} Ultralytics models to {MODELS_DIR}...")
+    print(f"LAI_PRETRAINED_MODELS={spec!r} → {len(models_to_download)} model(s) → {MODELS_DIR}")
     for i, name in enumerate(models_to_download, 1):
         try:
             print(f"[{i}/{len(models_to_download)}] Loading {name} ...", flush=True)
@@ -60,7 +59,6 @@ def main() -> None:
             else:
                 print(f"  OK {name}")
         except Exception as e:
-            # Some combos may not exist (e.g. rtdetr-seg); skip
             print(f"  Skip {name}: {e}", file=sys.stderr)
     print("Done.")
 

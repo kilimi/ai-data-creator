@@ -1,91 +1,65 @@
 import { test, expect, Page } from '@playwright/test';
 
+// Run tests serially to avoid parallel project creation conflicts
+test.describe.configure({ mode: 'serial' });
+
 // Increase timeout for all tests in this file
 test.setTimeout(60000);
 
 // Helper function to create a test project first (datasets need a project)
-async function createTestProject(page: Page, projectName: string): Promise<string> {
-  await page.goto('/');
-  await page.click('text=New Project');
-  await expect(page).toHaveURL('/projects/new');
-  
-  // Fill minimal project info
+async function createTestProject(page: Page, projectName: string): Promise<number> {
+  await page.goto('/projects/new');
   await page.fill('input#name', projectName);
-  
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for navigation back to home page
   await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Wait for the project to appear
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
-  
-  return projectName;
+  // Get project ID via API - find newest project with this name
+  const projectId = await page.evaluate(async (name) => {
+    const r = await fetch('http://localhost:9999/projects');
+    const projects = await r.json();
+    const sorted = [...projects].sort((a: any, b: any) => b.id - a.id);
+    const p = sorted.find((p: any) => p.name === name);
+    return p ? p.id : 0;
+  }, projectName);
+  return projectId;
 }
 
 // Helper function to create a test dataset within a project
-async function createTestDataset(page: Page, projectName: string, datasetName: string) {
-  // Navigate to the project
-  await page.goto('/');
+async function createTestDataset(page: Page, projectId: number, datasetName: string) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
-  
-  // Click on the project name to navigate to project detail
-  await page.getByText(projectName).first().click();
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
-  
-  // Find and click on Create dropdown button
-  const createButton = page.locator('button:has-text("Create")').first();
-  await createButton.click();
-  
-  // Wait for dropdown menu to appear
   await page.waitForTimeout(500);
   
-  // Click on the "Dataset" menu item
+  const createButton = page.locator('button:has-text("Create")').first();
+  await createButton.click();
+  await page.waitForTimeout(500);
   await page.getByRole('menuitem', { name: 'Dataset', exact: true }).click();
-  
-  // Wait for navigation to create dataset page
   await page.waitForURL('**/projects/new/dataset', { timeout: 10000 });
   
-  // Fill dataset name
   await page.fill('input[placeholder*="Vehicle Detection"]', datasetName);
-  
-  // Fill description
   await page.fill('textarea[placeholder*="Describe"]', 'Test dataset for deletion testing');
-  
-  // Submit the form
   await page.click('button[type="submit"]:has-text("Create Dataset")');
-  
-  // Wait for success
   await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  return datasetName;
 }
 
 // Helper to navigate to project datasets page
-async function navigateToProjectDatasets(page: Page, projectName: string) {
-  await page.goto('/');
+async function navigateToProjectDatasets(page: Page, projectId: number) {
+  await page.goto(`/projects/${projectId}/datasets`);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(500);
-  
-  // Click on the project
-  const projectLink = page.getByText(projectName).first();
-  await projectLink.waitFor({ state: 'visible', timeout: 10000 });
-  await projectLink.click({ force: true });
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(1000);
 }
 
 // Helper to navigate to a specific dataset's detail page
-async function navigateToDatasetDetail(page: Page, projectName: string, datasetName: string) {
-  await navigateToProjectDatasets(page, projectName);
-  
-  // Click on the dataset
-  const datasetLink = page.getByText(datasetName).first();
-  await datasetLink.waitFor({ state: 'visible', timeout: 10000 });
-  await datasetLink.click({ force: true });
+async function navigateToDatasetDetail(page: Page, projectId: number, datasetName: string) {
+  // Get dataset ID via API
+  const datasetId = await page.evaluate(async ({ pid, dname }) => {
+    const r = await fetch(`http://localhost:9999/projects/${pid}`);
+    const p = await r.json();
+    const d = p.datasets?.find((d: any) => d.name === dname);
+    return d ? d.id : 0;
+  }, { pid: projectId, dname: datasetName });
+  if (!datasetId) throw new Error(`Dataset not found: ${datasetName}`);
+  await page.goto(`/projects/${projectId}/datasets/${datasetId}`);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
 }
@@ -93,29 +67,28 @@ async function navigateToDatasetDetail(page: Page, projectName: string, datasetN
 test.describe('Delete Dataset', () => {
   const timestamp = Date.now();
   const testProjectName = `Project for Delete Test ${timestamp}`;
+  let projectId: number;
   
   test.beforeEach(async ({ page }) => {
     // Create a test project before each test
-    await createTestProject(page, testProjectName);
+    projectId = await createTestProject(page, testProjectName);
   });
 
   test('should delete dataset from dataset card dropdown menu', async ({ page }) => {
     const datasetName = `Dataset to Delete Card ${timestamp}`;
     
     // Create a test dataset
-    await createTestDataset(page, testProjectName, datasetName);
+    await createTestDataset(page, projectId, datasetName);
     
     // Navigate to project datasets page
-    await navigateToProjectDatasets(page, testProjectName);
+    await navigateToProjectDatasets(page, projectId);
     
     // Wait for the dataset to be visible
     await expect(page.getByText(datasetName).first()).toBeVisible({ timeout: 15000 });
     
-    // Find the dataset card and open the dropdown menu
-    const datasetCard = page.locator('div').filter({ hasText: datasetName }).first();
-    
-    // Find and click the dropdown trigger (usually a button with MoreVertical icon)
-    const dropdownTrigger = datasetCard.locator('button').filter({ has: page.locator('svg') }).first();
+    // Find and click the MoreHorizontal dropdown trigger on the dataset card (h-7 w-7 icon button)
+    const dropdownTrigger = page.locator('button.h-7.w-7').first();
+    await dropdownTrigger.waitFor({ state: 'visible', timeout: 10000 });
     await dropdownTrigger.click();
     
     // Wait for dropdown menu to appear
@@ -154,15 +127,17 @@ test.describe('Delete Dataset', () => {
     const datasetName = `Dataset to Delete Detail ${timestamp}`;
     
     // Create a test dataset
-    await createTestDataset(page, testProjectName, datasetName);
+    await createTestDataset(page, projectId, datasetName);
     
     // Navigate to dataset detail page
-    await navigateToDatasetDetail(page, testProjectName, datasetName);
+    await navigateToDatasetDetail(page, projectId, datasetName);
     
-    // Click on "Delete Dataset" button
-    const deleteButton = page.locator('button:has-text("Delete Dataset")');
-    await expect(deleteButton).toBeVisible({ timeout: 10000 });
-    await deleteButton.click();
+    // Open Actions dropdown and click Delete Dataset
+    const actionsButton = page.locator('button:has-text("Actions")');
+    await expect(actionsButton).toBeVisible({ timeout: 10000 });
+    await actionsButton.click();
+    await page.waitForTimeout(300);
+    await page.getByRole('menuitem', { name: 'Delete Dataset' }).click();
     
     // Wait for confirmation dialog to appear
     await page.waitForTimeout(500);
@@ -197,15 +172,17 @@ test.describe('Delete Dataset', () => {
     const datasetName = `Dataset Cancel Delete ${timestamp}`;
     
     // Create a test dataset
-    await createTestDataset(page, testProjectName, datasetName);
+    await createTestDataset(page, projectId, datasetName);
     
     // Navigate to dataset detail page
-    await navigateToDatasetDetail(page, testProjectName, datasetName);
+    await navigateToDatasetDetail(page, projectId, datasetName);
     
-    // Click on "Delete Dataset" button
-    const deleteButton = page.locator('button:has-text("Delete Dataset")');
-    await expect(deleteButton).toBeVisible({ timeout: 10000 });
-    await deleteButton.click();
+    // Open Actions dropdown and click Delete Dataset
+    const actionsButton = page.locator('button:has-text("Actions")');
+    await expect(actionsButton).toBeVisible({ timeout: 10000 });
+    await actionsButton.click();
+    await page.waitForTimeout(300);
+    await page.getByRole('menuitem', { name: 'Delete Dataset' }).click();
     
     // Wait for confirmation dialog to appear
     await page.waitForTimeout(500);
@@ -234,15 +211,17 @@ test.describe('Delete Dataset', () => {
     const datasetName = `Dataset Confirm Dialog ${timestamp}`;
     
     // Create a test dataset
-    await createTestDataset(page, testProjectName, datasetName);
+    await createTestDataset(page, projectId, datasetName);
     
     // Navigate to dataset detail page
-    await navigateToDatasetDetail(page, testProjectName, datasetName);
+    await navigateToDatasetDetail(page, projectId, datasetName);
     
-    // Click on "Delete Dataset" button
-    const deleteButton = page.locator('button:has-text("Delete Dataset")');
-    await expect(deleteButton).toBeVisible({ timeout: 10000 });
-    await deleteButton.click();
+    // Open Actions dropdown and click Delete Dataset
+    const actionsButton = page.locator('button:has-text("Actions")');
+    await expect(actionsButton).toBeVisible({ timeout: 10000 });
+    await actionsButton.click();
+    await page.waitForTimeout(300);
+    await page.getByRole('menuitem', { name: 'Delete Dataset' }).click();
     
     // Wait for confirmation dialog to appear
     await page.waitForTimeout(500);

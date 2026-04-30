@@ -140,10 +140,16 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
       
       const result = await response.json();
       console.log('Auto-annotation response:', result);
-      
+
+      const baseDesc = `Running ${selectedModel} on ${datasetName}. Check tasks for progress.`;
+      const downloadNote =
+        result.weights_download_expected && result.weights_download_notice
+          ? ` ${result.weights_download_notice}`
+          : "";
+
       toast({
         title: "Auto-annotation started",
-        description: `Running ${selectedModel} on ${datasetName}. Check tasks for progress.`,
+        description: `${baseDesc}${downloadNote}`,
       });
     } catch (error) {
       console.error('Auto-annotation error:', error);

@@ -12,11 +12,14 @@ router = APIRouter()
 
 
 def _list_thumbnail(url: str | None) -> str | None:
-    """Drop base64 data URLs for list payloads; keep normal URLs."""
+    """
+    Prefer normal HTTP(S) image URLs. Allow small data:image/ URLs — dataset logos are
+    stored as ~200×200 JPEG data URLs from the upload path; omit only if unusually large.
+    """
     if not url:
         return None
     if url.startswith("data:image/"):
-        return None
+        return url if len(url) <= 500_000 else None
     return url
 
 

@@ -30,7 +30,16 @@ logger = logging.getLogger(__name__)
 from . import models, schemas
 from .database import engine, get_db
 
-models.Base.metadata.create_all(bind=engine)
+import time
+for _attempt in range(1, 31):
+    try:
+        models.Base.metadata.create_all(bind=engine)
+        break
+    except Exception as _exc:
+        logger.warning("DB not ready (attempt %d/30): %s", _attempt, _exc)
+        if _attempt == 30:
+            raise
+        time.sleep(2)
 
 app = FastAPI()
 
@@ -458,7 +467,7 @@ async def health_check(db: Session = Depends(get_db)):
 
 
 # Import routers
-from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines, auto_annotation, preannotate, system
+from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines, auto_annotation, preannotate, system, calibration
 
 # Include routers
 app.include_router(system.router)
@@ -478,3 +487,4 @@ app.include_router(export.router)
 app.include_router(pipelines.router)
 app.include_router(auto_annotation.router)
 app.include_router(preannotate.router)
+app.include_router(calibration.router)

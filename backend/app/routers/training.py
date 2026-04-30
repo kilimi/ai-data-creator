@@ -16,6 +16,7 @@ import sys
 
 from ..database import get_db, SessionLocal
 from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection
+from ..model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -845,11 +846,15 @@ async def start_yolo_training(
                 task.id,
                 training_config
             )
-        
+
+        tw_cached = is_training_base_weights_cached(request.model_type)
+
         return {
             "success": True,
             "task_id": task.id,
             "message": "YOLO training started",
+            "weights_download_expected": not tw_cached,
+            "weights_download_notice": None if tw_cached else WEIGHTS_DOWNLOAD_NOTICE,
             "task": {
                 "id": task.id,
                 "name": task.name,
@@ -1315,11 +1320,15 @@ async def start_rtdetr_training(
             logger.warning("Using BackgroundTasks instead of Celery - tasks may run concurrently!")
             # Note: Would need to implement background task handler for RT-DETR
             raise HTTPException(status_code=500, detail="RT-DETR training requires Celery")
-        
+
+        rtd_cached = is_training_base_weights_cached(request.model_type)
+
         return {
             "success": True,
             "task_id": task.id,
             "message": "RT-DETR training started",
+            "weights_download_expected": not rtd_cached,
+            "weights_download_notice": None if rtd_cached else WEIGHTS_DOWNLOAD_NOTICE,
             "task": {
                 "id": task.id,
                 "name": task.name,

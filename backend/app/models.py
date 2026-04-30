@@ -62,6 +62,7 @@ class Dataset(Base):
     annotations = relationship("Annotation", cascade="all, delete-orphan", back_populates="dataset")
     annotation_files = relationship("AnnotationFile", cascade="all, delete-orphan", back_populates="dataset")
     image_collections = relationship("ImageCollection", cascade="all, delete-orphan", back_populates="dataset")
+    calibrations = relationship("CollectionCalibration", cascade="all, delete-orphan", back_populates="dataset")
 
     @property
     def tags(self):
@@ -108,6 +109,10 @@ class Dataset(Base):
 
 class Image(Base):
     __tablename__ = "images"
+    __table_args__ = (
+        Index('idx_image_dataset_filename', 'dataset_id', 'file_name'),
+        Index('idx_image_dataset_collection', 'dataset_id', 'collection_id'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
@@ -119,8 +124,8 @@ class Image(Base):
     thumbnail_url = Column(String)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     annotations_count = Column(Integer, default=0)
-    collection_id = Column(Integer, ForeignKey("image_collections.id"), nullable=True, index=True)  # Optional: which collection this image belongs to
-    group_id = Column(String, nullable=True, index=True)  # Groups corresponding images across collections (same base filename → same group_id)
+    collection_id = Column(Integer, ForeignKey("image_collections.id"), nullable=True, index=True)
+    group_id = Column(String, nullable=True, index=True)
 
     dataset = relationship("Dataset", back_populates="images")
     annotations = relationship("Annotation", cascade="all, delete-orphan", back_populates="image")
@@ -135,6 +140,7 @@ class ImageCollection(Base):
     name = Column(String, index=True)
     description = Column(Text, nullable=True)
     is_default = Column(Boolean, default=False)  # True for the main "RGB Images" collection
+    position = Column(Integer, nullable=False, default=0)  # Left-to-right order in UI
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -149,15 +155,20 @@ class ImageCollection(Base):
 
 class Annotation(Base):
     __tablename__ = "annotations"
+    __table_args__ = (
+        Index('idx_ann_file_image', 'annotation_file_id', 'image_id'),
+        Index('idx_ann_file_category', 'annotation_file_id', 'category'),
+        Index('idx_ann_dataset', 'dataset_id', 'annotation_file_id'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), nullable=True, index=True)  # Link to annotation file
+    annotation_file_id = Column(String, ForeignKey("annotation_files.id"), nullable=True, index=True)
     image_id = Column(Integer, ForeignKey("images.id"), index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
-    coco_image_id = Column(Integer, nullable=True, index=True)  # Original COCO image ID
-    coco_annotation_id = Column(Integer, nullable=True, index=True)  # Original COCO annotation ID
-    category_id = Column(Integer, nullable=True, index=True)  # COCO category ID
-    category = Column(String, index=True)  # Class name
+    coco_image_id = Column(Integer, nullable=True, index=True)
+    coco_annotation_id = Column(Integer, nullable=True, index=True)
+    category_id = Column(Integer, nullable=True, index=True)
+    category = Column(String, index=True)
     bbox_x = Column(Float, nullable=True)  # Normalized bbox coordinates
     bbox_y = Column(Float, nullable=True)
     bbox_width = Column(Float, nullable=True) 
@@ -248,11 +259,14 @@ class AnnotationFile(Base):
 
 class AnnotationClass(Base):
     __tablename__ = "annotation_classes"
+    __table_args__ = (
+        Index('idx_anncls_file_classname', 'annotation_file_id', 'class_name'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     annotation_file_id = Column(String, ForeignKey("annotation_files.id"), index=True)
     class_name = Column(String, index=True)
-    category_id = Column(Integer, nullable=True)  # COCO category ID
+    category_id = Column(Integer, nullable=True)
     count = Column(Integer, default=0)
     color = Column(String, default='#ea384c')  # Hex color
     opacity = Column(Float, default=0.25)
@@ -264,6 +278,9 @@ class AnnotationClass(Base):
 
 class AnnotationFileImage(Base):
     __tablename__ = "annotation_file_images"
+    __table_args__ = (
+        Index('idx_afi_file_datasetimg', 'annotation_file_id', 'dataset_image_id'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     annotation_file_id = Column(String, ForeignKey("annotation_files.id"), index=True)
@@ -388,3 +405,29 @@ class Pipeline(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     project = relationship("Project")
+
+
+class CollectionCalibration(Base):
+    """Stores homography-based calibration between two image collections in a dataset."""
+    __tablename__ = "collection_calibrations"
+    __table_args__ = (
+        Index('idx_cal_dataset_src_tgt', 'dataset_id', 'source_collection_id', 'target_collection_id', unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
+    source_collection_id = Column(Integer, ForeignKey("image_collections.id"), index=True)
+    target_collection_id = Column(Integer, ForeignKey("image_collections.id"), index=True)
+    # 3x3 homography matrix as list-of-lists (H maps source → target pixel coords)
+    homography = Column(JSON, nullable=False)
+    # Inverse (target → source), pre-computed for display performance
+    homography_inv = Column(JSON, nullable=False)
+    # Raw point pairs used for computation — stored for inspection / re-compute
+    point_pairs = Column(JSON, nullable=False)  # [{src_x, src_y, tgt_x, tgt_y}, ...]
+    point_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    dataset = relationship("Dataset", back_populates="calibrations")
+    source_collection = relationship("ImageCollection", foreign_keys=[source_collection_id])
+    target_collection = relationship("ImageCollection", foreign_keys=[target_collection_id])

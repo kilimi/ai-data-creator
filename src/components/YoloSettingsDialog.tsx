@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,20 @@ interface YoloSettingsDialogProps {
   onSettingsUpdate: (settings: any) => void;
 }
 
+const YOLO_TRAIN_SIZES: Record<string, string[]> = {
+  yolo11: ['n', 's', 'm', 'l', 'x'],
+  yolo26: ['n', 's', 'm', 'l', 'x'],
+  yolo_nas: ['s', 'm', 'l'],
+};
+
+const SIZE_LABELS: Record<string, string> = {
+  n: 'Nano (n) - Fastest',
+  s: 'Small (s) - Balanced',
+  m: 'Medium (m)',
+  l: 'Large (l) - Most Accurate',
+  x: 'Extra Large (x)',
+};
+
 export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: YoloSettingsDialogProps) {
   const [version, setVersion] = useState('yolo11');
   const [size, setSize] = useState('n');
@@ -43,6 +57,14 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
   const [savePeriod, setSavePeriod] = useState(-1);
   const [showAugmentations, setShowAugmentations] = useState(false);
   const [augmentationSettings, setAugmentationSettings] = useState<any>({});
+
+  const allowedSizes = YOLO_TRAIN_SIZES[version] || YOLO_TRAIN_SIZES.yolo11;
+  useEffect(() => {
+    const allowed = YOLO_TRAIN_SIZES[version] || YOLO_TRAIN_SIZES.yolo11;
+    if (!allowed.includes(size)) {
+      setSize(allowed[0]);
+    }
+  }, [version]);
 
   const handleSave = () => {
     // Construct model file name based on version, size, and task
@@ -97,12 +119,9 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-background border shadow-md z-[70]">
-                <SelectItem value="yolo5">YOLOv5</SelectItem>
-                <SelectItem value="yolo8">YOLOv8</SelectItem>
-                <SelectItem value="yolo9">YOLOv9</SelectItem>
-                <SelectItem value="yolo10">YOLOv10</SelectItem>
                 <SelectItem value="yolo11">YOLOv11</SelectItem>
                 <SelectItem value="yolo26">YOLO26</SelectItem>
+                <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -111,26 +130,14 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
           <div className="space-y-3">
             <Label>Model Size</Label>
             <RadioGroup value={size} onValueChange={setSize} className="flex flex-wrap gap-4">
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="n" id="size-n" />
-                <Label htmlFor="size-n" className="text-sm">Nano (n) - Fastest</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="s" id="size-s" />
-                <Label htmlFor="size-s" className="text-sm">Small (s) - Balanced</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="m" id="size-m" />
-                <Label htmlFor="size-m" className="text-sm">Medium (m)</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="l" id="size-l" />
-                <Label htmlFor="size-l" className="text-sm">Large (l) - Most Accurate</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="x" id="size-x" />
-                <Label htmlFor="size-x" className="text-sm">Extra Large (x)</Label>
-              </div>
+              {allowedSizes.map((sz) => (
+                <div key={sz} className="flex items-center space-x-2">
+                  <RadioGroupItem value={sz} id={`size-${sz}`} />
+                  <Label htmlFor={`size-${sz}`} className="text-sm">
+                    {SIZE_LABELS[sz] ?? sz}
+                  </Label>
+                </div>
+              ))}
             </RadioGroup>
           </div>
 

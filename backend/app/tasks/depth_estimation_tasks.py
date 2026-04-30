@@ -3,6 +3,7 @@ Celery tasks for depth estimation using Depth-Anything-V2 ONNX models.
 """
 import os
 import logging
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -17,8 +18,22 @@ from .. import models
 
 logger = logging.getLogger(__name__)
 
-# Model directory from Docker pre-download
+# Model directory from Docker pre-download (or runtime download if install used LAI_DEPTH_MODELS=none)
 DEPTH_MODELS_DIR = Path("/app/ai_models/depth_estimation")
+_DEPTH_ONNX_BASE_URL = (
+    "https://github.com/fabio-sim/Depth-Anything-ONNX/releases/download/v2.0.0"
+)
+
+
+def _ensure_depth_onnx(model_path: Path, model_filename: str, task_id: int) -> None:
+    """Download ONNX once if missing (e.g. image built with LAI_DEPTH_MODELS=none)."""
+    if model_path.exists():
+        return
+    DEPTH_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    url = f"{_DEPTH_ONNX_BASE_URL}/{model_filename}"
+    logger.info(f"Task {task_id}: Downloading depth ONNX (on demand): {url}")
+    urllib.request.urlretrieve(url, model_path)
+    logger.info(f"Task {task_id}: Saved to {model_path}")
 
 
 class DepthEstimationTask(Task):
@@ -59,12 +74,15 @@ def load_depth_model(model_size: str, environment: str, task_id: int):
     
     model_filename = f"depth_anything_v2_{model_size}_{environment}_dynamic.onnx"
     model_path = DEPTH_MODELS_DIR / model_filename
-    
+
+    try:
+        _ensure_depth_onnx(model_path, model_filename, task_id)
+    except Exception as e:
+        raise RuntimeError(
+            f"Depth ONNX not at {model_path} and on-demand download failed: {e}"
+        ) from e
     if not model_path.exists():
-        raise FileNotFoundError(
-            f"Depth model not found at {model_path}. "
-            f"Make sure the Docker build downloaded the models."
-        )
+        raise FileNotFoundError(f"Depth model not found at {model_path} after download attempt.")
     
     logger.info(f"Task {task_id}: Loading depth model from {model_path}")
     
@@ -295,8 +313,13 @@ def generate_depth_maps(
             
             target_dataset_id = dataset_id
             target_collection_id = new_collection.id
-            output_base_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
-            
+            # IMPORTANT: write depth maps into a per-collection subdirectory so we don't
+            # overwrite RGB images (or other collections) that share the same filename.
+            # Previously this used the flat `images/` dir, which caused e.g. depth outputs
+            # to overwrite the source RGB files on disk.
+            output_subdir = f"c{target_collection_id}"
+            output_base_dir = Path("projects") / str(project_id) / str(dataset_id) / "images" / output_subdir
+
             logger.info(f"Task {task_id}: Created new collection {target_collection_id}")
         
         output_base_dir.mkdir(parents=True, exist_ok=True)
@@ -331,9 +354,15 @@ def generate_depth_maps(
                 width, height = process_single_image_depth(session, input_path, output_path, task_id)
                 
                 if width > 0 and height > 0:
-                    # Create image record
-                    relative_url = f"/static/projects/{project_id}/{target_dataset_id}/images/{output_filename}"
-                    
+                    # Build URL that matches where we actually wrote the file. For
+                    # save_as="collection" this is now a subdirectory (c{collection_id}) to
+                    # avoid colliding with the source RGB images; save_as="dataset" still
+                    # uses the flat images/ directory of the newly-created dataset.
+                    if save_as == "dataset":
+                        relative_url = f"/static/projects/{project_id}/{target_dataset_id}/images/{output_filename}"
+                    else:
+                        relative_url = f"/static/projects/{project_id}/{target_dataset_id}/images/{output_subdir}/{output_filename}"
+
                     new_image = models.Image(
                         dataset_id=target_dataset_id,
                         collection_id=target_collection_id,

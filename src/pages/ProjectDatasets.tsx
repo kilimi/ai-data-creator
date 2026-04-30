@@ -79,7 +79,10 @@ export default function ProjectDatasets() {
     
     setIsLoading(true);
     try {
-      const response = await fetch(`${getApiBaseUrl()}/projects/${id}/datasets/list`, { credentials: 'omit' });
+      const response = await fetch(
+        `${getApiBaseUrl()}/projects/${id}/datasets/list?include_thumbnails=true`,
+        { credentials: 'omit' },
+      );
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data) {
