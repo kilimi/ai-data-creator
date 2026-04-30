@@ -57,7 +57,8 @@ import {
   Hexagon,
   Sun,
   Moon,
-  Crosshair
+  Crosshair,
+  Pencil
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
