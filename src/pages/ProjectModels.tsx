@@ -245,8 +245,14 @@ export default function ProjectModels() {
     return task.name.toLowerCase().includes(query);
   });
 
+  const statusFilteredTasks = filteredTasks.filter(t => {
+    if (statusFilter === "all") return true;
+    if (statusFilter === "running") return t.status === "running" || t.status === "pending";
+    return t.status === statusFilter;
+  });
+
   // Sort tasks
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
+  const sortedTasks = [...statusFilteredTasks].sort((a, b) => {
     switch (modelsSortOrder) {
       case "newest":
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -260,6 +266,61 @@ export default function ProjectModels() {
   });
 
   const failedTasksCount = trainingTasks.filter(t => t.status === 'failed').length;
+
+  const statusCounts = {
+    all: trainingTasks.length,
+    running: trainingTasks.filter(t => t.status === "running" || t.status === "pending").length,
+    completed: trainingTasks.filter(t => t.status === "completed").length,
+    failed: failedTasksCount,
+  };
+
+  // Action handlers (extracted so cards can call them)
+  const handleRerunTask = async (task: any) => {
+    try {
+      const response = await fetch(`http://localhost:9999/training/${task.id}/rerun`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        toast({ title: "Training Rerun Started", description: `New training task "${data.task.name}" has been created and started.` });
+        fetchTrainingTasks();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to rerun training task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to rerun training task", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteTask = async (task: any) => {
+    if (!confirm(`Are you sure you want to delete training task "${task.name}"? This will also delete all model files.`)) return;
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
+      if (response.ok) {
+        toast({ title: "Task Deleted", description: `Training task "${task.name}" has been deleted.` });
+        fetchTrainingTasks();
+      } else {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to delete task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete training task", variant: "destructive" });
+    }
+  };
+
+  const handleStopTask = async (task: any) => {
+    if (!confirm(`Are you sure you want to stop training task "${task.name}"?`)) return;
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
+      if (response.ok) {
+        toast({ title: "Training Stopped", description: `Task "${task.name}" has been cancelled.` });
+        fetchTrainingTasks();
+      } else {
+        throw new Error('Failed to cancel task');
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to stop training task", variant: "destructive" });
+    }
+  };
 
   return (
     <div className="space-y-6">
