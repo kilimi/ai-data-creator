@@ -162,6 +162,18 @@ export default function ProjectEvaluations() {
       const q = searchQuery.toLowerCase();
       result = result.filter(t => t.name?.toLowerCase().includes(q));
     }
+    if (statusFilter !== "all") {
+      result = result.filter(t => {
+        const m = t.task_metadata || {};
+        if (m.is_multi_dataset) {
+          const children = evaluationTasks.filter(c => (m.child_task_ids || []).includes(c.id));
+          if (statusFilter === "completed") return children.length > 0 && children.every(c => c.status === "completed");
+          if (statusFilter === "failed") return children.some(c => c.status === "failed");
+          if (statusFilter === "running") return children.some(c => c.status === "running" || c.status === "pending");
+        }
+        return t.status === statusFilter;
+      });
+    }
     return [...result].sort((a, b) => {
       switch (sortOrder) {
         case "oldest":
@@ -174,6 +186,105 @@ export default function ProjectEvaluations() {
       }
     });
   })();
+
+  const statusCounts = {
+    all: parentEvaluations.length,
+    running: parentEvaluations.filter(t => t.status === "running" || t.status === "pending").length,
+    completed: parentEvaluations.filter(t => t.status === "completed").length,
+    failed: parentEvaluations.filter(t => t.status === "failed").length,
+  };
+
+  const selectedTasksForCompare = parentEvaluations.filter(t => selectedForCompare.has(t.id));
+
+  const toggleCompareSelect = (taskId: number) => {
+    setSelectedForCompare(prev => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+
+  // Action handlers (extracted from inline so cards can call them)
+  const handleRename = (task: any) => {
+    setRenamingTask({ id: task.id, name: task.name });
+    setNewTaskName(task.name);
+  };
+
+  const handleDelete = async (task: any) => {
+    const isMulti = !!task.task_metadata?.is_multi_dataset;
+    if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"${isMulti ? ' and all its child evaluations' : ''}?`)) return;
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Failed to delete task');
+      toast({ title: "Task Deleted", description: `Evaluation task "${task.name}" has been deleted.` });
+      fetchEvaluationTasks();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete evaluation task", variant: "destructive" });
+    }
+  };
+
+  const handleRerun = async (task: any) => {
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        toast({
+          title: "Evaluation Rerun Started",
+          description: `New evaluation task "${data.task?.name || task.name}" has been created and started.`,
+        });
+        fetchEvaluationTasks();
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Failed to rerun evaluation task');
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to rerun evaluation task",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDownloadCoco = async (task: any, multi = false) => {
+    const m = task.task_metadata || {};
+    if (multi) {
+      const url = `http://localhost:9999/predictions/export-coco-all/${task.id}`;
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('Failed to download');
+        const blob = await r.blob();
+        const u = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = u; a.download = `evaluation_${task.id}_all_coco.zip`;
+        document.body.appendChild(a); a.click();
+        window.URL.revokeObjectURL(u); document.body.removeChild(a);
+        toast({ title: "Download Complete", description: "All COCO files downloaded" });
+      } catch (e) {
+        toast({ title: "Download Failed", description: e instanceof Error ? e.message : "Failed", variant: "destructive" });
+      }
+      return;
+    }
+    const predCount = m.results?.predictions_count || 0;
+    if (predCount <= 0) {
+      toast({ title: "No Predictions", description: "This evaluation has no predictions to export.", variant: "destructive" });
+      return;
+    }
+    try {
+      const r = await fetch(`http://localhost:9999/predictions/export-coco/${task.id}`);
+      if (!r.ok) throw new Error('Failed to download');
+      const blob = await r.blob();
+      const u = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = u; a.download = `evaluation_${task.id}_coco.json`;
+      document.body.appendChild(a); a.click();
+      window.URL.revokeObjectURL(u); document.body.removeChild(a);
+      toast({ title: "Download Complete", description: "COCO results downloaded" });
+    } catch (e) {
+      toast({ title: "Download Failed", description: e instanceof Error ? e.message : "Failed", variant: "destructive" });
+    }
+  };
 
   return (
     <div className="space-y-6">
