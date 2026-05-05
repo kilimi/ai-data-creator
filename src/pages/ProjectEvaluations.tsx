@@ -57,6 +57,9 @@ export default function ProjectEvaluations() {
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
   const [modalResourcesLoading, setModalResourcesLoading] = useState(false);
   const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedForCompare, setSelectedForCompare] = useState<Set<number>>(new Set());
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
