@@ -8,8 +8,15 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { AlertCircle, Activity, Brain, Trash2, Pencil, ChevronDown, Database } from "lucide-react";
+import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal } from "lucide-react";
 import { Project, DatasetGroup } from '@/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -40,6 +47,8 @@ export default function ProjectEvaluations() {
   const [showEvaluationModal, setShowEvaluationModal] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [expandedEvaluations, setExpandedEvaluations] = useState<Set<number>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
   const [datasets, setDatasets] = useState<any[]>([]);
@@ -129,27 +138,72 @@ export default function ProjectEvaluations() {
     return `${datasetName} (${collectionName})`;
   };
 
+  // Filter and sort
+  const visibleEvaluations = (() => {
+    let result = parentEvaluations;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(t => t.name?.toLowerCase().includes(q));
+    }
+    return [...result].sort((a, b) => {
+      switch (sortOrder) {
+        case "oldest":
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case "name":
+          return (a.name || "").localeCompare(b.name || "");
+        case "newest":
+        default:
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+    });
+  })();
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Activity className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-bold">Model Evaluations</h1>
-          <Badge variant="secondary" className="ml-2">
-            {parentEvaluations.length} evaluations
-          </Badge>
+      <div className="flex items-center gap-2">
+        <Activity className="h-6 w-6 text-primary" />
+        <h1 className="text-2xl font-bold">Model Evaluations</h1>
+        <Badge variant="secondary" className="ml-2">
+          {parentEvaluations.length} evaluations
+        </Badge>
+      </div>
+
+      {/* Search and Filter Controls (mirrors Models page) */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+          <Input
+            placeholder="Search evaluations by name..."
+            className="pl-9"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
-        
-        <Button 
-          variant="default" 
-          size="sm" 
-          className="whitespace-nowrap"
-          onClick={() => setShowEvaluationModal(true)}
-        >
-          <Brain className="w-4 h-4 mr-2" />
-          New Evaluation
-        </Button>
+
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal className="text-muted-foreground h-4 w-4" />
+          <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as any)}>
+            <SelectTrigger className="min-w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="oldest">Oldest first</SelectItem>
+              <SelectItem value="name">Name (A-Z)</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Button
+            variant="default"
+            size="sm"
+            className="whitespace-nowrap ml-2"
+            onClick={() => setShowEvaluationModal(true)}
+          >
+            <Activity className="w-4 h-4 mr-2" />
+            New Evaluation
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
@@ -174,7 +228,7 @@ export default function ProjectEvaluations() {
             </Button>
           </div>
         </div>
-      ) : parentEvaluations.length > 0 ? (
+      ) : visibleEvaluations.length > 0 ? (
         <div className="border border-gray-800 rounded-lg overflow-x-auto">
           <table className="w-full table-fixed">
             <thead className="bg-gray-900 border-b border-gray-800">
@@ -194,7 +248,7 @@ export default function ProjectEvaluations() {
               </tr>
             </thead>
             <tbody className="bg-gray-950 divide-y divide-gray-800">
-              {parentEvaluations.map((task) => {
+              {visibleEvaluations.map((task) => {
                 const metadata = task.task_metadata || {};
                 const isRunning = task.status === 'running';
                 const isFailed = task.status === 'failed';
@@ -437,7 +491,7 @@ export default function ProjectEvaluations() {
                               className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
                               title="Download COCO predictions"
                             >
-                              <Database className="w-3.5 h-3.5" />
+                              <Download className="w-3.5 h-3.5" />
                             </button>
                           )}
                           {isMultiDataset && aggregateStatus === 'completed' && (
@@ -489,7 +543,7 @@ export default function ProjectEvaluations() {
                               className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
                               title="Download all COCO predictions (ZIP)"
                             >
-                              <Database className="w-3.5 h-3.5" />
+                              <Download className="w-3.5 h-3.5" />
                             </button>
                           )}
                           <button
@@ -658,7 +712,7 @@ export default function ProjectEvaluations() {
                                   className="inline-flex items-center p-1 rounded text-xs bg-green-800/50 text-green-400 hover:bg-green-700 transition-colors"
                                   title="Download COCO predictions"
                                 >
-                                  <Database className="w-3 h-3" />
+                                  <Download className="w-3 h-3" />
                                 </button>
                               )}
                             </div>
@@ -674,13 +728,13 @@ export default function ProjectEvaluations() {
         </div>
       ) : (
         <div className="text-center py-16">
-          <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <Activity className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h3 className="text-lg font-medium mb-2">No Evaluations Yet</h3>
           <p className="text-muted-foreground mb-6">
             Start evaluating your trained models to analyze their performance.
           </p>
           <Button onClick={() => setShowEvaluationModal(true)}>
-            <Brain className="w-4 h-4 mr-2" />
+            <Activity className="w-4 h-4 mr-2" />
             New Evaluation
           </Button>
         </div>
