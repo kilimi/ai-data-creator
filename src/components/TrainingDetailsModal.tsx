@@ -135,19 +135,14 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   };
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, any> = {
-      running: { color: 'bg-blue-500/20 text-primary border-blue-500/30', label: 'Running' },
-      completed: { color: 'bg-green-500/20 text-green-400 border-green-500/30', label: 'Completed' },
-      failed: { color: 'bg-red-500/20 text-destructive border-red-500/30', label: 'Failed' },
-      pending: { color: 'bg-gray-500/20 text-muted-foreground border-gray-500/30', label: 'Pending' },
+    const variants: Record<string, { className: string; label: string }> = {
+      running: { className: 'bg-primary/15 text-primary border-primary/30', label: 'Running' },
+      completed: { className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30', label: 'Completed' },
+      failed: { className: 'bg-destructive/15 text-destructive border-destructive/30', label: 'Failed' },
+      pending: { className: 'bg-muted text-muted-foreground border-border', label: 'Pending' },
     };
-    
     const variant = variants[status] || variants.pending;
-    return (
-      <Badge className={`${variant.color} border`}>
-        {variant.label}
-      </Badge>
-    );
+    return <Badge className={`${variant.className} border`}>{variant.label}</Badge>;
   };
 
   const renderMetricCard = (title: string, value: number | string | undefined, icon: React.ReactNode, format?: 'percent' | 'decimal') => {
