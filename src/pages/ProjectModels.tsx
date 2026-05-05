@@ -95,6 +95,7 @@ export default function ProjectModels() {
   const [selectedTaskError, setSelectedTaskError] = useState<{ name: string; error: string; id: number } | null>(null);
   const [selectedTaskCommand, setSelectedTaskCommand] = useState<{ name: string; command: string; id: number } | null>(null);
   const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
   const [datasets, setDatasets] = useState<any[]>([]);
