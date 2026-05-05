@@ -230,7 +230,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <div className="flex-1 bg-muted rounded-full h-2">
                       <div
                         className={`h-2 rounded-full transition-all ${
-                          task.status === 'failed' ? 'bg-red-500' : task.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'
+                          task.status === 'failed' ? 'bg-destructive' : task.status === 'completed' ? 'bg-emerald-500' : 'bg-primary'
                         }`}
                         style={{ width: `${task.progress}%` }}
                       />
