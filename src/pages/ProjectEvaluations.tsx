@@ -247,7 +247,7 @@ export default function ProjectEvaluations() {
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8"></th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-14">ID</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Name</th>
-                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-48">Dataset</th>
+                
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-24">Status</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-32">Progress</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Model</th>
