@@ -513,6 +513,15 @@ export default function ProjectEvaluations() {
         </div>
       )}
       
+      {/* Compare panel */}
+      {compareMode && selectedTasksForCompare.length > 0 && (
+        <EvaluationComparePanel
+          tasks={selectedTasksForCompare}
+          onClose={() => { setCompareMode(false); setSelectedForCompare(new Set()); }}
+          onClear={() => setSelectedForCompare(new Set())}
+        />
+      )}
+
       {/* Modals */}
       {/* Rename Task Modal */}
       <Dialog open={!!renamingTask} onOpenChange={() => setRenamingTask(null)}>
