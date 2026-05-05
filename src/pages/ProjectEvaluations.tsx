@@ -591,9 +591,6 @@ export default function ProjectEvaluations() {
                           <td className="px-2 py-2"></td>
                           <td className="px-4 py-2 text-sm text-gray-400 pl-8">└ #{childTask.id}</td>
                           <td className="px-4 py-2 text-sm text-gray-300">{childMetadata.dataset_name || 'Unknown'}</td>
-                          <td className="px-4 py-2 text-sm text-gray-400">
-                            {formatDatasetCollectionLabel(childMetadata.dataset_name, childMetadata.collection_name)}
-                          </td>
                           <td className="px-4 py-2 text-sm">
                             {childIsRunning && (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
