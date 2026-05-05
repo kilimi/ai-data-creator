@@ -346,29 +346,6 @@ export default function ProjectEvaluations() {
                           )}
                         </div>
                       </td>
-                      <td className="px-2 py-2 text-xs text-gray-400">
-                        <span className="block line-clamp-2" title={isMultiDataset
-                          ? (childTasks.length > 0
-                            ? childTasks
-                                .map((ct) => formatDatasetCollectionLabel(
-                                  ct.task_metadata?.dataset_name,
-                                  ct.task_metadata?.collection_name,
-                                ))
-                                .join(', ')
-                            : `${metadata.dataset_names?.join(', ') || 'Multiple'}`)
-                          : formatDatasetCollectionLabel(metadata.dataset_name, metadata.collection_name)}>
-                          {isMultiDataset
-                            ? (childTasks.length > 0
-                              ? childTasks
-                                  .map((ct) => formatDatasetCollectionLabel(
-                                    ct.task_metadata?.dataset_name,
-                                    ct.task_metadata?.collection_name,
-                                  ))
-                                  .join(', ')
-                              : `${metadata.dataset_names?.join(', ') || 'Multiple'}`)
-                            : formatDatasetCollectionLabel(metadata.dataset_name, metadata.collection_name)}
-                        </span>
-                      </td>
                       <td className="px-2 py-2 text-xs">
                         {aggregateStatus === 'running' && (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
