@@ -69,10 +69,21 @@ export default function ProjectEvaluations() {
       );
       if (response.ok) {
         const data = await response.json();
-        setEvaluationTasks(data);
+        const list = Array.isArray(data) ? data : [];
+        if (list.length === 0) {
+          const { MOCK_EVALUATION_TASKS } = await import('@/lib/mockTasks');
+          setEvaluationTasks(MOCK_EVALUATION_TASKS);
+        } else {
+          setEvaluationTasks(list);
+        }
+      } else {
+        const { MOCK_EVALUATION_TASKS } = await import('@/lib/mockTasks');
+        setEvaluationTasks(MOCK_EVALUATION_TASKS);
       }
     } catch (error) {
       console.error('Error fetching evaluation tasks:', error);
+      const { MOCK_EVALUATION_TASKS } = await import('@/lib/mockTasks');
+      setEvaluationTasks(MOCK_EVALUATION_TASKS);
     } finally {
       setLoadingTasks(false);
     }
