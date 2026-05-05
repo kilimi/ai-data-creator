@@ -603,16 +603,16 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 <h3 className="text-lg font-semibold mb-3">Dataset Split</h3>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="text-center">
-                    <div className="text-2xl font-semibold text-primary">{metadata.image_counts.train}</div>
-                    <div className="text-sm text-muted-foreground">Train</div>
+                    <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.train}</div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Train</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-semibold text-green-400">{metadata.image_counts.val}</div>
-                    <div className="text-sm text-muted-foreground">Validation</div>
+                    <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.val}</div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Validation</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-semibold text-purple-400">{metadata.image_counts.test || 0}</div>
-                    <div className="text-sm text-muted-foreground">Test</div>
+                    <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.test || 0}</div>
+                    <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Test</div>
                   </div>
                 </div>
               </div>
