@@ -11,6 +11,7 @@ import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { DownloadModelModal } from '@/components/DownloadModelModal';
 import { TestTrainingInferenceModal } from '@/components/TestTrainingInferenceModal';
 import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw } from "lucide-react";
+import { TrainingCard } from "@/components/TrainingCard";
 import { Project, DatasetGroup } from '@/types';
 import {
   Select,
@@ -94,6 +95,7 @@ export default function ProjectModels() {
   const [selectedTaskError, setSelectedTaskError] = useState<{ name: string; error: string; id: number } | null>(null);
   const [selectedTaskCommand, setSelectedTaskCommand] = useState<{ name: string; command: string; id: number } | null>(null);
   const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
   const [datasets, setDatasets] = useState<any[]>([]);
@@ -244,8 +246,14 @@ export default function ProjectModels() {
     return task.name.toLowerCase().includes(query);
   });
 
+  const statusFilteredTasks = filteredTasks.filter(t => {
+    if (statusFilter === "all") return true;
+    if (statusFilter === "running") return t.status === "running" || t.status === "pending";
+    return t.status === statusFilter;
+  });
+
   // Sort tasks
-  const sortedTasks = [...filteredTasks].sort((a, b) => {
+  const sortedTasks = [...statusFilteredTasks].sort((a, b) => {
     switch (modelsSortOrder) {
       case "newest":
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -259,6 +267,61 @@ export default function ProjectModels() {
   });
 
   const failedTasksCount = trainingTasks.filter(t => t.status === 'failed').length;
+
+  const statusCounts = {
+    all: trainingTasks.length,
+    running: trainingTasks.filter(t => t.status === "running" || t.status === "pending").length,
+    completed: trainingTasks.filter(t => t.status === "completed").length,
+    failed: failedTasksCount,
+  };
+
+  // Action handlers (extracted so cards can call them)
+  const handleRerunTask = async (task: any) => {
+    try {
+      const response = await fetch(`http://localhost:9999/training/${task.id}/rerun`, { method: 'POST' });
+      if (response.ok) {
+        const data = await response.json();
+        toast({ title: "Training Rerun Started", description: `New training task "${data.task.name}" has been created and started.` });
+        fetchTrainingTasks();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to rerun training task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to rerun training task", variant: "destructive" });
+    }
+  };
+
+  const handleDeleteTask = async (task: any) => {
+    if (!confirm(`Are you sure you want to delete training task "${task.name}"? This will also delete all model files.`)) return;
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
+      if (response.ok) {
+        toast({ title: "Task Deleted", description: `Training task "${task.name}" has been deleted.` });
+        fetchTrainingTasks();
+      } else {
+        const data = await response.json();
+        throw new Error(data.detail || 'Failed to delete task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete training task", variant: "destructive" });
+    }
+  };
+
+  const handleStopTask = async (task: any) => {
+    if (!confirm(`Are you sure you want to stop training task "${task.name}"?`)) return;
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
+      if (response.ok) {
+        toast({ title: "Training Stopped", description: `Task "${task.name}" has been cancelled.` });
+        fetchTrainingTasks();
+      } else {
+        throw new Error('Failed to cancel task');
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to stop training task", variant: "destructive" });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -323,6 +386,35 @@ export default function ProjectModels() {
         </div>
       </div>
 
+      {/* Status filter chips */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {([
+          { key: "all", label: "All" },
+          { key: "running", label: "Running" },
+          { key: "completed", label: "Completed" },
+          { key: "failed", label: "Failed" },
+        ] as const).map(({ key, label }) => {
+          const active = statusFilter === key;
+          const count = statusCounts[key];
+          return (
+            <button
+              key={key}
+              onClick={() => setStatusFilter(key)}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                active
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted/40 text-muted-foreground border-border hover:bg-muted"
+              }`}
+            >
+              <span>{label}</span>
+              <span className={`text-xs tabular-nums ${active ? "opacity-90" : "opacity-70"}`}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Content */}
       {loadingTasks ? (
         <div className="text-center py-16">
@@ -346,284 +438,34 @@ export default function ProjectModels() {
           </div>
         </div>
       ) : sortedTasks.length > 0 ? (
-        <div className="border border-gray-800 rounded-lg overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-900 border-b border-gray-800">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Started</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Size</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Epochs</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-gray-950 divide-y divide-gray-800">
-              {sortedTasks.map((task) => {
-                const metadata = task.task_metadata || {};
-                const isRunning = task.status === 'running';
-                const isFailed = task.status === 'failed';
-                const isCompleted = task.status === 'completed';
-                
-                return (
-                  <tr 
-                    key={task.id} 
-                    className="hover:bg-gray-900 transition-colors cursor-pointer"
-                    onClick={() => setSelectedTaskId(task.id)}
-                  >
-                    <td className="px-4 py-3 text-sm text-gray-300">#{task.id}</td>
-                    <td className="px-4 py-3 text-sm text-gray-200">{task.name}</td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {new Date(task.created_at).toLocaleString('en-GB', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {isRunning && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                          Running
-                        </span>
-                      )}
-                      {isFailed && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id });
-                          }}
-                          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 cursor-pointer transition-colors"
-                        >
-                          Failed
-                        </button>
-                      )}
-                      {isCompleted && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
-                          Completed
-                        </span>
-                      )}
-                      {task.status === 'pending' && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400 border border-gray-500/30">
-                          Pending
-                        </span>
-                      )}
-                      {task.status === 'stopped' && (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                          Stopped
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 max-w-[120px]">
-                          <div className="w-full bg-gray-800 rounded-full h-2">
-                            <div
-                              className={`h-2 rounded-full transition-all ${
-                                isFailed ? 'bg-red-500' : 
-                                isCompleted ? 'bg-green-500' : 
-                                task.status === 'stopped' ? 'bg-orange-500' : 
-                                'bg-blue-500'
-                              }`}
-                              style={{ width: `${task.progress}%` }}
-                            />
-                          </div>
-                        </div>
-                        <span className="text-xs text-gray-400 min-w-[35px]">{task.progress}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {(() => {
-                        const modelName = metadata.model_config?.model || metadata.model_type || '';
-                        const family = getModelFamily(modelName);
-                        if (family.includes('YOLO')) return 'YOLO';
-                        if (family.includes('DETR')) return 'RT-DETR';
-                        return family;
-                      })()}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {(() => {
-                        const modelName = metadata.model_config?.model || metadata.model_variant || metadata.model_type || '';
-                        const family = getModelFamily(modelName);
-                        const size = getModelSize(modelName);
-                        return size !== '-' ? size : family;
-                      })()}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">
-                      {(() => {
-                        if (isRunning && metadata.current_epoch && metadata.epochs) {
-                          return `${metadata.current_epoch}/${metadata.epochs}`;
-                        } else if ((isCompleted || isFailed || task.status === 'stopped') && metadata.current_epoch) {
-                          return metadata.current_epoch;
-                        } else if (metadata.training_params?.epochs || metadata.epochs) {
-                          return metadata.training_params?.epochs || metadata.epochs;
-                        }
-                        return '-';
-                      })()}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      <div className="flex items-center gap-2">
-                        {(isCompleted || isFailed || task.status === 'stopped') && (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                const response = await fetch(`http://localhost:9999/training/${task.id}/rerun`, {
-                                  method: 'POST'
-                                });
-                                if (response.ok) {
-                                  const data = await response.json();
-                                  toast({
-                                    title: "Training Rerun Started",
-                                    description: `New training task "${data.task.name}" has been created and started.`
-                                  });
-                                  fetchTrainingTasks();
-                                } else {
-                                  const errorData = await response.json();
-                                  throw new Error(errorData.detail || 'Failed to rerun training task');
-                                }
-                              } catch (error) {
-                                toast({
-                                  title: "Error",
-                                  description: error instanceof Error ? error.message : "Failed to rerun training task",
-                                  variant: "destructive"
-                                });
-                              }
-                            }}
-                            className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-purple-800 text-purple-300 border border-purple-700 hover:bg-purple-700 hover:text-white transition-colors"
-                            title="Rerun training with same settings"
-                          >
-                            <RotateCw className="w-4 h-4" />
-                          </button>
-                        )}
-                        {isCompleted && (
-                          <>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setTestInference({ id: task.id, name: task.name });
-                              }}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
-                              title="Test inference"
-                            >
-                              <TestTube className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDownloadModel({ id: task.id, name: task.name });
-                              }}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-blue-800 text-blue-300 border border-blue-700 hover:bg-blue-700 hover:text-white transition-colors"
-                              title="Download model"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedTaskCommand({ name: task.name, command: generateTrainingCommand(task), id: task.id });
-                          }}
-                          className="inline-flex items-center px-2.5 py-1 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
-                          title="View CLI command"
-                        >
-                          <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          CLI
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setRenamingTask({ id: task.id, name: task.name });
-                            setNewTaskName(task.name);
-                          }}
-                          className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors"
-                          title="Rename task"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={async (e) => {
-                            e.stopPropagation();
-                            if (!confirm(`Are you sure you want to delete training task "${task.name}"? This will also delete all model files.`)) {
-                              return;
-                            }
-                            try {
-                              const response = await fetch(`http://localhost:9999/tasks/${task.id}`, {
-                                method: 'DELETE'
-                              });
-                              if (response.ok) {
-                                toast({
-                                  title: "Task Deleted",
-                                  description: `Training task "${task.name}" has been deleted.`
-                                });
-                                fetchTrainingTasks();
-                              } else {
-                                const data = await response.json();
-                                throw new Error(data.detail || 'Failed to delete task');
-                              }
-                            } catch (error) {
-                              toast({
-                                title: "Error",
-                                description: error instanceof Error ? error.message : "Failed to delete training task",
-                                variant: "destructive"
-                              });
-                            }
-                          }}
-                          className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
-                          title="Delete training task"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                        {(isRunning || task.status === 'pending') && (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              if (!confirm(`Are you sure you want to stop training task "${task.name}"?`)) {
-                                return;
-                              }
-                              try {
-                                const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, {
-                                  method: 'PATCH'
-                                });
-                                if (response.ok) {
-                                  toast({
-                                    title: "Training Stopped",
-                                    description: `Task "${task.name}" has been cancelled.`
-                                  });
-                                  fetchTrainingTasks();
-                                } else {
-                                  throw new Error('Failed to cancel task');
-                                }
-                              } catch (error) {
-                                toast({
-                                  title: "Error",
-                                  description: "Failed to stop training task",
-                                  variant: "destructive"
-                                });
-                              }
-                            }}
-                            className="inline-flex items-center justify-center w-8 h-8 rounded text-xs font-medium bg-red-800 text-red-300 border border-red-700 hover:bg-red-700 hover:text-white transition-colors"
-                            title="Stop training"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          {sortedTasks.map((task) => {
+            const metadata = task.task_metadata || {};
+            const modelName = metadata.model_config?.model || metadata.model_variant || metadata.model_type || '';
+            const family = getModelFamily(modelName);
+            const familyShort = family.includes('YOLO') ? 'YOLO' : family.includes('DETR') ? 'RT-DETR' : family;
+            const size = getModelSize(modelName);
+            return (
+              <TrainingCard
+                key={task.id}
+                task={task}
+                modelFamily={familyShort}
+                modelSize={size}
+                onOpen={() => setSelectedTaskId(task.id)}
+                onRename={() => {
+                  setRenamingTask({ id: task.id, name: task.name });
+                  setNewTaskName(task.name);
+                }}
+                onRerun={() => handleRerunTask(task)}
+                onDelete={() => handleDeleteTask(task)}
+                onTestInference={() => setTestInference({ id: task.id, name: task.name })}
+                onDownload={() => setDownloadModel({ id: task.id, name: task.name })}
+                onShowCli={() => setSelectedTaskCommand({ name: task.name, command: generateTrainingCommand(task), id: task.id })}
+                onStop={() => handleStopTask(task)}
+                onShowError={() => setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id })}
+              />
+            );
+          })}
         </div>
       ) : (
         <div className="text-center py-16">
