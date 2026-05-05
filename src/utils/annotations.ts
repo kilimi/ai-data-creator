@@ -22,7 +22,7 @@ export interface AnnotationFile {
   name: string;
   date: string;
   format: string;
-  type?: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' | 'classification' | 'segmentation' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'nothing' | 'any'; // Support both new and old annotation types for backward compatibility
+  type?: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' | 'classification' | 'segmentation' | 'segmentation-mask-bbox' | 'segmentation-mask' | 'segmentation-bbox' | 'detection' | 'object_detection' | 'nothing' | 'any'; // Support both new and old annotation types for backward compatibility (detection = legacy augmented bbox-only)
   classCount: number;
   imageCount: number;
   matchedImageCount: number;

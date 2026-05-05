@@ -337,15 +337,42 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
     annotation_files = db.query(models.AnnotationFile).filter(
         models.AnnotationFile.dataset_id == dataset_id
     ).order_by(models.AnnotationFile.created_at.desc()).all()
+
+    # Some legacy/imported files have stale or zero `annotation_count` in
+    # AnnotationFile even though rows exist in `annotations`. Compute live
+    # counts once and use them as a fallback so UI selectors (e.g. augmentation
+    # source picker) don't incorrectly show "0 annotations".
+    file_ids = [f.id for f in annotation_files if f.id]
+    live_counts_by_file = {}
+    if file_ids:
+        live_counts_rows = (
+            db.query(models.Annotation.annotation_file_id, func.count(models.Annotation.id))
+            .filter(models.Annotation.annotation_file_id.in_(file_ids))
+            .group_by(models.Annotation.annotation_file_id)
+            .all()
+        )
+        live_counts_by_file = {file_id: int(count or 0) for file_id, count in live_counts_rows}
     
     result = []
     for ann_file in annotation_files:
+        stored_count = int(ann_file.annotation_count or 0)
+        live_count = int(live_counts_by_file.get(ann_file.id, 0))
+        effective_count = live_count if live_count > 0 else stored_count
         result.append({
             "id": ann_file.id,
             "name": ann_file.name,
             "file_name": ann_file.name,
-            "annotation_count": ann_file.annotation_count or 0
+            "annotation_count": effective_count
         })
+
+    # Fallback for legacy datasets where per-file counts were never persisted and
+    # annotations are not linked row-wise to Annotation.annotation_file_id.
+    # If there is a single annotation file and it still resolves to 0, use the
+    # dataset-level annotation_count so UI selectors don't incorrectly show 0.
+    if len(result) == 1 and int(result[0].get("annotation_count", 0) or 0) == 0:
+        ds_total = int(dataset.annotation_count or 0)
+        if ds_total > 0:
+            result[0]["annotation_count"] = ds_total
     
     return {"success": True, "data": result}
 

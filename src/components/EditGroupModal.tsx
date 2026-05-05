@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { Dataset, DatasetGroup } from "@/types";
 import { useToast } from "@/hooks/use-toast";
+import { resolveBackendMediaUrl } from "@/config/api";
 
 interface EditGroupModalProps {
   open: boolean;
@@ -216,7 +217,9 @@ export function EditGroupModal({
             
             <ScrollArea className="h-[300px]">
               <div className="space-y-3">
-                {availableDatasets.map((dataset) => (
+                {availableDatasets.map((dataset) => {
+                  const thumb = resolveBackendMediaUrl(dataset.thumbnailUrl);
+                  return (
                   <Card 
                     key={dataset.id}
                     className={`cursor-pointer transition-colors ${
@@ -234,9 +237,9 @@ export function EditGroupModal({
                           className="mt-0.5"
                         />
                         
-                        {dataset.thumbnailUrl ? (
+                        {thumb ? (
                           <img
-                            src={dataset.thumbnailUrl}
+                            src={thumb}
                             alt={dataset.name}
                             className="w-12 h-12 rounded object-cover flex-shrink-0"
                           />
@@ -284,7 +287,8 @@ export function EditGroupModal({
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                );
+                })}
               </div>
             </ScrollArea>
           </div>

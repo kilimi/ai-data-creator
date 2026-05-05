@@ -10,8 +10,9 @@ from datetime import datetime
 import logging
 import os
 
+from ..auto_annotate_collection import resolve_auto_annotate_source_collection_id
 from ..database import get_db
-from ..models import Task, Dataset, AnnotationFile
+from ..models import Task, Dataset, AnnotationFile, ImageCollection
 from ..foundation_models import pretrained_yolo_catalog
 
 router = APIRouter()
@@ -54,6 +55,8 @@ class PretrainedAutoAnnotationRequest(BaseModel):
     conf_threshold: float = 0.25
     iou_threshold: float = 0.45
     task_name: Optional[str] = None
+    # Omit to use the dataset default (or first) collection when the dataset uses collections
+    collection_id: Optional[int] = None
 
 
 @router.get("/auto-annotate/pretrained-models")
@@ -100,6 +103,21 @@ async def start_auto_annotation_pretrained(
         dataset = db.query(Dataset).filter(Dataset.id == request.dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
+
+        cid_req = request.collection_id
+        if cid_req is not None:
+            coll = db.query(ImageCollection).filter(
+                ImageCollection.id == cid_req,
+                ImageCollection.dataset_id == request.dataset_id,
+            ).first()
+            if not coll:
+                raise HTTPException(
+                    status_code=400,
+                    detail="collection_id must belong to the selected dataset",
+                )
+        effective_collection_id = resolve_auto_annotate_source_collection_id(
+            db, request.dataset_id, cid_req
+        )
         
         # Generate task name
         task_name = request.task_name or f"Auto-Annotate {dataset.name} with {model_info['name']}"
@@ -137,7 +155,12 @@ async def start_auto_annotation_pretrained(
                 "use_segmentation": use_segmentation,
                 "class_names": COCO_CLASSES,
                 "num_classes": len(COCO_CLASSES),
-                "is_pretrained": True
+                "is_pretrained": True,
+                **(
+                    {"collection_id": effective_collection_id}
+                    if effective_collection_id is not None
+                    else {}
+                ),
             }
         )
         db.add(task)
@@ -195,6 +218,7 @@ async def start_auto_annotation_from_training(
     use_segmentation: bool = True,
     checkpoint: str = "best",
     task_name: Optional[str] = None,
+    collection_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -220,6 +244,21 @@ async def start_auto_annotation_from_training(
         dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
+
+        cid_req = collection_id
+        if cid_req is not None:
+            coll = db.query(ImageCollection).filter(
+                ImageCollection.id == cid_req,
+                ImageCollection.dataset_id == dataset_id,
+            ).first()
+            if not coll:
+                raise HTTPException(
+                    status_code=400,
+                    detail="collection_id must belong to the selected dataset",
+                )
+        effective_collection_id = resolve_auto_annotate_source_collection_id(
+            db, dataset_id, cid_req
+        )
         
         # Get model path from training task
         task_metadata = training_task.task_metadata or {}
@@ -281,7 +320,12 @@ async def start_auto_annotation_from_training(
                 "iou_threshold": iou_threshold,
                 "use_segmentation": use_segmentation,
                 "class_names": class_names,
-                "num_classes": len(class_names)
+                "num_classes": len(class_names),
+                **(
+                    {"collection_id": effective_collection_id}
+                    if effective_collection_id is not None
+                    else {}
+                ),
             }
         )
         db.add(task)

@@ -7,6 +7,7 @@ import { AnnotationsContent } from '@/components/AnnotationsContent';
 import { Image, ImageCollection } from '@/types';
 import { AnnotationSample } from '@/utils/annotations';
 import { LayoutType } from './LayoutControls';
+import type { DatasetUiMode } from '@/hooks/useDatasetSettings';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ResizableDatasetLayoutProps {
@@ -36,6 +37,7 @@ interface ResizableDatasetLayoutProps {
   onOpenCalibrationDialog?: () => void; // NEW: for calibration dialog
   calibrations?: Array<{ id?: number; source_collection_id: number | string; target_collection_id: number | string }>;
   onDeleteCalibration?: (calibrationId: number) => Promise<void> | void;
+  datasetUiMode?: DatasetUiMode;
   paginatedImages: Image[];
   totalPages: number;
   annotations?: AnnotationSample[];
@@ -72,6 +74,7 @@ export function ResizableDatasetLayout({
   onOpenCalibrationDialog,
   calibrations = [],
   onDeleteCalibration,
+  datasetUiMode = 'default',
   paginatedImages,
   totalPages,
   annotations = [],
@@ -122,6 +125,7 @@ export function ResizableDatasetLayout({
             onOpenCalibrationDialog={onOpenCalibrationDialog}
             calibrations={calibrations}
             onDeleteCalibration={onDeleteCalibration}
+            datasetUiMode={datasetUiMode}
             annotations={annotations}
             annotationFiles={annotationFiles}
             selectedImageIndex={selectedImageIndex}
@@ -152,6 +156,26 @@ export function ResizableDatasetLayout({
       </div>
     </ScrollArea>
   );
+
+  /**
+   * Annotation panel needs the image ids that are currently "in view" so it can
+   * lazy-load per-page annotations. In tabbed mode pagination lives per
+   * collection (inside `imageCollections[*].paginatedImages`), so using only the
+   * legacy `paginatedImages` prop keeps it stuck on page 1 ids.
+   */
+  const currentPageImageIdsForAnnotations = useMemo(() => {
+    if (useTabbedImages && imageCollections && imageCollections.length > 0) {
+      const ids = new Set<string>();
+      for (const collection of imageCollections) {
+        const currentPageImages = collection.paginatedImages || [];
+        for (const img of currentPageImages) {
+          ids.add(String(img.id));
+        }
+      }
+      return Array.from(ids);
+    }
+    return paginatedImages.map((img) => String(img.id));
+  }, [useTabbedImages, imageCollections, paginatedImages]);
   
   const renderAnnotationsSection = () => (
     <ScrollArea className="h-full w-full">
@@ -168,7 +192,7 @@ export function ResizableDatasetLayout({
           images={imagesMemo}
           imageCollections={imageCollections}
           // Pass current page image IDs for smart annotation loading
-          currentPageImageIds={paginatedImages.map(img => img.id)}
+          currentPageImageIds={currentPageImageIdsForAnnotations}
         />
       </div>
     </ScrollArea>

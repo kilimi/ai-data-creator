@@ -10,6 +10,11 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 
 from app.tasks.training_tasks import TrainingTask, SessionLocal
+from app.tasks.yolo_training_helpers import (
+    fix_path_permissions_recursive,
+    get_runtime_training_project,
+    prepare_yolo_training_weights_dir,
+)
 from app.models import Task as TaskModel
 from app.celery_app import celery_app
 
@@ -226,8 +231,11 @@ class YOLOTrainingTask(TrainingTask):
         """Build training arguments dictionary"""
         from app.tasks.yolo_training_helpers import build_yolo_training_args
         
-        project_path = self.output_base.resolve()
-        logger.info(f"Setting YOLO project to: {project_path}")
+        # Run training in container-local /tmp to avoid bind-mount EPERM on
+        # repeated checkpoint writes (last.pt) under /app/projects.
+        project_path = get_runtime_training_project(self.task_id)
+        logger.info(f"Setting YOLO runtime project to: {project_path}")
+        logger.info(f"Expected persisted output base: {self.output_base.resolve()}")
         logger.info(f"Dataset info keys: {list(dataset_info.keys())}")
         logger.info(f"Dataset yaml_path: {dataset_info.get('yaml_path')}")
         
@@ -265,21 +273,16 @@ class YOLOTrainingTask(TrainingTask):
         train_args_filtered = {k: v for k, v in train_args.items() if k != 'model'}
         logger.info(f"Train args (without full model): {train_args_filtered}")
         
-        # Skip permission fixing for now - it might be causing hangs on large directories
-        # Just ensure directories exist
-        if self.weights_dir:
-            try:
-                self.weights_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Ensured weights directory exists: {self.weights_dir}")
-            except Exception as e:
-                logger.warning(f"Could not create weights directory: {e}")
-        
+        # Fresh YOLO run dir: remove stale .../training (not dataset/), chmod parents, probe write.
         if self.output_base:
             try:
-                self.output_base.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Ensured output_base exists: {self.output_base}")
+                logger.info(f"Pre-train weights-dir prepare START: {self.output_base}")
+                prepare_yolo_training_weights_dir(self.output_base)
+                logger.info("Pre-train weights-dir prepare DONE")
+            except PermissionError:
+                raise
             except Exception as e:
-                logger.warning(f"Could not create output_base: {e}")
+                logger.warning(f"prepare_yolo_training_weights_dir failed: {e}")
         
         # Verify data.yaml exists before training (double check)
         data_yaml_path = Path(train_args.get('data', ''))
@@ -401,6 +404,10 @@ class YOLOTrainingTask(TrainingTask):
         self.db.commit()
         
         # Copy weights to expected location
+        logger.info(
+            "Post-train: copy_weights_to_expected_location "
+            f"(actual_save_dir={actual_save_dir}, weights_dir={self.weights_dir})"
+        )
         weights_info = copy_weights_to_expected_location(
             actual_save_dir,
             self.weights_dir,

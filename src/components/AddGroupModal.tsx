@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { Dataset } from "@/types";
 import { useToast } from "@/hooks/use-toast";
+import { resolveBackendMediaUrl } from "@/config/api";
 
 interface AddGroupModalProps {
   open: boolean;
@@ -209,7 +210,9 @@ export function AddGroupModal({
             
             <ScrollArea className="h-[300px]">
               <div className="space-y-3">
-                {datasets.map((dataset) => (
+                {datasets.map((dataset) => {
+                  const thumb = resolveBackendMediaUrl(dataset.thumbnailUrl);
+                  return (
                   <Card 
                     key={dataset.id}
                     className={`cursor-pointer transition-colors ${
@@ -227,9 +230,9 @@ export function AddGroupModal({
                           className="mt-0.5"
                         />
                         
-                        {dataset.thumbnailUrl ? (
+                        {thumb ? (
                           <img
-                            src={dataset.thumbnailUrl}
+                            src={thumb}
                             alt={dataset.name}
                             className="w-12 h-12 rounded object-cover flex-shrink-0"
                           />
@@ -277,7 +280,8 @@ export function AddGroupModal({
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                );
+                })}
               </div>
             </ScrollArea>
           </div>

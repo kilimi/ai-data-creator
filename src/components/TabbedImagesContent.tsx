@@ -22,6 +22,7 @@ import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AddImageTabDialog } from "@/components/AddImageTabDialog";
 import { ChunkedImageCollectionUploadDialog } from "@/components/ChunkedImageCollectionUploadDialog";
 import { useState, useEffect, useMemo } from "react";
+import type { DatasetUiMode } from "@/hooks/useDatasetSettings";
 
 interface TabbedImagesContentProps {
   id: string;
@@ -43,6 +44,7 @@ interface TabbedImagesContentProps {
    *  collection tabs that participate in a calibration. */
   calibrations?: Array<{ id?: number; source_collection_id: number | string; target_collection_id: number | string }>;
   onDeleteCalibration?: (calibrationId: number) => Promise<void> | void;
+  datasetUiMode?: DatasetUiMode;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
   selectedImageIndex: number | null;
@@ -75,6 +77,7 @@ export function TabbedImagesContent({
   onOpenCalibrationDialog,
   calibrations = [],
   onDeleteCalibration,
+  datasetUiMode = 'default',
   annotations = [],
   annotationFiles = [],
   selectedImageIndex,
@@ -329,7 +332,7 @@ export function TabbedImagesContent({
                       flex items-center gap-2 min-w-0
                     "
                     title={
-                      calibrationPartners.get(String(collection.id))?.length
+                      datasetUiMode === 'advanced' && calibrationPartners.get(String(collection.id))?.length
                         ? `Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`
                         : undefined
                     }
@@ -339,7 +342,7 @@ export function TabbedImagesContent({
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-background/20">
                       {collection.images.length}
                     </span>
-                    {calibrationPartners.get(String(collection.id))?.length ? (
+                    {datasetUiMode === 'advanced' && calibrationPartners.get(String(collection.id))?.length ? (
                       <span
                         className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 data-[state=active]:bg-emerald-500/25"
                         title={`Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`}
@@ -372,7 +375,7 @@ export function TabbedImagesContent({
               <Plus className="w-4 h-4" />
               <span className="text-sm font-medium">Add Collection</span>
             </Button>
-            {imageCollections.length >= 2 && onOpenCalibrationDialog && (
+            {datasetUiMode === 'advanced' && imageCollections.length >= 2 && onOpenCalibrationDialog && (
               <div className="flex items-center gap-1">
                 <Button
                   variant="outline"
@@ -484,7 +487,9 @@ export function TabbedImagesContent({
                       <span className="text-sm text-muted-foreground px-2.5 py-1 bg-muted/50 rounded-full border border-border/40">
                         {collection.images.length} {collection.images.length === 1 ? 'image' : 'images'}
                       </span>
-                      {calibrationPartners.get(String(collection.id))?.length ? (
+                      {datasetUiMode === 'advanced' &&
+                      calibrationPartners.get(String(collection.id))?.length &&
+                      onOpenCalibrationDialog ? (
                         <button
                           type="button"
                           onClick={onOpenCalibrationDialog}

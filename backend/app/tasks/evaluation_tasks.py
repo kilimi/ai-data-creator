@@ -26,6 +26,47 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def _resolve_evaluation_image_path(img: Image, project_id: int, dataset_id: int) -> Optional[Path]:
+    """
+    Resolve the on-disk image path for evaluation.
+
+    Supports both current storage (`projects/{project}/{dataset}/images/...`) and
+    legacy paths, plus URL-based resolution when metadata points to a static URL.
+    """
+    candidates: List[Path] = []
+
+    # Current canonical location.
+    candidates.append(Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name)
+    # Legacy location.
+    candidates.append(Path("data") / "images" / str(dataset_id) / img.file_name)
+
+    # If URL is stored, convert /static/... and absolute variants back to local paths.
+    img_url = (img.url or "").strip()
+    if img_url:
+        url_path = img_url.lstrip("/")
+        if url_path.startswith("static/"):
+            url_path = url_path[len("static/"):]
+        if url_path:
+            p = Path(url_path)
+            candidates.append(p)
+            if not str(p).startswith("projects"):
+                candidates.append(Path("projects") / p)
+
+    # Absolute in-container path (if any caller stores it directly).
+    candidates.append(Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / img.file_name)
+    candidates.append(Path("/app/data") / "images" / str(dataset_id) / img.file_name)
+
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
 class EvaluationTask(Task):
     """Base task for evaluation with progress tracking"""
     
@@ -140,6 +181,7 @@ def evaluate_model(
     use_grid: bool = False,
     grid_size: int = 640,
     grid_overlap: float = 0.2,
+    collection_id: Optional[int] = None,
     ignored_classes: Optional[List[str]] = None
 ):
     """
@@ -294,8 +336,13 @@ def evaluate_model(
         db.commit()
         
         # Get images
-        images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+        if collection_id is not None:
+            images_query = images_query.filter(Image.collection_id == collection_id)
+        images = images_query.all()
         if not images:
+            if collection_id is not None:
+                raise ValueError(f"No images found in dataset for collection_id={collection_id}")
             raise ValueError("No images found in dataset")
         
         # Map image_id → file_name for frontend threshold explorer
@@ -360,15 +407,15 @@ def evaluate_model(
         
         # Run inference on each image
         for idx, img in enumerate(images):
-            # Construct image path: projects/{project_id}/{dataset_id}/images/{file_name}
-            img_path = Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name
-            
-            # Fallback to old structure if new path doesn't exist
-            if not img_path.exists():
-                img_path = Path("data") / "images" / str(dataset_id) / img.file_name
-            
-            if not img_path.exists():
-                logger.warning(f"Image file not found: {img_path}")
+            img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
+            if img_path is None:
+                logger.warning(
+                    "Image file not found for evaluation: file=%s dataset_id=%s project_id=%s url=%s",
+                    img.file_name,
+                    dataset_id,
+                    project_id,
+                    getattr(img, "url", None),
+                )
                 continue
             
             # Store predictions for this image with bbox and segmentation
@@ -558,11 +605,7 @@ def evaluate_model(
                 if result.boxes:
                     for box_idx, box in enumerate(result.boxes):
                         pred_class_id = int(box.cls.item())
-                        
-                        # Skip predictions for ignored classes
-                        if pred_class_id in ignored_class_ids:
-                            continue
-                            
+
                         if pred_class_id < num_classes:
                             # Get bbox in xyxy format
                             xyxy = box.xyxy[0].cpu().numpy()
@@ -737,6 +780,22 @@ def evaluate_model(
         f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
         logger.info(f"Metrics: Precision={precision:.3f}, Recall={recall:.3f}, F1={f1_score:.3f}")
         
+        # Stats that do not require ground truth
+        avg_confidence = 0.0
+        predictions_per_image = 0.0
+        class_prediction_counts: Dict[str, int] = {}
+        if all_predictions:
+            avg_confidence = float(
+                sum(float(p.get('conf', 0.0)) for p in all_predictions) / len(all_predictions)
+            )
+            if total_images > 0:
+                predictions_per_image = float(len(all_predictions) / total_images)
+            for p in all_predictions:
+                class_id = int(p.get('class_id', -1))
+                if 0 <= class_id < len(class_names):
+                    class_name = class_names[class_id]
+                    class_prediction_counts[class_name] = class_prediction_counts.get(class_name, 0) + 1
+
         # Store results in task metadata (heavy lists go to disk — see artifacts)
         results = {
             'precision': float(precision),
@@ -750,10 +809,14 @@ def evaluate_model(
             'image_id_to_filename': {str(k): v for k, v in image_id_to_filename.items()},
             'predictions_count': predictions_count,
             'has_ground_truth': has_ground_truth,
+            'avg_confidence': avg_confidence,
+            'predictions_per_image': predictions_per_image,
+            'class_prediction_counts': class_prediction_counts,
             'inference_time_ms': float(inference_time_ms),
             'images_processed': total_images,
             'training_task_id': training_task_id,
             'dataset_id': dataset_id,
+            'collection_id': collection_id,
             'checkpoint': checkpoint,
             'conf_threshold': conf_threshold,
             'iou_threshold': iou_threshold,
@@ -864,26 +927,50 @@ def update_parent_task_status(db, parent_task_id: int):
                 for ct in completed_children if ct.task_metadata
             )
             
-            # Calculate average metrics
-            avg_precision = sum(
-                ct.task_metadata.get('results', {}).get('precision', 0) 
-                for ct in completed_children if ct.task_metadata
-            ) / completed_count
-            avg_recall = sum(
-                ct.task_metadata.get('results', {}).get('recall', 0) 
-                for ct in completed_children if ct.task_metadata
-            ) / completed_count
-            avg_f1 = sum(
-                ct.task_metadata.get('results', {}).get('f1_score', 0) 
-                for ct in completed_children if ct.task_metadata
-            ) / completed_count
+            # Calculate average metrics only from children with ground truth.
+            completed_with_gt = [
+                ct for ct in completed_children
+                if (ct.task_metadata or {}).get('results', {}).get('has_ground_truth') is True
+            ]
+            avg_precision = None
+            avg_recall = None
+            avg_f1 = None
+            if completed_with_gt:
+                gt_count = len(completed_with_gt)
+                avg_precision = sum(
+                    ct.task_metadata.get('results', {}).get('precision', 0)
+                    for ct in completed_with_gt if ct.task_metadata
+                ) / gt_count
+                avg_recall = sum(
+                    ct.task_metadata.get('results', {}).get('recall', 0)
+                    for ct in completed_with_gt if ct.task_metadata
+                ) / gt_count
+                avg_f1 = sum(
+                    ct.task_metadata.get('results', {}).get('f1_score', 0)
+                    for ct in completed_with_gt if ct.task_metadata
+                ) / gt_count
+
+            # Prediction-only aggregate stats (valid even without ground truth)
+            total_conf_weight = 0.0
+            total_pred_for_conf = 0
+            for ct in completed_children:
+                results = (ct.task_metadata or {}).get('results', {})
+                pred_count = int(results.get('predictions_count') or 0)
+                avg_conf = float(results.get('avg_confidence') or 0.0)
+                total_conf_weight += avg_conf * pred_count
+                total_pred_for_conf += pred_count
+            aggregate_avg_confidence = (total_conf_weight / total_pred_for_conf) if total_pred_for_conf > 0 else 0.0
+            aggregate_predictions_per_image = (total_predictions / total_images) if total_images > 0 else 0.0
             
             aggregate_results = {
                 'precision': avg_precision,
                 'recall': avg_recall,
                 'f1_score': avg_f1,
+                'has_ground_truth': len(completed_with_gt) > 0,
                 'images_processed': total_images,
                 'predictions_count': total_predictions,
+                'avg_confidence': aggregate_avg_confidence,
+                'predictions_per_image': aggregate_predictions_per_image,
                 'inference_time_ms': total_inference_time,
                 'completed_datasets': completed_count,
                 'failed_datasets': failed_count,

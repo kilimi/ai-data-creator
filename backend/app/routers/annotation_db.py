@@ -15,7 +15,10 @@ router = APIRouter()
 
 
 def resolve_dataset_image_by_filename(
-    db: Session, dataset_id: int, file_name: str
+    db: Session,
+    dataset_id: int,
+    file_name: str,
+    preferred_collection_id: Optional[int] = None,
 ) -> Optional[Image]:
     """
     Deterministically resolve a dataset image from a bare filename.
@@ -27,12 +30,27 @@ def resolve_dataset_image_by_filename(
     against one collection's image and read back against another, making them
     appear lost on reload.
 
-    We canonicalise to the dataset's default collection (the "source" images,
-    typically RGB). If there is no default collection or no match there we fall
-    back to the oldest matching image by id, which is stable across processes.
+    If a preferred collection is provided (e.g. the currently edited layer),
+    resolve there first. Otherwise canonicalise to the dataset's default
+    collection (typically RGB). If neither yields a match, fall back to the
+    oldest matching image by id, which is stable across processes.
     """
     if not file_name:
         return None
+
+    if preferred_collection_id is not None:
+        preferred_image = (
+            db.query(Image)
+            .filter(
+                Image.dataset_id == dataset_id,
+                Image.file_name == file_name,
+                Image.collection_id == preferred_collection_id,
+            )
+            .order_by(Image.id.asc())
+            .first()
+        )
+        if preferred_image is not None:
+            return preferred_image
 
     default_collection = (
         db.query(ImageCollection)
@@ -568,6 +586,13 @@ async def save_annotations_direct(
     categories = data.get('categories', [])
     images = data.get('images', [])
     annotations = data.get('annotations', [])
+    requested_collection_id_raw = data.get("active_collection_id")
+    requested_collection_id: Optional[int] = None
+    if requested_collection_id_raw is not None:
+        try:
+            requested_collection_id = int(requested_collection_id_raw)
+        except (TypeError, ValueError):
+            requested_collection_id = None
     
     if not categories:
         raise HTTPException(status_code=400, detail="At least one category is required")
@@ -625,7 +650,16 @@ async def save_annotations_direct(
                 if existing is None:
                     image_mapping[key] = img
                     continue
-                # Prefer the default collection's row; otherwise keep the oldest id.
+                # Prefer the explicitly requested collection first (active layer),
+                # then the dataset default collection, then oldest id.
+                existing_is_requested = (
+                    requested_collection_id is not None
+                    and existing.collection_id == requested_collection_id
+                )
+                new_is_requested = (
+                    requested_collection_id is not None
+                    and img.collection_id == requested_collection_id
+                )
                 existing_is_default = (
                     default_collection_id is not None
                     and existing.collection_id == default_collection_id
@@ -634,9 +668,19 @@ async def save_annotations_direct(
                     default_collection_id is not None
                     and img.collection_id == default_collection_id
                 )
-                if new_is_default and not existing_is_default:
+                if new_is_requested and not existing_is_requested:
                     image_mapping[key] = img
-                elif new_is_default == existing_is_default and img.id < existing.id:
+                elif (
+                    new_is_requested == existing_is_requested
+                    and new_is_default
+                    and not existing_is_default
+                ):
+                    image_mapping[key] = img
+                elif (
+                    new_is_requested == existing_is_requested
+                    and new_is_default == existing_is_default
+                    and img.id < existing.id
+                ):
                     image_mapping[key] = img
         
         # Process categories
@@ -893,6 +937,7 @@ async def get_annotations_for_image(
     dataset_id: int,
     annotation_file_id: str,
     image_filename: str = Query(..., description="Image filename (e.g. photo.png)"),
+    collection_id: Optional[int] = Query(None, description="Preferred image-collection id"),
     db: Session = Depends(get_db)
 ):
     """Return all annotations for a single image inside an annotation file (by filename)."""
@@ -903,7 +948,12 @@ async def get_annotations_for_image(
         raise HTTPException(status_code=404, detail="Annotation file not found")
 
     # Use the shared resolver so this matches exactly the row the save paths wrote to.
-    image = resolve_dataset_image_by_filename(db, dataset_id, image_filename)
+    image = resolve_dataset_image_by_filename(
+        db,
+        dataset_id,
+        image_filename,
+        preferred_collection_id=collection_id,
+    )
     if not image:
         raise HTTPException(status_code=404, detail=f"Image '{image_filename}' not found in dataset")
 

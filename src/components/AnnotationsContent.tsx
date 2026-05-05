@@ -659,22 +659,28 @@ export function AnnotationsContent({
     if (file.type === 'Segmentation (mask+bbox)' || file.type === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
     if (file.type === 'Segmentation (mask)' || file.type === 'segmentation-mask') return 'Segmentation (mask)';
     if (file.type === 'Segmentation (bbox)' || file.type === 'segmentation-bbox') return 'Segmentation (bbox)';
+    // Augmentation pipeline historically stored bbox-only COCO as 'detection' (not in COCO import path)
+    {
+      const t = file.type as string | undefined;
+      if (t === "detection" || t === "object_detection") return "Segmentation (bbox)";
+    }
     if (file.type === 'segmentation') {
-      // For old 'segmentation' type, we still need to detect the detailed subtype
-      if (file.samples && file.samples.length > 0) {
-        const hasSegmentation = file.samples.some(sample => 
-          sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-        );
-        const hasMeaningfulBbox = file.samples.some(sample => 
-          sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-          (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-        );
-        
-        if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
-        if (hasSegmentation) return 'Segmentation (mask)';
-        if (hasMeaningfulBbox) return 'Segmentation (bbox)';
+      // For DB type 'segmentation' (instance/semantic seg), prefer mask+bbox until samples load
+      if (!file.samples || file.samples.length === 0) {
+        return 'Segmentation (mask+bbox)';
       }
-      return 'Segmentation (bbox)'; // Default fallback for old segmentation type
+      const hasSegmentation = file.samples.some(sample =>
+        sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
+      );
+      const hasMeaningfulBbox = file.samples.some(sample =>
+        sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 &&
+        (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
+      );
+
+      if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
+      if (hasSegmentation) return 'Segmentation (mask)';
+      if (hasMeaningfulBbox) return 'Segmentation (bbox)';
+      return 'Segmentation (mask+bbox)';
     }
     
     // Auto-detect based on samples content
@@ -711,6 +717,8 @@ export function AnnotationsContent({
     // Check filename for hints
     if (file.name) {
       const nameLower = file.name.toLowerCase();
+      // Augmented datasets are usually seg/bbox COCO; detailed subtype comes from samples when loaded
+      if (nameLower.startsWith('augmented_')) return 'Segmentation (mask+bbox)';
       if (nameLower.includes('classification') || nameLower.includes('class')) return 'Classification';
       if (nameLower.includes('mask') && nameLower.includes('bbox')) return 'Segmentation (mask+bbox)';
       if (nameLower.includes('mask')) return 'Segmentation (mask)';
@@ -3428,7 +3436,15 @@ export function AnnotationsContent({
           const hasBackendType = typeof backendType === 'string' && backendType.length > 0;
           let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
           if (hasBackendType) {
-            detectedType = backendType as typeof detectedType;
+            const bt = String(backendType).toLowerCase();
+            if (bt === 'detection' || bt === 'object_detection') {
+              detectedType = 'Segmentation (bbox)';
+            } else if (bt === 'segmentation') {
+              // DB stores generic instance-seg label; UI default before samples load
+              detectedType = 'Segmentation (mask+bbox)';
+            } else {
+              detectedType = backendType as typeof detectedType;
+            }
           } else {
             const nameLower = (fileSummary.name || '').toLowerCase();
             if (nameLower.includes('classification') || nameLower.includes('class')) {

@@ -229,22 +229,90 @@ def _try_fix_ownership(directory: Path):
 
 def fix_path_permissions_recursive(path: Path):
     """
-    Recursively fix permissions on a path and all its parent directories.
-    This ensures that the entire directory tree has correct permissions.
+    Walk upward from ``path`` and chmod existing directories to 0o777.
+
+    Must stop when ``.parent`` reaches an anchor (e.g. ``Path('.').parent == Path('.')``).
+    Relative paths never reach ``Path('/')`` on POSIX, so the old
+    ``while current != Path('/')`` loop could spin forever and stall training at 90%.
     """
     current = path
     fixed_count = 0
-    while current and current != Path('/'):
+    max_steps = 64
+    for _ in range(max_steps):
         try:
             if current.exists():
                 os.chmod(current, 0o777)
                 fixed_count += 1
-            current = current.parent
         except Exception as e:
             logger.warning(f"Could not fix permissions on {current}: {e}")
             break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
     if fixed_count > 0:
         logger.info(f"Fixed permissions on {fixed_count} directories in path: {path}")
+
+
+def prepare_yolo_training_weights_dir(output_base: Path) -> Path:
+    """
+    Ensure output_base/training/weights exists and is writable for Ultralytics
+    (last.pt / best.pt), using only fast, targeted operations.
+
+    IMPORTANT: avoid recursive chmod/rmtree here — those can stall on some
+    Docker Desktop bind mounts and block the worker before model.train() starts.
+    """
+    training_dir = output_base / "training"
+    weights_dir = training_dir / "weights"
+    logger.info("Preparing YOLO weights directory (lightweight mode)")
+    training_dir.mkdir(parents=True, exist_ok=True)
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(training_dir, 0o777)
+        os.chmod(weights_dir, 0o777)
+    except OSError as e:
+        logger.warning(f"chmod on training dirs: {e}")
+
+    # Remove stale checkpoints only (not entire training dir) so writes to
+    # last.pt/best.pt won't fail with EPERM from prior runs.
+    for pt in ("last.pt", "best.pt"):
+        pt_path = weights_dir / pt
+        if not pt_path.exists():
+            continue
+        try:
+            os.chmod(pt_path, 0o666)
+        except OSError:
+            try:
+                pt_path.unlink()
+            except OSError as e:
+                logger.warning(f"Could not fix or remove stale checkpoint {pt_path}: {e}")
+
+    probe = weights_dir / ".write_probe"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+    except OSError as e:
+        raise PermissionError(
+            f"Cannot write under {weights_dir}. "
+            f"On Docker Desktop, ensure the host folder mapped to LAI_DATA_DIR/projects is writable "
+            f"by the container (original error: {e})"
+        ) from e
+
+    return weights_dir
+
+
+def get_runtime_training_project(task_id: int) -> Path:
+    """
+    Return a container-local writable project dir for Ultralytics checkpoints.
+
+    Using /tmp avoids bind-mount permission quirks on Docker Desktop where
+    repeated writes to last.pt can fail with EPERM even after chmod.
+    """
+    runtime_project = Path("/tmp/lai-training") / f"task_{task_id}"
+    runtime_project.mkdir(parents=True, exist_ok=True)
+    runtime_training = runtime_project / "training"
+    runtime_training.mkdir(parents=True, exist_ok=True)
+    return runtime_project
 
 
 def build_yolo_training_args(
@@ -419,12 +487,18 @@ def copy_weights_to_expected_location(
     weights_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(weights_dir, 0o777)
-        # Also ensure all parent directories have correct permissions
+        # Chmod parents up to output_base.parent (inclusive), with anchor guard.
+        stop = output_base.parent
         current_dir = weights_dir
-        while current_dir != output_base.parent:
+        for _ in range(64):
             if current_dir.exists():
                 os.chmod(current_dir, 0o777)
-            current_dir = current_dir.parent
+            if current_dir == stop:
+                break
+            nxt = current_dir.parent
+            if nxt == current_dir:
+                break
+            current_dir = nxt
         logger.info(f"Ensured weights directory and parents have permissions: {weights_dir}")
     except Exception as e:
         logger.warning(f"Could not set permissions on weights_dir: {e}")

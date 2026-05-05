@@ -116,7 +116,15 @@ export default function Dataset() {
   
   // Use persistent settings hook with better ID handling
   const datasetId = id || '';
-  const { settings, isLoaded: settingsLoaded, updateImagesPerPage, updateImageSize, updateLayout, updateSliderPosition } = useDatasetSettings(datasetId);
+  const {
+    settings,
+    isLoaded: settingsLoaded,
+    updateImagesPerPage,
+    updateImageSize,
+    updateLayout,
+    updateSliderPosition,
+    updateMode,
+  } = useDatasetSettings(datasetId);
   
   // Load image collections from database (use same API client as rest of app so base URL is consistent)
   const loadImageCollections = async (): Promise<void> => {
@@ -698,7 +706,14 @@ export default function Dataset() {
 
   const handleVideoUpload = async (
     file: File,
-    params: { interval_seconds: number; max_frames: number; sequential_names: boolean; resize_width: number; resize_height: number }
+    params: {
+      interval_seconds: number;
+      frame_step: number;
+      max_frames: number;
+      sequential_names: boolean;
+      resize_width: number;
+      resize_height: number;
+    }
   ) => {
     if (!api || !id) return;
     setIsVideoUploading(true);
@@ -1159,6 +1174,10 @@ export default function Dataset() {
                   onDuplicateDataset={handleDuplicateDataset}
                   projectId={effectiveProjectId}
                   imageCount={images.length}
+                  imageCollections={imageCollections}
+                  useTabbedImages={useTabbedImages}
+                  datasetUiMode={settings.mode}
+                  onDatasetUiModeChange={updateMode}
                 />
               </div>
             </div>
@@ -1212,6 +1231,7 @@ export default function Dataset() {
                     });
                   }
                 }}
+                datasetUiMode={settings.mode}
               />
             </div>
             <ImageUploadDialog 

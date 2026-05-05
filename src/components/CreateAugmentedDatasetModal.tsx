@@ -19,7 +19,7 @@ import {
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users } from 'lucide-react';
-import { Dataset, DatasetGroup } from '@/types';
+import { Dataset, DatasetGroup, ImageCollection } from '@/types';
 
 interface CreateAugmentedDatasetModalProps {
   open: boolean;
@@ -32,6 +32,9 @@ interface CreateAugmentedDatasetModalProps {
 interface DatasetSelection {
   id: string; // unique selection id
   dataset: Dataset;
+  collectionId: string | null; // selected image collection ID (required)
+  imageCollections: ImageCollection[];
+  loadingCollections: boolean;
   annotationFileId: string | null; // selected annotation file ID (or null for no annotations)
   annotationFiles: Array<{ id: number; name: string; annotation_count?: number }>;
   loadingAnnotations: boolean;
@@ -50,6 +53,9 @@ interface CreateAugmentedDatasetModalProps {
 interface DatasetSelection {
   id: string; // unique selection id
   dataset: Dataset;
+  collectionId: string | null; // selected image collection ID (required)
+  imageCollections: ImageCollection[];
+  loadingCollections: boolean;
   annotationFileId: string | null; // selected annotation file ID (or null for no annotations)
   annotationFiles: Array<{ id: number; name: string; annotation_count?: number }>;
   loadingAnnotations: boolean;
@@ -258,6 +264,39 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     advanced: false
   });
 
+  // Fetch image collections for a specific selection
+  const fetchImageCollectionsForSelection = async (selectionId: string, datasetId: number) => {
+    setDatasetSelections(prev => prev.map(sel =>
+      sel.id === selectionId ? { ...sel, loadingCollections: true } : sel
+    ));
+
+    try {
+      const response = await api?.getImageCollections(datasetId);
+      if (response?.success && response.data) {
+        const collections = response.data;
+        const preferredCollection = collections.find(c => (c as any).is_default) || collections[0] || null;
+        setDatasetSelections(prev => prev.map(sel => {
+          if (sel.id !== selectionId) return sel;
+          return {
+            ...sel,
+            imageCollections: collections,
+            collectionId: preferredCollection ? String(preferredCollection.id) : null,
+            loadingCollections: false,
+          };
+        }));
+      } else {
+        setDatasetSelections(prev => prev.map(sel =>
+          sel.id === selectionId ? { ...sel, imageCollections: [], collectionId: null, loadingCollections: false } : sel
+        ));
+      }
+    } catch (error) {
+      console.error('Error fetching image collections:', error);
+      setDatasetSelections(prev => prev.map(sel =>
+        sel.id === selectionId ? { ...sel, imageCollections: [], collectionId: null, loadingCollections: false } : sel
+      ));
+    }
+  };
+
   // Fetch annotation files for a specific selection
   const fetchAnnotationFilesForSelection = async (selectionId: string, datasetId: number) => {
     setDatasetSelections(prev => prev.map(sel => 
@@ -301,6 +340,9 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     const newSelection: DatasetSelection = {
       id: `${Date.now()}-${Math.random()}`,
       dataset: targetDataset,
+      collectionId: null,
+      imageCollections: [],
+      loadingCollections: false,
       annotationFileId: null,
       annotationFiles: [],
       loadingAnnotations: false,
@@ -309,6 +351,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     setDatasetSelections(prev => [...prev, newSelection]);
     
     // Fetch annotation files for the dataset
+    fetchImageCollectionsForSelection(newSelection.id, targetDataset.id);
     if ((targetDataset.annotation_count || 0) > 0) {
       fetchAnnotationFilesForSelection(newSelection.id, targetDataset.id);
     }
@@ -321,6 +364,9 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     const newSelections: DatasetSelection[] = group.datasets.map(dataset => ({
       id: `${Date.now()}-${Math.random()}-${dataset.id}`,
       dataset: dataset,
+      collectionId: null,
+      imageCollections: [],
+      loadingCollections: false,
       annotationFileId: null,
       annotationFiles: [],
       loadingAnnotations: false,
@@ -332,6 +378,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     
     // Fetch annotation files for all datasets in the group
     newSelections.forEach(selection => {
+      fetchImageCollectionsForSelection(selection.id, selection.dataset.id);
       if ((selection.dataset.annotation_count || 0) > 0) {
         fetchAnnotationFilesForSelection(selection.id, selection.dataset.id);
       }
@@ -344,7 +391,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
   };
 
   // Update a dataset selection
-  const updateDatasetSelection = (selectionId: string, field: 'dataset' | 'annotationFileId', value: any) => {
+  const updateDatasetSelection = (selectionId: string, field: 'dataset' | 'collectionId' | 'annotationFileId', value: any) => {
     setDatasetSelections(prev => prev.map(sel => {
       if (sel.id === selectionId) {
         if (field === 'dataset') {
@@ -353,12 +400,16 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
           const updated = { 
             ...sel, 
             dataset: newDataset, 
+            collectionId: null,
+            imageCollections: [],
+            loadingCollections: false,
             annotationFileId: null,
             annotationFiles: [],
             loadingAnnotations: false,
             fromGroup: false, // No longer from group if manually changed
             groupName: undefined,
           };
+          fetchImageCollectionsForSelection(sel.id, newDataset.id);
           if ((newDataset.annotation_count || 0) > 0) {
             fetchAnnotationFilesForSelection(sel.id, newDataset.id);
           }
@@ -485,6 +536,15 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       });
       return;
     }
+    const missingCollection = datasetSelections.find(sel => !sel.collectionId);
+    if (missingCollection) {
+      toast({
+        title: "Error",
+        description: `Please select an image collection for dataset "${missingCollection.dataset.name}"`,
+        variant: "destructive",
+      });
+      return;
+    }
 
     if (!api || !isConfigured) {
       toast({
@@ -501,6 +561,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       // Prepare dataset configs - each selection becomes a config entry
       const datasetConfigs = datasetSelections.map(sel => ({
         dataset_id: sel.dataset.id,
+        collection_id: sel.collectionId ? parseInt(sel.collectionId, 10) : null,
         annotation_file_id: sel.annotationFileId ? parseInt(sel.annotationFileId) : null,
       }));
 
@@ -586,7 +647,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
             Create Augmented Dataset
           </DialogTitle>
           <DialogDescription>
-            Create a new dataset by applying data augmentation techniques to existing datasets
+            Create a new dataset by applying data augmentation techniques to existing datasets. Augmentation runs only on the selected image collection for each source dataset.
           </DialogDescription>
         </DialogHeader>
 
@@ -712,7 +773,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                       </div>
                     </CardHeader>
                     <CardContent className="py-2 px-3 space-y-3">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         {/* Dataset Selector */}
                         <div className="space-y-1">
                           <Label className="text-xs">Dataset</Label>
@@ -741,6 +802,42 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                               ))}
                             </SelectContent>
                           </Select>
+                        </div>
+
+                        {/* Image Collection Selector */}
+                        <div className="space-y-1">
+                          <Label className="text-xs">Image Collection</Label>
+                          {selection.loadingCollections ? (
+                            <div className="flex items-center gap-2 h-8 text-xs text-muted-foreground">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Loading...
+                            </div>
+                          ) : selection.imageCollections.length > 0 ? (
+                            <Select
+                              value={selection.collectionId || ""}
+                              onValueChange={(value) => updateDatasetSelection(selection.id, 'collectionId', value)}
+                            >
+                              <SelectTrigger className="h-8 text-sm">
+                                <SelectValue placeholder="Select collection" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {selection.imageCollections.map(collection => (
+                                  <SelectItem key={collection.id} value={String(collection.id)}>
+                                    <div className="flex items-center gap-2">
+                                      <span>{collection.name}</span>
+                                      <Badge variant="outline" className="text-xs">
+                                        {collection.images?.length || 0} imgs
+                                      </Badge>
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="flex items-center h-8 text-xs text-muted-foreground italic">
+                              No image collections available
+                            </div>
+                          )}
                         </div>
                         
                         {/* Annotation File Selector */}

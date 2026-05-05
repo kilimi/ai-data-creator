@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Brain, Activity, Download, Eye, ChevronDown, Database, AlertCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { ThresholdExplorer, type RawPrediction, type RawGTBox } from "@/components/ThresholdExplorer";
@@ -48,6 +48,10 @@ interface TaskDetails {
       project_id?: number;
       dataset_id?: number;
       predictions_count: number;
+      has_ground_truth?: boolean;
+      avg_confidence?: number;
+      predictions_per_image?: number;
+      class_prediction_counts?: Record<string, number>;
       images_processed: number;
       inference_time_ms: number;
       all_ground_truth?: RawGTBox[];
@@ -65,6 +69,215 @@ interface EvalBlobPayload {
   predictions: RawPrediction[];
   all_ground_truth: RawGTBox[];
   confusion_matrix_samples?: Record<string, CmSample[]>;
+}
+
+type PredWithBBox = RawPrediction & { bbox?: number[] };
+
+function getPredictionBboxXyxy(pred: PredWithBBox): [number, number, number, number] | null {
+  const xyxy = pred.bbox_xyxy;
+  if (Array.isArray(xyxy) && xyxy.length >= 4) {
+    return [Number(xyxy[0]), Number(xyxy[1]), Number(xyxy[2]), Number(xyxy[3])];
+  }
+  const bb = pred.bbox;
+  if (Array.isArray(bb) && bb.length >= 4) {
+    const x = Number(bb[0]);
+    const y = Number(bb[1]);
+    const w = Number(bb[2]);
+    const h = Number(bb[3]);
+    return [x, y, x + w, y + h];
+  }
+  return null;
+}
+
+/** Expand bbox by padFrac of box size for context; clamp to image bounds. */
+function paddedCropRegion(
+  [x1, y1, x2, y2]: [number, number, number, number],
+  nw: number,
+  nh: number,
+  padFrac = 0.22
+): { sx: number; sy: number; sw: number; sh: number } {
+  const bw = Math.max(1e-6, x2 - x1);
+  const bh = Math.max(1e-6, y2 - y1);
+  const padX = bw * padFrac;
+  const padY = bh * padFrac;
+  let sx = x1 - padX;
+  let sy = y1 - padY;
+  let sw = bw + 2 * padX;
+  let sh = bh + 2 * padY;
+  if (sx < 0) {
+    sw += sx;
+    sx = 0;
+  }
+  if (sy < 0) {
+    sh += sy;
+    sy = 0;
+  }
+  if (sx + sw > nw) sw = nw - sx;
+  if (sy + sh > nh) sh = nh - sy;
+  sw = Math.max(1, sw);
+  sh = Math.max(1, sh);
+  return { sx, sy, sw, sh };
+}
+
+/** Draw cropped region around bbox (natural pixels) scaled to cw×ch like object-contain, then bbox + label. */
+function drawPredictionSnapshotCrop(
+  canvas: HTMLCanvasElement,
+  img: HTMLImageElement,
+  bbox: [number, number, number, number],
+  label: string,
+  cw: number,
+  ch: number
+) {
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  if (!nw || !nh || !cw || !ch) return;
+
+  const { sx, sy, sw, sh } = paddedCropRegion(bbox, nw, nh);
+  const scale = Math.min(cw / sw, ch / sh);
+  const dw = sw * scale;
+  const dh = sh * scale;
+  const ox = (cw - dw) / 2;
+  const oy = (ch - dh) / 2;
+
+  const [x1, y1, x2, y2] = bbox;
+  const mapX = (x: number) => ox + (x - sx) * scale;
+  const mapY = (y: number) => oy + (y - sy) * scale;
+  let px1 = mapX(x1);
+  let py1 = mapY(y1);
+  let px2 = mapX(x2);
+  let py2 = mapY(y2);
+  const rx1 = Math.min(px1, px2);
+  const ry1 = Math.min(py1, py2);
+  const rx2 = Math.max(px1, px2);
+  const ry2 = Math.max(py1, py2);
+  px1 = rx1;
+  py1 = ry1;
+  px2 = rx2;
+  py2 = ry2;
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cw * dpr);
+  canvas.height = Math.round(ch * dpr);
+  canvas.style.width = `${cw}px`;
+  canvas.style.height = `${ch}px`;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, sx, sy, sw, sh, ox, oy, dw, dh);
+
+  const lineW = Math.max(2, Math.round(Math.min(cw, ch) / 90));
+  ctx.strokeStyle = "#22c55e";
+  ctx.lineWidth = lineW;
+  ctx.strokeRect(px1, py1, px2 - px1, py2 - py1);
+
+  const fontPx = Math.max(11, Math.round(Math.min(cw, ch) / 28));
+  ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+  const pad = 4;
+  const textW = ctx.measureText(label).width;
+  const labelH = fontPx + pad;
+  let ly = py1 - labelH - 2;
+  if (ly < oy + 2) ly = py1 + lineW + 2;
+  ly = Math.max(oy + 2, Math.min(oy + dh - labelH - 2, ly));
+  const lx = Math.max(ox + 2, Math.min(ox + dw - textW - pad * 2 - 2, px1));
+
+  ctx.fillStyle = "rgba(34, 197, 94, 0.95)";
+  ctx.fillRect(lx, ly, textW + pad * 2, labelH);
+  ctx.fillStyle = "#0a0a0a";
+  ctx.fillText(label, lx + pad, ly + fontPx - 1);
+}
+
+function PredictionSnapshotCard({
+  imageUrls,
+  fileName,
+  className,
+  conf,
+  bbox,
+}: {
+  imageUrls: string[];
+  fileName: string;
+  className: string;
+  conf: number;
+  bbox: [number, number, number, number] | null;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const label = `${className} · ${(conf * 100).toFixed(1)}%`;
+  const [srcIndex, setSrcIndex] = useState(0);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const activeSrc = imageUrls[Math.min(srcIndex, Math.max(0, imageUrls.length - 1))] || "";
+
+  useEffect(() => {
+    setSrcIndex(0);
+    setImageLoaded(false);
+  }, [imageUrls, fileName]);
+
+  const redraw = useCallback(() => {
+    const img = imgRef.current;
+    const canvas = canvasRef.current;
+    const box = containerRef.current;
+    if (!img || !canvas || !box || !bbox || img.naturalWidth === 0) return;
+    const cw = box.clientWidth;
+    const ch = box.clientHeight;
+    if (!cw || !ch) return;
+    drawPredictionSnapshotCrop(canvas, img, bbox, label, cw, ch);
+  }, [bbox, label]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const img = imgRef.current;
+      if (img && img.naturalWidth > 0) redraw();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [redraw]);
+
+  useEffect(() => {
+    redraw();
+  }, [activeSrc, bbox, redraw]);
+
+  return (
+    <div className="border border-gray-800 rounded overflow-hidden bg-gray-900/40">
+      <div ref={containerRef} className="relative w-full h-44 bg-black">
+        <img
+          ref={imgRef}
+          src={activeSrc}
+          alt={fileName}
+          className={`absolute inset-0 w-full h-full object-contain ${bbox && imageLoaded ? "opacity-0" : ""}`}
+          loading="lazy"
+          onLoad={() => {
+            setImageLoaded(true);
+            redraw();
+          }}
+          onError={() => {
+            setImageLoaded(false);
+            setSrcIndex((prev) => (prev + 1 < imageUrls.length ? prev + 1 : prev));
+          }}
+        />
+        <canvas
+          ref={canvasRef}
+          className={`absolute inset-0 pointer-events-none ${bbox ? "" : "hidden"}`}
+          aria-hidden
+        />
+      </div>
+      <div className="p-2 border-t border-gray-800">
+        <div className="text-xs text-gray-300 truncate" title={fileName}>
+          {fileName}
+        </div>
+        <div className="text-xs text-gray-500">
+          {bbox ? `Crop around top detection · ${label}` : "Bounding box unavailable for crop"}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: EvaluationDetailsModalProps) {
@@ -144,6 +357,60 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
     if (evalBlobPayload) return { ...raw, ...evalBlobPayload };
     return raw;
   }, [task, evalBlobPayload]);
+
+  const topPredictedClasses = useMemo(() => {
+    if (!mergedResults?.class_prediction_counts) return [];
+    return Object.entries(mergedResults.class_prediction_counts)
+      .map(([className, count]) => ({ className, count: Number(count || 0) }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [mergedResults]);
+
+  const predictionSnapshots = useMemo(() => {
+    if (!mergedResults?.predictions || !mergedResults?.image_id_to_filename) return [];
+    const projectId = mergedResults.project_id;
+    const datasetId = mergedResults.dataset_id;
+    if (!projectId || !datasetId) return [];
+
+    const bestByImage = new Map<number, RawPrediction>();
+    for (const pred of mergedResults.predictions) {
+      const existing = bestByImage.get(pred.image_id);
+      if (!existing || pred.conf > existing.conf) {
+        bestByImage.set(pred.image_id, pred);
+      }
+    }
+
+    const encodeFilePath = (name: string) =>
+      String(name || "")
+        .replace(/\\/g, "/")
+        .split("/")
+        .map((part) => encodeURIComponent(part))
+        .join("/");
+
+    return Array.from(bestByImage.values())
+      .sort((a, b) => b.conf - a.conf)
+      .slice(0, 6)
+      .map((pred) => {
+        const fileName = mergedResults.image_id_to_filename?.[String(pred.image_id)] || "";
+        const className = mergedResults.class_names?.[pred.class_id] || `Class ${pred.class_id}`;
+        const encodedName = encodeFilePath(fileName);
+        const imageUrls = [
+          `http://localhost:9999/predictions/evaluation-image/${taskId}/${pred.image_id}`,
+          `http://localhost:9999/static/projects/${projectId}/${datasetId}/images/${encodedName}`,
+          `http://localhost:9999/static/data/images/${datasetId}/${encodedName}`,
+        ];
+        const bbox = getPredictionBboxXyxy(pred as PredWithBBox);
+        return {
+          imageId: pred.image_id,
+          fileName,
+          className,
+          conf: pred.conf,
+          imageUrls,
+          bbox,
+        };
+      })
+      .filter((item) => !!item.fileName);
+  }, [mergedResults]);
 
   useEffect(() => {
     if (!open || !taskId) return;
@@ -232,13 +499,34 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
   const downloadCocoResults = async (taskIdToDownload?: number) => {
     const downloadTaskId = taskIdToDownload || taskId;
+    const isChild = !!taskIdToDownload;
+    const sourceTask = isChild
+      ? childTasks.find((ct) => ct.id === downloadTaskId)
+      : task;
+    const predCount = sourceTask?.task_metadata?.results?.predictions_count || 0;
+    if (predCount <= 0) {
+      toast({
+        title: "No Predictions",
+        description: "There are no predictions for this evaluation, so COCO download is unavailable.",
+        variant: "destructive"
+      });
+      return;
+    }
     
     setDownloading(true);
     try {
       const response = await fetch(`http://localhost:9999/predictions/export-coco/${downloadTaskId}`);
       
       if (!response.ok) {
-        throw new Error('Failed to download results');
+        let message = 'Failed to download results';
+        try {
+          const errorData = await response.json();
+          message = errorData.detail || errorData.message || message;
+        } catch {
+          const text = await response.text();
+          if (text) message = text;
+        }
+        throw new Error(message);
       }
       
       const blob = await response.blob();
@@ -259,7 +547,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       console.error('Error downloading COCO results:', err);
       toast({
         title: "Download Failed",
-        description: "Failed to download evaluation results",
+        description: err instanceof Error ? err.message : "Failed to download evaluation results",
         variant: "destructive"
       });
     } finally {
@@ -269,13 +557,33 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
   const downloadAllCocoResults = async () => {
     if (!task?.task_metadata?.is_multi_dataset) return;
+    const totalPredictions = childTasks.reduce(
+      (sum, ct) => sum + (ct.task_metadata?.results?.predictions_count || 0),
+      0
+    );
+    if (totalPredictions <= 0) {
+      toast({
+        title: "No Predictions",
+        description: "No child evaluations contain predictions yet, so ZIP export is unavailable.",
+        variant: "destructive"
+      });
+      return;
+    }
     
     setDownloadingAll(true);
     try {
       const response = await fetch(`http://localhost:9999/predictions/export-coco-all/${taskId}`);
       
       if (!response.ok) {
-        throw new Error('Failed to download results');
+        let message = 'Failed to download results';
+        try {
+          const errorData = await response.json();
+          message = errorData.detail || errorData.message || message;
+        } catch {
+          const text = await response.text();
+          if (text) message = text;
+        }
+        throw new Error(message);
       }
       
       const blob = await response.blob();
@@ -296,7 +604,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       console.error('Error downloading all COCO results:', err);
       toast({
         title: "Download Failed",
-        description: "Failed to download evaluation results",
+        description: err instanceof Error ? err.message : "Failed to download evaluation results",
         variant: "destructive"
       });
     } finally {
@@ -306,8 +614,21 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
   const viewInFiftyOne = async () => {
     if (!task || task.status !== 'completed') return;
+    const predCount = task.task_metadata?.results?.predictions_count || 0;
+    if (predCount <= 0) {
+      toast({
+        title: "No Predictions",
+        description: "There are no predictions for this evaluation, so FiftyOne cannot be opened.",
+        variant: "destructive"
+      });
+      return;
+    }
     
     setLaunchingFiftyOne(true);
+    toast({
+      title: "Starting FiftyOne",
+      description: "Please wait 10-60 seconds while FiftyOne initializes. Keep this page open.",
+    });
     try {
       const response = await fetch(`http://localhost:9999/predictions/view-fiftyone/${taskId}`, {
         method: 'POST'
@@ -548,6 +869,93 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
           {/* Results */}
           {results && task.status === 'completed' && (
             <>
+              {launchingFiftyOne && (
+                <div className="rounded border border-blue-900/60 bg-blue-950/30 px-3 py-2 text-sm text-blue-200">
+                  FiftyOne is starting. Please wait; first launch may take up to a minute.
+                </div>
+              )}
+              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-blue-500" />
+                  Evaluation Statistics
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-400">Images</div>
+                    <div className="text-lg font-semibold text-white">{results.images_processed ?? 0}</div>
+                  </div>
+                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-400">Predictions</div>
+                    <div className="text-lg font-semibold text-white">{results.predictions_count ?? 0}</div>
+                  </div>
+                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-400">Predictions / Image</div>
+                    <div className="text-lg font-semibold text-white">
+                      {Number(results.predictions_per_image ?? 0).toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-400">Avg Confidence</div>
+                    <div className="text-lg font-semibold text-white">
+                      {`${(Number(results.avg_confidence ?? 0) * 100).toFixed(1)}%`}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-400">Precision</div>
+                    <div className="text-lg font-semibold text-white">
+                      {results.has_ground_truth ? `${(results.precision * 100).toFixed(1)}%` : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
+                    <div className="text-xs text-gray-400">F1 Score</div>
+                    <div className="text-lg font-semibold text-white">
+                      {results.has_ground_truth ? `${(results.f1_score * 100).toFixed(1)}%` : 'N/A'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-3">Top Predicted Classes</h3>
+                {topPredictedClasses.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {topPredictedClasses.map((item) => (
+                      <div
+                        key={item.className}
+                        className="bg-gray-900/60 border border-gray-800 rounded p-3"
+                      >
+                        <div className="text-sm text-gray-200 truncate" title={item.className}>
+                          {item.className}
+                        </div>
+                        <div className="text-lg font-semibold text-white">{item.count}</div>
+                        <div className="text-xs text-gray-400">predictions</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-400">No predictions available yet.</div>
+                )}
+              </div>
+              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-3">Prediction Snapshot Examples</h3>
+                {predictionSnapshots.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {predictionSnapshots.map((snap) => (
+                      <PredictionSnapshotCard
+                        key={snap.imageId}
+                        imageUrls={snap.imageUrls}
+                        fileName={snap.fileName}
+                        className={snap.className}
+                        conf={snap.conf}
+                        bbox={snap.bbox}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-400">
+                    Snapshot examples become available after prediction blobs are loaded.
+                  </div>
+                )}
+              </div>
               {evalBlobsLoading &&
                 metadata.results?.artifacts?.blobs &&
                 metadata.results.predictions === undefined && (
@@ -609,7 +1017,9 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                         <div className="flex items-center gap-4 text-sm text-gray-400">
                           {childTask.status === 'completed' && childResults && (
                             <>
-                              <span>F1: {(childResults.f1_score * 100).toFixed(1)}%</span>
+                              <span>
+                                F1: {childResults.has_ground_truth ? `${(childResults.f1_score * 100).toFixed(1)}%` : 'N/A'}
+                              </span>
                               <span>{childResults.images_processed} images</span>
                               <Button
                                 variant="ghost"
@@ -639,19 +1049,19 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                             <div className="bg-gray-800/50 rounded p-3 text-center">
                               <div className="text-xs text-gray-400 mb-1">Precision</div>
                               <div className="text-lg font-bold text-white">
-                                {(childResults.precision * 100).toFixed(1)}%
+                                {childResults.has_ground_truth ? `${(childResults.precision * 100).toFixed(1)}%` : 'N/A'}
                               </div>
                             </div>
                             <div className="bg-gray-800/50 rounded p-3 text-center">
                               <div className="text-xs text-gray-400 mb-1">Recall</div>
                               <div className="text-lg font-bold text-white">
-                                {(childResults.recall * 100).toFixed(1)}%
+                                {childResults.has_ground_truth ? `${(childResults.recall * 100).toFixed(1)}%` : 'N/A'}
                               </div>
                             </div>
                             <div className="bg-gray-800/50 rounded p-3 text-center">
                               <div className="text-xs text-gray-400 mb-1">F1 Score</div>
                               <div className="text-lg font-bold text-white">
-                                {(childResults.f1_score * 100).toFixed(1)}%
+                                {childResults.has_ground_truth ? `${(childResults.f1_score * 100).toFixed(1)}%` : 'N/A'}
                               </div>
                             </div>
                             <div className="bg-gray-800/50 rounded p-3 text-center">

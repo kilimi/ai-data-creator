@@ -8,14 +8,30 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { getApiBaseUrl } from "@/config/api";
+import type { ImageCollection } from "@/types";
 
 interface AutoAnnotateModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   datasetId: number;
   datasetName: string;
+  imageCollections?: ImageCollection[];
+}
+
+/** Default collection for Auto-Annotate: backend default (e.g. primary RGB), else first collection. */
+function defaultAutoAnnotateCollectionId(collections: ImageCollection[]): string {
+  if (collections.length === 0) return "";
+  const preferred = collections.find((c) => c.is_default === true);
+  return String(preferred?.id ?? collections[0].id);
 }
 
 type Family = "yolo" | "depth_anything";
@@ -86,7 +102,13 @@ const COCO_CLASSES = [
   "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
 ];
 
-export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }: AutoAnnotateModalProps) {
+export function AutoAnnotateModal({
+  open,
+  onOpenChange,
+  datasetId,
+  datasetName,
+  imageCollections = [],
+}: AutoAnnotateModalProps) {
   const { toast } = useToast();
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
   const [selectedYoloArch, setSelectedYoloArch] = React.useState("yolo11");
@@ -99,6 +121,12 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
   const [showClasses, setShowClasses] = React.useState(false);
   const [confThreshold, setConfThreshold] = React.useState(0.25);
   const [depthEnvironment, setDepthEnvironment] = React.useState<"indoor" | "outdoor">("outdoor");
+  const [selectedCollectionId, setSelectedCollectionId] = React.useState("");
+
+  React.useEffect(() => {
+    if (!open) return;
+    setSelectedCollectionId(defaultAutoAnnotateCollectionId(imageCollections));
+  }, [open, imageCollections]);
 
   const selectedModel = selectedFamily === "yolo"
     ? `${selectedYoloArch}${selectedSize}`
@@ -112,6 +140,15 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
         model_name: selectedModel,
         dataset_id: datasetId,
       };
+
+      const collIdStr =
+        selectedCollectionId || defaultAutoAnnotateCollectionId(imageCollections);
+      const cid = parseInt(collIdStr, 10);
+      // Send when we have a concrete id; if collections are still loading (empty UI list),
+      // the backend resolves the dataset default collection.
+      if (!Number.isNaN(cid)) {
+        body.collection_id = cid;
+      }
 
       if (selectedFamily === "yolo") {
         body.annotation_file_name = annotationFileName || `Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`;
@@ -175,6 +212,33 @@ export function AutoAnnotateModal({ open, onOpenChange, datasetId, datasetName }
           </p>
         </DialogHeader>
         <div className="flex flex-col gap-4 mt-2">
+          {imageCollections.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="auto-annotate-collection" className="text-sm font-medium">
+                Image collection
+              </Label>
+              <Select
+                value={selectedCollectionId || defaultAutoAnnotateCollectionId(imageCollections)}
+                onValueChange={setSelectedCollectionId}
+              >
+                <SelectTrigger id="auto-annotate-collection" className="text-sm">
+                  <SelectValue placeholder="Select collection" />
+                </SelectTrigger>
+                <SelectContent>
+                  {imageCollections.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)} className="text-sm">
+                      {c.name}
+                      {c.is_default ? " (default)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Run Auto-Annotate only on images in this collection (default matches your primary dataset collection).
+              </p>
+            </div>
+          )}
+
           <span className="block font-medium text-sm">Choose a model family</span>
           <div className="grid grid-cols-2 gap-2">
             {([

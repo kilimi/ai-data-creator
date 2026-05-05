@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -240,6 +240,14 @@ const ImageAnnotation = () => {
 
   // Get annotation ID from URL params if editing existing annotation
   const annotationId = searchParams.get('annotationId');
+  /** Set `?debugAnnot=1` on the URL or `sessionStorage.setItem('debugAnnotFirst','1')` then reload — logs first-image / load races in the console (filter: AnnotDebug). */
+  const debugAnnotFirst =
+    typeof window !== 'undefined' &&
+    (searchParams.get('debugAnnot') === '1' || sessionStorage.getItem('debugAnnotFirst') === '1');
+  const logAnnotDebug = (label: string, payload?: Record<string, unknown>) => {
+    if (!debugAnnotFirst) return;
+    console.log(`[AnnotDebug] ${label}`, { ...payload, ts: Date.now() });
+  };
 
   // Redirect legacy /datasets/:id/annotate/segmentation to project-scoped URL
   useEffect(() => {
@@ -292,6 +300,39 @@ const ImageAnnotation = () => {
   useEffect(() => {
     try { sessionStorage.setItem('annotation-companion-panel-open', String(companionPanelOpen)); } catch {}
   }, [companionPanelOpen]);
+  /**
+   * Companion collections that should ALSO receive a copy of every annotation
+   * save (so e.g. drawing on RGB also persists annotations under a thermal
+   * collection's storage). Driven by the per-row toggle in the picker. We keep
+   * a ref alongside state so save callbacks always see the latest selection
+   * even from stale closures.
+   */
+  const [duplicateCollectionIds, setDuplicateCollectionIds] = useState<string[]>([]);
+  const duplicateCollectionIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    duplicateCollectionIdsRef.current = duplicateCollectionIds;
+  }, [duplicateCollectionIds]);
+
+  /**
+   * Refs that mirror displayLayer / mainLayer so callbacks (createAnnotation,
+   * drag-handlers, etc.) always read the *current* "active" collection id
+   * even when their useCallback closure was captured before the user switched
+   * layers. Without these, switching from RGB → Thermal would still save new
+   * annotations under the old RGB key, leaving the Save button disabled and
+   * making "annotate per collection" appear broken.
+   *
+   * We assign during render (not via useEffect) so the refs are guaranteed
+   * to be in sync the moment any callback runs in the same React tick as
+   * the state update.
+   */
+  const displayLayerRef = useRef<string>('');
+  const mainLayerRef = useRef<string>('');
+  displayLayerRef.current = displayLayer;
+  mainLayerRef.current = mainLayer;
+  /** Resolves the active "annotating" collection id at call time (not closure time). */
+  const getActiveCollectionId = useCallback(() => {
+    return displayLayerRef.current || mainLayerRef.current || 'default';
+  }, []);
   const [isLayerSwitching, setIsLayerSwitching] = useState(false); // Prevent flicker during layer changes
   const layerSwitchCounterRef = useRef(0); // Increment on every layer switch to force image remount
   const [isLoading, setIsLoading] = useState(true);
@@ -303,6 +344,9 @@ const ImageAnnotation = () => {
   const [imageContrast, setImageContrast] = useState(100);     // %
   const [imageSaturation, setImageSaturation] = useState(100); // %
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
+  /** Always matches latest `annotations` so async loaders don't read a stale closure for the early-return / skip-clear logic. */
+  const annotationsRef = useRef<AnnotationShape[]>([]);
+  annotationsRef.current = annotations;
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
@@ -366,12 +410,46 @@ const ImageAnnotation = () => {
   const leftStartXRef = useRef(0);
   const leftStartWidthRef = useRef(0);
   const lastLoadedImageRef = useRef<string>(''); // Use ref instead of state to avoid re-renders
+  /** Last annotation file we opened (for invalidating lastLoadedImageRef when switching files). */
+  const lastOpenedAnnotationFileIdRef = useRef<string | null>(null);
+  /** Bumped when the annotation-file load effect cleans up or re-runs so in-flight loads don't clear caches / wipe polygons (Strict Mode + overlapping effects). */
+  const annotationFileLoadGenerationRef = useRef(0);
+  /** Monotonic token so stale async annotation loads cannot commit after navigating to another image. */
+  const pendingAnnotationLoadTokenRef = useRef(0);
   // Always-current image name ref so stale useCallback closures can still access the latest value
   const currentImageNameRef = useRef<string>('');
   // Always-current load function ref so stale callbacks can call the latest version
-  const loadAnnotationsForImageRef = useRef<((name: string) => Promise<void>) | null>(null);
+  const loadAnnotationsForImageRef = useRef<((name: string, forceCollectionId?: string) => Promise<void>) | null>(null);
   // COCO image dimensions (file_name -> { width, height }) so we can scale loaded coords to actual image space
   const cocoImageDimensionsRef = useRef<Record<string, { width: number; height: number }>>({});
+
+  /**
+   * Pixel space of stored polygon coordinates (same as API / file pixels).
+   * Prefer decoded bitmap WxH when the canvas image matches this file — augmented or resized
+   * files often disagree with DB `Image.width/height`, which would remap polygons off-canvas.
+   * Then DB row, then COCO ref.
+   */
+  const getAnnotReferenceDimensions = useCallback((fileName: string | undefined) => {
+    if (!fileName) return undefined;
+    const imgEl = imageRef.current;
+    const nw = imgEl?.naturalWidth ?? 0;
+    const nh = imgEl?.naturalHeight ?? 0;
+    if (
+      currentImage?.fileName === fileName
+      && imgEl?.complete
+      && nw > 0
+      && nh > 0
+    ) {
+      return { width: nw, height: nh };
+    }
+    if (currentImage?.fileName === fileName && currentImage.width > 0 && currentImage.height > 0) {
+      return { width: currentImage.width, height: currentImage.height };
+    }
+    const coco = cocoImageDimensionsRef.current[fileName];
+    if (coco && coco.width > 0 && coco.height > 0) return coco;
+    return undefined;
+  }, [currentImage]);
+
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -610,16 +688,15 @@ const ImageAnnotation = () => {
 
     setAnnotations(prev => {
       const updated = [...prev, ...newAnns];
-      const storageKey = `annotations_${id}_${currentImageName}`;
-      safeLocalStorageSet(storageKey, JSON.stringify(updated));
-      // Save annotation-layer dims (same logic as createAnnotation)
       const annotDims = annotLayerDimsRef.current;
       const saveDims = annotDims
         ? { width: annotDims.width, height: annotDims.height }
         : { width: imageRef.current?.naturalWidth || 0, height: imageRef.current?.naturalHeight || 0 };
-      if (saveDims.width && saveDims.height) {
-        safeLocalStorageSet(`annotations_${id}_${currentImageName}_dims`, JSON.stringify(saveDims));
-      }
+      saveAnnotationsToLocalStorage(
+        currentImageName,
+        updated,
+        saveDims.width && saveDims.height ? saveDims : undefined,
+      );
       return updated;
     });
 
@@ -992,8 +1069,14 @@ const ImageAnnotation = () => {
           if (initialNames.length > 0) {
             const firstName = initialNames[0];
             setCurrentImageName(firstName);
+            currentImageNameRef.current = firstName;
             updateCurrentImages(firstName, defaultCollection ? String(defaultCollection.id) : '', collectionsResponse.data);
-            loadAnnotationsForImage(firstName);
+            // When editing an existing annotation file, do not load here: `loadFromAnnotationFile` clears
+            // caches and bumps the pending-load token; an in-flight load from this line races that pipeline
+            // and the first image can stay empty until next/prev forces a fresh load.
+            if (!annotationId) {
+              loadAnnotationsForImage(firstName, defaultCollection ? String(defaultCollection.id) : 'default');
+            }
           }
           
           const navCount = urlCollectionId && defaultCollection 
@@ -1028,10 +1111,14 @@ const ImageAnnotation = () => {
             setAllImageNames(imageNames);
             
             if (imageNames.length > 0) {
-              setCurrentImageName(imageNames[0]);
+              const first = imageNames[0];
+              setCurrentImageName(first);
+              currentImageNameRef.current = first;
               setCurrentImage(response.data[0]);
               setDisplayImage(response.data[0]);
-              loadAnnotationsForImage(imageNames[0]);
+              if (!annotationId) {
+                loadAnnotationsForImage(first, 'default');
+              }
             }
           }
         }
@@ -1050,7 +1137,7 @@ const ImageAnnotation = () => {
     };
 
     loadImagesEffect();
-  }, [id, api, toast]);
+  }, [id, api, toast, annotationId]);
 
   // Fetch calibrations for this dataset once api + id are ready
   useEffect(() => {
@@ -1145,12 +1232,29 @@ const ImageAnnotation = () => {
 
       if (imageName !== currentImageName) {
         setCurrentImageName(imageName);
+        currentImageNameRef.current = imageName;
         loadAnnotationsForImage(imageName);
       }
       updateCurrentImages(imageName, displayLayer, imageCollections);
     }
   }, [currentImageIndex, allImageNames, mainLayer, displayLayer, imageCollections, isInitialLoad]);
 
+  // Reload annotations for the new collection when displayLayer changes (e.g. user clicks a layer tab)
+  useEffect(() => {
+    if (isInitialLoad || !currentImageName) return;
+    // Reset the "last loaded image" guard so loadAnnotationsForImage doesn't
+    // short-circuit on the (image-name unchanged, annotations still in state)
+    // path — those annotations belong to the *previous* layer.
+    logAnnotDebug('displayLayer effect → reset lastLoaded + reload', {
+      displayLayer,
+      mainLayer,
+      currentImageName,
+      annotRefLen: annotationsRef.current.length,
+    });
+    lastLoadedImageRef.current = '';
+    loadAnnotationsForImageRef.current?.(currentImageName, displayLayer || mainLayer || 'default');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayLayer]);
 
   // Update current index when layer changes to maintain the same image if possible
   useEffect(() => {
@@ -1229,33 +1333,82 @@ const ImageAnnotation = () => {
     setDisplayImage(displayPixel);
   };
 
-  const loadAnnotationsForImage = async (imageName: string) => {
+  const loadAnnotationsForImage = async (imageName: string, forceCollectionId?: string) => {
+    const activeCollId = forceCollectionId ?? displayLayer ?? mainLayer ?? 'default';
     console.log('[loadAnnotations] image:', imageName, 'last:', lastLoadedImageRef.current);
 
-    if (imageName === lastLoadedImageRef.current && annotations.length > 0) {
+    if (imageName === lastLoadedImageRef.current && annotationsRef.current.length > 0) {
+      logAnnotDebug('loadAnnotationsForImage SKIP (already have polygons for this image)', {
+        imageName,
+        activeCollId,
+        count: annotationsRef.current.length,
+        token: pendingAnnotationLoadTokenRef.current,
+      });
       return;
     }
+
+    logAnnotDebug('loadAnnotationsForImage START', {
+      imageName,
+      activeCollId,
+      lastLoaded: lastLoadedImageRef.current,
+      annotRefLen: annotationsRef.current.length,
+      annotationId: !!annotationId,
+    });
+
+    const myToken = ++pendingAnnotationLoadTokenRef.current;
+    const stillFresh = () => myToken === pendingAnnotationLoadTokenRef.current;
+
     lastLoadedImageRef.current = imageName;
 
     // --- PATH A: Editing an existing annotation file → load from DB API ---
     if (annotationId && api && id) {
       try {
-        const storageKey = `annotations_${id}_${imageName}`;
+        const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
         const cached = localStorage.getItem(storageKey);
         if (cached) {
           try {
             const parsed = JSON.parse(cached) as AnnotationShape[];
             if (parsed.length > 0) {
+              if (!stillFresh()) return;
               const classColorMap: { [name: string]: string } = {};
               classes.forEach(c => { classColorMap[c.name] = c.color; });
-              setAnnotations(parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a));
+              const mappedCache = parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a);
+              annotationsRef.current = mappedCache;
+              setAnnotations(mappedCache);
+              logAnnotDebug('loadAnnotationsForImage CACHE hit', { imageName, activeCollId, count: mappedCache.length });
+              const dimsKeyCache = `annotations_${id}_${activeCollId}_${imageName}_dims`;
+              const savedDimsCache = localStorage.getItem(dimsKeyCache);
+              if (savedDimsCache) {
+                try {
+                  const dims = JSON.parse(savedDimsCache) as { width: number; height: number };
+                  if (dims.width > 0 && dims.height > 0) {
+                    cocoImageDimensionsRef.current[imageName] = { width: dims.width, height: dims.height };
+                  }
+                } catch { /* ignore */ }
+              }
               console.log(`[loadAnnotations] ${parsed.length} from localStorage cache`);
               return;
             }
           } catch { /* fall through */ }
         }
 
-        const resp = await api.getImageAnnotations(id, annotationId, imageName);
+        // Prevent prior image polygons from lingering while the API round-trip completes
+        if (!stillFresh()) return;
+        logAnnotDebug('loadAnnotationsForImage CLEAR (await API)', {
+          imageName,
+          activeCollId,
+          token: myToken,
+        });
+        annotationsRef.current = [];
+        setAnnotations([]);
+
+        const resp = await api.getImageAnnotations(
+          id,
+          annotationId,
+          imageName,
+          activeCollId,
+        );
+        if (!stillFresh()) return;
         if (resp.success && resp.data) {
           const { annotations: apiAnns, imageWidth, imageHeight } = resp.data;
           cocoImageDimensionsRef.current[imageName] = { width: imageWidth, height: imageHeight };
@@ -1282,12 +1435,22 @@ const ImageAnnotation = () => {
             }
           }
 
+          annotationsRef.current = imageAnnotations;
           setAnnotations(imageAnnotations);
+          logAnnotDebug('loadAnnotationsForImage API done', {
+            imageName,
+            activeCollId,
+            count: imageAnnotations.length,
+            token: myToken,
+          });
           console.log(`[loadAnnotations] ${imageAnnotations.length} from API for ${imageName}`);
 
           if (imageAnnotations.length > 0) {
             safeLocalStorageSet(storageKey, JSON.stringify(imageAnnotations));
-            safeLocalStorageSet(`annotations_${id}_${imageName}_dims`, JSON.stringify({ width: imageWidth, height: imageHeight }));
+            safeLocalStorageSet(
+              `annotations_${id}_${activeCollId}_${imageName}_dims`,
+              JSON.stringify({ width: imageWidth, height: imageHeight }),
+            );
           }
           return;
         }
@@ -1298,15 +1461,19 @@ const ImageAnnotation = () => {
 
     // --- PATH B: New annotation session (no annotationId) → localStorage only ---
     try {
-      const storageKey = `annotations_${id}_${imageName}`;
+      const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
       const saved = localStorage.getItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved) as AnnotationShape[];
         if (parsed.length > 0) {
+          if (!stillFresh()) return;
           const classColorMap: { [name: string]: string } = {};
           classes.forEach(c => { classColorMap[c.name] = c.color; });
-          setAnnotations(parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a));
-          const dimsKey = `annotations_${id}_${imageName}_dims`;
+          const mappedLs = parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a);
+          annotationsRef.current = mappedLs;
+          setAnnotations(mappedLs);
+          logAnnotDebug('loadAnnotationsForImage PATH B localStorage', { imageName, count: mappedLs.length });
+          const dimsKey = `annotations_${id}_${activeCollId}_${imageName}_dims`;
           const savedDims = localStorage.getItem(dimsKey);
           if (savedDims) {
             try {
@@ -1317,10 +1484,16 @@ const ImageAnnotation = () => {
           return;
         }
       }
+      if (!stillFresh()) return;
+      logAnnotDebug('loadAnnotationsForImage CLEAR (path B empty / no saved)', { imageName, activeCollId });
+      annotationsRef.current = [];
       setAnnotations([]);
       if (annotationId) loadGlobalClasses();
     } catch (error) {
       console.error('[loadAnnotations] error:', error);
+      if (!stillFresh()) return;
+      logAnnotDebug('loadAnnotationsForImage CLEAR (path B error)', { imageName, activeCollId, error: String(error) });
+      annotationsRef.current = [];
       setAnnotations([]);
       if (annotationId) loadGlobalClasses();
     }
@@ -1330,28 +1503,43 @@ const ImageAnnotation = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   loadAnnotationsForImageRef.current = loadAnnotationsForImage;
 
-  // Helper: Save annotations to localStorage with collection tracking
+  // Helper: Save annotations to localStorage with collection tracking.
+  // When the user has enabled "Duplicate annotations" for one or more
+  // companion collections in the picker, mirror the same write into each
+  // companion's storage key so annotations also persist (and re-appear when
+  // that collection is later opened as primary). Reads are unchanged.
   const saveAnnotationsToLocalStorage = useCallback((
     imageName: string,
     annotations: AnnotationShape[],
     dims?: { width: number; height: number }
   ) => {
     if (!id || !imageName) return;
-    
-    const storageKey = `annotations_${id}_${imageName}`;
-    safeLocalStorageSet(storageKey, JSON.stringify(annotations));
-    
-    // Save which collection these annotations were created in
-    const currentCollection = displayLayer || mainLayer;
-    if (currentCollection) {
-      safeLocalStorageSet(`annotations_${id}_${imageName}_collection`, currentCollection);
+
+    // Read via refs so save callbacks captured *before* a layer switch still
+    // write to the user's currently-active collection (otherwise drawing on
+    // Thermal after starting on RGB would silently keep saving under the RGB
+    // key, leaving the Save button disabled for the new layer).
+    const activeCollId =
+      displayLayerRef.current || mainLayerRef.current || 'default';
+    const targets = new Set<string>([activeCollId]);
+    for (const dupId of duplicateCollectionIdsRef.current) {
+      if (dupId && dupId !== activeCollId) targets.add(dupId);
     }
-    
-    // Save dimensions if provided
-    if (dims && dims.width > 0 && dims.height > 0) {
-      safeLocalStorageSet(`annotations_${id}_${imageName}_dims`, JSON.stringify(dims));
+
+    const payload = JSON.stringify(annotations);
+    const dimsPayload =
+      dims && dims.width > 0 && dims.height > 0 ? JSON.stringify(dims) : null;
+
+    for (const collId of targets) {
+      safeLocalStorageSet(`annotations_${id}_${collId}_${imageName}`, payload);
+      if (dimsPayload) {
+        safeLocalStorageSet(`annotations_${id}_${collId}_${imageName}_dims`, dimsPayload);
+      }
     }
-  }, [id, displayLayer, mainLayer]);
+  }, [id]);
+
+  /** Must match the collection segment in saveAnnotationsToLocalStorage keys: annotations_${id}_${this}_${fileName} */
+  const annotationStorageCollId = displayLayer || mainLayer || 'default';
 
   // Global statistics across all saved annotation files (all images)
   const [globalStats, setGlobalStats] = useState<{ [className: string]: number }>({});
@@ -1512,7 +1700,8 @@ const ImageAnnotation = () => {
             });
             
             // Overlay localStorage for any image that has been edited (so new/removed annotations are reflected)
-            const prefix = `annotations_${id}_`;
+            const overlayCollId = displayLayer || mainLayer || 'default';
+            const prefix = `annotations_${id}_${overlayCollId}_`;
             for (let i = 0; i < localStorage.length; i++) {
               const key = localStorage.key(i);
               if (!key || !key.startsWith(prefix)) continue;
@@ -1549,7 +1738,7 @@ const ImageAnnotation = () => {
                 // ignore parse errors
               }
             }
-            
+
             console.log(`Statistics: ${validAnnotations}/${totalAnnotations} valid annotations counted`);
             console.log('Computed global stats from sessionStorage:', counts);
           }
@@ -1560,9 +1749,10 @@ const ImageAnnotation = () => {
         // Fallback: scan localStorage for cached annotations
         // Build a set of image names to check
         const imageNamesToCheck = new Set<string>(allImageNames);
+        const fbCollId = displayLayer || mainLayer || 'default';
 
-        // Scan localStorage keys for any annotations_{id}_* entries
-        const prefix = `annotations_${id}_`;
+        // Scan localStorage keys for any annotations_{id}_{collectionId}_* entries
+        const prefix = `annotations_${id}_${fbCollId}_`;
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
           if (!key) continue;
@@ -1574,7 +1764,7 @@ const ImageAnnotation = () => {
 
         // Iterate over all discovered image names and count annotations
         imageNamesToCheck.forEach(name => {
-          const key = `annotations_${id}_${name}`;
+          const key = `annotations_${id}_${fbCollId}_${name}`;
           const saved = localStorage.getItem(key);
           if (!saved) return;
           try {
@@ -1612,7 +1802,7 @@ const ImageAnnotation = () => {
       setGlobalStats({});
       setGlobalAvgAreas({});
     }
-  }, [allImageNames, id, annotationId, api]);
+  }, [allImageNames, id, annotationId, api, displayLayer, mainLayer]);
 
   // Debounced recompute for user actions (add/delete/edit) so rapid changes trigger one run
   const computeGlobalStatsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1699,16 +1889,15 @@ const ImageAnnotation = () => {
           visible: true,
         };
 
-        const storageKey = `annotations_${id}_${imageName}`;
+        const collId = displayLayer || mainLayer || 'default';
+        const storageKey = `annotations_${id}_${collId}_${imageName}`;
         const raw = localStorage.getItem(storageKey);
         const existing: AnnotationShape[] = raw ? JSON.parse(raw) : [];
-        safeLocalStorageSet(storageKey, JSON.stringify([...existing, newAnn]));
-        
-        // Save image dimensions so they can be used when saving annotation file
-        if (img.width && img.height) {
-          const dimsKey = `annotations_${id}_${imageName}_dims`;
-          safeLocalStorageSet(dimsKey, JSON.stringify({ width: img.width, height: img.height }));
-        }
+        const merged = [...existing, newAnn];
+        const dims =
+          img.width && img.height ? { width: img.width, height: img.height } : undefined;
+        // Use the central helper so duplicate-annotation companions also receive the write
+        saveAnnotationsToLocalStorage(imageName, merged, dims);
         
         addedCount += 1;
       } catch {
@@ -1795,8 +1984,20 @@ const ImageAnnotation = () => {
   }, [computeGlobalStats]);
 
   // Load annotations from annotation file when annotationId is provided
-  const loadFromAnnotationFile = useCallback(async (annotationFileId: string) => {
+  const loadFromAnnotationFile = useCallback(async (annotationFileId: string, loadGeneration: number) => {
     if (!id) return;
+    if (annotationFileLoadGenerationRef.current !== loadGeneration) return;
+
+    const prevFileId = lastOpenedAnnotationFileIdRef.current;
+    if (prevFileId != null && prevFileId !== annotationFileId) {
+      lastLoadedImageRef.current = '';
+      annotationsRef.current = [];
+      setAnnotations([]);
+      logAnnotDebug('loadFromAnnotationFile switched annotation file → cleared polygons', {
+        prevFileId,
+        annotationFileId,
+      });
+    }
     
     console.log('Loading segmentation annotations from annotation file:', annotationFileId);
     
@@ -1811,6 +2012,8 @@ const ImageAnnotation = () => {
     }
     keysToRemove.forEach(key => localStorage.removeItem(key));
     console.log(`Cleared ${keysToRemove.length} cached annotation entries`);
+
+    if (annotationFileLoadGenerationRef.current !== loadGeneration) return;
     
     // First try to load from saved_annotations localStorage
     const savedAnnotations = localStorage.getItem(`saved_annotations_${id}`);
@@ -1823,7 +2026,7 @@ const ImageAnnotation = () => {
         
         setAnnotationName(targetAnnotation.name);
         const cocoData = targetAnnotation.content;
-        return loadAnnotationsFromCOCO(cocoData, annotationFileId);
+        return loadAnnotationsFromCOCO(cocoData, annotationFileId, loadGeneration);
       }
     }
     
@@ -1833,7 +2036,9 @@ const ImageAnnotation = () => {
         console.log('Fetching annotation from backend for file ID:', annotationFileId);
         // First get annotation metadata to get the name
         const annotationResponse = await api.getAnnotation(id, annotationFileId);
+        if (annotationFileLoadGenerationRef.current !== loadGeneration) return;
         const response = await api.getAnnotationContent(id, annotationFileId);
+        if (annotationFileLoadGenerationRef.current !== loadGeneration) return;
         
         console.log('Backend response:', response);
         
@@ -1866,7 +2071,7 @@ const ImageAnnotation = () => {
               });
             }
             
-            return loadAnnotationsFromCOCO(cocoData, annotationFileId);
+            return loadAnnotationsFromCOCO(cocoData, annotationFileId, loadGeneration);
           } catch (parseError) {
             console.error('Failed to parse COCO JSON:', parseError);
             console.error('Content preview:', response.data.content.substring(0, 500));
@@ -1896,8 +2101,14 @@ const ImageAnnotation = () => {
   }, [id, api, toast]);
 
   // Helper function to load annotations from COCO format
-  const loadAnnotationsFromCOCO = useCallback(async (cocoData: any, fileId?: string) => {
+  const loadAnnotationsFromCOCO = useCallback(async (cocoData: any, fileId?: string, loadGeneration?: number) => {
     try {
+      if (
+        loadGeneration != null
+        && annotationFileLoadGenerationRef.current !== loadGeneration
+      ) {
+        return false;
+      }
       console.log('Loading COCO data:', {
         hasCategories: !!cocoData.categories,
         categoryCount: cocoData.categories?.length || 0,
@@ -1923,6 +2134,12 @@ const ImageAnnotation = () => {
       if (cocoData.categories.length === 0 && api && fileId) {
         try {
           const res = await api.getAnnotationClasses(id, fileId);
+          if (
+            loadGeneration != null
+            && annotationFileLoadGenerationRef.current !== loadGeneration
+          ) {
+            return false;
+          }
           if (res?.success && res.data?.classes?.length) {
             cocoData.categories = res.data.classes.map((c: { className: string; categoryId?: number }, idx: number) => ({
               id: c.categoryId ?? idx + 1,
@@ -1936,9 +2153,10 @@ const ImageAnnotation = () => {
         }
       }
       
-      // Reset the last loaded image ref so annotations can be loaded fresh
-      lastLoadedImageRef.current = null;
-      
+      // Do not clear lastLoadedImageRef here: the debounced AnnotationLoader often finishes first
+      // and sets lastLoaded + polygons; nulling this ref made the follow-up loadAnnotationsForImage
+      // skip the early-return and run setAnnotations([]), so masks flashed then disappeared.
+
       // Don't load all annotations at once - just prepare the data structure
       // and load on-demand when navigating to images
       const classSet = new Set<string>();
@@ -2004,6 +2222,13 @@ const ImageAnnotation = () => {
         console.log(`Cleared ${keysToRemove.length} annotation caches from localStorage`);
       } catch (e) {
         console.warn('Could not clear localStorage annotation caches:', e);
+      }
+
+      if (
+        loadGeneration != null
+        && annotationFileLoadGenerationRef.current !== loadGeneration
+      ) {
+        return false;
       }
       
       // Update classes
@@ -2093,7 +2318,7 @@ const ImageAnnotation = () => {
         });
         
         if (imageAnnotations.length > 0) {
-          const storageKey = `annotations_${id}_${imageName}`;
+          const storageKey = `annotations_${id}_${annotationStorageCollId}_${imageName}`;
           try {
             safeLocalStorageSet(storageKey, JSON.stringify(imageAnnotations));
             loadedCount++;
@@ -2107,18 +2332,46 @@ const ImageAnnotation = () => {
       
       // Load annotations for current image — use refs so stale closures always see the latest values
       const latestImageName = currentImageNameRef.current || currentImageName;
-      if (latestImageName && loadAnnotationsForImageRef.current) {
+      if (
+        latestImageName
+        && loadAnnotationsForImageRef.current
+        && (loadGeneration == null
+          || annotationFileLoadGenerationRef.current === loadGeneration)
+      ) {
+        logAnnotDebug('loadAnnotationsFromCOCO → tail loadAnnotationsForImage', {
+          latestImageName,
+          refName: currentImageNameRef.current,
+          stateName: currentImageName,
+          loadGeneration,
+          genNow: annotationFileLoadGenerationRef.current,
+          annotRefLen: annotationsRef.current.length,
+        });
         loadAnnotationsForImageRef.current(latestImageName);
+      }
+
+      if (
+        loadGeneration != null
+        && annotationFileLoadGenerationRef.current !== loadGeneration
+      ) {
+        return false;
       }
       
       // Recompute global stats and wait for it to complete
       await computeGlobalStats();
+
+      if (
+        loadGeneration != null
+        && annotationFileLoadGenerationRef.current !== loadGeneration
+      ) {
+        return false;
+      }
       
       toast({
         title: "Annotations loaded",
         description: `Loaded annotation file with ${cocoData.images?.length || 0} images. Annotations load on-demand as you navigate.`,
       });
-      
+
+      if (fileId) lastOpenedAnnotationFileIdRef.current = fileId;
       return true;
     } catch (error) {
       console.error('Error parsing COCO data:', error);
@@ -2129,21 +2382,27 @@ const ImageAnnotation = () => {
       });
       return false;
     }
-  }, [id, api, computeGlobalStats, toast]);
+  }, [id, api, computeGlobalStats, toast, annotationStorageCollId]);
 
   // Load from annotation file if annotationId is provided
   useEffect(() => {
+    let invalidateAnnotationFileLoadOnCleanup = false;
     if (annotationId && !isLoading) {
       // Skip reload if we just saved - data is already in localStorage
       if (justSavedRef.current) {
         console.log('Skipping reload after save - data already in localStorage');
         justSavedRef.current = false;
-        return;
+        return undefined;
       }
+
+      annotationFileLoadGenerationRef.current += 1;
+      const loadGen = annotationFileLoadGenerationRef.current;
+      invalidateAnnotationFileLoadOnCleanup = true;
       
       // Wait for images to be loaded before attempting to load annotation file
       console.log('Loading annotation file with ID:', annotationId);
-      loadFromAnnotationFile(annotationId).then((success) => {
+      void loadFromAnnotationFile(annotationId, loadGen).then((success) => {
+        if (annotationFileLoadGenerationRef.current !== loadGen) return;
         if (success) {
           console.log('Annotation file loaded successfully');
         } else {
@@ -2167,6 +2426,7 @@ const ImageAnnotation = () => {
       cocoImageDimensionsRef.current = {};
       
       // Clear annotations state and classes for fresh start
+      annotationsRef.current = [];
       setAnnotations([]);
       setClasses([]);
       localStorage.removeItem(`classes_${id}`);
@@ -2175,6 +2435,11 @@ const ImageAnnotation = () => {
       
       console.log(`Cleared ${keysToRemove.length} cached entries for new annotation session`);
     }
+    return () => {
+      if (invalidateAnnotationFileLoadOnCleanup) {
+        annotationFileLoadGenerationRef.current += 1;
+      }
+    };
   }, [annotationId, isLoading, loadFromAnnotationFile, id]);
 
   // Ensure annotations are loaded for current image when editing an existing annotation file.
@@ -2182,11 +2447,16 @@ const ImageAnnotation = () => {
   const attemptedLoadRef = useRef<string | null>(null);
   useEffect(() => {
     if (!annotationId || !currentImageName || isLoading) return;
-    if (annotations.length > 0 && lastLoadedImageRef.current === currentImageName) return;
+    if (annotationsRef.current.length > 0 && lastLoadedImageRef.current === currentImageName) return;
     if (attemptedLoadRef.current === currentImageName) return;
     attemptedLoadRef.current = currentImageName;
 
     const timeoutId = setTimeout(() => {
+      logAnnotDebug('AnnotationLoader timeout → loadAnnotationsForImage', {
+        currentImageName,
+        annotRefLen: annotationsRef.current.length,
+        lastLoaded: lastLoadedImageRef.current,
+      });
       console.log('[AnnotationLoader] loading from API for:', currentImageName);
       loadAnnotationsForImageRef.current?.(currentImageName);
     }, 150);
@@ -2291,14 +2561,14 @@ const ImageAnnotation = () => {
       // Annotation layer is set — use its scale factor
       qx = x * sa.x;
       qy = y * sa.y;
-    } else if (currentImage?.fileName && imageRef.current) {
-      // COCO fallback: remap if annotation dims differ from display dims
-      const cocoDims = cocoImageDimensionsRef.current[currentImage.fileName];
+    } else if (!annotationId && currentImage?.fileName && imageRef.current) {
+      // Remap if stored annotation space differs from decoded bitmap (natural) size
+      const refDims = getAnnotReferenceDimensions(currentImage.fileName);
       const nw = imageRef.current.naturalWidth;
       const nh = imageRef.current.naturalHeight;
-      if (cocoDims && nw > 0 && nh > 0 && (cocoDims.width !== nw || cocoDims.height !== nh)) {
-        qx = x * (cocoDims.width / nw);
-        qy = y * (cocoDims.height / nh);
+      if (refDims && nw > 0 && nh > 0 && (refDims.width !== nw || refDims.height !== nh)) {
+        qx = x * (refDims.width / nw);
+        qy = y * (refDims.height / nh);
       }
     }
     for (const annotation of annotations) {
@@ -2311,7 +2581,7 @@ const ImageAnnotation = () => {
       }
     }
     return null;
-  }, [annotations, isPointInPolygon, currentImage]);
+  }, [annotations, isPointInPolygon, currentImage, getAnnotReferenceDimensions, annotationId]);
 
   // Create new annotation
   const createAnnotation = useCallback((type: 'rectangle' | 'circle' | 'polygon', points: Point[]) => {
@@ -2518,14 +2788,13 @@ const ImageAnnotation = () => {
         // Annotation layer set — use its scale factor
         deltaX *= sa.x;
         deltaY *= sa.y;
-      } else if (currentImage?.fileName && imageRef.current) {
-        // COCO fallback
-        const cocoDims = cocoImageDimensionsRef.current[currentImage.fileName];
+      } else if (!annotationId && currentImage?.fileName && imageRef.current) {
+        const refDims = getAnnotReferenceDimensions(currentImage.fileName);
         const nw = imageRef.current.naturalWidth;
         const nh = imageRef.current.naturalHeight;
-        if (cocoDims && nw > 0 && nh > 0 && (cocoDims.width !== nw || cocoDims.height !== nh)) {
-          deltaX *= cocoDims.width / nw;
-          deltaY *= cocoDims.height / nh;
+        if (refDims && nw > 0 && nh > 0 && (refDims.width !== nw || refDims.height !== nh)) {
+          deltaX *= refDims.width / nw;
+          deltaY *= refDims.height / nh;
         }
       }
       
@@ -2547,7 +2816,7 @@ const ImageAnnotation = () => {
       const deltaYFinal = deltaY;
       setTimeout(() => {
         if (currentImageName) {
-          const storageKey = `annotations_${id}_${currentImageName}`;
+          const storageKey = `annotations_${id}_${annotationStorageCollId}_${currentImageName}`;
           const currentAnnotations = JSON.parse(localStorage.getItem(storageKey) || '[]');
           const updatedAnnotations = currentAnnotations.map((ann: AnnotationShape) => {
             if (ann.id === selectedAnnotation) {
@@ -2571,7 +2840,7 @@ const ImageAnnotation = () => {
       
       setMoveOffset(imageCoords);
     }
-  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage, isDrawing, activeTool]);
+  }, [isDragging, dragStart, isMovingAnnotation, selectedAnnotation, moveOffset, screenToImageCoords, currentImage, isDrawing, activeTool, id, currentImageName, annotationStorageCollId, saveAnnotationsToLocalStorage, getAnnotReferenceDimensions, annotationId]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (isPanningRef.current) {
@@ -2759,6 +3028,11 @@ const ImageAnnotation = () => {
     // Save context
     ctx.save();
 
+    // Read scale/offset from refs once for this frame (bitmap + annotations must match).
+    // Declared here — not inside the drawImage if — so annotationToScreen can see them.
+    const scaleNow = scaleRef.current || imageScale;
+    const offsetNow = offsetRef.current || imageOffset;
+
     // Draw image with proper scaling and offset
     if (imageRef.current && imageRef.current.complete && imageRef.current.naturalWidth > 0) {
       // Apply display adjustments (brightness/contrast/saturation) only to
@@ -2770,10 +3044,10 @@ const ImageAnnotation = () => {
       }
       ctx.drawImage(
         imageRef.current,
-        imageOffset.x,
-        imageOffset.y,
-        imageRef.current.naturalWidth * imageScale,
-        imageRef.current.naturalHeight * imageScale
+        offsetNow.x,
+        offsetNow.y,
+        imageRef.current.naturalWidth * scaleNow,
+        imageRef.current.naturalHeight * scaleNow
       );
       if (needsFilter) {
         ctx.filter = 'none';
@@ -2799,30 +3073,34 @@ const ImageAnnotation = () => {
           return { x: px * naturalW / annotImg.width, y: py * naturalH / annotImg.height };
         }
       }
-      const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
-      if (cocoDims && naturalW > 0 && naturalH > 0 && cocoDims.width > 0 && cocoDims.height > 0 &&
-          (cocoDims.width !== naturalW || cocoDims.height !== naturalH)) {
-        return { x: px * naturalW / cocoDims.width, y: py * naturalH / cocoDims.height };
+      // GET /image-annotations stores polygons in the displayed bitmap's pixel space. The
+      // on-disk COCO file may list different width/height (or bbox-only rows); remapping
+      // with those dims scales coordinates wrong and hides shapes on the canvas.
+      if (annotationId) {
+        return { x: px, y: py };
+      }
+      const refDims = getAnnotReferenceDimensions(currentImage?.fileName);
+      if (refDims && naturalW > 0 && naturalH > 0 && refDims.width > 0 && refDims.height > 0 &&
+          (refDims.width !== naturalW || refDims.height !== naturalH)) {
+        return { x: px * naturalW / refDims.width, y: py * naturalH / refDims.height };
       }
       return { x: px, y: py };
     };
 
+    // Use the same scale/offset that was used to draw the bitmap (refs, not
+    // stale React state). This is critical on first load: handleImageResize
+    // writes scaleRef/offsetRef synchronously then schedules a redraw via rAF.
+    // If that rAF fires before React has committed the new imageScale state,
+    // annotationToScreen via imageToScreenCoords (which closes over state) would
+    // use scale=1 while the bitmap was drawn at 0.15, placing polygons off-canvas.
     const annotationToScreen = (px: number, py: number) => {
       const disp = annotToDisplayPx(px, py);
-      return imageToScreenCoords(disp.x, disp.y);
+      return { x: disp.x * scaleNow + offsetNow.x, y: disp.y * scaleNow + offsetNow.y };
     };
-
-    // Debug: log all annotations and their visibility
-    const visibleCount = annotations.filter(a => a.visible).length;
-    const invisibleCount = annotations.filter(a => !a.visible).length;
-    if (annotations.length > 0) {
-      console.log('[Canvas Draw] Annotations:', { total: annotations.length, visible: visibleCount, invisible: invisibleCount });
-    }
 
     // Draw annotations
     annotations.forEach((annotation, idx) => {
       if (!annotation.visible) {
-        console.log('[Canvas Draw] Skipping invisible annotation:', { id: annotation.id, label: annotation.label, visible: annotation.visible });
         return;
       }
 
@@ -2944,7 +3222,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, imageToScreenCoords, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation, getAnnotReferenceDimensions, annotationId]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
@@ -3127,9 +3405,10 @@ const ImageAnnotation = () => {
 
     setAnnotations(prev => {
       const updated = prev.filter(a => a.id !== annotationId);
-      // Auto-save to localStorage using image name
-      const storageKey = `annotations_${id}_${currentImageName}`;
-      safeLocalStorageSet(storageKey, JSON.stringify(updated));
+      const saveDims = imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+        ? { width: imageRef.current.naturalWidth, height: imageRef.current.naturalHeight }
+        : undefined;
+      saveAnnotationsToLocalStorage(currentImageName, updated, saveDims);
       return updated;
     });
     
@@ -3185,14 +3464,33 @@ const ImageAnnotation = () => {
   const handleImageLoad = () => {
     // Reset preserve flag for new image loads
     preserveZoomRef.current = false;
-    
-    // Use requestAnimationFrame to ensure DOM has settled before calculating sizes
-    // This prevents "weird" initial rendering where container dimensions might still be stabilizing
+
+    // Immediate fit avoids one or more paints at imageScale===1 (full natural size),
+    // which reads as “zoomed in” relative to fit-to-view.
+    handleImageResize(true);
+
+    // Double-rAF: the first frame lets React flush its DOM mutations and starts the
+    // browser layout pass; the second frame fires after that layout pass completes.
+    // This is critical on initial page load where ResizablePanelGroup (flex/grid)
+    // hasn't finished computing its container dimensions by the first rAF.
     requestAnimationFrame(() => {
-      // Always force a refit when a new image source has loaded, regardless of any
-      // resize-listener timers that may have re-set preserveZoomRef in the meantime.
-      handleImageResize(true);
+      requestAnimationFrame(() => {
+        handleImageResize(true);
+      });
     });
+
+    // Safety-net: if the container was still at zero/unstable size during the double-rAF
+    // (e.g. browser was busy with other layout work), re-run the fit after a short delay.
+    const srcAtLoad = imageRef.current?.src;
+    setTimeout(() => {
+      if (imageRef.current?.src !== srcAtLoad) return; // image changed, skip
+      const container = containerRef.current;
+      if (!container) return;
+      const { width, height } = container.getBoundingClientRect();
+      if (width > 0 && height > 0 && !preserveZoomRef.current) {
+        handleImageResize(true);
+      }
+    }, 150);
   };
 
   // Schedule a redraw, retrying for a few frames in case the image bitmap
@@ -3253,15 +3551,20 @@ const ImageAnnotation = () => {
 
     // Only reset zoom if this is initial load, we're explicitly not preserving zoom, AND we're not preventing reset due to panning
     if (forceRefit || (!preserveZoomRef.current && !preventZoomResetRef.current)) {
-      setImageScale(fitToContainerScale);
-      // Center image in container for new images
       const scaledWidth = img.naturalWidth * fitToContainerScale;
       const scaledHeight = img.naturalHeight * fitToContainerScale;
-      
-      setImageOffset({
+      const newOffset = {
         x: (containerRect.width - scaledWidth) / 2,
-        y: (containerRect.height - scaledHeight) / 2
-      });
+        y: (containerRect.height - scaledHeight) / 2,
+      };
+      // Sync refs immediately so the imminent scheduleRedraw() (and any draw
+      // pulled in via stale closure / pre-commit rAF) uses the fit values, not
+      // the initial imageScale === 1 that would render the bitmap at native
+      // resolution and look "zoomed in" on the first paint.
+      scaleRef.current = fitToContainerScale;
+      offsetRef.current = newOffset;
+      setImageScale(fitToContainerScale);
+      setImageOffset(newOffset);
       // The scale/offset state changes will trigger the redraw useEffect, but
       // we also schedule retried redraws as a safety net (image may not be
       // 'complete' on the first frame after a layer switch).
@@ -3315,10 +3618,12 @@ const ImageAnnotation = () => {
     try {
       const naturalW = imageRef.current?.naturalWidth || 1920;
       const naturalH = imageRef.current?.naturalHeight || 1080;
-      const cocoDims = currentImage?.fileName ? cocoImageDimensionsRef.current[currentImage.fileName] : undefined;
-      const toNatural = cocoDims && (cocoDims.width !== naturalW || cocoDims.height !== naturalH) && cocoDims.width > 0 && cocoDims.height > 0
-        ? (p: Point) => ({ x: p.x * (naturalW / cocoDims!.width), y: p.y * (naturalH / cocoDims!.height) })
-        : (p: Point) => p;
+      const refDims = getAnnotReferenceDimensions(currentImage.fileName);
+      const toNatural = annotationId
+        ? (p: Point) => p
+        : refDims && (refDims.width !== naturalW || refDims.height !== naturalH) && refDims.width > 0 && refDims.height > 0
+          ? (p: Point) => ({ x: p.x * (naturalW / refDims.width), y: p.y * (naturalH / refDims.height) })
+          : (p: Point) => p;
 
       // Create COCO format export (always in natural image pixel coordinates)
       const cocoData = {
@@ -3369,9 +3674,10 @@ const ImageAnnotation = () => {
       };
 
       // Save to localStorage using image name (and reference dimensions so edit uses correct scale when image size differs)
-      const storageKey = `annotations_${id}_${currentImageName}`;
+      const collId = displayLayer || mainLayer || 'default';
+      const storageKey = `annotations_${id}_${collId}_${currentImageName}`;
       safeLocalStorageSet(storageKey, JSON.stringify(annotations));
-      const dimsKey = `annotations_${id}_${currentImageName}_dims`;
+      const dimsKey = `annotations_${id}_${collId}_${currentImageName}_dims`;
       safeLocalStorageSet(dimsKey, JSON.stringify({ width: naturalW, height: naturalH }));
       
       // Export as downloadable file
@@ -3458,13 +3764,14 @@ const ImageAnnotation = () => {
 
       let annId = 1;
       let imageId = 1;
+      const dlCollId = annotationStorageCollId;
 
       for (const name of allImageNames) {
-        const storageKey = `annotations_${id}_${name}`;
+        const storageKey = `annotations_${id}_${dlCollId}_${name}`;
         const saved = localStorage.getItem(storageKey);
         
         // Get stored dimensions for this specific image (not current image!)
-        const dimsKey = `annotations_${id}_${name}_dims`;
+        const dimsKey = `annotations_${id}_${dlCollId}_${name}_dims`;
         const savedDims = localStorage.getItem(dimsKey);
         let imgWidth = 0;
         let imgHeight = 0;
@@ -3590,13 +3897,14 @@ const ImageAnnotation = () => {
 
       let annId = 1;
       let imageId = 1;
+      const activeCollId = displayLayer || mainLayer || 'default';
 
       for (const imageName of allImageNames) {
-        const storageKey = `annotations_${id}_${imageName}`;
+        const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
         const saved = localStorage.getItem(storageKey);
         
         // Get stored dimensions for this specific image
-        const dimsKey = `annotations_${id}_${imageName}_dims`;
+        const dimsKey = `annotations_${id}_${activeCollId}_${imageName}_dims`;
         const savedDims = localStorage.getItem(dimsKey);
         let imgWidth = 0;
         let imgHeight = 0;
@@ -3701,7 +4009,8 @@ const ImageAnnotation = () => {
           name: name,
           categories: categoryMap,
           images: imagesArr,
-          annotations: annotationsArr
+          annotations: annotationsArr,
+          active_collection_id: activeCollId,
         })
       });
       
@@ -3804,8 +4113,9 @@ const ImageAnnotation = () => {
     let lastError: string | null = null;
 
     try {
+      const activeCollId = displayLayer || mainLayer || 'default';
       for (const imageName of allImageNames) {
-        const storageKey = `annotations_${id}_${imageName}`;
+        const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
         const saved = localStorage.getItem(storageKey);
         if (!saved) continue;
 
@@ -3842,7 +4152,8 @@ const ImageAnnotation = () => {
           body: JSON.stringify({
             annotations: annotationsData,
             image_width: 0,
-            image_height: 0
+            image_height: 0,
+            collection_id: activeCollId,
           })
         });
         const data = await response.json();
@@ -3934,7 +4245,8 @@ const ImageAnnotation = () => {
         body: JSON.stringify({
           annotations: annotationsData,
           image_width: imageWidth,
-          image_height: imageHeight
+          image_height: imageHeight,
+          collection_id: getActiveCollectionId(),
         })
       });
 
@@ -4029,7 +4341,7 @@ const ImageAnnotation = () => {
       console.error('Error saving image annotations:', error);
       return false;
     }
-  }, [annotationId, api, currentImageName, annotations, displayImage, currentImage, classes, id]);
+  }, [annotationId, api, currentImageName, annotations, displayImage, currentImage, classes, id, getActiveCollectionId]);
 
   // Auto-save function with debouncing
   const autoSaveToDatabase = useCallback(async () => {
@@ -4070,13 +4382,14 @@ const ImageAnnotation = () => {
 
       let annId = 1;
       let imageId = 1;
+      const exportCollId = annotationStorageCollId;
 
       for (const name of allImageNames) {
-        const storageKey = `annotations_${id}_${name}`;
+        const storageKey = `annotations_${id}_${exportCollId}_${name}`;
         const saved = localStorage.getItem(storageKey);
         
         // Get stored dimensions for this specific image (not current image!)
-        const dimsKey = `annotations_${id}_${name}_dims`;
+        const dimsKey = `annotations_${id}_${exportCollId}_${name}_dims`;
         const savedDims = localStorage.getItem(dimsKey);
         let imgWidth = 0;
         let imgHeight = 0;
@@ -4243,9 +4556,10 @@ const ImageAnnotation = () => {
     // Clear in-memory annotations
     setAnnotations([]);
     
-    // Save empty array to localStorage (don't remove the key, so overlay logic works)
-    const storageKey = `annotations_${id}_${currentImageName}`;
-    localStorage.setItem(storageKey, JSON.stringify([]));
+    // Persist the empty array (also mirrors to any "duplicate annotation"
+    // companion collections, so deletes don't leave orphan annotations behind
+    // on a previously mirrored layer).
+    saveAnnotationsToLocalStorage(currentImageName, []);
 
     // Also update sessionStorage COCO data to remove annotations for this image
     try {
@@ -4327,7 +4641,7 @@ const ImageAnnotation = () => {
     const hasUnsavedWork = annotationId 
       ? hasUnsavedChanges 
       : (hasUnsavedChanges || allImageNames.some(imageName => {
-          const storageKey = `annotations_${id}_${imageName}`;
+          const storageKey = `annotations_${id}_${annotationStorageCollId}_${imageName}`;
           const saved = localStorage.getItem(storageKey);
           return saved && saved !== '[]';
         }));
@@ -4372,13 +4686,27 @@ const ImageAnnotation = () => {
     
     // Save current image annotations to localStorage and database before navigating
     if (currentImageName) {
-      const storageKey = `annotations_${id}_${currentImageName}`;
-      // Try to update localStorage - but don't fail if quota exceeded
       try {
         if (annotations.length > 0) {
-          safeLocalStorageSet(storageKey, JSON.stringify(annotations));
+          // Route through the central helper so any companion collections
+          // marked "duplicate" also receive the latest copy.
+          const saveDims = imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+            ? { width: imageRef.current.naturalWidth, height: imageRef.current.naturalHeight }
+            : undefined;
+          saveAnnotationsToLocalStorage(currentImageName, annotations, saveDims);
         } else {
-          localStorage.removeItem(storageKey);
+          // Empty list — clear under the active collection AND any duplicates
+          // so a user-initiated "delete all" propagates the same way saves do.
+          const activeCollId = displayLayerRef.current || mainLayerRef.current || 'default';
+          const targets = new Set<string>([activeCollId]);
+          for (const dupId of duplicateCollectionIdsRef.current) {
+            if (dupId && dupId !== activeCollId) targets.add(dupId);
+          }
+          for (const cid of targets) {
+            try {
+              localStorage.removeItem(`annotations_${id}_${cid}_${currentImageName}`);
+            } catch { /* ignore */ }
+          }
         }
       } catch (e) {
         if (e instanceof DOMException && e.name === 'QuotaExceededError') {
@@ -4405,7 +4733,7 @@ const ImageAnnotation = () => {
     try {
       for (let i = 0; i < imageList.length; i++) {
         if (Math.abs(i - newIndex) > 5) {
-          const oldStorageKey = `annotations_${id}_${imageList[i]}`;
+          const oldStorageKey = `annotations_${id}_${annotationStorageCollId}_${imageList[i]}`;
           if (localStorage.getItem(oldStorageKey)) {
             localStorage.removeItem(oldStorageKey);
           }
@@ -4418,6 +4746,7 @@ const ImageAnnotation = () => {
     setCurrentImageIndex(newIndex);
     const newImageName = imageList[newIndex];
     setCurrentImageName(newImageName);
+    currentImageNameRef.current = newImageName;
     
     // Load global classes when editing an existing annotation file (not when starting new segmentation)
     if (annotationId) loadGlobalClasses();
@@ -4427,7 +4756,7 @@ const ImageAnnotation = () => {
     
     // Load annotations for the new image
     loadAnnotationsForImage(newImageName);
-  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase]);
+  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId]);
 
   // Keyboard shortcuts: Arrow keys or A/D for previous/next image navigation
   useEffect(() => {
@@ -4497,7 +4826,7 @@ const ImageAnnotation = () => {
     if (index >= 0 && index < imageList.length) {
       // Save current image annotations to localStorage and database before navigating
       if (currentImageName) {
-        const storageKey = `annotations_${id}_${currentImageName}`;
+        const storageKey = `annotations_${id}_${annotationStorageCollId}_${currentImageName}`;
         // Try to update localStorage - but don't fail if quota exceeded
         try {
           if (annotations.length > 0) {
@@ -4524,7 +4853,7 @@ const ImageAnnotation = () => {
       try {
         for (let i = 0; i < imageList.length; i++) {
           if (Math.abs(i - index) > 5) {
-            const oldStorageKey = `annotations_${id}_${imageList[i]}`;
+            const oldStorageKey = `annotations_${id}_${annotationStorageCollId}_${imageList[i]}`;
             if (localStorage.getItem(oldStorageKey)) {
               localStorage.removeItem(oldStorageKey);
             }
@@ -4537,6 +4866,7 @@ const ImageAnnotation = () => {
       setCurrentImageIndex(index);
       const newImageName = imageList[index];
       setCurrentImageName(newImageName);
+      currentImageNameRef.current = newImageName;
       
       // Update the currentImage object as well
       updateCurrentImages(newImageName, displayLayer, imageCollections);
@@ -4550,7 +4880,7 @@ const ImageAnnotation = () => {
           const nextIndex = index + i;
           if (nextIndex < imageList.length) {
             const nextImageName = imageList[nextIndex];
-            const storageKey = `annotations_${id}_${nextImageName}`;
+            const storageKey = `annotations_${id}_${annotationStorageCollId}_${nextImageName}`;
             
             // Only pre-load if not already in localStorage
             if (!localStorage.getItem(storageKey)) {
@@ -4651,6 +4981,7 @@ const ImageAnnotation = () => {
     layerSwitchCounterRef.current += 1;
     preserveZoomRef.current = false;
     preventZoomResetRef.current = false;
+    lastLoadedImageRef.current = ''; // force annotation reload for new collection
     setDisplayLayer(layerId);
     // Display bitmap + noCorrespondingImage are synced in the effect that calls updateCurrentImages when displayLayer changes
     // Force a refit after layer switch to ensure proper image sizing
@@ -4691,8 +5022,9 @@ const ImageAnnotation = () => {
         setCurrentImageIndex(0);
         const firstImageName = mainLayerImageNames[0];
         setCurrentImageName(firstImageName);
+        currentImageNameRef.current = firstImageName;
         updateCurrentImages(firstImageName, displayLayer, imageCollections);
-        loadAnnotationsForImage(firstImageName);
+        loadAnnotationsForImage(firstImageName, layerId);
       }
     }
   };
@@ -4761,7 +5093,7 @@ const ImageAnnotation = () => {
             <Button 
               onClick={() => {
                 const hasAnnotations = allImageNames.some(imageName => {
-                  const storageKey = `annotations_${id}_${imageName}`;
+                  const storageKey = `annotations_${id}_${annotationStorageCollId}_${imageName}`;
                   const saved = localStorage.getItem(storageKey);
                   return saved && saved !== '[]';
                 });
@@ -4777,11 +5109,11 @@ const ImageAnnotation = () => {
                 
                 setShowSaveDialog(true);
               }}
-              disabled={!id || isSavingAnnotation || !allImageNames.some(imageName => {
-                const storageKey = `annotations_${id}_${imageName}`;
-                const saved = localStorage.getItem(storageKey);
-                return saved && saved !== '[]';
-              })}
+              disabled={
+                !id ||
+                isSavingAnnotation ||
+                (annotations.length === 0 && !hasAnyAnnotationsStored)
+              }
               title="Save annotations as new annotation file"
             >
               {isSavingAnnotation ? (
@@ -4815,7 +5147,7 @@ const ImageAnnotation = () => {
                   });
                 }
               }}
-              disabled={!currentImageName || annotations.length === 0}
+              disabled={!currentImageName || (!hasUnsavedChanges && annotations.length === 0)}
               title="Save current image annotations to database"
             >
               <Save className="w-4 h-4 mr-2" />
@@ -5648,18 +5980,20 @@ const ImageAnnotation = () => {
                       from other collections, with shared annotations overlaid. */}
                   <CompanionLayersPanel
                     collections={imageCollections}
-                    primaryCollectionId={mainLayer || displayLayer}
+                    primaryCollectionId={displayLayer || mainLayer}
                     primaryImage={displayImage || currentImage}
                     imageName={currentImageName}
+                    datasetId={id ?? null}
                     annotations={annotations}
                     calibrations={calibrations}
+                    primaryCocoDims={currentImageName ? (getAnnotReferenceDimensions(currentImageName) ?? null) : null}
                     projectId={projectId ?? null}
-                    onSetPrimary={handleLayerChange}
                     onClose={() => setCompanionPanelOpen(false)}
                     onPrev={() => goToImage(currentImageIndex - 1)}
                     onNext={() => goToImage(currentImageIndex + 1)}
                     canPrev={currentImageIndex > 0}
                     canNext={currentImageIndex < (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
+                    onDuplicateChange={setDuplicateCollectionIds}
                   />
                 </ResizablePanel>
               </>

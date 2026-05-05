@@ -26,7 +26,7 @@ import {
 import { useState } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { createApiClient } from "@/utils/api";
-import { API_CONFIG } from "@/config/api";
+import { API_CONFIG, resolveBackendMediaUrl } from "@/config/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { EditProjectDialog } from "./EditProjectDialog";
@@ -40,7 +40,7 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectCardProps) {
-  const projectCover = project.logo_url || project.thumbnailUrl;
+  const projectCover = resolveBackendMediaUrl(project.logo_url || project.thumbnailUrl);
   const { isLoaded: imageLoaded } = useImageLoad(projectCover);
   const [isHovered, setIsHovered] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
@@ -287,6 +287,7 @@ interface DatasetThumbnailProps {
 function DatasetThumbnail({ dataset, projectId }: DatasetThumbnailProps) {
   // Get annotation count from localStorage (for locally saved annotations)
   const localAnnotationCount = useAnnotationFilesCount(dataset.id);
+  const thumb = resolveBackendMediaUrl(dataset.thumbnailUrl);
   
   // Use the higher of backend count or localStorage count
   const totalAnnotationCount = Math.max(dataset.annotation_count || 0, localAnnotationCount || 0);
@@ -296,8 +297,8 @@ function DatasetThumbnail({ dataset, projectId }: DatasetThumbnailProps) {
       <HoverCardTrigger asChild>
         <Link to={`/projects/${projectId}/datasets/${dataset.id}`}>
           <Avatar className="border-2 border-background h-8 w-8 cursor-pointer">
-            {dataset.thumbnailUrl ? (
-              <AvatarImage src={dataset.thumbnailUrl} alt={dataset.name} />
+            {thumb ? (
+              <AvatarImage src={thumb} alt={dataset.name} />
             ) : (
               <AvatarFallback className="bg-primary/10 text-primary text-xs">
                 {dataset.name.substring(0, 2).toUpperCase()}
@@ -309,8 +310,8 @@ function DatasetThumbnail({ dataset, projectId }: DatasetThumbnailProps) {
       <HoverCardContent className="w-80">
         <div className="flex space-x-4">
           <div className="w-16 h-16 rounded overflow-hidden bg-muted">
-            {dataset.thumbnailUrl ? (
-              <img src={dataset.thumbnailUrl} alt={dataset.name} className="w-full h-full object-cover" />
+            {thumb ? (
+              <img src={thumb} alt={dataset.name} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-primary/10">
                 <span className="text-primary text-lg font-semibold">

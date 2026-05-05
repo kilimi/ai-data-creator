@@ -26,7 +26,15 @@ export type VideoServerStage =
 export interface VideoUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (file: File, params: { interval_seconds: number; max_frames: number; sequential_names: boolean; resize_width: number; resize_height: number }) => void;
+  onSubmit: (file: File, params: {
+    interval_seconds: number;
+    /** Save every Nth source frame (1 = every frame). */
+    frame_step: number;
+    max_frames: number;
+    sequential_names: boolean;
+    resize_width: number;
+    resize_height: number;
+  }) => void;
   isUploading?: boolean;
   /** Upload progress 0..100. When undefined, no bar is shown. */
   uploadProgress?: number;
@@ -69,6 +77,7 @@ export function VideoUploadDialog({
 }: VideoUploadDialogProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [framesPerSecond, setFramesPerSecond] = useState(24);
+  const [frameStep, setFrameStep] = useState(1);
   const [maxFramesText, setMaxFramesText] = useState("");
   const [sequentialNames, setSequentialNames] = useState(false);
   const [resizeWidthText, setResizeWidthText] = useState("");
@@ -89,10 +98,12 @@ export function VideoUploadDialog({
     if (!selectedFile) return;
     const safeFps = framesPerSecond > 0 ? framesPerSecond : 24;
     const intervalSeconds = 1 / safeFps;
+    const safeFrameStep = frameStep > 0 ? Math.floor(frameStep) : 1;
     const trimmed = maxFramesText.trim();
     const parsedLimit = trimmed === "" ? 0 : Math.max(0, parseInt(trimmed, 10) || 0);
     onSubmit(selectedFile, {
       interval_seconds: intervalSeconds,
+      frame_step: safeFrameStep,
       max_frames: parsedLimit,
       sequential_names: sequentialNames,
       resize_width: sequentialNames ? (parseInt(resizeWidthText, 10) || 0) : 0,
@@ -106,6 +117,7 @@ export function VideoUploadDialog({
     if (isUploading) return;
     setSelectedFile(null);
     setFramesPerSecond(24);
+    setFrameStep(1);
     setMaxFramesText("");
     setSequentialNames(false);
     setResizeWidthText("");
@@ -181,6 +193,24 @@ export function VideoUploadDialog({
 
           <div className="grid gap-4">
             <div className="space-y-2">
+              <Label htmlFor="frame_step" className="text-gray-300">
+                Save every Nth frame
+              </Label>
+              <Input
+                id="frame_step"
+                type="number"
+                min={1}
+                step={1}
+                value={frameStep}
+                onChange={(e) => setFrameStep(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className="bg-gray-800 border-gray-600 text-white"
+                disabled={isUploading}
+              />
+              <p className="text-xs text-gray-500">
+                1 = save every frame, 10 = every 10th frame, 100 = every 100th frame.
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="frames_per_second" className="text-gray-300">
                 Frames per second
               </Label>
@@ -195,6 +225,7 @@ export function VideoUploadDialog({
                 disabled={isUploading}
               />
               <p className="text-xs text-gray-500">
+                Time-based sampling. Used when "Save every Nth frame" is 1.
                 e.g. 24 = 24 fps, 1 = one frame per second, 0.5 ≈ one frame every 2 seconds
               </p>
             </div>

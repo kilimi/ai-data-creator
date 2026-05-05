@@ -53,6 +53,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'augmentation':
         return <Sparkles className="w-4 h-4 text-purple-500" />;
       case 'training':
+      case 'yolo_training':
         return <Brain className="w-4 h-4 text-indigo-500" />;
       case 'duplication':
         return <Copy className="w-4 h-4 text-cyan-500" />;
@@ -70,6 +71,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'augmentation':
         return 'Augmentation';
       case 'training':
+      case 'yolo_training':
         return 'Training';
       case 'duplication':
         return 'Duplication';
@@ -121,6 +123,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'augmentation':
         return 'bg-purple-100 text-purple-800 border-purple-200';
       case 'training':
+      case 'yolo_training':
         return 'bg-indigo-100 text-indigo-800 border-indigo-200';
       case 'duplication':
         return 'bg-cyan-100 text-cyan-800 border-cyan-200';
@@ -209,7 +212,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
     
     switch (task.task_type) {
       case 'training':
-        return `/projects/${taskProjectId}/models`;
+      case 'yolo_training':
+        return `/projects/${taskProjectId}/models?taskId=${task.id}`;
       case 'evaluation':
         return `/projects/${taskProjectId}/evaluations`;
       case 'augmentation':
@@ -343,6 +347,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                       <th className="px-3 py-3 font-medium text-muted-foreground">Type</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground">Task Name</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground">Status</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-28">Progress</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground w-20"></th>
                     </tr>
                   </thead>
@@ -387,6 +392,23 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                           </Badge>
                         </td>
                         <td className="px-3 py-4">
+                          {(task.status === 'running' || task.status === 'pending') ? (
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 max-w-[72px] bg-muted rounded-full h-1.5">
+                                <div
+                                  className={`h-1.5 rounded-full transition-all ${
+                                    task.status === 'running' ? 'bg-blue-500' : 'bg-yellow-500'
+                                  }`}
+                                  style={{ width: `${task.progress ?? 0}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-muted-foreground tabular-nums">{Math.round(task.progress ?? 0)}%</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground tabular-nums">{Math.round(task.progress ?? 0)}%</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-4">
                           {getTaskNavigationUrl(task) && (
                             <Button
                               variant="ghost"
@@ -411,7 +433,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
 
       {/* Task Detail Modal */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selectedTask && getTaskTypeIcon(selectedTask.task_type)}
@@ -591,7 +613,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                     <AlertCircle className="w-4 h-4" />
                     Error
                   </label>
-                  <div className="mt-1 text-sm bg-red-50 border border-red-200 text-red-800 p-3 rounded-md">
+                  <div className="mt-1 text-sm bg-red-50 border border-red-200 text-red-800 p-3 rounded-md max-h-56 overflow-y-auto whitespace-pre-wrap break-words">
                     {selectedTask.error_message}
                   </div>
                 </div>

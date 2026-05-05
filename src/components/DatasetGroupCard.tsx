@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { DatasetGroup } from "@/types";
 import { cn } from "@/lib/utils";
+import { resolveBackendMediaUrl } from "@/config/api";
 
 interface DatasetGroupCardProps {
   group: DatasetGroup;
@@ -43,7 +44,8 @@ export function DatasetGroupCard({
   ...props 
 }: DatasetGroupCardProps) {
   /** One preview per group keeps network use similar to ungrouped dataset cards (not 4× images). */
-  const headerPreviewUrl = group.datasets.find(d => d.thumbnailUrl)?.thumbnailUrl ?? null;
+  const headerPreviewRaw = group.datasets.find(d => d.thumbnailUrl)?.thumbnailUrl ?? null;
+  const headerPreviewUrl = resolveBackendMediaUrl(headerPreviewRaw) ?? null;
   const totalImages = group.datasets.reduce((sum, dataset) => sum + (dataset.image_count || 0), 0);
   const totalAnnotations = group.datasets.reduce((sum, dataset) => sum + (dataset.annotation_count || 0), 0);
 
@@ -193,15 +195,17 @@ export function DatasetGroupCard({
             <h4 className="text-sm font-medium text-muted-foreground mb-2">
               Datasets in this group:
             </h4>
-            {group.datasets.map((dataset) => (
+            {group.datasets.map((dataset) => {
+              const rowThumb = resolveBackendMediaUrl(dataset.thumbnailUrl);
+              return (
               <Link
                 key={dataset.id}
                 to={`/projects/${group.project_id}/datasets/${dataset.id}`}
                 className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors"
               >
-                {dataset.thumbnailUrl ? (
+                {rowThumb ? (
                   <img
-                    src={dataset.thumbnailUrl}
+                    src={rowThumb}
                     alt={dataset.name}
                     loading="lazy"
                     decoding="async"
@@ -221,7 +225,8 @@ export function DatasetGroupCard({
                   </div>
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

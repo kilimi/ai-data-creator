@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Pencil, Trash2, Copy, MoreHorizontal, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
-import { Dataset } from "@/types";
+import { Dataset, ImageCollection } from "@/types";
 import { DatasetInfoBar } from "@/components/DatasetInfoBar";
 import { AutoAnnotateModal } from "@/components/AutoAnnotateModal";
 import { HelpHint } from "@/components/ui/help-hint";
@@ -13,6 +13,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { DatasetUiMode } from "@/hooks/useDatasetSettings";
 
 interface DatasetHeaderProps {
   isLoading: boolean;
@@ -25,9 +34,30 @@ interface DatasetHeaderProps {
   onDuplicateDataset?: () => void;
   projectId?: string | null;
   imageCount?: number;
+  /** When set (tabbed/multi-collection datasets), Auto-Annotate can target one collection */
+  imageCollections?: ImageCollection[];
+  /** When true, dataset uses collections UI (Calibration / Mode apply) */
+  useTabbedImages?: boolean;
+  datasetUiMode?: DatasetUiMode;
+  onDatasetUiModeChange?: (mode: DatasetUiMode) => void;
 }
 
-export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, dataset, onEditDataset, onDeleteDataset, onDuplicateDataset, projectId, imageCount = 0 }: DatasetHeaderProps) {
+export function DatasetHeader({
+  isLoading,
+  name,
+  currentLayout,
+  onLayoutChange,
+  dataset,
+  onEditDataset,
+  onDeleteDataset,
+  onDuplicateDataset,
+  projectId,
+  imageCount = 0,
+  imageCollections = [],
+  useTabbedImages = false,
+  datasetUiMode = "default",
+  onDatasetUiModeChange,
+}: DatasetHeaderProps) {
   const [isAutoAnnotateOpen, setIsAutoAnnotateOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -115,6 +145,36 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
             </DropdownMenu>
           )}
 
+          {!isLoading &&
+            useTabbedImages &&
+            imageCollections.length > 0 &&
+            onDatasetUiModeChange != null && (
+              <div
+                className="flex items-center gap-2 flex-shrink-0 border border-border rounded-md px-2.5 py-1 bg-muted/30"
+                title="Advanced mode shows Calibrate Collections and related options for multi-collection datasets."
+              >
+                <Label htmlFor="dataset-header-mode" className="text-xs text-muted-foreground whitespace-nowrap">
+                  Mode
+                </Label>
+                <Select
+                  value={datasetUiMode}
+                  onValueChange={(v) => onDatasetUiModeChange(v as DatasetUiMode)}
+                >
+                  <SelectTrigger id="dataset-header-mode" className="h-8 w-[130px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="end">
+                    <SelectItem value="default" className="text-xs">
+                      Default
+                    </SelectItem>
+                    <SelectItem value="advanced" className="text-xs">
+                      Advanced
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
           {currentLayout && onLayoutChange && (
             <div className="flex-shrink-0">
               <LayoutControls 
@@ -142,6 +202,7 @@ export function DatasetHeader({ isLoading, name, currentLayout, onLayoutChange, 
           onOpenChange={setIsAutoAnnotateOpen}
           datasetId={dataset.id}
           datasetName={dataset.name}
+          imageCollections={imageCollections}
         />
       )}
     </div>

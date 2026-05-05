@@ -185,12 +185,25 @@ def auto_annotate_yolo(
         if not dataset:
             raise ValueError(f"Dataset {dataset_id} not found")
         
-        # Get images
-        images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        md = task.task_metadata or {}
+        cid_raw = md.get("collection_id")
+        cid = None
+        if cid_raw is not None:
+            try:
+                cid = int(cid_raw)
+            except (TypeError, ValueError):
+                cid = None
+        q_img = db.query(Image).filter(Image.dataset_id == dataset_id)
+        if cid is not None:
+            q_img = q_img.filter(Image.collection_id == cid)
+        images = q_img.order_by(Image.id.asc()).all()
         if not images:
             raise ValueError("No images found in dataset")
         
-        logger.info(f"Found {len(images)} images to annotate")
+        logger.info(
+            f"Found {len(images)} images to annotate"
+            + (f" (collection_id={cid})" if cid is not None else " (all collections)")
+        )
         
         task.progress = 20
         task.task_metadata = {

@@ -682,6 +682,16 @@ async def create_augmented_dataset(
         
         logger.info(f"Parsed inputs - source datasets: {source_dataset_ids}, methods: {methods}, parameters: {parameters}")
         logger.info(f"Annotation settings - transform: {transform_annotations_bool}, config: {annotation_config}")
+
+        # Validate dataset config structure early (including collection_id type)
+        for cfg in annotation_file_configs:
+            if 'dataset_id' not in cfg:
+                raise HTTPException(status_code=422, detail="dataset_configs entries must include dataset_id")
+            if cfg.get('collection_id') is not None:
+                try:
+                    cfg['collection_id'] = int(cfg['collection_id'])
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=422, detail="collection_id must be an integer when provided")
         
         # Validate source datasets exist (use unique IDs)
         unique_dataset_ids = list(set(source_dataset_ids))
@@ -694,6 +704,21 @@ async def create_augmented_dataset(
             raise HTTPException(status_code=404, detail="One or more source datasets not found")
         
         logger.info(f"Validated {len(existing_datasets)} unique source datasets")
+
+        # Validate selected collection ids belong to their datasets.
+        for cfg in annotation_file_configs:
+            coll_id = cfg.get('collection_id')
+            if coll_id is None:
+                continue
+            coll_exists = db.query(models.ImageCollection).filter(
+                models.ImageCollection.id == coll_id,
+                models.ImageCollection.dataset_id == cfg['dataset_id']
+            ).first()
+            if not coll_exists:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"collection_id {coll_id} does not belong to dataset_id {cfg['dataset_id']}"
+                )
         
         # Validate project exists
         project = db.query(models.Project).filter(models.Project.id == project_id).first()

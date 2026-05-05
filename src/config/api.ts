@@ -12,6 +12,32 @@ export const getApiBaseUrl = () => {
   return url;
 };
 
+/**
+ * Turn backend-relative media paths into absolute URLs the browser can load.
+ * Dataset thumbnails and image URLs are often stored as `/static/projects/...`
+ * while the SPA runs on another origin (e.g. Vite :8080 vs API :9999).
+ */
+export function resolveBackendMediaUrl(
+  href: string | undefined | null
+): string | undefined {
+  if (href == null) return undefined;
+  const h = String(href).trim();
+  if (!h) return undefined;
+  if (
+    h.startsWith("data:") ||
+    h.startsWith("http://") ||
+    h.startsWith("https://") ||
+    h.startsWith("blob:")
+  ) {
+    return h;
+  }
+  if (h.startsWith("/")) {
+    const base = getApiBaseUrl().replace(/\/+$/, "");
+    return `${base}${h}`;
+  }
+  return h;
+}
+
 // Check if a URL is accessible
 const isUrlAccessible = async (url: string): Promise<boolean> => {
   try {

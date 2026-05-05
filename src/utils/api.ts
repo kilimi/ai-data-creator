@@ -460,7 +460,15 @@ export class ApiClient {
   uploadVideoExtract(
     datasetId: string | number,
     videoFile: File,
-    params: { interval_seconds: number; max_frames: number; collection_id?: string | number; sequential_names?: boolean; resize_width?: number; resize_height?: number },
+    params: {
+      interval_seconds: number;
+      frame_step?: number;
+      max_frames: number;
+      collection_id?: string | number;
+      sequential_names?: boolean;
+      resize_width?: number;
+      resize_height?: number;
+    },
     onProgress?: (progress: {
       loaded: number;
       total: number;
@@ -472,6 +480,9 @@ export class ApiClient {
     const form = new FormData();
     form.append('video', videoFile);
     form.append('interval_seconds', String(params.interval_seconds));
+    if (params.frame_step !== undefined && params.frame_step !== null) {
+      form.append('frame_step', String(params.frame_step));
+    }
     form.append('max_frames', String(params.max_frames));
     if (params.collection_id !== undefined && params.collection_id !== null && params.collection_id !== '') {
       form.append('collection_id', String(params.collection_id));
@@ -673,6 +684,17 @@ export class ApiClient {
     return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/coverage`);
   }
 
+  async getAnnotationCollectionCounts(
+    datasetId: string | number,
+    annotationFileId: string
+  ): Promise<ApiResponse<Array<{
+    collection_id: number;
+    collection_name: string;
+    annotation_count: number;
+  }>>> {
+    return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/collection-counts`);
+  }
+
   async getDatasetAnnotationsCoverage(datasetId: string | number): Promise<ApiResponse<Array<{
     annotation_file_id: string;
     name: string;
@@ -778,7 +800,8 @@ export class ApiClient {
   async getImageAnnotations(
     datasetId: string | number,
     annotationFileId: string,
-    imageFilename: string
+    imageFilename: string,
+    collectionId?: string | number | null
   ): Promise<ApiResponse<{
     annotations: Array<{
       id: number;
@@ -794,7 +817,14 @@ export class ApiClient {
     imageFilename: string;
     imageId: number;
   }>> {
-    const qs = new URLSearchParams({ image_filename: imageFilename }).toString();
+    const params = new URLSearchParams({ image_filename: imageFilename });
+    if (collectionId !== undefined && collectionId !== null && String(collectionId) !== "") {
+      const numericCollectionId = Number(collectionId);
+      if (Number.isFinite(numericCollectionId)) {
+        params.set("collection_id", String(numericCollectionId));
+      }
+    }
+    const qs = params.toString();
     return this.request(`/datasets/${datasetId}/annotations/${annotationFileId}/image-annotations?${qs}`);
   }
 

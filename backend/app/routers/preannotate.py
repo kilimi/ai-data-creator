@@ -14,6 +14,7 @@ import shutil
 import logging
 
 from .. import models, schemas
+from ..auto_annotate_collection import resolve_auto_annotate_source_collection_id
 from ..database import get_db
 from ..model_weights_presence import (
     WEIGHTS_DOWNLOAD_NOTICE,
@@ -564,8 +565,22 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         if not dataset:
             raise Exception(f"Dataset {dataset_id} not found")
         
-        images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
-        logger.info(f"Task {task_id}: Found {len(images)} images to process in dataset {dataset_id} (project {dataset.project_id})")
+        md = task.task_metadata or {}
+        cid = md.get("collection_id")
+        if cid is not None:
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                cid = None
+        q_img = db.query(models.Image).filter(models.Image.dataset_id == dataset_id)
+        if cid is not None:
+            q_img = q_img.filter(models.Image.collection_id == cid)
+        images = q_img.order_by(models.Image.id.asc()).all()
+        logger.info(
+            f"Task {task_id}: Found {len(images)} images to process in dataset {dataset_id}"
+            + (f" collection_id={cid}" if cid is not None else " (all collections)")
+            + f" (project {dataset.project_id})"
+        )
         
         if len(images) > 0:
             # Log first few image details for debugging
@@ -667,6 +682,28 @@ async def start_preannotate(
         task_type = request.get("task_type", "detect")
         environment = request.get("environment", "outdoor")
         model_size = request.get("model_size", "vitb")
+        collection_id_raw = request.get("collection_id")
+        collection_id: Optional[int] = None
+        if collection_id_raw is not None and collection_id_raw != "":
+            try:
+                collection_id = int(collection_id_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="collection_id must be an integer")
+
+        if collection_id is not None:
+            coll = db.query(models.ImageCollection).filter(
+                models.ImageCollection.id == collection_id,
+                models.ImageCollection.dataset_id == dataset_id,
+            ).first()
+            if not coll:
+                raise HTTPException(
+                    status_code=400,
+                    detail="collection_id must belong to the selected dataset",
+                )
+
+        effective_collection_id = resolve_auto_annotate_source_collection_id(
+            db, dataset_id, collection_id
+        )
         
         if not model_name or not dataset_id:
             raise HTTPException(status_code=400, detail="model_name and dataset_id are required")
@@ -698,7 +735,12 @@ async def start_preannotate(
                 "conf_threshold": conf_threshold,
                 "task_type": task_type,
                 "environment": environment,
-                "model_size": model_size
+                "model_size": model_size,
+                **(
+                    {"collection_id": effective_collection_id}
+                    if effective_collection_id is not None
+                    else {}
+                ),
             }
         )
         db.add(task)

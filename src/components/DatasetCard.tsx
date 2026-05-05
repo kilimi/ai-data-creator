@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
 import { useApi } from "@/hooks/use-api";
+import { resolveBackendMediaUrl } from "@/config/api";
 import { useToast } from "@/hooks/use-toast";
 import {
   DropdownMenu,
@@ -26,7 +27,8 @@ interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ...props }: DatasetCardProps) {
-  const imageLoaded = useImageLoad(dataset.thumbnailUrl);
+  const thumbnailSrc = resolveBackendMediaUrl(dataset.thumbnailUrl);
+  const imageLoaded = useImageLoad(thumbnailSrc);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   
   const { api } = useApi();
@@ -129,14 +131,14 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
     <Card className={cn("overflow-hidden hover-card", className)}>
       <CardHeader className="p-0">
         <div className="relative h-40 w-full overflow-hidden">
-          {dataset.thumbnailUrl ? (
+          {thumbnailSrc ? (
             <>
               {!imageLoaded && (
                 <div className="absolute inset-0 bg-muted animate-pulse" />
               )}
               <img
-                key={dataset.thumbnailUrl}
-                src={dataset.thumbnailUrl}
+                key={thumbnailSrc}
+                src={thumbnailSrc}
                 alt={dataset.name}
                 loading="lazy"
                 decoding="async"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, Link, useOutletContext, useNavigate } from 'react-router-dom';
+import { useParams, Link, useOutletContext, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -80,6 +80,7 @@ const getModelSize = (modelName: string) => {
 export default function ProjectModels() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { project } = useOutletContext<OutletContext>();
   const { isConnected } = useApi();
   const { toast } = useToast();
@@ -163,6 +164,17 @@ export default function ProjectModels() {
 
     return () => clearInterval(interval);
   }, [id, fetchTrainingTasks]);
+
+  // Support deep-linking directly into Training Details modal from
+  // task-related navigation (e.g. Active Tasks "Go to").
+  useEffect(() => {
+    const taskIdParam = searchParams.get('taskId');
+    if (!taskIdParam) return;
+    const parsed = parseInt(taskIdParam, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      setSelectedTaskId(parsed);
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (!showTrainModelModal || !id) return;
@@ -770,7 +782,14 @@ export default function ProjectModels() {
       {selectedTaskId && (
         <TrainingDetailsModal
           open={true}
-          onOpenChange={(open) => !open && setSelectedTaskId(null)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedTaskId(null);
+              const nextParams = new URLSearchParams(searchParams);
+              nextParams.delete('taskId');
+              setSearchParams(nextParams, { replace: true });
+            }
+          }}
           taskId={selectedTaskId}
         />
       )}

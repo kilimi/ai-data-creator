@@ -123,6 +123,11 @@ export default function ProjectEvaluations() {
 
   // Filter to show only parent tasks and single dataset tasks (not child tasks)
   const parentEvaluations = evaluationTasks.filter(t => !t.task_metadata?.parent_task_id);
+  const formatDatasetCollectionLabel = (datasetName?: string, collectionName?: string) => {
+    if (!datasetName) return '-';
+    if (!collectionName) return datasetName;
+    return `${datasetName} (${collectionName})`;
+  };
 
   return (
     <div className="space-y-6">
@@ -170,22 +175,22 @@ export default function ProjectEvaluations() {
           </div>
         </div>
       ) : parentEvaluations.length > 0 ? (
-        <div className="border border-gray-800 rounded-lg overflow-hidden">
-          <table className="w-full">
+        <div className="border border-gray-800 rounded-lg overflow-x-auto">
+          <table className="w-full table-fixed">
             <thead className="bg-gray-900 border-b border-gray-800">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8"></th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Dataset</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Progress</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Precision</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Recall</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">F1</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Images</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8"></th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-14">ID</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Name</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-48">Dataset</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-24">Status</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-32">Progress</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Model</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Prec.</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Rec.</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-14">F1</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-28">Images</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-28">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-gray-950 divide-y divide-gray-800">
@@ -265,10 +270,10 @@ export default function ProjectEvaluations() {
                           </button>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-300">#{task.id}</td>
-                      <td className="px-4 py-3 text-sm text-gray-200">
-                        <div className="flex items-center gap-2">
-                          {task.name}
+                      <td className="px-2 py-2 text-xs text-gray-300">#{task.id}</td>
+                      <td className="px-2 py-2 text-xs text-gray-200">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate" title={task.name}>{task.name}</span>
                           {isMultiDataset && (
                             <Badge variant="outline" className="text-xs">
                               {childTaskIds.length} datasets
@@ -276,12 +281,30 @@ export default function ProjectEvaluations() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400">
-                        {isMultiDataset 
-                          ? `${metadata.dataset_names?.join(', ') || 'Multiple'}` 
-                          : metadata.dataset_name || '-'}
+                      <td className="px-2 py-2 text-xs text-gray-400">
+                        <span className="block line-clamp-2" title={isMultiDataset
+                          ? (childTasks.length > 0
+                            ? childTasks
+                                .map((ct) => formatDatasetCollectionLabel(
+                                  ct.task_metadata?.dataset_name,
+                                  ct.task_metadata?.collection_name,
+                                ))
+                                .join(', ')
+                            : `${metadata.dataset_names?.join(', ') || 'Multiple'}`)
+                          : formatDatasetCollectionLabel(metadata.dataset_name, metadata.collection_name)}>
+                          {isMultiDataset
+                            ? (childTasks.length > 0
+                              ? childTasks
+                                  .map((ct) => formatDatasetCollectionLabel(
+                                    ct.task_metadata?.dataset_name,
+                                    ct.task_metadata?.collection_name,
+                                  ))
+                                  .join(', ')
+                              : `${metadata.dataset_names?.join(', ') || 'Multiple'}`)
+                            : formatDatasetCollectionLabel(metadata.dataset_name, metadata.collection_name)}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 text-sm">
+                      <td className="px-2 py-2 text-xs">
                         {aggregateStatus === 'running' && (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
                             Running
@@ -308,7 +331,7 @@ export default function ProjectEvaluations() {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm">
+                      <td className="px-2 py-2 text-xs">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 max-w-[120px]">
                             <div className="w-full bg-gray-800 rounded-full h-2">
@@ -325,54 +348,37 @@ export default function ProjectEvaluations() {
                           <span className="text-xs text-gray-400 min-w-[35px]">{aggregateProgress}%</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-300 max-w-[220px]">
-                        <span className="line-clamp-2" title={modelDisplay}>
+                      <td className="px-2 py-2 text-xs text-gray-300">
+                        <span className="block line-clamp-2" title={modelDisplay}>
                           {modelDisplay}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                      <td className="px-2 py-2 text-xs text-gray-400 tabular-nums">
                         {metrics ? formatMetricPct(metrics.precision) : "—"}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                      <td className="px-2 py-2 text-xs text-gray-400 tabular-nums">
                         {metrics ? formatMetricPct(metrics.recall) : "—"}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400 tabular-nums">
+                      <td className="px-2 py-2 text-xs text-gray-400 tabular-nums">
                         {metrics ? formatMetricPct(metrics.f1) : "—"}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-400">
-                        {isMultiDataset 
-                          ? childTasks.filter(ct => ct.status === 'completed').reduce((sum, ct) => sum + (ct.task_metadata?.results?.images_processed || 0), 0)
-                          : (isCompleted && metadata.results?.images_processed ? `${metadata.results.images_processed}` : '-')}
+                      <td className="px-2 py-2 text-xs text-gray-400">
+                        {isMultiDataset
+                          ? (() => {
+                              const images = childTasks
+                                .filter(ct => ct.status === 'completed')
+                                .reduce((sum, ct) => sum + (ct.task_metadata?.results?.images_processed || 0), 0);
+                              const preds = childTasks
+                                .filter(ct => ct.status === 'completed')
+                                .reduce((sum, ct) => sum + (ct.task_metadata?.results?.predictions_count || 0), 0);
+                              return images > 0 ? `${images} / ${preds} preds` : '-';
+                            })()
+                          : (isCompleted && metadata.results?.images_processed
+                            ? `${metadata.results.images_processed} / ${metadata.results?.predictions_count || 0} preds`
+                            : '-')}
                       </td>
-                      <td className="px-4 py-3 text-sm">
-                        <div className="flex items-center gap-2">
-                          {isMultiDataset && aggregateStatus === 'completed' && (
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                try {
-                                  const response = await fetch(`http://localhost:9999/predictions/export-coco-all/${task.id}`);
-                                  if (!response.ok) throw new Error('Failed to download');
-                                  const blob = await response.blob();
-                                  const url = window.URL.createObjectURL(blob);
-                                  const a = document.createElement('a');
-                                  a.href = url;
-                                  a.download = `evaluation_${task.id}_all_coco.zip`;
-                                  document.body.appendChild(a);
-                                  a.click();
-                                  window.URL.revokeObjectURL(url);
-                                  document.body.removeChild(a);
-                                  toast({ title: "Download Complete", description: "All COCO files downloaded" });
-                                } catch (error) {
-                                  toast({ title: "Download Failed", description: "Failed to download COCO files", variant: "destructive" });
-                                }
-                              }}
-                              className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
-                              title="Download All COCO predictions"
-                            >
-                              <Database className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                      <td className="px-2 py-2 text-xs">
+                        <div className="flex items-center gap-1.5">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -384,6 +390,108 @@ export default function ProjectEvaluations() {
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
+                          {!isMultiDataset && isCompleted && (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const predCount = metadata.results?.predictions_count || 0;
+                                if (predCount <= 0) {
+                                  toast({
+                                    title: "No Predictions",
+                                    description: "This evaluation has no predictions to export.",
+                                    variant: "destructive"
+                                  });
+                                  return;
+                                }
+                                try {
+                                  const response = await fetch(`http://localhost:9999/predictions/export-coco/${task.id}`);
+                                  if (!response.ok) {
+                                    let message = 'Failed to download';
+                                    try {
+                                      const errorData = await response.json();
+                                      message = errorData.detail || errorData.message || message;
+                                    } catch {
+                                      const text = await response.text();
+                                      if (text) message = text;
+                                    }
+                                    throw new Error(message);
+                                  }
+                                  const blob = await response.blob();
+                                  const url = window.URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = `evaluation_${task.id}_coco.json`;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  window.URL.revokeObjectURL(url);
+                                  document.body.removeChild(a);
+                                  toast({ title: "Download Complete", description: "COCO results downloaded" });
+                                } catch (error) {
+                                  toast({
+                                    title: "Download Failed",
+                                    description: error instanceof Error ? error.message : "Failed to download COCO file",
+                                    variant: "destructive"
+                                  });
+                                }
+                              }}
+                              className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
+                              title="Download COCO predictions"
+                            >
+                              <Database className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {isMultiDataset && aggregateStatus === 'completed' && (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                const totalPredictions = childTasks
+                                  .filter(ct => ct.status === 'completed')
+                                  .reduce((sum, ct) => sum + (ct.task_metadata?.results?.predictions_count || 0), 0);
+                                if (totalPredictions <= 0) {
+                                  toast({
+                                    title: "No Predictions",
+                                    description: "No predictions available for this evaluation yet.",
+                                    variant: "destructive"
+                                  });
+                                  return;
+                                }
+                                try {
+                                  const response = await fetch(`http://localhost:9999/predictions/export-coco-all/${task.id}`);
+                                  if (!response.ok) {
+                                    let message = 'Failed to download';
+                                    try {
+                                      const errorData = await response.json();
+                                      message = errorData.detail || errorData.message || message;
+                                    } catch {
+                                      const text = await response.text();
+                                      if (text) message = text;
+                                    }
+                                    throw new Error(message);
+                                  }
+                                  const blob = await response.blob();
+                                  const url = window.URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = `evaluation_${task.id}_all_coco.zip`;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  window.URL.revokeObjectURL(url);
+                                  document.body.removeChild(a);
+                                  toast({ title: "Download Complete", description: "All COCO files downloaded" });
+                                } catch (error) {
+                                  toast({
+                                    title: "Download Failed",
+                                    description: error instanceof Error ? error.message : "Failed to download COCO files",
+                                    variant: "destructive"
+                                  });
+                                }
+                              }}
+                              className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
+                              title="Download all COCO predictions (ZIP)"
+                            >
+                              <Database className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={async (e) => {
                               e.stopPropagation();
@@ -441,7 +549,9 @@ export default function ProjectEvaluations() {
                           <td className="px-2 py-2"></td>
                           <td className="px-4 py-2 text-sm text-gray-400 pl-8">└ #{childTask.id}</td>
                           <td className="px-4 py-2 text-sm text-gray-300">{childMetadata.dataset_name || 'Unknown'}</td>
-                          <td className="px-4 py-2 text-sm text-gray-400">{childMetadata.dataset_name || '-'}</td>
+                          <td className="px-4 py-2 text-sm text-gray-400">
+                            {formatDatasetCollectionLabel(childMetadata.dataset_name, childMetadata.collection_name)}
+                          </td>
                           <td className="px-4 py-2 text-sm">
                             {childIsRunning && (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
@@ -496,8 +606,8 @@ export default function ProjectEvaluations() {
                             {childMetrics ? formatMetricPct(childMetrics.f1) : "—"}
                           </td>
                           <td className="px-4 py-2 text-sm text-gray-400">
-                            {childIsCompleted && childMetadata.results?.images_processed 
-                              ? childMetadata.results.images_processed 
+                            {childIsCompleted && childMetadata.results?.images_processed
+                              ? `${childMetadata.results.images_processed} / ${childMetadata.results?.predictions_count || 0} preds`
                               : '-'}
                           </td>
                           <td className="px-4 py-2 text-sm">
@@ -506,9 +616,28 @@ export default function ProjectEvaluations() {
                                 <button
                                   onClick={async (e) => {
                                     e.stopPropagation();
+                                    const predCount = childMetadata.results?.predictions_count || 0;
+                                    if (predCount <= 0) {
+                                      toast({
+                                        title: "No Predictions",
+                                        description: "This evaluation has no predictions to export.",
+                                        variant: "destructive"
+                                      });
+                                      return;
+                                    }
                                     try {
                                       const response = await fetch(`http://localhost:9999/predictions/export-coco/${childTask.id}`);
-                                      if (!response.ok) throw new Error('Failed to download');
+                                      if (!response.ok) {
+                                        let message = 'Failed to download';
+                                        try {
+                                          const errorData = await response.json();
+                                          message = errorData.detail || errorData.message || message;
+                                        } catch {
+                                          const text = await response.text();
+                                          if (text) message = text;
+                                        }
+                                        throw new Error(message);
+                                      }
                                       const blob = await response.blob();
                                       const url = window.URL.createObjectURL(blob);
                                       const a = document.createElement('a');
@@ -519,7 +648,11 @@ export default function ProjectEvaluations() {
                                       window.URL.revokeObjectURL(url);
                                       document.body.removeChild(a);
                                     } catch (error) {
-                                      toast({ title: "Error", description: "Failed to download COCO file", variant: "destructive" });
+                                      toast({
+                                        title: "Error",
+                                        description: error instanceof Error ? error.message : "Failed to download COCO file",
+                                        variant: "destructive"
+                                      });
                                     }
                                   }}
                                   className="inline-flex items-center p-1 rounded text-xs bg-green-800/50 text-green-400 hover:bg-green-700 transition-colors"
@@ -653,6 +786,7 @@ export default function ProjectEvaluations() {
               body: JSON.stringify({
                 task_id: params.taskId,
                 dataset_id: params.datasetId,
+                collection_id: params.collectionId ? parseInt(params.collectionId, 10) : null,
                 annotation_file_id: params.annotationFileId,
                 checkpoint: params.checkpoint,
                 conf_threshold: params.confThreshold,
@@ -700,7 +834,10 @@ export default function ProjectEvaluations() {
           try {
             const requestBody = {
               task_id: params.taskId,
-              datasets: params.datasets,
+              datasets: params.datasets.map((d) => ({
+                ...d,
+                collectionId: d.collectionId ? parseInt(d.collectionId, 10) : null,
+              })),
               checkpoint: params.checkpoint,
               conf_threshold: params.confThreshold,
               iou_threshold: params.iouThreshold,

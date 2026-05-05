@@ -18,7 +18,7 @@ import {
 import { Brain, Database, ChevronDown, ChevronUp, X, ImageIcon, FileText, CheckCircle2, Circle, Plus, Trash2, Users } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useApi } from "@/hooks/use-api";
-import { Dataset, DatasetGroup } from "@/types";
+import { Dataset, DatasetGroup, ImageCollection } from "@/types";
 
 interface AnnotationClass {
   className: string;
@@ -31,6 +31,7 @@ interface DatasetEvalConfig {
   datasetName: string;
   annotationFileId: string | null;
   annotationFileName: string | null;
+  collectionId: string | null;
 }
 
 interface EvaluateModelModalProps {
@@ -54,6 +55,7 @@ interface EvaluateModelModalProps {
     gridSize: number;
     gridOverlap: number;
     ignoredClasses: string[];
+    collectionId: string | null;
   }) => Promise<void>;
   onEvaluateMultiple?: (params: {
     taskId: number;
@@ -111,6 +113,35 @@ export function EvaluateModelModal({
 
   // Local enriched datasets with annotation files
   const [enrichedDatasets, setEnrichedDatasets] = useState<Map<number, Dataset>>(new Map());
+  const [datasetCollections, setDatasetCollections] = useState<Map<number, ImageCollection[]>>(new Map());
+  const [collectionAnnotationCounts, setCollectionAnnotationCounts] = useState<Map<number, Record<string, number>>>(new Map());
+
+  const fetchCollectionCountsForSelection = async (datasetId: number, annotationFileId: string | null) => {
+    if (!annotationFileId) {
+      setCollectionAnnotationCounts(prev => {
+        const next = new Map(prev);
+        next.set(datasetId, {});
+        return next;
+      });
+      return;
+    }
+    try {
+      const response = await api.getAnnotationCollectionCounts(datasetId, annotationFileId);
+      if (response.success && response.data) {
+        const countsByCollection = (response.data || []).reduce((acc: Record<string, number>, row: any) => {
+          acc[String(row.collection_id)] = Number(row.annotation_count || 0);
+          return acc;
+        }, {});
+        setCollectionAnnotationCounts(prev => {
+          const next = new Map(prev);
+          next.set(datasetId, countsByCollection);
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching annotation counts per collection:', error);
+    }
+  };
 
   // Add dataset to evaluation
   const addDatasetSelection = async (dataset: Dataset) => {
@@ -121,6 +152,7 @@ export function EvaluateModelModal({
     
     // Fetch annotation files for this dataset (lightweight - only ID and name)
     let annotationFiles: any[] = [];
+    let imageCollections: ImageCollection[] = [];
     try {
       const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/annotation-files/list`);
       if (response.ok) {
@@ -128,6 +160,10 @@ export function EvaluateModelModal({
         if (result.success && result.data) {
           annotationFiles = result.data;
         }
+      }
+      const collectionsResponse = await api.getImageCollections(dataset.id);
+      if (collectionsResponse.success && collectionsResponse.data) {
+        imageCollections = collectionsResponse.data;
       }
     } catch (error) {
       console.error('Error fetching annotation files:', error);
@@ -139,15 +175,20 @@ export function EvaluateModelModal({
       annotation_files: annotationFiles
     };
     setEnrichedDatasets(prev => new Map(prev).set(dataset.id, datasetWithAnnotations));
+    setDatasetCollections(prev => new Map(prev).set(dataset.id, imageCollections));
+
+    const preferredCollection = imageCollections.find(c => (c as any).is_default) || imageCollections[0] || null;
     
     const config: DatasetEvalConfig = {
       datasetId: dataset.id,
       datasetName: dataset.name,
       annotationFileId: annotationFiles?.[0]?.id ? String(annotationFiles[0].id) : null,
-      annotationFileName: annotationFiles?.[0]?.file_name || annotationFiles?.[0]?.name || null
+      annotationFileName: annotationFiles?.[0]?.file_name || annotationFiles?.[0]?.name || null,
+      collectionId: preferredCollection ? String(preferredCollection.id) : null,
     };
     
     setSelectedDatasets(prev => [...prev, config]);
+    void fetchCollectionCountsForSelection(dataset.id, config.annotationFileId);
   };
 
   // Add all datasets from a group (fetch annotation file lists if not in lightweight group payload)
@@ -162,6 +203,7 @@ export function EvaluateModelModal({
       if (selectedDatasets.some((d) => d.datasetId === dataset.id)) continue;
 
       let annFiles = dataset.annotation_files;
+      let imageCollections: ImageCollection[] = [];
       if (!annFiles || annFiles.length === 0) {
         try {
           const response = await fetch(
@@ -175,16 +217,28 @@ export function EvaluateModelModal({
           console.error("Error fetching annotation files for group dataset:", e);
         }
       }
+      try {
+        const collectionsResponse = await api.getImageCollections(dataset.id);
+        if (collectionsResponse.success && collectionsResponse.data) {
+          imageCollections = collectionsResponse.data;
+        }
+      } catch (e) {
+        console.error("Error fetching image collections for group dataset:", e);
+      }
 
       const dsWith = { ...dataset, annotation_files: annFiles || [] };
       mergedEnriched.set(dataset.id, dsWith);
+      setDatasetCollections(prev => new Map(prev).set(dataset.id, imageCollections));
+      const preferredCollection = imageCollections.find(c => (c as any).is_default) || imageCollections[0] || null;
 
       newConfigs.push({
         datasetId: dataset.id,
         datasetName: dataset.name,
         annotationFileId: annFiles?.[0]?.id ? String(annFiles[0].id) : null,
         annotationFileName: annFiles?.[0]?.file_name || annFiles?.[0]?.name || null,
+        collectionId: preferredCollection ? String(preferredCollection.id) : null,
       });
+      void fetchCollectionCountsForSelection(dataset.id, annFiles?.[0]?.id ? String(annFiles[0].id) : null);
       groupInfoMap[dataset.id] = { groupName: group.name, groupId: group.id };
     }
 
@@ -329,10 +383,12 @@ export function EvaluateModelModal({
       annotationFileId: useGroundTruth ? selectedAnnotation || null : null,
       annotationFileName: useGroundTruth && selectedAnnotation 
         ? datasetData.annotation_files?.find((f: any) => String(f.id) === selectedAnnotation)?.file_name || null
-        : null
+        : null,
+      collectionId: null,
     };
     
     setSelectedDatasets(prev => [...prev, config]);
+    void fetchCollectionCountsForSelection(parseInt(selectedDataset), config.annotationFileId);
     
     // Reset selection for adding more
     setSelectedDataset('');
@@ -375,7 +431,8 @@ export function EvaluateModelModal({
           useGrid,
           gridSize,
           gridOverlap,
-          ignoredClasses: ignoredClasses
+          ignoredClasses: ignoredClasses,
+          collectionId: selectedDatasets[0].collectionId,
         });
       }
       
@@ -385,6 +442,8 @@ export function EvaluateModelModal({
       setSelectedDataset('');
       setSelectedAnnotation('');
       setSelectedDatasets([]);
+      setDatasetCollections(new Map());
+      setCollectionAnnotationCounts(new Map());
       setUseGroundTruth(true);
       setConfThreshold(0.25);
       setIouThreshold(0.45);
@@ -574,6 +633,8 @@ export function EvaluateModelModal({
                     const dataset = enrichedDatasets.get(config.datasetId) || datasets.find(d => d.id === config.datasetId);
                     const groupInfo = datasetGroupInfo[config.datasetId];
                     const hasAnnotations = dataset?.annotation_files && dataset.annotation_files.length > 0;
+                    const imageCollections = datasetCollections.get(config.datasetId) || [];
+                    const countsForDataset = collectionAnnotationCounts.get(config.datasetId) || {};
                     
                     return (
                       <Card key={config.datasetId} className="border">
@@ -612,6 +673,35 @@ export function EvaluateModelModal({
                               </span>
                             )}
                           </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Image Collection</Label>
+                            <Select
+                              value={config.collectionId || ''}
+                              onValueChange={(value) => {
+                                setSelectedDatasets(prev => prev.map(sd => {
+                                  if (sd.datasetId === config.datasetId) {
+                                    return {
+                                      ...sd,
+                                      collectionId: value || null,
+                                    };
+                                  }
+                                  return sd;
+                                }));
+                              }}
+                            >
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue placeholder="Select image collection" />
+                              </SelectTrigger>
+                              <SelectContent className="z-[100]">
+                                {imageCollections.map((collection: any) => (
+                                  <SelectItem key={collection.id} value={String(collection.id)}>
+                                    {collection.name} ({countsForDataset[String(collection.id)] ?? 0} annotations)
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
                           
                           {hasAnnotations && (
                             <div className="space-y-2">
@@ -619,17 +709,19 @@ export function EvaluateModelModal({
                               <Select
                                 value={config.annotationFileId || 'none'}
                                 onValueChange={(value) => {
+                                  const nextAnnotationId = value === 'none' ? null : value;
                                   setSelectedDatasets(prev => prev.map(sd => {
                                     if (sd.datasetId === config.datasetId) {
                                       const selectedFile = dataset!.annotation_files!.find((f: any) => String(f.id) === value);
                                       return {
                                         ...sd,
-                                        annotationFileId: value === 'none' ? null : value,
+                                        annotationFileId: nextAnnotationId,
                                         annotationFileName: selectedFile ? (selectedFile.file_name || selectedFile.name) : null
                                       };
                                     }
                                     return sd;
                                   }));
+                                  void fetchCollectionCountsForSelection(config.datasetId, nextAnnotationId);
                                 }}
                               >
                                 <SelectTrigger className="h-8 text-xs">
@@ -639,7 +731,15 @@ export function EvaluateModelModal({
                                   <SelectItem value="none">No ground truth</SelectItem>
                                   {dataset!.annotation_files!.map((file: any) => (
                                     <SelectItem key={file.id} value={String(file.id)}>
-                                      {file.file_name || file.name} ({file.annotation_count || 0} annotations)
+                                      {file.file_name || file.name} ({
+                                        (() => {
+                                          const fileCount = Number(file.annotation_count || 0);
+                                          if (fileCount > 0) return fileCount;
+                                          const dsCount = Number((dataset as any)?.annotation_count || 0);
+                                          if ((dataset!.annotation_files!.length === 1) && dsCount > 0) return dsCount;
+                                          return 0;
+                                        })()
+                                      } annotations)
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
@@ -825,7 +925,8 @@ export function EvaluateModelModal({
                 isSubmitting ||
                 resourcesLoading ||
                 !selectedModel ||
-                selectedDatasets.length === 0
+                selectedDatasets.length === 0 ||
+                selectedDatasets.some((d) => !d.collectionId)
               }
             >
               {isSubmitting ? (

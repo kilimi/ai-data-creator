@@ -252,9 +252,23 @@ def generate_depth_maps(
         if not dataset:
             raise Exception(f"Dataset {dataset_id} not found")
         
-        # Get source images
-        images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
-        logger.info(f"Task {task_id}: Found {len(images)} images to process")
+        # Get source images (optional: restrict to one image collection via task_metadata)
+        md = task.task_metadata or {}
+        cid_raw = md.get("collection_id")
+        cid = None
+        if cid_raw is not None:
+            try:
+                cid = int(cid_raw)
+            except (TypeError, ValueError):
+                cid = None
+        q_img = db.query(models.Image).filter(models.Image.dataset_id == dataset_id)
+        if cid is not None:
+            q_img = q_img.filter(models.Image.collection_id == cid)
+        images = q_img.order_by(models.Image.id.asc()).all()
+        logger.info(
+            f"Task {task_id}: Found {len(images)} images to process"
+            + (f" (collection_id={cid})" if cid is not None else " (all collections)")
+        )
         
         if len(images) == 0:
             raise Exception("No images found in dataset")

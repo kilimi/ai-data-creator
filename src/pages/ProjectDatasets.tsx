@@ -426,15 +426,17 @@ export default function ProjectDatasets() {
                   Dataset
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <div 
-                  onClick={() => setShowAugmentedModal(true)}
-                  className="flex items-center cursor-pointer"
-                >
-                  <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
-                  <span className="text-yellow-600">Augmented Dataset</span>
-                </div>
-              </DropdownMenuItem>
+              {datasets.length > 0 && (
+                <DropdownMenuItem asChild>
+                  <div
+                    onClick={() => setShowAugmentedModal(true)}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                    <span className="text-yellow-600">Augmented Dataset</span>
+                  </div>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -555,15 +557,17 @@ export default function ProjectDatasets() {
                   Dataset
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <div 
-                  onClick={() => setShowAugmentedModal(true)}
-                  className="flex items-center cursor-pointer"
-                >
-                  <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
-                  <span className="text-yellow-600">Augmented Dataset</span>
-                </div>
-              </DropdownMenuItem>
+              {datasets.length > 0 && (
+                <DropdownMenuItem asChild>
+                  <div
+                    onClick={() => setShowAugmentedModal(true)}
+                    className="flex items-center cursor-pointer"
+                  >
+                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
+                    <span className="text-yellow-600">Augmented Dataset</span>
+                  </div>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

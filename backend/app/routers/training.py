@@ -665,7 +665,13 @@ async def train_yolo_model_task(
                 train_args['entity'] = training_config['wandb_entity']
         
         logger.info(f"Starting training with args: {train_args}")
-        
+
+        from app.tasks.yolo_training_helpers import prepare_yolo_training_weights_dir
+
+        logger.info(f"Pre-train weights-dir prepare START: {output_base}")
+        prepare_yolo_training_weights_dir(output_base)
+        logger.info("Pre-train weights-dir prepare DONE")
+
         # Train the model
         results = model.train(**train_args)
         

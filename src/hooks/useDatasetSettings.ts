@@ -2,18 +2,23 @@
 import { useState, useEffect } from 'react';
 import { LayoutType } from '@/components/LayoutControls';
 
+export type DatasetUiMode = 'default' | 'advanced';
+
 interface DatasetSettings {
   imagesPerPage: number;
   imageSize: number;
   layout: LayoutType;
   sliderPosition: number; // Add slider position (0-100)
+  /** default: simplified UI (e.g. hide collection calibration). advanced: full tools. */
+  mode: DatasetUiMode;
 }
 
 const DEFAULT_SETTINGS: DatasetSettings = {
   imagesPerPage: 20,
   imageSize: 160,
   layout: 'horizontal',
-  sliderPosition: 50 // Default 50/50 split
+  sliderPosition: 50, // Default 50/50 split
+  mode: 'default',
 };
 
 /** Optional overrides when no saved settings exist (e.g. classification view uses larger default image size) */
@@ -45,7 +50,10 @@ export function useDatasetSettings(datasetId: string, overrides?: DatasetSetting
     if (storedSettings) {
       try {
         const parsed = JSON.parse(storedSettings);
-        const mergedSettings = { ...defaults, ...parsed };
+        const mergedSettings: DatasetSettings = { ...defaults, ...parsed };
+        if (mergedSettings.mode !== 'default' && mergedSettings.mode !== 'advanced') {
+          mergedSettings.mode = defaults.mode;
+        }
         console.log('Parsed settings:', parsed);
         console.log('Merged settings:', mergedSettings);
         setSettings(mergedSettings);
@@ -88,6 +96,7 @@ export function useDatasetSettings(datasetId: string, overrides?: DatasetSetting
     updateImagesPerPage: (value: number) => updateSettings({ imagesPerPage: value }),
     updateImageSize: (value: number) => updateSettings({ imageSize: value }),
     updateLayout: (value: LayoutType) => updateSettings({ layout: value }),
-    updateSliderPosition: (value: number) => updateSettings({ sliderPosition: value })
+    updateSliderPosition: (value: number) => updateSettings({ sliderPosition: value }),
+    updateMode: (value: DatasetUiMode) => updateSettings({ mode: value }),
   };
 }

@@ -15,10 +15,41 @@ import io
 
 from ..database import get_db
 from ..evaluation_artifacts import load_merged_evaluation_results
-from ..models import Task, Dataset, Image
+from ..models import Task, Dataset, Image, ImageCollection
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _resolve_eval_image_path(img: Image, project_id: int, dataset_id: int) -> Optional[Path]:
+    """Resolve image path for evaluation/snapshot serving."""
+    candidates: List[Path] = [
+        Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name,
+        Path("data") / "images" / str(dataset_id) / img.file_name,
+        Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / img.file_name,
+        Path("/app/data") / "images" / str(dataset_id) / img.file_name,
+    ]
+
+    img_url = (img.url or "").strip()
+    if img_url:
+        url_path = img_url.lstrip("/")
+        if url_path.startswith("static/"):
+            url_path = url_path[len("static/"):]
+        if url_path:
+            p = Path(url_path)
+            candidates.append(p)
+            if not str(p).startswith("projects"):
+                candidates.append(Path("projects") / p)
+
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+    return None
 
 
 class DatasetEvalConfig(BaseModel):
@@ -27,12 +58,14 @@ class DatasetEvalConfig(BaseModel):
     datasetName: str
     annotationFileId: Optional[str] = None
     annotationFileName: Optional[str] = None
+    collectionId: Optional[int] = None
 
 
 class EvaluationRequest(BaseModel):
     """Request model for model evaluation"""
     task_id: int  # Training task ID
     dataset_id: int
+    collection_id: Optional[int] = None
     annotation_file_id: Optional[str] = None  # Ground truth annotations
     checkpoint: str = "best"  # "best" or "last"
     conf_threshold: float = 0.25
@@ -80,6 +113,16 @@ async def evaluate_model(
         dataset = db.query(Dataset).filter(Dataset.id == request.dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
+
+        selected_collection_name = None
+        if request.collection_id is not None:
+            selected_collection = db.query(ImageCollection).filter(
+                ImageCollection.id == request.collection_id,
+                ImageCollection.dataset_id == request.dataset_id,
+            ).first()
+            if not selected_collection:
+                raise HTTPException(status_code=400, detail="Selected image collection does not belong to the dataset")
+            selected_collection_name = selected_collection.name
         
         # Get model info from training task
         task_metadata = training_task.task_metadata or {}
@@ -108,6 +151,8 @@ async def evaluate_model(
                 "training_task_name": training_task.name,
                 "dataset_id": request.dataset_id,
                 "dataset_name": dataset.name,
+                "collection_id": request.collection_id,
+                "collection_name": selected_collection_name,
                 "annotation_file_id": request.annotation_file_id,
                 "annotation_file_name": annotation_file_name,
                 "checkpoint": request.checkpoint,
@@ -139,6 +184,7 @@ async def evaluate_model(
             request.use_grid,
             request.grid_size,
             request.grid_overlap,
+            request.collection_id,
             request.ignored_classes or []
         )
         
@@ -238,6 +284,19 @@ async def evaluate_model_multiple_datasets(
             if not dataset:
                 logger.warning(f"Dataset {dataset_config.datasetId} not found, skipping")
                 continue
+
+            selected_collection_name = None
+            if dataset_config.collectionId is not None:
+                selected_collection = db.query(ImageCollection).filter(
+                    ImageCollection.id == dataset_config.collectionId,
+                    ImageCollection.dataset_id == dataset_config.datasetId,
+                ).first()
+                if not selected_collection:
+                    logger.warning(
+                        f"Collection {dataset_config.collectionId} does not belong to dataset {dataset_config.datasetId}, skipping"
+                    )
+                    continue
+                selected_collection_name = selected_collection.name
             
             # Get annotation file name if provided
             annotation_file_name = dataset_config.annotationFileName
@@ -255,6 +314,8 @@ async def evaluate_model_multiple_datasets(
                     "training_task_name": training_task.name,
                     "dataset_id": dataset_config.datasetId,
                     "dataset_name": dataset_config.datasetName,
+                    "collection_id": dataset_config.collectionId,
+                    "collection_name": selected_collection_name,
                     "annotation_file_id": dataset_config.annotationFileId,
                     "annotation_file_name": annotation_file_name,
                     "checkpoint": request.checkpoint,
@@ -286,6 +347,7 @@ async def evaluate_model_multiple_datasets(
                 request.use_grid,
                 request.grid_size,
                 request.grid_overlap,
+                dataset_config.collectionId,
                 request.ignored_classes or []
             )
             
@@ -349,6 +411,50 @@ async def get_evaluation_blobs(
     }
 
 
+@router.get("/predictions/evaluation-image/{task_id}/{image_id}")
+async def get_evaluation_image(
+    task_id: int,
+    image_id: int,
+    db: Session = Depends(get_db),
+):
+    """Serve raw image file for evaluation snapshot cards."""
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task.task_type != 'model_evaluation':
+        raise HTTPException(status_code=400, detail="Task is not an evaluation task")
+
+    results = load_merged_evaluation_results((task.task_metadata or {}).get('results', {}))
+    dataset_id = results.get('dataset_id')
+    if not dataset_id:
+        raise HTTPException(status_code=400, detail="Evaluation dataset not found")
+
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    img = db.query(Image).filter(Image.id == image_id, Image.dataset_id == dataset_id).first()
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found in evaluation dataset")
+
+    img_path = _resolve_eval_image_path(img, dataset.project_id, dataset_id)
+    if img_path is None:
+        raise HTTPException(status_code=404, detail="Image file not found on disk")
+
+    suffix = img_path.suffix.lower()
+    media_type = None
+    if suffix in [".jpg", ".jpeg"]:
+        media_type = "image/jpeg"
+    elif suffix == ".png":
+        media_type = "image/png"
+    elif suffix == ".webp":
+        media_type = "image/webp"
+    elif suffix == ".gif":
+        media_type = "image/gif"
+
+    return FileResponse(path=str(img_path), media_type=media_type, filename=img_path.name)
+
+
 @router.get("/predictions/export-coco/{task_id}")
 async def export_coco_results(
     task_id: int,
@@ -374,6 +480,7 @@ async def export_coco_results(
         
         # Get evaluation parameters
         dataset_id = results.get('dataset_id')
+        collection_id = results.get('collection_id')
         class_names = results.get('class_names', [])
         predictions = results.get('predictions', [])
         conf_threshold = results.get('conf_threshold', 0.25)
@@ -389,7 +496,10 @@ async def export_coco_results(
             raise HTTPException(status_code=404, detail="Dataset not found")
         
         # Get images from dataset
-        images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+        if collection_id is not None:
+            images_query = images_query.filter(Image.collection_id == collection_id)
+        images = images_query.all()
         if not images:
             raise HTTPException(status_code=400, detail="No images found in dataset")
         
@@ -505,6 +615,7 @@ async def export_all_coco_results(
                 
                 # Get evaluation parameters
                 dataset_id = results.get('dataset_id')
+                collection_id = results.get('collection_id')
                 dataset_name = child_metadata.get('dataset_name', f'dataset_{dataset_id}')
                 class_names = results.get('class_names', [])
                 predictions = results.get('predictions', [])
@@ -520,7 +631,10 @@ async def export_all_coco_results(
                 if not dataset:
                     continue
                 
-                images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+                images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+                if collection_id is not None:
+                    images_query = images_query.filter(Image.collection_id == collection_id)
+                images = images_query.all()
                 if not images:
                     continue
                 
@@ -622,9 +736,15 @@ async def view_in_fiftyone(
             raise HTTPException(status_code=404, detail="No evaluation results found")
         
         dataset_id = results.get('dataset_id')
+        collection_id = results.get('collection_id')
         class_names = results.get('class_names', [])
         predictions = results.get('predictions', [])
         annotation_file_id = metadata.get('annotation_file_id')
+        if not predictions:
+            raise HTTPException(
+                status_code=400,
+                detail="No predictions available for this evaluation. Run evaluation with detectable outputs first."
+            )
         
         # Get dataset
         dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
@@ -634,7 +754,10 @@ async def view_in_fiftyone(
         project_id = dataset.project_id
         
         # Get images
-        images = db.query(Image).filter(Image.dataset_id == dataset_id).all()
+        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+        if collection_id is not None:
+            images_query = images_query.filter(Image.collection_id == collection_id)
+        images = images_query.all()
         if not images:
             raise HTTPException(status_code=400, detail="No images found in dataset")
         

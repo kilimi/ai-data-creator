@@ -34,6 +34,7 @@ interface TaskDetails {
   progress: number;
   created_at: string;
   completed_at?: string;
+  error_message?: string;
   task_metadata?: {
     current_epoch?: number;
     epochs?: number;
@@ -65,12 +66,19 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAllSettings, setShowAllSettings] = useState(false);
+  const [showStatusReason, setShowStatusReason] = useState(false);
 
   useEffect(() => {
     if (open && taskId) {
       fetchTaskDetails();
     }
   }, [open, taskId, api]);
+
+  useEffect(() => {
+    if (!open) {
+      setShowStatusReason(false);
+    }
+  }, [open, taskId]);
 
   useEffect(() => {
     if (!open || !taskId) return;
@@ -165,6 +173,12 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   const metadata = task?.task_metadata;
   const latestMetrics = metadata?.latest_metrics;
   const metricsHistory = metadata?.metrics_history || [];
+  const statusReason =
+    task?.error_message
+    || (metadata as any)?.error
+    || (metadata as any)?.failure_reason
+    || (metadata as any)?.failureReason
+    || null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -201,7 +215,19 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
                   <div className="text-sm text-gray-400 mb-1">Status</div>
-                  {getStatusBadge(task.status)}
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(task.status)}
+                    {(task.status === 'failed' || task.status === 'stopped') && statusReason && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => setShowStatusReason(prev => !prev)}
+                      >
+                        {showStatusReason ? 'Hide why' : 'Why?'}
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <div className="text-sm text-gray-400 mb-1">Progress</div>
@@ -230,6 +256,14 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   </div>
                 </div>
               </div>
+              {(task.status === 'failed' || task.status === 'stopped') && showStatusReason && (
+                <div className="mt-4 rounded-md border border-red-900/60 bg-red-950/30 p-3">
+                  <div className="mb-1 text-xs uppercase tracking-wide text-red-300">Failure reason</div>
+                  <div className="whitespace-pre-wrap text-sm text-red-100">
+                    {statusReason || 'No detailed error message was provided by the backend.'}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Training Configuration */}

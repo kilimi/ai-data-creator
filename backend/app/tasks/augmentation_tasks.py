@@ -7,7 +7,7 @@ import shutil
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 from PIL import Image as PILImage
 import cv2
@@ -24,6 +24,7 @@ import uuid
 
 from app.celery_app import celery_app
 from app.models import Task as TaskModel, Dataset, Image, Annotation, Augmentation, AnnotationFile, AnnotationClass, AnnotationFileImage
+from app.routers.annotation_db import validate_and_normalize_segmentation
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,72 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db/lai_db')
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def _parse_annotation_segmentation(seg: Any) -> Any:
+    """DB/JSON may store segmentation as a JSON string — normalize to object."""
+    if seg is None:
+        return None
+    if isinstance(seg, str):
+        s = seg.strip()
+        if not s:
+            return None
+        try:
+            return json.loads(s)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return seg
+
+
+def _segmentation_mask_flags(
+    raw_seg: Any, image_width: int, image_height: int
+) -> Tuple[Any, bool, bool]:
+    """
+    Returns (normalized_segmentation, has_polygon_masks, has_rle_mask).
+    Polygon lists are validated/clamped like COCO import; RLE dicts are detected but not expanded here.
+    """
+    parsed = _parse_annotation_segmentation(raw_seg)
+    if not parsed:
+        return None, False, False
+    if isinstance(parsed, dict) and ("counts" in parsed or "size" in parsed):
+        return parsed, False, True
+    norm = validate_and_normalize_segmentation(
+        parsed, image_width, image_height, normalize=False
+    )
+    if isinstance(norm, list) and len(norm) > 0:
+        return norm, True, False
+    return None, False, False
+
+
+def _clip_segmentation_polygons(
+    seg: Optional[List], width: int, height: int
+) -> Optional[List]:
+    """Clamp all polygon vertices to image pixel bounds (inclusive)."""
+    if not seg or width <= 0 or height <= 0:
+        return seg
+    w1 = max(0, width - 1)
+    h1 = max(0, height - 1)
+    out: List[List[int]] = []
+    for poly in seg:
+        if not isinstance(poly, list) or len(poly) < 6:
+            continue
+        clipped: List[int] = []
+        for i in range(0, len(poly), 2):
+            if i + 1 >= len(poly):
+                break
+            try:
+                xf = float(np.asarray(poly[i]).item())
+                yf = float(np.asarray(poly[i + 1]).item())
+            except (TypeError, ValueError, IndexError):
+                continue
+            if np.isnan(xf) or np.isnan(yf) or np.isinf(xf) or np.isinf(yf):
+                continue
+            xi = int(round(max(0.0, min(xf, float(w1)))))
+            yi = int(round(max(0.0, min(yf, float(h1)))))
+            clipped.extend([xi, yi])
+        if len(clipped) >= 6:
+            out.append(clipped)
+    return out if out else None
 
 
 class AugmentationTask(Task):
@@ -55,7 +122,12 @@ class AugmentationTask(Task):
             db.close()
 
 
-def create_albumentations_transform(augmentation_methods: List[str], method_parameters: Dict[str, Any]) -> 'A.Compose':
+def create_albumentations_transform(
+    augmentation_methods: List[str],
+    method_parameters: Dict[str, Any],
+    *,
+    include_keypoint_params: bool = True,
+) -> 'A.Compose':
     """
     Create an Albumentations transform pipeline based on the selected methods and parameters.
     """
@@ -210,18 +282,20 @@ def create_albumentations_transform(augmentation_methods: List[str], method_para
         'bbox_params': A.BboxParams(
             format='coco',  # [x, y, width, height]
             label_fields=['class_labels'],
-            min_visibility=0.3  # Minimum visibility threshold for bboxes
+            # Keep all instances so bbox ↔ keypoint streams stay aligned for masks
+            min_visibility=0.0,
         )
     }
     
-    # Always add keypoint_params if we have any transforms (needed for segmentation transformation)
-    # Even simple transforms like brightness/contrast don't need it, but if we have any geometric transforms, we need it
-    if transforms:  # If we have any transforms at all, include keypoint support for segmentation
+    # Keypoint_params make Albumentations require `keypoints` in every __call__. We only have polygon
+    # vertices when there is segmentation-derived flat_keypoints; bbox-only images must omit this or
+    # Compose raises KeyError('keypoints') when keypoints are not passed in.
+    if transforms and include_keypoint_params:
         compose_kwargs['keypoint_params'] = A.KeypointParams(
             format='xy',  # List of (x, y) tuples
-            remove_invisible=False  # Keep all keypoints even if partially out of bounds
+            remove_invisible=False,  # Keep all keypoints even if partially out of bounds
         )
-    
+
     return A.Compose(**compose_kwargs)
 
 
@@ -428,14 +502,43 @@ def create_augmented_dataset_task(self, task_id: int):
         task.task_metadata = {**(task.task_metadata or {}), "stage": "collecting_images"}
         db.commit()
         
-        # Get all images from source datasets
+        # Build per-dataset collection filter from task metadata.
+        # The augmentation request can include dataset_configs entries with
+        # collection_id so augmentation runs only on that selected collection.
+        dataset_collection_filter: Dict[int, Optional[int]] = {}
+        task_metadata = task.task_metadata or {}
+        for cfg in task_metadata.get("annotation_file_configs", []) or []:
+            try:
+                ds_id = int(cfg.get("dataset_id"))
+            except (TypeError, ValueError):
+                continue
+            coll_raw = cfg.get("collection_id")
+            if coll_raw is None:
+                dataset_collection_filter[ds_id] = None
+                continue
+            try:
+                dataset_collection_filter[ds_id] = int(coll_raw)
+            except (TypeError, ValueError):
+                dataset_collection_filter[ds_id] = None
+
+        # Get all images from source datasets (filtered by selected collection
+        # when provided).
         all_source_images = []
         for dataset in source_datasets:
-            dataset_images = db.query(Image).filter(
-                Image.dataset_id == dataset.id
-            ).all()
+            query = db.query(Image).filter(Image.dataset_id == dataset.id)
+            selected_collection_id = dataset_collection_filter.get(dataset.id)
+            if selected_collection_id is not None:
+                query = query.filter(Image.collection_id == selected_collection_id)
+            dataset_images = query.all()
             all_source_images.extend([(img, dataset.project_id) for img in dataset_images])
-            logger.info(f"Task {task_id}: Found {len(dataset_images)} images in dataset {dataset.name}")
+            if selected_collection_id is None:
+                logger.info(
+                    f"Task {task_id}: Found {len(dataset_images)} images in dataset {dataset.name}"
+                )
+            else:
+                logger.info(
+                    f"Task {task_id}: Found {len(dataset_images)} images in dataset {dataset.name} (collection {selected_collection_id})"
+                )
         
         if not all_source_images:
             raise Exception("No images found in source datasets")
@@ -597,32 +700,36 @@ def create_augmented_dataset_task(self, task_id: int):
                                             # Cache it for future use
                                             source_class_to_category_id[ann.category] = category_id
                             
-                            # Convert segmentation to keypoint format for Albumentations
+                            # Convert segmentation to keypoint format for Albumentations (use same normalization as COCO import)
+                            norm_seg, has_polygon_masks, has_rle_mask = _segmentation_mask_flags(
+                                ann.segmentation, image_width, image_height
+                            )
                             ann_keypoints = []
-                            if ann.segmentation and isinstance(ann.segmentation, list):
-                                # Segmentation is a list of polygons (COCO format)
-                                # Each polygon is a flat list: [x1, y1, x2, y2, ...]
-                                for polygon in ann.segmentation:
+                            keypoint_polygon_vertex_counts: List[int] = []
+                            if has_polygon_masks and isinstance(norm_seg, list):
+                                for polygon in norm_seg:
                                     if polygon and isinstance(polygon, list) and len(polygon) >= 6:
-                                        # Convert flat list to list of (x, y) tuples
                                         polygon_keypoints = []
                                         for i in range(0, len(polygon), 2):
                                             if i + 1 < len(polygon):
                                                 px = float(polygon[i])
                                                 py = float(polygon[i + 1])
-                                                # Clamp to image bounds
-                                                px = max(0, min(px, image_width))
-                                                py = max(0, min(py, image_height))
+                                                px = max(0.0, min(px, float(image_width - 1)))
+                                                py = max(0.0, min(py, float(image_height - 1)))
                                                 polygon_keypoints.append((px, py))
-                                        if len(polygon_keypoints) >= 3:  # At least 3 points for a valid polygon
+                                        if len(polygon_keypoints) >= 3:
+                                            keypoint_polygon_vertex_counts.append(len(polygon_keypoints))
                                             ann_keypoints.extend(polygon_keypoints)
                             
                             annotation_data_list.append({
                                 'category': ann.category,
-                                'segmentation': ann.segmentation,
+                                'segmentation': norm_seg if has_polygon_masks else _parse_annotation_segmentation(ann.segmentation),
                                 'area': ann.area,
-                                'category_id': category_id,  # Use resolved category_id
-                                'keypoints': ann_keypoints  # Store original keypoints for reference
+                                'category_id': category_id,
+                                'keypoints': ann_keypoints,
+                                'keypoint_polygon_vertex_counts': keypoint_polygon_vertex_counts,
+                                'has_polygon_masks': has_polygon_masks,
+                                'has_rle_mask': has_rle_mask,
                             })
                             keypoints.append(ann_keypoints)  # Add to keypoints list for Albumentations
                     else:
@@ -637,18 +744,20 @@ def create_augmented_dataset_task(self, task_id: int):
                         return {"status": "cancelled", "processed": processed_images}
                     
                     try:
-                        # Create the augmentation pipeline
+                        # Flatten polygon vertices for Albumentations (empty for bbox-only / no valid polygons)
+                        flat_keypoints: List[Tuple[float, float]] = []
+                        for kp_list in keypoints:
+                            flat_keypoints.extend(kp_list)
+
+                        # Create the augmentation pipeline (keypoint_params only when we actually pass keypoints)
                         transform = create_albumentations_transform(
                             augmentation.augmentation_methods,
-                            augmentation.method_parameters or {}
+                            augmentation.method_parameters or {},
+                            include_keypoint_params=bool(flat_keypoints),
                         )
-                        
+
                         # Apply augmentation with bboxes and keypoints (for segmentation)
                         if bboxes and augmentation.transform_annotations:
-                            # Flatten keypoints list for Albumentations (it expects a flat list)
-                            flat_keypoints = []
-                            for kp_list in keypoints:
-                                flat_keypoints.extend(kp_list)
                             
                             # Prepare transform arguments
                             transform_args = {
@@ -674,7 +783,18 @@ def create_augmented_dataset_task(self, task_id: int):
                                     sample_kp = transformed_keypoints[0]
                                     logger.debug(f"Sample transformed keypoint format: {type(sample_kp)}, value: {sample_kp}")
                         else:
-                            augmented = transform(image=image_data)
+                            # Keep call signature compatible with Compose configured
+                            # with bbox_params(label_fields=['class_labels']).
+                            # When a source image has no bbox annotations (e.g.
+                            # classification-only), Albumentations still validates
+                            # label_fields and raises:
+                            # "Your 'label_fields' are not valid..."
+                            # unless we pass empty bboxes + class_labels.
+                            augmented = transform(
+                                image=image_data,
+                                bboxes=[],
+                                class_labels=[],
+                            )
                             transformed_bboxes = []
                             transformed_labels = []
                             transformed_keypoints = []
@@ -734,6 +854,9 @@ def create_augmented_dataset_task(self, task_id: int):
                             for bbox_idx, (bbox, label) in enumerate(zip(transformed_bboxes, transformed_labels)):
                                 if bbox_idx < len(annotation_data_list):
                                     ann_data = annotation_data_list[bbox_idx]
+                                    expect_masks = bool(
+                                        ann_data.get("has_polygon_masks") or ann_data.get("has_rle_mask")
+                                    )
                                     
                                     # Transform segmentation using transformed keypoints from Albumentations
                                     transformed_seg = None
@@ -744,86 +867,108 @@ def create_augmented_dataset_task(self, task_id: int):
                                             ann_transformed_kp = transformed_keypoints[keypoint_idx:keypoint_idx + num_keypoints]
                                             keypoint_idx += num_keypoints
                                             
-                                            # Convert keypoints back to COCO segmentation format (flat list)
-                                            # Group keypoints back into polygons (assuming one polygon per annotation for now)
+                                            # Rebuild COCO segmentation: split keypoints back into polygon rings
                                             if ann_transformed_kp:
-                                                # Albumentations returns keypoints as list of [x, y] or (x, y)
-                                                # Convert to flat list [x1, y1, x2, y2, ...]
-                                                # Filter and clamp points to ensure they're within image bounds
-                                                flat_seg = []
-                                                valid_points = 0
-                                                points_outside = 0
-                                                
-                                                for kp in ann_transformed_kp:
-                                                    # Handle both tuple and list formats from Albumentations
-                                                    if isinstance(kp, (list, tuple)) and len(kp) >= 2:
-                                                        kx = float(kp[0])
-                                                        ky = float(kp[1])
-                                                    else:
-                                                        logger.warning(f"Invalid keypoint format: {kp}")
+                                                vertex_counts = ann_data.get('keypoint_polygon_vertex_counts') or []
+                                                if (
+                                                    not vertex_counts
+                                                    or sum(vertex_counts) != len(ann_transformed_kp)
+                                                ):
+                                                    vertex_counts = [len(ann_transformed_kp)]
+                                                polygons_out: List[List[int]] = []
+                                                offset_poly = 0
+                                                total_outside = 0
+                                                for ring_idx, cnt in enumerate(vertex_counts):
+                                                    if cnt < 1:
                                                         continue
-                                                    
-                                                    # Check if point is way outside bounds (more than 10% outside)
-                                                    # If so, don't include it - it's likely from a transformation that moved it too far
-                                                    margin = max(aug_width, aug_height) * 0.1
-                                                    if kx < -margin or kx > aug_width + margin or ky < -margin or ky > aug_height + margin:
-                                                        points_outside += 1
-                                                        continue
-                                                    
-                                                    # Clamp to augmented image bounds (strictly within [0, width/height])
-                                                    kx = max(0.0, min(kx, float(aug_width - 1)))
-                                                    ky = max(0.0, min(ky, float(aug_height - 1)))
-                                                    
-                                                    # Only add point if it's valid (not NaN or Inf)
-                                                    if not (np.isnan(kx) or np.isnan(ky) or np.isinf(kx) or np.isinf(ky)):
-                                                        # Convert to integer coordinates (round to nearest integer)
-                                                        kx_int = int(round(kx))
-                                                        ky_int = int(round(ky))
-                                                        # Final check: ensure no negatives after rounding
-                                                        if kx_int >= 0 and ky_int >= 0 and kx_int < aug_width and ky_int < aug_height:
-                                                            flat_seg.extend([kx_int, ky_int])
-                                                            valid_points += 1
-                                                    else:
-                                                        logger.warning(f"Invalid keypoint value (NaN/Inf): ({kx}, {ky})")
-                                                
-                                                # Final validation: ensure NO negative coordinates and convert to integers
-                                                # Double-check all coordinates are valid before saving
-                                                validated_seg = []
-                                                for coord_idx in range(0, len(flat_seg), 2):
-                                                    if coord_idx + 1 < len(flat_seg):
-                                                        x = flat_seg[coord_idx]
-                                                        y = flat_seg[coord_idx + 1]
-                                                        
-                                                        # Convert to integer (should already be int, but ensure it)
-                                                        x_int = int(x) if isinstance(x, (int, float)) else x
-                                                        y_int = int(y) if isinstance(y, (int, float)) else y
-                                                        
-                                                        # Final validation - no negatives, no NaN, no Inf, within bounds
-                                                        if (x_int >= 0 and y_int >= 0 and 
-                                                            x_int < aug_width and y_int < aug_height and
-                                                            not (np.isnan(x_int) or np.isnan(y_int) or np.isinf(x_int) or np.isinf(y_int))):
-                                                            validated_seg.extend([x_int, y_int])
-                                                
-                                                # Only create segmentation if we have at least 3 valid points after final validation
-                                                # and at least 50% of original points are valid
-                                                original_point_count = len(ann_transformed_kp)
-                                                final_valid_points = len(validated_seg) // 2
-                                                
-                                                if final_valid_points >= 3 and len(validated_seg) >= 6:
-                                                    # Check if we kept enough points (at least 50% of original)
-                                                    if final_valid_points >= original_point_count * 0.5:
-                                                        transformed_seg = [validated_seg]
-                                                        logger.debug(f"Transformed segmentation for annotation {bbox_idx}: {final_valid_points}/{original_point_count} valid points after validation")
-                                                    else:
-                                                        logger.warning(f"Too many points lost for annotation {bbox_idx}: {final_valid_points}/{original_point_count} valid (need at least 50%)")
-                                                else:
-                                                    logger.warning(f"Insufficient valid points for annotation {bbox_idx}: {final_valid_points} points (need at least 3), {points_outside} points outside bounds")
+                                                    chunk = ann_transformed_kp[offset_poly : offset_poly + cnt]
+                                                    offset_poly += cnt
+                                                    flat_seg: List[int] = []
+                                                    ring_outside = 0
+                                                    for kp in chunk:
+                                                        if isinstance(kp, (list, tuple, np.ndarray)):
+                                                            arr = np.asarray(kp).reshape(-1)
+                                                            if arr.size < 2:
+                                                                continue
+                                                            kx = float(arr[0].item())
+                                                            ky = float(arr[1].item())
+                                                        else:
+                                                            logger.warning(f"Invalid keypoint format: {kp}")
+                                                            continue
+                                                        if (
+                                                            kx < -0.5
+                                                            or kx > aug_width + 0.5
+                                                            or ky < -0.5
+                                                            or ky > aug_height + 0.5
+                                                        ):
+                                                            ring_outside += 1
+                                                            total_outside += 1
+                                                        kx = max(0.0, min(kx, float(max(0, aug_width - 1))))
+                                                        ky = max(0.0, min(ky, float(max(0, aug_height - 1))))
+                                                        if not (
+                                                            np.isnan(kx)
+                                                            or np.isnan(ky)
+                                                            or np.isinf(kx)
+                                                            or np.isinf(ky)
+                                                        ):
+                                                            kx_int = int(round(kx))
+                                                            ky_int = int(round(ky))
+                                                            if (
+                                                                0 <= kx_int < aug_width
+                                                                and 0 <= ky_int < aug_height
+                                                            ):
+                                                                flat_seg.extend([kx_int, ky_int])
+                                                        else:
+                                                            logger.warning(
+                                                                f"Invalid keypoint value (NaN/Inf): ({kx}, {ky})"
+                                                            )
+                                                    validated_seg: List[int] = []
+                                                    for coord_idx in range(0, len(flat_seg), 2):
+                                                        if coord_idx + 1 < len(flat_seg):
+                                                            x_int = int(flat_seg[coord_idx])
+                                                            y_int = int(flat_seg[coord_idx + 1])
+                                                            if (
+                                                                x_int >= 0
+                                                                and y_int >= 0
+                                                                and x_int < aug_width
+                                                                and y_int < aug_height
+                                                            ):
+                                                                validated_seg.extend([x_int, y_int])
+                                                    if len(validated_seg) >= 6 and len(validated_seg) // 2 >= 3:
+                                                        polygons_out.append(validated_seg)
+                                                    elif ring_outside:
+                                                        logger.debug(
+                                                            f"Annotation {bbox_idx} ring {ring_idx}: "
+                                                            f"insufficient in-bounds points after geometry aug"
+                                                        )
+                                                if offset_poly != len(ann_transformed_kp):
+                                                    logger.warning(
+                                                        f"Keypoint ring sizes mismatch ann={bbox_idx}: "
+                                                        f"got {len(ann_transformed_kp)} keypoints, "
+                                                        f"consumed {offset_poly} via counts {vertex_counts}"
+                                                    )
+                                                if polygons_out:
+                                                    transformed_seg = _clip_segmentation_polygons(
+                                                        polygons_out, aug_width, aug_height
+                                                    )
+                                                    logger.debug(
+                                                        f"Transformed segmentation ann={bbox_idx}: "
+                                                        f"{len(polygons_out)} polygon(s), "
+                                                        f"{total_outside} verts were slightly OOB before clamp"
+                                                    )
                                         else:
                                             logger.warning(f"Not enough transformed keypoints for annotation {bbox_idx}: need {num_keypoints}, have {len(transformed_keypoints) - keypoint_idx}")
                                     
-                                    # If segmentation transformation failed, try fallback method
-                                    if not transformed_seg and ann_data.get('segmentation'):
-                                        logger.warning(f"Failed to transform segmentation using keypoints for annotation {bbox_idx}, using fallback method")
+                                    # If segmentation transformation failed, try flip-only fallback (rotation/scale/elastic need keypoints path)
+                                    if (
+                                        not transformed_seg
+                                        and ann_data.get("has_polygon_masks")
+                                        and isinstance(ann_data.get("segmentation"), list)
+                                    ):
+                                        logger.warning(
+                                            f"Failed to transform segmentation using keypoints for annotation {bbox_idx}, "
+                                            f"using flip-only fallback"
+                                        )
                                         transformed_seg = transform_segmentation_with_augmentation(
                                             ann_data['segmentation'],
                                             aug_width,
@@ -954,8 +1099,13 @@ def create_augmented_dataset_task(self, task_id: int):
                                         if transformed_seg is not None:
                                             transformed_seg = final_seg if final_seg else None
                                     
-                                    # Only create annotation if we have valid segmentation (or if it's a bbox-only annotation)
-                                    if transformed_seg or (not ann_data.get('segmentation') and bbox_list):
+                                    if transformed_seg:
+                                        transformed_seg = _clip_segmentation_polygons(
+                                            transformed_seg, aug_width, aug_height
+                                        )
+
+                                    # Only create annotation if we have valid segmentation (or true bbox-only source)
+                                    if transformed_seg or (not expect_masks and bbox_list):
                                         # One more safety check right before database save - ensure all integers and no negatives
                                         if transformed_seg:
                                             for polygon in transformed_seg:
@@ -976,7 +1126,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                                 if transformed_seg is None:
                                                     break
                                         
-                                        if transformed_seg or (not ann_data.get('segmentation') and bbox_list):
+                                        if transformed_seg or (not expect_masks and bbox_list):
                                             new_annotation = Annotation(
                                                 annotation_file_id=annotation_file.id,
                                                 image_id=augmented_image_record.id,
@@ -1000,16 +1150,29 @@ def create_augmented_dataset_task(self, task_id: int):
                                                 logger.debug(f"Created annotation for {file_name}: category={label}, segmentation_points={sum(len(p) for p in transformed_seg) if isinstance(transformed_seg, list) else 0}")
                                             else:
                                                 logger.debug(f"Created annotation for {file_name}: category={label}, no segmentation")
+                                            
+                                            # Track category counts and detect annotation type (match annotation_db / UI)
+                                            annotation_type = 'segmentation' if transformed_seg else 'Segmentation (bbox)'
+                                            if ann_data.get('segmentation'):
+                                                annotation_type = 'segmentation'
+                                            category_counts[label] = category_counts.get(label, 0) + 1
                                         else:
                                             logger.warning(f"Skipping annotation {bbox_idx} for {file_name}: failed final validation check")
                                     else:
-                                        logger.warning(f"Skipping annotation {bbox_idx} for {file_name}: no valid segmentation after transformation")
-                                    
-                                    # Track category counts and detect annotation type
-                                    annotation_type = 'detection' if transformed_seg else 'detection'
-                                    if ann_data.get('segmentation'):
-                                        annotation_type = 'segmentation'
-                                    category_counts[label] = category_counts.get(label, 0) + 1
+                                        if ann_data.get("has_rle_mask"):
+                                            logger.warning(
+                                                f"Skipping annotation {bbox_idx} for {file_name}: "
+                                                f"COCO RLE segmentation is not supported for geometry augmentation in this worker yet."
+                                            )
+                                        elif expect_masks:
+                                            logger.warning(
+                                                f"Skipping annotation {bbox_idx} for {file_name}: "
+                                                f"polygon masks could not be transformed — not saving a bbox-only substitute."
+                                            )
+                                        else:
+                                            logger.warning(
+                                                f"Skipping annotation {bbox_idx} for {file_name}: no valid segmentation after transformation"
+                                            )
                         
                         # Copy classification annotations (no bbox) - they apply to the whole image
                         if classification_annotations:
@@ -1104,7 +1267,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                 
                                 # Track category counts and detect annotation type
                                 if ann.bbox:
-                                    annotation_type = 'segmentation' if ann.segmentation else 'detection'
+                                    annotation_type = 'segmentation' if ann.segmentation else 'Segmentation (bbox)'
                                 category_counts[ann.category] = category_counts.get(ann.category, 0) + 1
                         
                         processed_images += 1

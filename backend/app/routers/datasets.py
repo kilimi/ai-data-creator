@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional, List
 from pydantic import BaseModel
 import json
@@ -873,6 +874,7 @@ async def extract_frames_from_video(
     dataset_id: int,
     video: UploadFile = File(...),
     interval_seconds: float = Form(1.0),
+    frame_step: int = Form(1),
     max_frames: int = Form(0),
     job_id: str = Form(""),
     collection_id: Optional[int] = Form(None),
@@ -908,6 +910,8 @@ async def extract_frames_from_video(
 
         if interval_seconds <= 0:
             raise HTTPException(status_code=400, detail="interval_seconds must be positive")
+        if frame_step <= 0:
+            raise HTTPException(status_code=400, detail="frame_step must be >= 1")
         if max_frames < 0:
             raise HTTPException(status_code=400, detail="max_frames must be >= 0")
 
@@ -991,7 +995,15 @@ async def extract_frames_from_video(
             finally:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-        frame_interval = max(1, int(round(fps * interval_seconds)))
+        # Two sampling modes:
+        # 1) frame_step > 1  => keep every Nth source frame (user-friendly for
+        #    large skips like "every 100th frame").
+        # 2) frame_step == 1 => fallback to time-based interval_seconds.
+        frame_interval = (
+            max(1, int(frame_step))
+            if frame_step > 1
+            else max(1, int(round(fps * interval_seconds)))
+        )
 
         # Compute the expected number of output frames up front so the progress
         # bar has a real denominator.
@@ -1013,6 +1025,7 @@ async def extract_frames_from_video(
             fps=fps,
             frame_interval=frame_interval,
             source_frames=total_source_frames,
+            frame_step=frame_step,
         )
 
         frame_idx = 0
@@ -1317,6 +1330,63 @@ def get_annotation_file_coverage(dataset_id: int, annotation_file_id: str, db: S
         raise
     except Exception as e:
         print(f"Error in get_annotation_file_coverage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/datasets/{dataset_id}/annotations/{annotation_file_id}/collection-counts")
+def get_annotation_file_collection_counts(
+    dataset_id: int,
+    annotation_file_id: str,
+    db: Session = Depends(get_db),
+):
+    """Return annotation counts per image collection for a given annotation file."""
+    try:
+        af = db.query(models.AnnotationFile).filter(
+            models.AnnotationFile.id == annotation_file_id,
+            models.AnnotationFile.dataset_id == dataset_id
+        ).first()
+        if not af:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+
+        collections = db.query(models.ImageCollection).filter(
+            models.ImageCollection.dataset_id == dataset_id
+        ).all()
+
+        grouped_rows = (
+            db.query(
+                models.Image.collection_id,
+                func.count(models.Annotation.id).label("annotation_count"),
+            )
+            .join(models.Image, models.Image.id == models.Annotation.image_id)
+            .filter(
+                models.Annotation.annotation_file_id == annotation_file_id,
+                models.Image.dataset_id == dataset_id,
+            )
+            .group_by(models.Image.collection_id)
+            .all()
+        )
+
+        grouped_map = {
+            int(row.collection_id): int(row.annotation_count or 0)
+            for row in grouped_rows
+            if row.collection_id is not None
+        }
+
+        return {
+            "success": True,
+            "data": [
+                {
+                    "collection_id": int(col.id),
+                    "collection_name": col.name,
+                    "annotation_count": grouped_map.get(int(col.id), 0),
+                }
+                for col in collections
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in get_annotation_file_collection_counts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2583,11 +2653,24 @@ async def update_single_image_annotations(
         if not annotation_file:
             raise HTTPException(status_code=404, detail="Annotation file not found")
 
+        request_collection_id_raw = request.get("collection_id")
+        request_collection_id = None
+        if request_collection_id_raw is not None:
+            try:
+                request_collection_id = int(request_collection_id_raw)
+            except (TypeError, ValueError):
+                request_collection_id = None
+
         # Find the image by filename. Use the shared resolver so save and load
         # paths always agree on which `images` row to target when multiple
         # collections share a filename (see annotation_db.resolve_dataset_image_by_filename).
         from .annotation_db import resolve_dataset_image_by_filename
-        image = resolve_dataset_image_by_filename(db, dataset_id, image_name)
+        image = resolve_dataset_image_by_filename(
+            db,
+            dataset_id,
+            image_name,
+            preferred_collection_id=request_collection_id,
+        )
 
         if not image:
             raise HTTPException(status_code=404, detail=f"Image '{image_name}' not found in dataset")

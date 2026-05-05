@@ -31,15 +31,15 @@ export type EvalMetrics = { precision: number; recall: number; f1: number };
 
 export function getEvaluationRowMetrics(
   metadata: {
-    results?: { precision?: number; recall?: number; f1_score?: number };
-    aggregate_results?: { precision?: number; recall?: number; f1_score?: number };
+    results?: { precision?: number; recall?: number; f1_score?: number; has_ground_truth?: boolean };
+    aggregate_results?: { precision?: number; recall?: number; f1_score?: number; has_ground_truth?: boolean };
   } | null | undefined,
   options: { isMultiDataset: boolean; aggregateStatus: string }
 ): EvalMetrics | null {
   const m = metadata || {};
   if (options.isMultiDataset) {
     const ar = m.aggregate_results;
-    if (ar && typeof ar.precision === "number") {
+    if (ar && ar.has_ground_truth !== false && typeof ar.precision === "number") {
       return {
         precision: ar.precision,
         recall: ar.recall ?? 0,
@@ -49,7 +49,7 @@ export function getEvaluationRowMetrics(
     return null;
   }
   const r = m.results;
-  if (r && typeof r.precision === "number") {
+  if (r && r.has_ground_truth !== false && typeof r.precision === "number") {
     return {
       precision: r.precision,
       recall: r.recall ?? 0,
