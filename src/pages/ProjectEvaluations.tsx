@@ -228,7 +228,7 @@ export default function ProjectEvaluations() {
             </Button>
           </div>
         </div>
-      ) : parentEvaluations.length > 0 ? (
+      ) : visibleEvaluations.length > 0 ? (
         <div className="border border-gray-800 rounded-lg overflow-x-auto">
           <table className="w-full table-fixed">
             <thead className="bg-gray-900 border-b border-gray-800">
@@ -248,7 +248,7 @@ export default function ProjectEvaluations() {
               </tr>
             </thead>
             <tbody className="bg-gray-950 divide-y divide-gray-800">
-              {parentEvaluations.map((task) => {
+              {visibleEvaluations.map((task) => {
                 const metadata = task.task_metadata || {};
                 const isRunning = task.status === 'running';
                 const isFailed = task.status === 'failed';
