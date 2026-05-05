@@ -254,7 +254,7 @@ export default function ProjectEvaluations() {
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Prec.</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Rec.</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-14">F1</th>
-                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-28">Images</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-32">Started</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-28">Actions</th>
               </tr>
             </thead>
@@ -405,19 +405,15 @@ export default function ProjectEvaluations() {
                         {metrics ? formatMetricPct(metrics.f1) : "—"}
                       </td>
                       <td className="px-2 py-2 text-xs text-gray-400">
-                        {isMultiDataset
-                          ? (() => {
-                              const images = childTasks
-                                .filter(ct => ct.status === 'completed')
-                                .reduce((sum, ct) => sum + (ct.task_metadata?.results?.images_processed || 0), 0);
-                              const preds = childTasks
-                                .filter(ct => ct.status === 'completed')
-                                .reduce((sum, ct) => sum + (ct.task_metadata?.results?.predictions_count || 0), 0);
-                              return images > 0 ? `${images} / ${preds} preds` : '-';
-                            })()
-                          : (isCompleted && metadata.results?.images_processed
-                            ? `${metadata.results.images_processed} / ${metadata.results?.predictions_count || 0} preds`
-                            : '-')}
+                        {task.created_at
+                          ? new Date(task.created_at).toLocaleString('en-GB', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : '-'}
                       </td>
                       <td className="px-2 py-2 text-xs">
                         <div className="flex items-center gap-1.5">
@@ -677,9 +673,15 @@ export default function ProjectEvaluations() {
                           <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
                             {childMetrics ? formatMetricPct(childMetrics.f1) : "—"}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-400">
-                            {childIsCompleted && childMetadata.results?.images_processed
-                              ? `${childMetadata.results.images_processed} / ${childMetadata.results?.predictions_count || 0} preds`
+                          <td className="px-4 py-2 text-sm text-gray-400 text-xs">
+                            {childTask.created_at
+                              ? new Date(childTask.created_at).toLocaleString('en-GB', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
                               : '-'}
                           </td>
                           <td className="px-4 py-2 text-sm">
