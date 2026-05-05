@@ -370,6 +370,50 @@ export default function ProjectEvaluations() {
         </div>
       </div>
 
+      {/* Status filter chips + Compare toggle */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          {([
+            { key: "all", label: "All" },
+            { key: "running", label: "Running" },
+            { key: "completed", label: "Completed" },
+            { key: "failed", label: "Failed" },
+          ] as const).map(({ key, label }) => {
+            const active = statusFilter === key;
+            const count = statusCounts[key];
+            return (
+              <button
+                key={key}
+                onClick={() => setStatusFilter(key)}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                  active
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-muted/40 text-muted-foreground border-border hover:bg-muted"
+                }`}
+              >
+                <span>{label}</span>
+                <span className={`text-xs tabular-nums ${active ? "opacity-90" : "opacity-70"}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={compareMode ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              setCompareMode(v => !v);
+              if (compareMode) setSelectedForCompare(new Set());
+            }}
+          >
+            <GitCompare className="w-4 h-4 mr-2" />
+            {compareMode ? "Exit compare" : "Compare"}
+          </Button>
+        </div>
+      </div>
+
       {/* Content */}
       {loadingTasks ? (
         <div className="text-center py-16">
