@@ -247,7 +247,7 @@ export default function ProjectEvaluations() {
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-8"></th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-14">ID</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Name</th>
-                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-48">Dataset</th>
+                
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-24">Status</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-32">Progress</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-40">Model</th>
@@ -345,29 +345,6 @@ export default function ProjectEvaluations() {
                             </Badge>
                           )}
                         </div>
-                      </td>
-                      <td className="px-2 py-2 text-xs text-gray-400">
-                        <span className="block line-clamp-2" title={isMultiDataset
-                          ? (childTasks.length > 0
-                            ? childTasks
-                                .map((ct) => formatDatasetCollectionLabel(
-                                  ct.task_metadata?.dataset_name,
-                                  ct.task_metadata?.collection_name,
-                                ))
-                                .join(', ')
-                            : `${metadata.dataset_names?.join(', ') || 'Multiple'}`)
-                          : formatDatasetCollectionLabel(metadata.dataset_name, metadata.collection_name)}>
-                          {isMultiDataset
-                            ? (childTasks.length > 0
-                              ? childTasks
-                                  .map((ct) => formatDatasetCollectionLabel(
-                                    ct.task_metadata?.dataset_name,
-                                    ct.task_metadata?.collection_name,
-                                  ))
-                                  .join(', ')
-                              : `${metadata.dataset_names?.join(', ') || 'Multiple'}`)
-                            : formatDatasetCollectionLabel(metadata.dataset_name, metadata.collection_name)}
-                        </span>
                       </td>
                       <td className="px-2 py-2 text-xs">
                         {aggregateStatus === 'running' && (
@@ -614,9 +591,6 @@ export default function ProjectEvaluations() {
                           <td className="px-2 py-2"></td>
                           <td className="px-4 py-2 text-sm text-gray-400 pl-8">└ #{childTask.id}</td>
                           <td className="px-4 py-2 text-sm text-gray-300">{childMetadata.dataset_name || 'Unknown'}</td>
-                          <td className="px-4 py-2 text-sm text-gray-400">
-                            {formatDatasetCollectionLabel(childMetadata.dataset_name, childMetadata.collection_name)}
-                          </td>
                           <td className="px-4 py-2 text-sm">
                             {childIsRunning && (
                               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
