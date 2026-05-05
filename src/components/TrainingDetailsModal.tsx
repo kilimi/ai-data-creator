@@ -136,10 +136,10 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, any> = {
-      running: { color: 'bg-blue-500/20 text-blue-400 border-blue-500/30', label: 'Running' },
+      running: { color: 'bg-blue-500/20 text-primary border-blue-500/30', label: 'Running' },
       completed: { color: 'bg-green-500/20 text-green-400 border-green-500/30', label: 'Completed' },
       failed: { color: 'bg-red-500/20 text-red-400 border-red-500/30', label: 'Failed' },
-      pending: { color: 'bg-gray-500/20 text-gray-400 border-gray-500/30', label: 'Pending' },
+      pending: { color: 'bg-gray-500/20 text-muted-foreground border-gray-500/30', label: 'Pending' },
     };
     
     const variant = variants[status] || variants.pending;
@@ -160,12 +160,12 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
       : value;
 
     return (
-      <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4">
+      <div className="bg-muted/30 border border-border rounded-lg p-4">
         <div className="flex items-center gap-2 mb-2">
-          <div className="text-blue-400">{icon}</div>
-          <span className="text-sm text-gray-400">{title}</span>
+          <div className="text-primary">{icon}</div>
+          <span className="text-sm text-muted-foreground">{title}</span>
         </div>
-        <div className="text-2xl font-bold text-white">{formattedValue}</div>
+        <div className="text-2xl font-semibold text-foreground">{formattedValue}</div>
       </div>
     );
   };
@@ -186,7 +186,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
         <DialogHeader>
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2 text-2xl">
-              <Brain className="w-6 h-6 text-blue-500" />
+              <Brain className="w-6 h-6 text-primary" />
               Training Details - Task #{taskId}
             </DialogTitle>
             <Button
@@ -211,10 +211,10 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
         ) : task ? (
           <div className="space-y-6">
             {/* Status Overview */}
-            <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+            <div className="bg-card border border-border rounded-lg p-4">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <div className="text-sm text-gray-400 mb-1">Status</div>
+                  <div className="text-sm text-muted-foreground mb-1">Status</div>
                   <div className="flex items-center gap-2">
                     {getStatusBadge(task.status)}
                     {(task.status === 'failed' || task.status === 'stopped') && statusReason && (
@@ -230,9 +230,9 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-gray-400 mb-1">Progress</div>
+                  <div className="text-sm text-muted-foreground mb-1">Progress</div>
                   <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-gray-800 rounded-full h-2">
+                    <div className="flex-1 bg-muted rounded-full h-2">
                       <div
                         className={`h-2 rounded-full transition-all ${
                           task.status === 'failed' ? 'bg-red-500' : task.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'
@@ -240,18 +240,18 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                         style={{ width: `${task.progress}%` }}
                       />
                     </div>
-                    <span className="text-sm font-medium text-white">{task.progress}%</span>
+                    <span className="text-sm font-medium text-foreground">{task.progress}%</span>
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-gray-400 mb-1">Epoch</div>
-                  <div className="text-lg font-medium text-white">
+                  <div className="text-sm text-muted-foreground mb-1">Epoch</div>
+                  <div className="text-lg font-medium text-foreground">
                     {metadata?.current_epoch || 0} / {metadata?.epochs || metadata?.training_params?.epochs || '-'}
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-gray-400 mb-1">Duration</div>
-                  <div className="text-lg font-medium text-white">
+                  <div className="text-sm text-muted-foreground mb-1">Duration</div>
+                  <div className="text-lg font-medium text-foreground">
                     {formatDuration(task.created_at, task.completed_at)}
                   </div>
                 </div>
@@ -267,9 +267,9 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
             </div>
 
             {/* Training Configuration */}
-            <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+            <div className="bg-card border border-border rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-blue-500" />
+                <Activity className="w-5 h-5 text-primary" />
                 Training Configuration
               </h3>
               
@@ -277,50 +277,50 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                     <div>
-                      <span className="text-gray-400">Model:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Model:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.model_config?.model || metadata?.training_params?.model || (metadata as any)?.model_type || '-'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Epochs:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Epochs:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.epochs || metadata?.epochs || '-'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Batch Size:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Batch Size:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.batch_size || (metadata as any)?.batch_size || metadata?.training_params?.batch || '-'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Image Size:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Image Size:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || (metadata as any)?.image_size || '-'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Optimizer:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Optimizer:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.optimizer || 'auto'}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Learning Rate:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Learning Rate:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.lr0 || 0.01}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Patience:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Patience:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.patience || 50}
                       </span>
                     </div>
                     <div>
-                      <span className="text-gray-400">Device:</span>
-                      <span className="ml-2 text-white font-medium">
+                      <span className="text-muted-foreground">Device:</span>
+                      <span className="ml-2 text-foreground font-medium">
                         {metadata?.training_params?.device || '0'}
                       </span>
                     </div>
@@ -328,10 +328,10 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   
                   {/* Augmentations Summary */}
                   {metadata?.model_config?.augmentations && Object.keys(metadata.model_config.augmentations).length > 0 && (
-                    <div className="border-t border-gray-800 pt-3">
+                    <div className="border-t border-border pt-3">
                       <div className="text-sm">
-                        <span className="text-gray-400">Augmentations:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Augmentations:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {(() => {
                             const augs = metadata.model_config.augmentations;
                             const enabledAugs: string[] = [];
@@ -350,10 +350,10 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   )}
                   
                   {metadata?.class_names && (
-                    <div className="border-t border-gray-800 pt-3">
+                    <div className="border-t border-border pt-3">
                       <div className="text-sm">
-                        <span className="text-gray-400">Classes ({metadata.class_names.length}):</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Classes ({metadata.class_names.length}):</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata.class_names.join(', ')}
                         </span>
                       </div>
@@ -364,59 +364,59 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 <div className="space-y-6">
                   {/* Basic Training Parameters */}
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Basic Parameters</h4>
+                    <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Basic Parameters</h4>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                       <div>
-                        <span className="text-gray-400">Model:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Model:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.model_config?.model || metadata?.training_params?.model || '-'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Epochs:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Epochs:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.epochs || metadata?.epochs || '-'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Batch Size:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Batch Size:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.batch_size || (metadata as any)?.batch_size || metadata?.training_params?.batch || '-'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Image Size:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Image Size:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || (metadata as any)?.image_size || '-'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Device:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Device:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.device || '0'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Workers:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Workers:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.workers || 8}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Save Period:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Save Period:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.save_period ?? metadata?.model_config?.save_period ?? '-'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Patience:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Patience:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.patience || 100}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Cache:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Cache:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {String(metadata?.training_params?.cache || false)}
                         </span>
                       </div>
@@ -425,53 +425,53 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
                   {/* Optimizer Settings */}
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Optimizer Settings</h4>
+                    <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Optimizer Settings</h4>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                       <div>
-                        <span className="text-gray-400">Optimizer:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Optimizer:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.optimizer || 'auto'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Learning Rate (lr0):</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Learning Rate (lr0):</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.lr0 || 0.01}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Final LR (lrf):</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Final LR (lrf):</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.lrf || 0.01}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Momentum:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Momentum:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.momentum || 0.937}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Weight Decay:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Weight Decay:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.weight_decay || 0.0005}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Warmup Epochs:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Warmup Epochs:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.warmup_epochs || 3}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Warmup Momentum:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Warmup Momentum:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.warmup_momentum || 0.8}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Warmup Bias LR:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Warmup Bias LR:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.warmup_bias_lr || 0.1}
                         </span>
                       </div>
@@ -481,12 +481,12 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   {/* Augmentation Settings */}
                   {metadata?.model_config?.augmentations && (
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Data Augmentation</h4>
+                      <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Data Augmentation</h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                         {Object.entries(metadata.model_config.augmentations).map(([key, value]) => (
                           <div key={key}>
-                            <span className="text-gray-400 capitalize">{key.replace(/_/g, ' ')}:</span>
-                            <span className="ml-2 text-white font-medium">
+                            <span className="text-muted-foreground capitalize">{key.replace(/_/g, ' ')}:</span>
+                            <span className="ml-2 text-foreground font-medium">
                               {typeof value === 'boolean' ? String(value) : String(value)}
                             </span>
                           </div>
@@ -497,41 +497,41 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
                   {/* Loss & Advanced Settings */}
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Loss & Advanced</h4>
+                    <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Loss & Advanced</h4>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                       <div>
-                        <span className="text-gray-400">Box Loss Gain:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Box Loss Gain:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.box || 7.5}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Cls Loss Gain:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Cls Loss Gain:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.cls || 0.5}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">DFL Loss Gain:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">DFL Loss Gain:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.dfl || 1.5}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Label Smoothing:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Label Smoothing:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.label_smoothing || 0.0}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Dropout:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Dropout:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {metadata?.training_params?.dropout || 0.0}
                         </span>
                       </div>
                       <div>
-                        <span className="text-gray-400">Val:</span>
-                        <span className="ml-2 text-white font-medium">
+                        <span className="text-muted-foreground">Val:</span>
+                        <span className="ml-2 text-foreground font-medium">
                           {String(metadata?.training_params?.val ?? true)}
                         </span>
                       </div>
@@ -541,7 +541,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   {/* Classes */}
                   {metadata?.class_names && (
                     <div>
-                      <h4 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Classes</h4>
+                      <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Classes</h4>
                       <div className="flex flex-wrap gap-2">
                         {metadata.class_names.map((className, idx) => (
                           <Badge key={idx} variant="secondary" className="text-xs">
@@ -557,35 +557,35 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
             {/* Datasets & Annotations */}
             {metadata?.dataset_configs && metadata.dataset_configs.length > 0 && (
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-3">Training Datasets</h3>
                 <div className="space-y-3">
                   {metadata.dataset_configs.map((config, idx) => (
-                    <div key={idx} className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+                    <div key={idx} className="bg-muted/30 border border-border rounded-lg p-3">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                         <div>
-                          <span className="text-gray-400">Dataset ID:</span>
-                          <span className="ml-2 text-white font-medium">#{config.dataset_id}</span>
+                          <span className="text-muted-foreground">Dataset ID:</span>
+                          <span className="ml-2 text-foreground font-medium">#{config.dataset_id}</span>
                           {config.dataset_name && (
-                            <span className="ml-1 text-gray-300">({config.dataset_name})</span>
+                            <span className="ml-1 text-foreground/80">({config.dataset_name})</span>
                           )}
                         </div>
                         <div>
-                          <span className="text-gray-400">Annotation File:</span>
-                          <span className="ml-2 text-blue-400 font-mono text-xs">
+                          <span className="text-muted-foreground">Annotation File:</span>
+                          <span className="ml-2 text-primary font-mono text-xs">
                             {config.annotation_file_name || config.annotation_file_id}
                           </span>
                         </div>
                         {config.image_collection && (
                           <div>
-                            <span className="text-gray-400">Image Collection:</span>
-                            <span className="ml-2 text-white font-medium">{config.image_collection}</span>
+                            <span className="text-muted-foreground">Image Collection:</span>
+                            <span className="ml-2 text-foreground font-medium">{config.image_collection}</span>
                           </div>
                         )}
                         {config.split && (
                           <div>
-                            <span className="text-gray-400">Split:</span>
-                            <span className="ml-2 text-white font-medium">
+                            <span className="text-muted-foreground">Split:</span>
+                            <span className="ml-2 text-foreground font-medium">
                               Train: {config.split.train}% / Val: {config.split.val}% / Test: {config.split.test}%
                             </span>
                           </div>
@@ -599,20 +599,20 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
             {/* Dataset Info */}
             {metadata?.image_counts && (
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-3">Dataset Split</h3>
                 <div className="grid grid-cols-3 gap-4">
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-blue-400">{metadata.image_counts.train}</div>
-                    <div className="text-sm text-gray-400">Train</div>
+                    <div className="text-2xl font-semibold text-primary">{metadata.image_counts.train}</div>
+                    <div className="text-sm text-muted-foreground">Train</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-green-400">{metadata.image_counts.val}</div>
-                    <div className="text-sm text-gray-400">Validation</div>
+                    <div className="text-2xl font-semibold text-green-400">{metadata.image_counts.val}</div>
+                    <div className="text-sm text-muted-foreground">Validation</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-2xl font-bold text-purple-400">{metadata.image_counts.test || 0}</div>
-                    <div className="text-sm text-gray-400">Test</div>
+                    <div className="text-2xl font-semibold text-purple-400">{metadata.image_counts.test || 0}</div>
+                    <div className="text-sm text-muted-foreground">Test</div>
                   </div>
                 </div>
               </div>
@@ -629,7 +629,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   
                   {/* Losses */}
                   <div className="mb-4">
-                    <h4 className="text-sm font-medium text-gray-400 mb-2">Training Losses</h4>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Training Losses</h4>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {renderMetricCard('Box Loss', latestMetrics.box_loss, <Target className="w-4 h-4" />, 'decimal')}
                       {renderMetricCard('Class Loss', latestMetrics.cls_loss, <Activity className="w-4 h-4" />, 'decimal')}
@@ -640,7 +640,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
                   {/* Performance Metrics */}
                   <div className="mb-4">
-                    <h4 className="text-sm font-medium text-gray-400 mb-2">Performance Metrics</h4>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Performance Metrics</h4>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {renderMetricCard('Precision', latestMetrics.precision, <Target className="w-4 h-4" />, 'percent')}
                       {renderMetricCard('Recall', latestMetrics.recall, <Activity className="w-4 h-4" />, 'percent')}
@@ -652,7 +652,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   {/* Learning Rates */}
                   {(latestMetrics.lr0 || latestMetrics.lr1 || latestMetrics.lr2) && (
                     <div>
-                      <h4 className="text-sm font-medium text-gray-400 mb-2">Learning Rates</h4>
+                      <h4 className="text-sm font-medium text-muted-foreground mb-2">Learning Rates</h4>
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                         {latestMetrics.lr0 && renderMetricCard('LR (pg0)', latestMetrics.lr0, <Gauge className="w-4 h-4" />, 'decimal')}
                         {latestMetrics.lr1 && renderMetricCard('LR (pg1)', latestMetrics.lr1, <Gauge className="w-4 h-4" />, 'decimal')}
@@ -668,8 +668,8 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <h3 className="text-lg font-semibold mb-3">Training Progress</h3>
                     <div className="space-y-6">
                       {/* Training Losses Chart */}
-                      <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-gray-400 mb-4">Training Losses</h4>
+                      <div className="bg-card border border-border rounded-lg p-4">
+                        <h4 className="text-sm font-medium text-muted-foreground mb-4">Training Losses</h4>
                         <ResponsiveContainer width="100%" height={200}>
                           <LineChart data={[...metricsHistory]}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -701,8 +701,8 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                       </div>
 
                       {/* mAP Metrics Chart */}
-                      <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-gray-400 mb-4">mAP Metrics</h4>
+                      <div className="bg-card border border-border rounded-lg p-4">
+                        <h4 className="text-sm font-medium text-muted-foreground mb-4">mAP Metrics</h4>
                         <ResponsiveContainer width="100%" height={200}>
                           <LineChart data={[...metricsHistory]}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -732,8 +732,8 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                       </div>
 
                       {/* Precision & Recall Chart */}
-                      <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-gray-400 mb-4">Precision & Recall</h4>
+                      <div className="bg-card border border-border rounded-lg p-4">
+                        <h4 className="text-sm font-medium text-muted-foreground mb-4">Precision & Recall</h4>
                         <ResponsiveContainer width="100%" height={200}>
                           <LineChart data={[...metricsHistory]}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -764,8 +764,8 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
                       {/* Learning Rates Chart */}
                       {metricsHistory.some(m => m.lr0 || m.lr1 || m.lr2) && (
-                        <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
-                          <h4 className="text-sm font-medium text-gray-400 mb-4">Learning Rates</h4>
+                        <div className="bg-card border border-border rounded-lg p-4">
+                          <h4 className="text-sm font-medium text-muted-foreground mb-4">Learning Rates</h4>
                           <ResponsiveContainer width="100%" height={200}>
                             <LineChart data={[...metricsHistory]}>
                               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -808,21 +808,21 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
             {/* Output Paths */}
             {(metadata?.best_model || metadata?.results_dir) && (
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-3">Output Files</h3>
                 <div className="space-y-2 text-sm">
                   {metadata.best_model && (
                     <div>
-                      <span className="text-gray-400">Best Model:</span>
-                      <code className="ml-2 text-blue-400 bg-gray-900 px-2 py-1 rounded text-xs">
+                      <span className="text-muted-foreground">Best Model:</span>
+                      <code className="ml-2 text-primary bg-muted/30 px-2 py-1 rounded text-xs">
                         {metadata.best_model}
                       </code>
                     </div>
                   )}
                   {metadata.results_dir && (
                     <div>
-                      <span className="text-gray-400">Results Directory:</span>
-                      <code className="ml-2 text-blue-400 bg-gray-900 px-2 py-1 rounded text-xs">
+                      <span className="text-muted-foreground">Results Directory:</span>
+                      <code className="ml-2 text-primary bg-muted/30 px-2 py-1 rounded text-xs">
                         {metadata.results_dir}
                       </code>
                     </div>
