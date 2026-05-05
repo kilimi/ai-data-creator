@@ -138,27 +138,72 @@ export default function ProjectEvaluations() {
     return `${datasetName} (${collectionName})`;
   };
 
+  // Filter and sort
+  const visibleEvaluations = (() => {
+    let result = parentEvaluations;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(t => t.name?.toLowerCase().includes(q));
+    }
+    return [...result].sort((a, b) => {
+      switch (sortOrder) {
+        case "oldest":
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        case "name":
+          return (a.name || "").localeCompare(b.name || "");
+        case "newest":
+        default:
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+    });
+  })();
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Activity className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-bold">Model Evaluations</h1>
-          <Badge variant="secondary" className="ml-2">
-            {parentEvaluations.length} evaluations
-          </Badge>
+      <div className="flex items-center gap-2">
+        <Activity className="h-6 w-6 text-primary" />
+        <h1 className="text-2xl font-bold">Model Evaluations</h1>
+        <Badge variant="secondary" className="ml-2">
+          {parentEvaluations.length} evaluations
+        </Badge>
+      </div>
+
+      {/* Search and Filter Controls (mirrors Models page) */}
+      <div className="flex flex-col sm:flex-row gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+          <Input
+            placeholder="Search evaluations by name..."
+            className="pl-9"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
-        
-        <Button 
-          variant="default" 
-          size="sm" 
-          className="whitespace-nowrap"
-          onClick={() => setShowEvaluationModal(true)}
-        >
-          <Activity className="w-4 h-4 mr-2" />
-          New Evaluation
-        </Button>
+
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal className="text-muted-foreground h-4 w-4" />
+          <Select value={sortOrder} onValueChange={(v) => setSortOrder(v as any)}>
+            <SelectTrigger className="min-w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest first</SelectItem>
+              <SelectItem value="oldest">Oldest first</SelectItem>
+              <SelectItem value="name">Name (A-Z)</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Button
+            variant="default"
+            size="sm"
+            className="whitespace-nowrap ml-2"
+            onClick={() => setShowEvaluationModal(true)}
+          >
+            <Activity className="w-4 h-4 mr-2" />
+            New Evaluation
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
