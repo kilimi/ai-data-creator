@@ -254,7 +254,7 @@ export default function ProjectEvaluations() {
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Prec.</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-16">Rec.</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-14">F1</th>
-                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-28">Images</th>
+                <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-32">Started</th>
                 <th className="px-2 py-2 text-left text-xs font-medium text-gray-400 uppercase tracking-wider w-28">Actions</th>
               </tr>
             </thead>
