@@ -11,6 +11,7 @@ import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { DownloadModelModal } from '@/components/DownloadModelModal';
 import { TestTrainingInferenceModal } from '@/components/TestTrainingInferenceModal';
 import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw } from "lucide-react";
+import { TrainingCard } from "@/components/TrainingCard";
 import { Project, DatasetGroup } from '@/types';
 import {
   Select,
