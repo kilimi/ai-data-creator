@@ -8,7 +8,7 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal } from "lucide-react";
+import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal, RotateCw } from "lucide-react";
 import { Project, DatasetGroup } from '@/types';
 import {
   Select,
