@@ -138,7 +138,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
     const variants: Record<string, any> = {
       running: { color: 'bg-blue-500/20 text-primary border-blue-500/30', label: 'Running' },
       completed: { color: 'bg-green-500/20 text-green-400 border-green-500/30', label: 'Completed' },
-      failed: { color: 'bg-red-500/20 text-red-400 border-red-500/30', label: 'Failed' },
+      failed: { color: 'bg-red-500/20 text-destructive border-red-500/30', label: 'Failed' },
       pending: { color: 'bg-gray-500/20 text-muted-foreground border-gray-500/30', label: 'Pending' },
     };
     
@@ -182,10 +182,10 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle className="flex items-center gap-2 text-2xl">
+            <DialogTitle className="flex items-center gap-2 text-xl">
               <Brain className="w-6 h-6 text-primary" />
               Training Details - Task #{taskId}
             </DialogTitle>
@@ -207,7 +207,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
           </div>
         ) : error ? (
-          <div className="text-center py-12 text-red-400">{error}</div>
+          <div className="text-center py-12 text-destructive">{error}</div>
         ) : task ? (
           <div className="space-y-6">
             {/* Status Overview */}
@@ -257,9 +257,9 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 </div>
               </div>
               {(task.status === 'failed' || task.status === 'stopped') && showStatusReason && (
-                <div className="mt-4 rounded-md border border-red-900/60 bg-red-950/30 p-3">
-                  <div className="mb-1 text-xs uppercase tracking-wide text-red-300">Failure reason</div>
-                  <div className="whitespace-pre-wrap text-sm text-red-100">
+                <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+                  <div className="mb-1 text-xs uppercase tracking-wide text-destructive">Failure reason</div>
+                  <div className="whitespace-pre-wrap text-sm text-destructive-foreground">
                     {statusReason || 'No detailed error message was provided by the backend.'}
                   </div>
                 </div>

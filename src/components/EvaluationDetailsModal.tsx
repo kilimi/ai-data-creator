@@ -484,7 +484,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
     const variants: Record<string, any> = {
       running: { color: 'bg-blue-500/20 text-primary border-blue-500/30', label: 'Running' },
       completed: { color: 'bg-green-500/20 text-green-400 border-green-500/30', label: 'Completed' },
-      failed: { color: 'bg-red-500/20 text-red-400 border-red-500/30', label: 'Failed' },
+      failed: { color: 'bg-red-500/20 text-destructive border-red-500/30', label: 'Failed' },
       pending: { color: 'bg-gray-500/20 text-muted-foreground border-gray-500/30', label: 'Pending' },
       stopped: { color: 'bg-orange-500/20 text-orange-400 border-orange-500/30', label: 'Stopped' },
     };
@@ -681,7 +681,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl bg-background">
           <DialogTitle className="sr-only">Evaluation error</DialogTitle>
-          <div className="text-center p-8 text-red-500">
+          <div className="text-center p-8 text-destructive">
             {error || 'Evaluation not found'}
           </div>
         </DialogContent>
@@ -698,7 +698,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div>
-              <DialogTitle className="text-2xl font-semibold flex items-center gap-2">
+              <DialogTitle className="text-xl font-semibold flex items-center gap-2">
                 <Brain className="w-6 h-6 text-primary" />
                 {task.name}
               </DialogTitle>
@@ -855,12 +855,12 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
           {/* Error Message for Failed Evaluations */}
           {task.status === 'failed' && (
-            <div className="bg-red-950/50 border border-red-800 rounded-lg p-4">
-              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-red-400">
+            <div className="border border-destructive/40 bg-destructive/10 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-destructive">
                 <AlertCircle className="w-5 h-5" />
                 Evaluation Failed
               </h3>
-              <p className="text-sm text-red-300 font-mono whitespace-pre-wrap break-words">
+              <p className="text-sm text-destructive font-mono whitespace-pre-wrap break-words">
                 {task.error_message || 'An unknown error occurred during evaluation. Please check the backend logs for more details.'}
               </p>
             </div>
@@ -964,7 +964,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                   </div>
                 )}
               {evalBlobsError && (
-                <div className="text-sm text-red-400 py-2 rounded border border-red-900/50 px-3 bg-red-950/30">
+                <div className="text-sm text-destructive py-2 rounded border border-destructive/40 px-3 bg-destructive/10">
                   {evalBlobsError}
                 </div>
               )}
@@ -1109,10 +1109,10 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
                       {/* Failed Error Message */}
                       {isExpanded && childTask.status === 'failed' && (
-                        <div className="p-4 border-t border-border bg-red-950/30">
+                        <div className="p-4 border-t border-border bg-destructive/10">
                           <div className="flex items-start gap-2">
-                            <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-                            <p className="text-sm text-red-300 font-mono whitespace-pre-wrap break-words">
+                            <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
+                            <p className="text-sm text-destructive font-mono whitespace-pre-wrap break-words">
                               {childTask.error_message || 'An unknown error occurred during evaluation.'}
                             </p>
                           </div>
