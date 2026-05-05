@@ -574,6 +574,8 @@ export function ThresholdExplorer({
           count={metrics.cm[cmCell.row][cmCell.col]}
           projectId={projectId}
           datasetId={datasetId}
+          taskId={taskId}
+          imageIdToFilename={imageIdToFilename}
         />
       )}
     </div>

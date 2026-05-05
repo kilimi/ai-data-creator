@@ -688,6 +688,7 @@ def evaluate_model(
                         if gt_class >= 0 and pred_class >= 0:
                             confusion_matrix[gt_class][pred_class] += 1
                             _add_cm_sample(gt_class, pred_class, {
+                                'image_id': img.id,
                                 'file_name': img.file_name,
                                 'pred_bbox': pred['bbox'],
                                 'gt_bbox': filtered_gt_boxes[best_gt_idx]['bbox'],
@@ -706,6 +707,7 @@ def evaluate_model(
                         if pred['class_id'] < num_classes:
                             confusion_matrix[num_classes][pred['class_id']] += 1
                             _add_cm_sample(num_classes, pred['class_id'], {
+                                'image_id': img.id,
                                 'file_name': img.file_name,
                                 'pred_bbox': pred['bbox'],
                                 'gt_bbox': None,
@@ -724,6 +726,7 @@ def evaluate_model(
                         if 0 <= gt_class < num_classes:
                             confusion_matrix[gt_class][num_classes] += 1
                             _add_cm_sample(gt_class, num_classes, {
+                                'image_id': img.id,
                                 'file_name': img.file_name,
                                 'pred_bbox': None,
                                 'gt_bbox': filtered_gt_boxes[j]['bbox'],

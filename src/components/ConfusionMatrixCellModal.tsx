@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Grid3X3, ZoomIn } from "lucide-react";
 
 export interface CmSample {
+  image_id?: number;
   file_name: string;
   pred_bbox?: [number, number, number, number] | null;
   gt_bbox?: [number, number, number, number] | null;
@@ -21,10 +22,29 @@ interface ConfusionMatrixCellModalProps {
   count: number;
   projectId: number;
   datasetId: number;
+  taskId: number;
+  imageIdToFilename?: Record<string, string>;
 }
 
-function buildImageUrl(projectId: number, datasetId: number, fileName: string) {
-  return `http://localhost:9999/static/projects/${projectId}/${datasetId}/images/${encodeURIComponent(fileName)}`;
+function encodeFilePath(name: string) {
+  return String(name || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+}
+
+function buildImageUrls(taskId: number, imageId: number | undefined, projectId: number, datasetId: number, fileName: string) {
+  const encoded = encodeFilePath(fileName);
+  const urls: string[] = [];
+  if (Number.isFinite(imageId)) {
+    urls.push(`http://localhost:9999/predictions/evaluation-image/${taskId}/${imageId}`);
+  }
+  urls.push(
+    `http://localhost:9999/static/projects/${projectId}/${datasetId}/images/${encoded}`,
+    `http://localhost:9999/static/data/images/${datasetId}/${encoded}`,
+  );
+  return urls;
 }
 
 /**
@@ -100,15 +120,23 @@ function drawAnnotations(
 
 function ImageCard({
   sample,
-  imageUrl,
+  imageUrls,
   onClick,
 }: {
   sample: CmSample;
-  imageUrl: string;
+  imageUrls: string[];
   onClick: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const [srcIndex, setSrcIndex] = useState(0);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const activeSrc = imageUrls[Math.min(srcIndex, Math.max(0, imageUrls.length - 1))] || "";
+
+  useEffect(() => {
+    setSrcIndex(0);
+    setImageLoaded(false);
+  }, [imageUrls, sample.file_name]);
 
   const redraw = useCallback(() => {
     if (canvasRef.current && imgRef.current)
@@ -127,16 +155,25 @@ function ImageCard({
       <div className="relative">
         <img
           ref={imgRef}
-          src={imageUrl}
+          src={activeSrc}
           alt={sample.file_name}
           className="w-full block"
-          onLoad={redraw}
-          onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }}
+          onLoad={() => {
+            setImageLoaded(true);
+            redraw();
+          }}
+          onError={(e) => {
+            setImageLoaded(false);
+            setSrcIndex((prev) => (prev + 1 < imageUrls.length ? prev + 1 : prev));
+            if (srcIndex + 1 >= imageUrls.length) {
+              (e.target as HTMLImageElement).style.opacity = "0.3";
+            }
+          }}
         />
         <canvas
           ref={canvasRef}
           className="absolute top-0 left-0"
-          style={{ pointerEvents: "none" }}
+          style={{ pointerEvents: "none", opacity: imageLoaded ? 1 : 0 }}
         />
         <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/30 transition-colors">
           <ZoomIn className="text-white opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 drop-shadow" />
@@ -157,14 +194,14 @@ function ImageCard({
 function DetailView({
   samples,
   index,
-  imageUrl,
+  imageUrls,
   onBack,
   onPrev,
   onNext,
 }: {
   samples: CmSample[];
   index: number;
-  imageUrl: string;
+  imageUrls: string[];
   onBack: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -172,6 +209,12 @@ function DetailView({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const sample = samples[index];
+  const [srcIndex, setSrcIndex] = useState(0);
+  const activeSrc = imageUrls[Math.min(srcIndex, Math.max(0, imageUrls.length - 1))] || "";
+
+  useEffect(() => {
+    setSrcIndex(0);
+  }, [imageUrls, index]);
 
   const redraw = useCallback(() => {
     if (canvasRef.current && imgRef.current)
@@ -237,11 +280,14 @@ function DetailView({
           <div className="relative inline-block max-w-full max-h-full">
             <img
               ref={imgRef}
-              key={imageUrl}
-              src={imageUrl}
+              key={activeSrc}
+              src={activeSrc}
               alt={sample.file_name}
               className="block max-w-full max-h-[60vh] object-contain rounded"
               onLoad={redraw}
+              onError={() => {
+                setSrcIndex((prev) => (prev + 1 < imageUrls.length ? prev + 1 : prev));
+              }}
             />
             <canvas
               ref={canvasRef}
@@ -293,6 +339,8 @@ export function ConfusionMatrixCellModal({
   count,
   projectId,
   datasetId,
+  taskId,
+  imageIdToFilename = {},
 }: ConfusionMatrixCellModalProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
@@ -327,8 +375,21 @@ export function ConfusionMatrixCellModal({
     borderColor = "border-red-700";
   }
 
-  function imageUrl(s: CmSample) {
-    return buildImageUrl(projectId, datasetId, s.file_name);
+  const filenameToImageId = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const m = new Map<string, number>();
+    for (const [idStr, name] of Object.entries(imageIdToFilename)) {
+      const idNum = Number(idStr);
+      if (Number.isFinite(idNum) && typeof name === "string" && name.length > 0) {
+        m.set(name, idNum);
+      }
+    }
+    filenameToImageId.current = m;
+  }, [imageIdToFilename]);
+
+  function imageUrlsForSample(s: CmSample) {
+    const imageId = ((s as any).image_id as number | undefined) ?? filenameToImageId.current.get(s.file_name);
+    return buildImageUrls(taskId, imageId, projectId, datasetId, s.file_name);
   }
 
   const goBack = useCallback(() => setSelectedIndex(null), []);
@@ -386,7 +447,7 @@ export function ConfusionMatrixCellModal({
           <DetailView
             samples={samples}
             index={selectedIndex}
-            imageUrl={imageUrl(samples[selectedIndex])}
+            imageUrls={imageUrlsForSample(samples[selectedIndex])}
             onBack={goBack}
             onPrev={goPrev}
             onNext={goNext}
@@ -395,12 +456,13 @@ export function ConfusionMatrixCellModal({
           <div className="flex-1 overflow-y-auto p-4">
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {samples.map((sample, i) => (
-                <ImageCard
-                  key={i}
-                  sample={sample}
-                  imageUrl={imageUrl(sample)}
-                  onClick={() => setSelectedIndex(i)}
-                />
+                <div key={i}>
+                  <ImageCard
+                    sample={sample}
+                    imageUrls={imageUrlsForSample(sample)}
+                    onClick={() => setSelectedIndex(i)}
+                  />
+                </div>
               ))}
             </div>
           </div>
