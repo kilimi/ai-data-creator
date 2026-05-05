@@ -1,0 +1,331 @@
+import React from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import {
+  Download,
+  MoreHorizontal,
+  Pencil,
+  RotateCw,
+  TestTube,
+  Trash2,
+  Terminal,
+  X,
+} from "lucide-react";
+
+const STATUS_BORDER: Record<string, string> = {
+  completed: "border-l-green-500",
+  running: "border-l-blue-500",
+  pending: "border-l-gray-500",
+  failed: "border-l-red-500",
+  stopped: "border-l-amber-500",
+  cancelled: "border-l-amber-500",
+};
+
+const STATUS_PILL: Record<string, string> = {
+  completed: "bg-green-500/15 text-green-400 border border-green-500/30",
+  running: "bg-blue-500/15 text-blue-400 border border-blue-500/30",
+  pending: "bg-gray-500/15 text-gray-400 border border-gray-500/30",
+  failed: "bg-red-500/15 text-red-400 border border-red-500/30",
+  stopped: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
+  cancelled: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  completed: "Completed",
+  running: "Running",
+  pending: "Pending",
+  failed: "Failed",
+  stopped: "Stopped",
+  cancelled: "Cancelled",
+};
+
+function metricColor(v: number): string {
+  if (v >= 0.85) return "text-green-400";
+  if (v >= 0.6) return "text-amber-400";
+  return "text-red-400";
+}
+
+function timeAgo(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso).getTime();
+  const diff = Date.now() - d;
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function MetricTile({
+  label,
+  value,
+  format = "pct",
+}: {
+  label: string;
+  value: number | null;
+  format?: "pct" | "raw";
+}) {
+  const display =
+    value === null
+      ? "—"
+      : format === "pct"
+      ? `${(value * 100).toFixed(1)}%`
+      : value.toFixed(3);
+  return (
+    <div className="flex flex-col">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+        {label}
+      </span>
+      <span
+        className={`text-2xl font-semibold tabular-nums leading-tight ${
+          value === null ? "text-muted-foreground" : metricColor(value)
+        }`}
+      >
+        {display}
+      </span>
+    </div>
+  );
+}
+
+export interface TrainingCardProps {
+  task: any;
+  modelFamily: string;
+  modelSize: string;
+  onOpen?: () => void;
+  onRename?: () => void;
+  onRerun?: () => void;
+  onDelete?: () => void;
+  onTestInference?: () => void;
+  onDownload?: () => void;
+  onShowCli?: () => void;
+  onStop?: () => void;
+  onShowError?: () => void;
+}
+
+export function TrainingCard({
+  task,
+  modelFamily,
+  modelSize,
+  onOpen,
+  onRename,
+  onRerun,
+  onDelete,
+  onTestInference,
+  onDownload,
+  onShowCli,
+  onStop,
+  onShowError,
+}: TrainingCardProps) {
+  const metadata = task.task_metadata || {};
+  const status = task.status as string;
+  const isRunning = status === "running";
+  const isCompleted = status === "completed";
+  const isFailed = status === "failed";
+  const isStopped = status === "stopped" || status === "cancelled";
+  const isPending = status === "pending";
+  const showProgress = isRunning || isPending;
+  const canRerun = isCompleted || isFailed || isStopped;
+
+  const epochsDisplay = (() => {
+    if (isRunning && metadata.current_epoch && metadata.epochs) {
+      return `${metadata.current_epoch} / ${metadata.epochs}`;
+    }
+    if ((isCompleted || isFailed || isStopped) && metadata.current_epoch) {
+      return String(metadata.current_epoch);
+    }
+    if (metadata.training_params?.epochs || metadata.epochs) {
+      return String(metadata.training_params?.epochs || metadata.epochs);
+    }
+    return null;
+  })();
+
+  // Metrics
+  const m: Record<string, number> | undefined = metadata.results?.metrics;
+  const map50 = m?.["metrics/mAP50(B)"] ?? m?.["metrics/mAP50(M)"] ?? null;
+  const map5095 =
+    m?.["metrics/mAP50-95(B)"] ?? m?.["metrics/mAP50-95(M)"] ?? null;
+
+  return (
+    <div
+      onClick={onOpen}
+      className={`group relative rounded-lg border border-border bg-card text-card-foreground border-l-4 ${
+        STATUS_BORDER[status] ?? "border-l-gray-500"
+      } cursor-pointer hover:border-primary/40 transition-colors`}
+    >
+      <div className="p-5">
+        <div className="flex items-start gap-4">
+          {/* Left: identity */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-semibold truncate" title={task.name}>
+                {task.name}
+              </h3>
+              {isFailed && onShowError ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowError();
+                  }}
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium hover:opacity-80 transition-opacity ${
+                    STATUS_PILL[status] ?? STATUS_PILL.pending
+                  }`}
+                >
+                  {STATUS_LABEL[status]}
+                </button>
+              ) : (
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                    STATUS_PILL[status] ?? STATUS_PILL.pending
+                  }`}
+                >
+                  {STATUS_LABEL[status] ?? status}
+                </span>
+              )}
+              <Badge variant="outline" className="text-xs">
+                {modelFamily}
+              </Badge>
+              {modelSize !== "-" && (
+                <Badge variant="outline" className="text-xs">
+                  {modelSize}
+                </Badge>
+              )}
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground flex items-center gap-3 flex-wrap">
+              <span className="font-medium text-foreground/80">
+                {metadata.model_config?.model || metadata.model_type || "—"}
+              </span>
+              <span>·</span>
+              <span>#{task.id}</span>
+              <span>·</span>
+              <span title={task.created_at}>{timeAgo(task.created_at)}</span>
+              {epochsDisplay && (
+                <>
+                  <span>·</span>
+                  <span>{epochsDisplay} epochs</span>
+                </>
+              )}
+            </div>
+
+            {showProgress && (
+              <div className="mt-3 flex items-center gap-3">
+                <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all ${
+                      isFailed
+                        ? "bg-red-500"
+                        : isCompleted
+                        ? "bg-green-500"
+                        : "bg-blue-500"
+                    }`}
+                    style={{ width: `${task.progress || 0}%` }}
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
+                  {task.progress || 0}%
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Middle: metrics */}
+          <div className="hidden md:grid grid-cols-2 gap-6 px-2">
+            <MetricTile label="mAP50" value={map50} />
+            <MetricTile label="mAP50-95" value={map5095} />
+          </div>
+
+          {/* Right: actions */}
+          <div
+            className="flex items-center gap-2 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {canRerun && onRerun && (
+              <Button variant="outline" size="sm" onClick={onRerun} className="h-8">
+                <RotateCw className="w-3.5 h-3.5 mr-1.5" />
+                Rerun
+              </Button>
+            )}
+            {isCompleted && onTestInference && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onTestInference}
+                className="h-8"
+                title="Test inference"
+              >
+                <TestTube className="w-3.5 h-3.5 mr-1.5" />
+                Test
+              </Button>
+            )}
+            {(isRunning || isPending) && onStop && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onStop}
+                className="h-8 text-red-400 hover:text-red-300"
+                title="Stop training"
+              >
+                <X className="w-3.5 h-3.5 mr-1.5" />
+                Stop
+              </Button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreHorizontal className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                {isCompleted && onDownload && (
+                  <DropdownMenuItem onClick={onDownload}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Download model
+                  </DropdownMenuItem>
+                )}
+                {onShowCli && (
+                  <DropdownMenuItem onClick={onShowCli}>
+                    <Terminal className="w-4 h-4 mr-2" />
+                    View CLI command
+                  </DropdownMenuItem>
+                )}
+                {onRename && (
+                  <DropdownMenuItem onClick={onRename}>
+                    <Pencil className="w-4 h-4 mr-2" />
+                    Rename
+                  </DropdownMenuItem>
+                )}
+                {onDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={onDelete}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {/* Mobile metrics */}
+        <div className="mt-4 grid grid-cols-2 gap-4 md:hidden">
+          <MetricTile label="mAP50" value={map50} />
+          <MetricTile label="mAP50-95" value={map5095} />
+        </div>
+      </div>
+    </div>
+  );
+}
