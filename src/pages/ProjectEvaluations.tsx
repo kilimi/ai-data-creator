@@ -421,6 +421,39 @@ export default function ProjectEvaluations() {
                       </td>
                       <td className="px-2 py-2 text-xs">
                         <div className="flex items-center gap-1.5">
+                          {(isCompleted || isFailed || task.status === 'stopped' || task.status === 'cancelled' || aggregateStatus === 'partial_failed') && (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, {
+                                    method: 'POST'
+                                  });
+                                  if (response.ok) {
+                                    const data = await response.json();
+                                    toast({
+                                      title: "Evaluation Rerun Started",
+                                      description: `New evaluation task "${data.task?.name || task.name}" has been created and started.`
+                                    });
+                                    fetchEvaluationTasks();
+                                  } else {
+                                    const errorData = await response.json().catch(() => ({}));
+                                    throw new Error(errorData.detail || 'Failed to rerun evaluation task');
+                                  }
+                                } catch (error) {
+                                  toast({
+                                    title: "Error",
+                                    description: error instanceof Error ? error.message : "Failed to rerun evaluation task",
+                                    variant: "destructive"
+                                  });
+                                }
+                              }}
+                              className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-purple-800 text-purple-300 border border-purple-700 hover:bg-purple-700 hover:text-white transition-colors"
+                              title="Rerun evaluation with same settings"
+                            >
+                              <RotateCw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
