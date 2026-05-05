@@ -54,6 +54,7 @@ export default function ProjectEvaluations() {
   const [datasets, setDatasets] = useState<any[]>([]);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
   const [modalResourcesLoading, setModalResourcesLoading] = useState(false);
+  const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
