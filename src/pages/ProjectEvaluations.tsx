@@ -154,7 +154,7 @@ export default function ProjectEvaluations() {
           className="whitespace-nowrap"
           onClick={() => setShowEvaluationModal(true)}
         >
-          <Brain className="w-4 h-4 mr-2" />
+          <Activity className="w-4 h-4 mr-2" />
           New Evaluation
         </Button>
       </div>
@@ -444,7 +444,7 @@ export default function ProjectEvaluations() {
                               className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
                               title="Download COCO predictions"
                             >
-                              <Database className="w-3.5 h-3.5" />
+                              <Download className="w-3.5 h-3.5" />
                             </button>
                           )}
                           {isMultiDataset && aggregateStatus === 'completed' && (
@@ -496,7 +496,7 @@ export default function ProjectEvaluations() {
                               className="inline-flex items-center p-1.5 rounded text-xs font-medium bg-green-800 text-green-300 border border-green-700 hover:bg-green-700 hover:text-white transition-colors"
                               title="Download all COCO predictions (ZIP)"
                             >
-                              <Database className="w-3.5 h-3.5" />
+                              <Download className="w-3.5 h-3.5" />
                             </button>
                           )}
                           <button
@@ -665,7 +665,7 @@ export default function ProjectEvaluations() {
                                   className="inline-flex items-center p-1 rounded text-xs bg-green-800/50 text-green-400 hover:bg-green-700 transition-colors"
                                   title="Download COCO predictions"
                                 >
-                                  <Database className="w-3 h-3" />
+                                  <Download className="w-3 h-3" />
                                 </button>
                               )}
                             </div>
@@ -681,13 +681,13 @@ export default function ProjectEvaluations() {
         </div>
       ) : (
         <div className="text-center py-16">
-          <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <Activity className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h3 className="text-lg font-medium mb-2">No Evaluations Yet</h3>
           <p className="text-muted-foreground mb-6">
             Start evaluating your trained models to analyze their performance.
           </p>
           <Button onClick={() => setShowEvaluationModal(true)}>
-            <Brain className="w-4 h-4 mr-2" />
+            <Activity className="w-4 h-4 mr-2" />
             New Evaluation
           </Button>
         </div>
