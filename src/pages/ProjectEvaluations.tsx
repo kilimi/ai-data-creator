@@ -54,6 +54,7 @@ export default function ProjectEvaluations() {
   const [datasets, setDatasets] = useState<any[]>([]);
   const [datasetGroups, setDatasetGroups] = useState<DatasetGroup[]>([]);
   const [modalResourcesLoading, setModalResourcesLoading] = useState(false);
+  const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
@@ -214,6 +215,42 @@ export default function ProjectEvaluations() {
             <Activity className="w-4 h-4 mr-2" />
             New Evaluation
           </Button>
+
+          {(() => {
+            const failedCount = evaluationTasks.filter(t => t.status === 'failed').length;
+            if (failedCount === 0) return null;
+            return (
+              <Button
+                variant="destructive"
+                size="sm"
+                className="whitespace-nowrap ml-2"
+                disabled={deletingFailedTasks}
+                onClick={async () => {
+                  const failed = evaluationTasks.filter(t => t.status === 'failed');
+                  if (failed.length === 0) return;
+                  if (!confirm(`Are you sure you want to delete ${failed.length} failed evaluation task(s)?`)) return;
+                  setDeletingFailedTasks(true);
+                  try {
+                    for (const t of failed) {
+                      await fetch(`http://localhost:9999/tasks/${t.id}`, { method: 'DELETE' });
+                    }
+                    toast({
+                      title: "Tasks Deleted",
+                      description: `${failed.length} failed evaluation task(s) have been deleted.`,
+                    });
+                    fetchEvaluationTasks();
+                  } catch {
+                    toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
+                  } finally {
+                    setDeletingFailedTasks(false);
+                  }
+                }}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${failedCount})`}
+              </Button>
+            );
+          })()}
         </div>
       </div>
 
