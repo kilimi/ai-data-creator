@@ -673,9 +673,15 @@ export default function ProjectEvaluations() {
                           <td className="px-4 py-2 text-sm text-gray-400 tabular-nums text-xs">
                             {childMetrics ? formatMetricPct(childMetrics.f1) : "—"}
                           </td>
-                          <td className="px-4 py-2 text-sm text-gray-400">
-                            {childIsCompleted && childMetadata.results?.images_processed
-                              ? `${childMetadata.results.images_processed} / ${childMetadata.results?.predictions_count || 0} preds`
+                          <td className="px-4 py-2 text-sm text-gray-400 text-xs">
+                            {childTask.created_at
+                              ? new Date(childTask.created_at).toLocaleString('en-GB', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
                               : '-'}
                           </td>
                           <td className="px-4 py-2 text-sm">
