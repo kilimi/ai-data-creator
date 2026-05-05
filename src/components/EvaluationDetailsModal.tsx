@@ -245,7 +245,7 @@ function PredictionSnapshotCard({
   }, [activeSrc, bbox, redraw]);
 
   return (
-    <div className="border border-gray-800 rounded overflow-hidden bg-gray-900/40">
+    <div className="border border-border rounded overflow-hidden bg-muted/30">
       <div ref={containerRef} className="relative w-full h-44 bg-black">
         <img
           ref={imgRef}
@@ -268,11 +268,11 @@ function PredictionSnapshotCard({
           aria-hidden
         />
       </div>
-      <div className="p-2 border-t border-gray-800">
-        <div className="text-xs text-gray-300 truncate" title={fileName}>
+      <div className="p-2 border-t border-border">
+        <div className="text-xs text-foreground/80 truncate" title={fileName}>
           {fileName}
         </div>
-        <div className="text-xs text-gray-500">
+        <div className="text-xs text-muted-foreground">
           {bbox ? `Crop around top detection · ${label}` : "Bounding box unavailable for crop"}
         </div>
       </div>
@@ -481,20 +481,15 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
   };
 
   const getStatusBadge = (status: string) => {
-    const variants: Record<string, any> = {
-      running: { color: 'bg-blue-500/20 text-blue-400 border-blue-500/30', label: 'Running' },
-      completed: { color: 'bg-green-500/20 text-green-400 border-green-500/30', label: 'Completed' },
-      failed: { color: 'bg-red-500/20 text-red-400 border-red-500/30', label: 'Failed' },
-      pending: { color: 'bg-gray-500/20 text-gray-400 border-gray-500/30', label: 'Pending' },
-      stopped: { color: 'bg-orange-500/20 text-orange-400 border-orange-500/30', label: 'Stopped' },
+    const variants: Record<string, { className: string; label: string }> = {
+      running: { className: 'bg-primary/15 text-primary border-primary/30', label: 'Running' },
+      completed: { className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30', label: 'Completed' },
+      failed: { className: 'bg-destructive/15 text-destructive border-destructive/30', label: 'Failed' },
+      pending: { className: 'bg-muted text-muted-foreground border-border', label: 'Pending' },
+      stopped: { className: 'bg-amber-500/15 text-amber-500 border-amber-500/30', label: 'Stopped' },
     };
-    
     const variant = variants[status] || variants.pending;
-    return (
-      <Badge className={`${variant.color} border`}>
-        {variant.label}
-      </Badge>
-    );
+    return <Badge className={`${variant.className} border`}>{variant.label}</Badge>;
   };
 
   const downloadCocoResults = async (taskIdToDownload?: number) => {
@@ -681,7 +676,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl bg-background">
           <DialogTitle className="sr-only">Evaluation error</DialogTitle>
-          <div className="text-center p-8 text-red-500">
+          <div className="text-center p-8 text-destructive">
             {error || 'Evaluation not found'}
           </div>
         </DialogContent>
@@ -698,8 +693,8 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div>
-              <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-                <Brain className="w-6 h-6 text-blue-500" />
+              <DialogTitle className="text-xl font-semibold flex items-center gap-2">
+                <Brain className="w-6 h-6 text-primary" />
                 {task.name}
               </DialogTitle>
               <div className="text-sm text-muted-foreground mt-2">
@@ -781,50 +776,50 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
           {metadata.is_multi_dataset && (
             <div className="bg-blue-950/50 border border-blue-800 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
-                <Database className="w-5 h-5 text-blue-400" />
+                <Database className="w-5 h-5 text-primary" />
                 Multi-Dataset Evaluation
                 <Badge variant="secondary">{childTasks.length} datasets</Badge>
               </h3>
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-muted-foreground">
                 This evaluation runs across multiple datasets. Click on each dataset below to see individual results.
               </p>
             </div>
           )}
 
           {/* Configuration Info */}
-          <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+          <div className="bg-card border border-border rounded-lg p-4">
             <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <Activity className="w-5 h-5 text-blue-500" />
+              <Activity className="w-5 h-5 text-primary" />
               Configuration
             </h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
               <div>
-                <span className="text-gray-400">Training Model:</span>
-                <span className="ml-2 text-white font-medium">{metadata.training_task_name || '-'}</span>
+                <span className="text-muted-foreground">Training Model:</span>
+                <span className="ml-2 text-foreground font-medium">{metadata.training_task_name || '-'}</span>
               </div>
               <div>
-                <span className="text-gray-400">Test Dataset:</span>
-                <span className="ml-2 text-white font-medium">
+                <span className="text-muted-foreground">Test Dataset:</span>
+                <span className="ml-2 text-foreground font-medium">
                   {metadata.is_multi_dataset 
                     ? `${metadata.dataset_names?.join(', ') || 'Multiple'}` 
                     : metadata.dataset_name || '-'}
                 </span>
               </div>
               <div>
-                <span className="text-gray-400">Checkpoint:</span>
-                <span className="ml-2 text-white font-medium">{metadata.checkpoint || 'best'}</span>
+                <span className="text-muted-foreground">Checkpoint:</span>
+                <span className="ml-2 text-foreground font-medium">{metadata.checkpoint || 'best'}</span>
               </div>
               <div>
-                <span className="text-gray-400">Confidence Threshold:</span>
-                <span className="ml-2 text-white font-medium">{metadata.conf_threshold || 0.25}</span>
+                <span className="text-muted-foreground">Confidence Threshold:</span>
+                <span className="ml-2 text-foreground font-medium">{metadata.conf_threshold || 0.25}</span>
               </div>
               <div>
-                <span className="text-gray-400">IoU Threshold:</span>
-                <span className="ml-2 text-white font-medium">{metadata.iou_threshold || 0.45}</span>
+                <span className="text-muted-foreground">IoU Threshold:</span>
+                <span className="ml-2 text-foreground font-medium">{metadata.iou_threshold || 0.45}</span>
               </div>
               <div>
-                <span className="text-gray-400">Ground Truth:</span>
-                <span className="ml-2 text-white font-medium">
+                <span className="text-muted-foreground">Ground Truth:</span>
+                <span className="ml-2 text-foreground font-medium">
                   {metadata.has_ground_truth ? (
                     (metadata as any).annotation_file_name ? (
                       <span title={(metadata as any).annotation_file_name}>
@@ -837,16 +832,16 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
               {metadata.use_grid && (
                 <>
                   <div>
-                    <span className="text-gray-400">Grid Inference:</span>
-                    <span className="ml-2 text-white font-medium">Enabled</span>
+                    <span className="text-muted-foreground">Grid Inference:</span>
+                    <span className="ml-2 text-foreground font-medium">Enabled</span>
                   </div>
                   <div>
-                    <span className="text-gray-400">Grid Tile Size:</span>
-                    <span className="ml-2 text-white font-medium">{metadata.grid_size}px</span>
+                    <span className="text-muted-foreground">Grid Tile Size:</span>
+                    <span className="ml-2 text-foreground font-medium">{metadata.grid_size}px</span>
                   </div>
                   <div>
-                    <span className="text-gray-400">Grid Overlap:</span>
-                    <span className="ml-2 text-white font-medium">{((metadata.grid_overlap || 0) * 100).toFixed(0)}%</span>
+                    <span className="text-muted-foreground">Grid Overlap:</span>
+                    <span className="ml-2 text-foreground font-medium">{((metadata.grid_overlap || 0) * 100).toFixed(0)}%</span>
                   </div>
                 </>
               )}
@@ -855,12 +850,12 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
           {/* Error Message for Failed Evaluations */}
           {task.status === 'failed' && (
-            <div className="bg-red-950/50 border border-red-800 rounded-lg p-4">
-              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-red-400">
+            <div className="border border-destructive/40 bg-destructive/10 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-destructive">
                 <AlertCircle className="w-5 h-5" />
                 Evaluation Failed
               </h3>
-              <p className="text-sm text-red-300 font-mono whitespace-pre-wrap break-words">
+              <p className="text-sm text-destructive font-mono whitespace-pre-wrap break-words">
                 {task.error_message || 'An unknown error occurred during evaluation. Please check the backend logs for more details.'}
               </p>
             </div>
@@ -874,68 +869,68 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                   FiftyOne is starting. Please wait; first launch may take up to a minute.
                 </div>
               )}
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-blue-500" />
+                  <Activity className="w-5 h-5 text-primary" />
                   Evaluation Statistics
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
-                    <div className="text-xs text-gray-400">Images</div>
-                    <div className="text-lg font-semibold text-white">{results.images_processed ?? 0}</div>
+                  <div className="bg-muted/30/60 border border-border rounded p-3">
+                    <div className="text-xs text-muted-foreground">Images</div>
+                    <div className="text-lg font-semibold text-foreground">{results.images_processed ?? 0}</div>
                   </div>
-                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
-                    <div className="text-xs text-gray-400">Predictions</div>
-                    <div className="text-lg font-semibold text-white">{results.predictions_count ?? 0}</div>
+                  <div className="bg-muted/30/60 border border-border rounded p-3">
+                    <div className="text-xs text-muted-foreground">Predictions</div>
+                    <div className="text-lg font-semibold text-foreground">{results.predictions_count ?? 0}</div>
                   </div>
-                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
-                    <div className="text-xs text-gray-400">Predictions / Image</div>
-                    <div className="text-lg font-semibold text-white">
+                  <div className="bg-muted/30/60 border border-border rounded p-3">
+                    <div className="text-xs text-muted-foreground">Predictions / Image</div>
+                    <div className="text-lg font-semibold text-foreground">
                       {Number(results.predictions_per_image ?? 0).toFixed(2)}
                     </div>
                   </div>
-                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
-                    <div className="text-xs text-gray-400">Avg Confidence</div>
-                    <div className="text-lg font-semibold text-white">
+                  <div className="bg-muted/30/60 border border-border rounded p-3">
+                    <div className="text-xs text-muted-foreground">Avg Confidence</div>
+                    <div className="text-lg font-semibold text-foreground">
                       {`${(Number(results.avg_confidence ?? 0) * 100).toFixed(1)}%`}
                     </div>
                   </div>
-                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
-                    <div className="text-xs text-gray-400">Precision</div>
-                    <div className="text-lg font-semibold text-white">
+                  <div className="bg-muted/30/60 border border-border rounded p-3">
+                    <div className="text-xs text-muted-foreground">Precision</div>
+                    <div className="text-lg font-semibold text-foreground">
                       {results.has_ground_truth ? `${(results.precision * 100).toFixed(1)}%` : 'N/A'}
                     </div>
                   </div>
-                  <div className="bg-gray-900/60 border border-gray-800 rounded p-3">
-                    <div className="text-xs text-gray-400">F1 Score</div>
-                    <div className="text-lg font-semibold text-white">
+                  <div className="bg-muted/30/60 border border-border rounded p-3">
+                    <div className="text-xs text-muted-foreground">F1 Score</div>
+                    <div className="text-lg font-semibold text-foreground">
                       {results.has_ground_truth ? `${(results.f1_score * 100).toFixed(1)}%` : 'N/A'}
                     </div>
                   </div>
                 </div>
               </div>
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-3">Top Predicted Classes</h3>
                 {topPredictedClasses.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                     {topPredictedClasses.map((item) => (
                       <div
                         key={item.className}
-                        className="bg-gray-900/60 border border-gray-800 rounded p-3"
+                        className="bg-muted/30/60 border border-border rounded p-3"
                       >
-                        <div className="text-sm text-gray-200 truncate" title={item.className}>
+                        <div className="text-sm text-foreground truncate" title={item.className}>
                           {item.className}
                         </div>
-                        <div className="text-lg font-semibold text-white">{item.count}</div>
-                        <div className="text-xs text-gray-400">predictions</div>
+                        <div className="text-lg font-semibold text-foreground">{item.count}</div>
+                        <div className="text-xs text-muted-foreground">predictions</div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-sm text-gray-400">No predictions available yet.</div>
+                  <div className="text-sm text-muted-foreground">No predictions available yet.</div>
                 )}
               </div>
-              <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+              <div className="bg-card border border-border rounded-lg p-4">
                 <h3 className="text-lg font-semibold mb-3">Prediction Snapshot Examples</h3>
                 {predictionSnapshots.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -951,7 +946,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                     ))}
                   </div>
                 ) : (
-                  <div className="text-sm text-gray-400">
+                  <div className="text-sm text-muted-foreground">
                     Snapshot examples become available after prediction blobs are loaded.
                   </div>
                 )}
@@ -959,12 +954,12 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
               {evalBlobsLoading &&
                 metadata.results?.artifacts?.blobs &&
                 metadata.results.predictions === undefined && (
-                  <div className="text-sm text-gray-400 py-2">
+                  <div className="text-sm text-muted-foreground py-2">
                     Loading interactive evaluation data…
                   </div>
                 )}
               {evalBlobsError && (
-                <div className="text-sm text-red-400 py-2 rounded border border-red-900/50 px-3 bg-red-950/30">
+                <div className="text-sm text-destructive py-2 rounded border border-destructive/40 px-3 bg-destructive/10">
                   {evalBlobsError}
                 </div>
               )}
@@ -991,9 +986,9 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
           {/* Child Tasks for Multi-Dataset Evaluations */}
           {metadata.is_multi_dataset && childTasks.length > 0 && (
-            <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+            <div className="bg-card border border-border rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Database className="w-5 h-5 text-blue-500" />
+                <Database className="w-5 h-5 text-primary" />
                 Per-Dataset Results
               </h3>
               <div className="space-y-3">
@@ -1003,18 +998,18 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                   const isExpanded = expandedChildId === childTask.id;
                   
                   return (
-                    <div key={childTask.id} className="border border-gray-700 rounded-lg overflow-hidden">
+                    <div key={childTask.id} className="border border-border rounded-lg overflow-hidden">
                       {/* Child Task Header */}
                       <button
                         onClick={() => setExpandedChildId(isExpanded ? null : childTask.id)}
-                        className="w-full flex items-center justify-between p-3 hover:bg-gray-800/50 transition-colors"
+                        className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors"
                       >
                         <div className="flex items-center gap-3">
                           <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
                           <span className="font-medium">{childMetadata.dataset_name || `Dataset ${childTask.id}`}</span>
                           {getStatusBadge(childTask.status)}
                         </div>
-                        <div className="flex items-center gap-4 text-sm text-gray-400">
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
                           {childTask.status === 'completed' && childResults && (
                             <>
                               <span>
@@ -1043,43 +1038,43 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                       
                       {/* Child Task Expanded Content */}
                       {isExpanded && childTask.status === 'completed' && childResults && (
-                        <div className="p-4 border-t border-gray-700 bg-gray-900/50">
+                        <div className="p-4 border-t border-border bg-muted/30">
                           {/* Metrics Grid */}
                           <div className="grid grid-cols-5 gap-3 mb-4">
-                            <div className="bg-gray-800/50 rounded p-3 text-center">
-                              <div className="text-xs text-gray-400 mb-1">Precision</div>
-                              <div className="text-lg font-bold text-white">
+                            <div className="bg-muted/50 rounded p-3 text-center">
+                              <div className="text-xs text-muted-foreground mb-1">Precision</div>
+                              <div className="text-lg font-semibold text-foreground">
                                 {childResults.has_ground_truth ? `${(childResults.precision * 100).toFixed(1)}%` : 'N/A'}
                               </div>
                             </div>
-                            <div className="bg-gray-800/50 rounded p-3 text-center">
-                              <div className="text-xs text-gray-400 mb-1">Recall</div>
-                              <div className="text-lg font-bold text-white">
+                            <div className="bg-muted/50 rounded p-3 text-center">
+                              <div className="text-xs text-muted-foreground mb-1">Recall</div>
+                              <div className="text-lg font-semibold text-foreground">
                                 {childResults.has_ground_truth ? `${(childResults.recall * 100).toFixed(1)}%` : 'N/A'}
                               </div>
                             </div>
-                            <div className="bg-gray-800/50 rounded p-3 text-center">
-                              <div className="text-xs text-gray-400 mb-1">F1 Score</div>
-                              <div className="text-lg font-bold text-white">
+                            <div className="bg-muted/50 rounded p-3 text-center">
+                              <div className="text-xs text-muted-foreground mb-1">F1 Score</div>
+                              <div className="text-lg font-semibold text-foreground">
                                 {childResults.has_ground_truth ? `${(childResults.f1_score * 100).toFixed(1)}%` : 'N/A'}
                               </div>
                             </div>
-                            <div className="bg-gray-800/50 rounded p-3 text-center">
-                              <div className="text-xs text-gray-400 mb-1">Predictions</div>
-                              <div className="text-lg font-bold text-white">
+                            <div className="bg-muted/50 rounded p-3 text-center">
+                              <div className="text-xs text-muted-foreground mb-1">Predictions</div>
+                              <div className="text-lg font-semibold text-foreground">
                                 {childResults.predictions_count}
                               </div>
                             </div>
-                            <div className="bg-gray-800/50 rounded p-3 text-center">
-                              <div className="text-xs text-gray-400 mb-1">Images</div>
-                              <div className="text-lg font-bold text-white">
+                            <div className="bg-muted/50 rounded p-3 text-center">
+                              <div className="text-xs text-muted-foreground mb-1">Images</div>
+                              <div className="text-lg font-semibold text-foreground">
                                 {childResults.images_processed}
                               </div>
                             </div>
                           </div>
                           
                           {/* Inference Time */}
-                          <div className="text-sm text-gray-400">
+                          <div className="text-sm text-muted-foreground">
                             <span>Inference Time: {childResults.inference_time_ms?.toFixed(0) || 0}ms</span>
                             <span className="ml-4">
                               Avg: {childResults.images_processed > 0 
@@ -1092,27 +1087,27 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                       
                       {/* Running Progress */}
                       {isExpanded && childTask.status === 'running' && (
-                        <div className="p-4 border-t border-gray-700 bg-gray-900/50">
+                        <div className="p-4 border-t border-border bg-muted/30">
                           <div className="flex items-center gap-4">
                             <div className="flex-1">
-                              <div className="w-full bg-gray-800 rounded-full h-2">
+                              <div className="w-full bg-muted rounded-full h-2">
                                 <div
-                                  className="bg-blue-500 h-2 rounded-full transition-all"
+                                  className="bg-primary h-2 rounded-full transition-all"
                                   style={{ width: `${childTask.progress}%` }}
                                 />
                               </div>
                             </div>
-                            <span className="text-sm text-gray-400">{childTask.progress}%</span>
+                            <span className="text-sm text-muted-foreground">{childTask.progress}%</span>
                           </div>
                         </div>
                       )}
 
                       {/* Failed Error Message */}
                       {isExpanded && childTask.status === 'failed' && (
-                        <div className="p-4 border-t border-gray-700 bg-red-950/30">
+                        <div className="p-4 border-t border-border bg-destructive/10">
                           <div className="flex items-start gap-2">
-                            <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-                            <p className="text-sm text-red-300 font-mono whitespace-pre-wrap break-words">
+                            <AlertCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
+                            <p className="text-sm text-destructive font-mono whitespace-pre-wrap break-words">
                               {childTask.error_message || 'An unknown error occurred during evaluation.'}
                             </p>
                           </div>
@@ -1127,14 +1122,14 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
 
           {/* Progress for running tasks */}
           {task.status === 'running' && (
-            <div className="bg-gray-950 border border-gray-800 rounded-lg p-4">
+            <div className="bg-card border border-border rounded-lg p-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium">Progress</span>
-                <span className="text-sm text-gray-400">{task.progress}%</span>
+                <span className="text-sm text-muted-foreground">{task.progress}%</span>
               </div>
-              <div className="w-full bg-gray-800 rounded-full h-2">
+              <div className="w-full bg-muted rounded-full h-2">
                 <div
-                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                  className="bg-primary h-2 rounded-full transition-all duration-300"
                   style={{ width: `${task.progress}%` }}
                 />
               </div>
