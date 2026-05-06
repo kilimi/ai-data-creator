@@ -206,6 +206,16 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             </div>
           )}
 
+          {/* Multi-format badge, bottom-left */}
+          {isMultiFormat && (
+            <div className="absolute bottom-2 left-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/15 text-primary px-2 py-0.5 text-[10px] font-medium backdrop-blur">
+                <Sparkles className="h-3 w-3" />
+                Multi-format
+              </span>
+            </div>
+          )}
+
           {/* Actions menu, top-right */}
           <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
             <DropdownMenu>
