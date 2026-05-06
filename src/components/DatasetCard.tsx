@@ -236,26 +236,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             {dataset.description || "No description provided"}
           </p>
 
-          {/* Annotation progress */}
-          {imgCount > 0 && (
-            <div className="pt-2 space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>Annotation progress</span>
-                <span className="tabular-nums">
-                  {annotated.toLocaleString()} / {imgCount.toLocaleString()} · {progress}%
-                </span>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    progress >= 100 ? "bg-emerald-500" : "bg-primary",
-                  )}
-                  style={{ width: `${Math.min(100, progress)}%` }}
-                />
-              </div>
-            </div>
-          )}
+          {/* Annotation progress removed: datasets can have many annotation files (1:N) */}
 
           {/* Tags */}
           {dataset.tags && dataset.tags.length > 0 && (
