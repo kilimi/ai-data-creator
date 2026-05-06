@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
-import { Plus, Search, Settings, Activity, Tag, Filter, Sparkles, RefreshCw, FolderOpen, ChevronRight } from "lucide-react";
+import { Plus, Search, Settings, Activity, Tag, Filter, Sparkles, RefreshCw, FolderOpen, ChevronRight, FolderPlus, Image as ImageIcon, Brain, BookOpen, Rocket, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -42,6 +42,95 @@ function QuickProjectItem({ project }: QuickProjectItemProps) {
       </div>
       <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
     </Link>
+  );
+}
+
+function EmptyOnboarding() {
+  const steps = [
+    {
+      icon: FolderPlus,
+      title: "Create your first project",
+      description: "Projects organize datasets, models, and evaluations together.",
+      cta: "New project",
+      to: "/projects/new",
+      primary: true,
+    },
+    {
+      icon: ImageIcon,
+      title: "Add a dataset",
+      description: "Upload images or a video, then label them with built-in tools.",
+      cta: "Learn how",
+      to: "/help/dataset-view",
+    },
+    {
+      icon: Brain,
+      title: "Train & evaluate a model",
+      description: "Run YOLO, Mask-RCNN or RT-DETR — compare results side-by-side.",
+      cta: "Browse docs",
+      to: "/help",
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <Card className="glass-card p-10 text-center relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 pointer-events-none" />
+        <div className="relative">
+          <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-primary/10 flex items-center justify-center">
+            <Rocket className="w-8 h-8 text-primary" />
+          </div>
+          <h3 className="text-2xl font-semibold mb-2">Welcome to LAI Studio</h3>
+          <p className="text-muted-foreground max-w-lg mx-auto mb-6">
+            You don't have any projects yet. Follow these three steps to go from raw images to a trained model.
+          </p>
+          <div className="flex gap-3 justify-center flex-wrap">
+            <Button asChild size="lg">
+              <Link to="/projects/new" className="gap-2">
+                <Plus className="w-4 h-4" />
+                Create your first project
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="lg">
+              <Link to="/help" className="gap-2">
+                <BookOpen className="w-4 h-4" />
+                Open Help Center
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {steps.map((step, idx) => {
+          const Icon = step.icon;
+          return (
+            <Link
+              key={step.title}
+              to={step.to}
+              className="group glass-card rounded-xl p-5 border border-border/50 hover:border-primary/40 transition-all hover:-translate-y-0.5"
+            >
+              <div className="flex items-start gap-3 mb-3">
+                <div className={cn(
+                  "h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0",
+                  step.primary ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                )}>
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-muted-foreground mb-0.5">Step {idx + 1}</div>
+                  <h4 className="font-semibold text-foreground leading-tight">{step.title}</h4>
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground mb-4">{step.description}</p>
+              <span className="inline-flex items-center gap-1 text-sm font-medium text-primary group-hover:gap-2 transition-all">
+                {step.cta}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -346,36 +435,25 @@ export default function Index() {
                 </div>
               </Card>
             ) : filteredAndSortedProjects().length === 0 ? (
-              <Card className="glass-card p-12 text-center">
-                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-primary/10 via-accent/10 to-secondary/10 flex items-center justify-center">
-                  <FolderOpen className="w-10 h-10 text-primary" />
-                </div>
-                <h3 className="text-xl font-semibold mb-2">
-                  {searchQuery || selectedTag ? "No matching projects" : "No projects yet"}
-                </h3>
-                <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                  {searchQuery || selectedTag
-                    ? "Try adjusting your filters or search terms."
-                    : "Create your first project to get started."
-                  }
-                </p>
-                <div className="flex gap-3 justify-center">
-                  <Button asChild>
-                    <Link to="/projects/new" className="flex items-center gap-2">
-                      <Plus className="w-4 h-4" />
-                      Create Project
-                    </Link>
+              (searchQuery || selectedTag) ? (
+                <Card className="glass-card p-12 text-center">
+                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted/40 flex items-center justify-center">
+                    <Search className="w-10 h-10 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">No matching projects</h3>
+                  <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                    Try adjusting your filters or search terms.
+                  </p>
+                  <Button variant="outline" onClick={() => {
+                    setSearchQuery("");
+                    setSelectedTag(null);
+                  }}>
+                    Clear Filters
                   </Button>
-                  {(searchQuery || selectedTag) && (
-                    <Button variant="outline" onClick={() => {
-                      setSearchQuery("");
-                      setSelectedTag(null);
-                    }}>
-                      Clear Filters
-                    </Button>
-                  )}
-                </div>
-              </Card>
+                </Card>
+              ) : (
+                <EmptyOnboarding />
+              )
             ) : (
               <div className="space-y-4">
                 {/* Results Header */}
@@ -385,14 +463,10 @@ export default function Index() {
                       {filteredAndSortedProjects().length} {filteredAndSortedProjects().length === 1 ? 'project' : 'projects'}
                     </span>
                     {(searchQuery || selectedTag) && (
-                      <Badge variant="secondary" className="text-xs">
-                        Filtered
-                      </Badge>
+                      <Badge variant="secondary" className="text-xs">Filtered</Badge>
                     )}
                   </div>
                 </div>
-                
-                {/* Projects Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filteredAndSortedProjects().map((project, index) => (
                     <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
