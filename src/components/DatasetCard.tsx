@@ -324,20 +324,67 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             · {formatRelative(dataset.updated_at || dataset.created_at)}
           </span>
         </div>
-        {fileCount === 0 && imgCount > 0 ? (
-          <Button
-            asChild
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-primary hover:text-primary"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Link to={annotateHref}>
-              <Pencil className="h-3.5 w-3.5 mr-1" />
-              Annotate
-            </Link>
-          </Button>
-        ) : null}
+        {imgCount > 0 && (
+          fileCount === 0 ? (
+            <Button
+              asChild
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-primary hover:text-primary"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Link to={annotateHref}>
+                <Pencil className="h-3.5 w-3.5 mr-1" />
+                Annotate
+              </Link>
+            </Button>
+          ) : (
+            <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+              <Button
+                asChild
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-primary hover:text-primary rounded-r-none"
+              >
+                <Link to={annotateHref}>
+                  <Pencil className="h-3.5 w-3.5 mr-1" />
+                  Annotate
+                </Link>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-6 px-0 text-primary hover:text-primary rounded-l-none border-l border-border/50"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link to={annotateHref}>
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Continue annotating
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={annotateHref}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New annotation set
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={datasetHref}>
+                      <FolderOpen className="h-4 w-4 mr-2" />
+                      Browse {fileCount} set{fileCount > 1 ? "s" : ""}
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )
+        )}
       </CardFooter>
 
       <EditDatasetDialog
