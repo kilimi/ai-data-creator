@@ -129,21 +129,16 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   
   // Derived metrics
   const imgCount = dataset.image_count || 0;
-  const annCount = dataset.annotation_count || 0;
   const fileCount = dataset.annotation_file_count || 0;
-  // Treat annotation_count as "annotated images" approximation when no per-image data;
-  // bound to image count to avoid >100% display.
-  const annotated = Math.min(annCount, imgCount);
-  const progress = imgCount > 0 ? Math.round((annotated / imgCount) * 100) : 0;
 
-  const status: { label: string; cls: string; Icon: typeof CheckCircle2 } =
+  // Only surface a status pill when the dataset has images but no annotation files yet.
+  // A dataset can have many annotation files, so we don't compute a 1:1 progress.
+  const status: { label: string; cls: string; Icon: typeof CheckCircle2 } | null =
     imgCount === 0
       ? { label: "Empty", cls: "bg-muted text-muted-foreground border-border", Icon: CircleDashed }
       : fileCount === 0
         ? { label: "Unannotated", cls: "bg-amber-500/15 text-amber-500 border-amber-500/30", Icon: CircleDashed }
-        : progress >= 100
-          ? { label: "Ready to train", cls: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30", Icon: CheckCircle2 }
-          : { label: "In progress", cls: "bg-primary/15 text-primary border-primary/30", Icon: Loader2 };
+        : null;
 
   const datasetHref = dataset.project_id
     ? `/projects/${dataset.project_id}/datasets/${dataset.id}`
@@ -184,18 +179,20 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             </div>
           )}
 
-          {/* Status pill, top-left */}
-          <div className="absolute top-2 left-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur",
-                status.cls,
-              )}
-            >
-              <status.Icon className={cn("h-3 w-3", status.label === "In progress" && "animate-spin")} />
-              {status.label}
-            </span>
-          </div>
+          {/* Status pill, top-left (only shown for Empty / Unannotated) */}
+          {status && (
+            <div className="absolute top-2 left-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur",
+                  status.cls,
+                )}
+              >
+                <status.Icon className="h-3 w-3" />
+                {status.label}
+              </span>
+            </div>
+          )}
 
           {/* Actions menu, top-right */}
           <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
@@ -239,26 +236,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             {dataset.description || "No description provided"}
           </p>
 
-          {/* Annotation progress */}
-          {imgCount > 0 && (
-            <div className="pt-2 space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>Annotation progress</span>
-                <span className="tabular-nums">
-                  {annotated.toLocaleString()} / {imgCount.toLocaleString()} · {progress}%
-                </span>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    progress >= 100 ? "bg-emerald-500" : "bg-primary",
-                  )}
-                  style={{ width: `${Math.min(100, progress)}%` }}
-                />
-              </div>
-            </div>
-          )}
+          {/* Annotation progress removed: datasets can have many annotation files (1:N) */}
 
           {/* Tags */}
           {dataset.tags && dataset.tags.length > 0 && (
@@ -303,19 +281,6 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             <Link to={annotateHref}>
               <Pencil className="h-3.5 w-3.5 mr-1" />
               Annotate
-            </Link>
-          </Button>
-        ) : progress > 0 && progress < 100 ? (
-          <Button
-            asChild
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Link to={annotateHref}>
-              <Pencil className="h-3.5 w-3.5 mr-1" />
-              Resume
             </Link>
           </Button>
         ) : null}
