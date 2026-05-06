@@ -39,6 +39,52 @@ interface ProjectCardProps {
   onUpdate?: (project: Project) => void;
 }
 
+function formatRelative(dateStr: string): string {
+  const d = new Date(dateStr).getTime();
+  const diff = Date.now() - d;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+function DatasetMosaic({ datasets }: { datasets: Dataset[] }) {
+  const withThumbs = datasets
+    .map((d) => ({ d, url: resolveBackendMediaUrl(d.thumbnailUrl) }))
+    .filter((x) => !!x.url)
+    .slice(0, 4);
+
+  if (withThumbs.length === 0) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
+        <Folder className="h-16 w-16 text-muted-foreground/20" />
+      </div>
+    );
+  }
+
+  if (withThumbs.length === 1) {
+    return <img src={withThumbs[0].url!} alt="" className="h-full w-full object-cover" loading="lazy" />;
+  }
+
+  const gridRows = withThumbs.length <= 2 ? "grid-rows-1" : "grid-rows-2";
+  return (
+    <div className={cn("grid h-full w-full gap-0.5 grid-cols-2", gridRows)}>
+      {withThumbs.map((x) => (
+        <div key={x.d.id} className="overflow-hidden bg-muted">
+          <img src={x.url!} alt="" className="h-full w-full object-cover" loading="lazy" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectCardProps) {
   const projectCover = resolveBackendMediaUrl(project.logo_url || project.thumbnailUrl);
   const { isLoaded: imageLoaded } = useImageLoad(projectCover);
@@ -123,14 +169,15 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
     <>
       <Card 
         className={cn(
-          "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card flex flex-col h-full",
+          "group overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-primary/40 glass-card flex flex-col h-full cursor-pointer",
           className
         )}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
+        onClick={() => navigate(`/projects/${project.id}/datasets`)}
       >
         <CardHeader className="p-0 flex-shrink-0">
-          <div className="relative h-44 w-full overflow-hidden">
+          <div className="relative h-44 w-full overflow-hidden bg-muted/30">
             {projectCover ? (
               <>
                 {!imageLoaded && (
@@ -150,6 +197,8 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                   )}
                 />
               </>
+            ) : project.datasets && project.datasets.length > 0 ? (
+              <DatasetMosaic datasets={project.datasets} />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
                 {isHovered ? (
@@ -159,17 +208,11 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                 )}
               </div>
             )}
-            
-            <div className="absolute inset-0 bg-gradient-to-t from-background/90 to-transparent" />
-            
-            <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
-              <div className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                {new Date(project.created_at).toLocaleDateString()}
-              </div>
-              
+
+            <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="secondary" size="icon" className="h-7 w-7">
+                  <Button variant="secondary" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur">
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -194,12 +237,10 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
         
         <CardContent className="p-4 flex-1 flex flex-col">
           <div className="space-y-2 flex-1">
-            <Link to={`/projects/${project.id}/datasets`}>
-              <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
-                {project.name}
-              </h3>
-            </Link>
-            <p className="text-sm text-muted-foreground line-clamp-2 min-h-[2.5rem]">
+            <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
+              {project.name}
+            </h3>
+            <p className="text-sm text-muted-foreground/90 line-clamp-2 min-h-[2.5rem]">
               {project.description || "No description provided"}
             </p>
             
@@ -221,15 +262,19 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
         
         <CardFooter className="p-4 pt-0 flex-shrink-0">
           <div className="flex justify-between items-center w-full">
-            <div className="flex items-center gap-2">
-              <Database className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5" />
                 {project.datasets.length} {project.datasets.length === 1 ? 'dataset' : 'datasets'}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span title={new Date(project.created_at).toLocaleString()}>
+                Updated {formatRelative(project.created_at)}
               </span>
             </div>
             
             {project.datasets.length > 0 && (
-              <div className="flex -space-x-2">
+              <div className="flex -space-x-2" onClick={(e) => e.stopPropagation()}>
                 {project.datasets.slice(0, 3).map((dataset) => (
                   <DatasetThumbnail key={dataset.id} dataset={dataset} projectId={project.id} />
                 ))}

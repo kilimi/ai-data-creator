@@ -243,15 +243,13 @@ export default function Index() {
               <div>
                 <h1 className="text-2xl font-bold text-foreground">Projects</h1>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Manage your machine learning projects
+                  {stats.totalProjects} {stats.totalProjects === 1 ? 'project' : 'projects'}
+                  {' · '}
+                  {stats.totalDatasets} {stats.totalDatasets === 1 ? 'dataset' : 'datasets'}
+                  {' · '}
+                  {stats.totalImages.toLocaleString()} images
                 </p>
               </div>
-              <Button asChild>
-                <Link to="/projects/new" className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  New Project
-                </Link>
-              </Button>
             </div>
 
             {/* Search and Filters */}
@@ -288,7 +286,8 @@ export default function Index() {
                   onClick={handleRefresh}
                   disabled={loading}
                   className="h-10 w-10 bg-background/50 border-border/50"
-                  title="Refresh"
+                  title="Refresh projects"
+                  aria-label="Refresh projects"
                 >
                   <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 </Button>
