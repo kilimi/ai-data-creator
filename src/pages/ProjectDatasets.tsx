@@ -24,7 +24,8 @@ import { AddGroupModal } from '@/components/AddGroupModal';
 import { EditGroupModal } from '@/components/EditGroupModal';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
 import { MergeDatasetsModal } from '@/components/MergeDatasetsModal';
-import { FolderPlus, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, GitMerge } from "lucide-react";
+import { FolderPlus, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, GitMerge, Image as ImageIcon, Brain, Pencil, Rocket, BookOpen, ArrowRight, CheckCircle2, Activity } from "lucide-react";
+import { HelpHint } from "@/components/ui/help-hint";
 import { Card } from "@/components/ui/card";
 import { Dataset, Project, DatasetGroup } from '@/types';
 import {
