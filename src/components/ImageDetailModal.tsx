@@ -4,7 +4,7 @@ import { Image } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Trash2, Download } from "lucide-react";
 import { AnnotationSample } from "@/utils/annotations";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ImageZoomControls } from "@/components/ImageZoomControls";
 import { ImageNavigation } from "@/components/ImageNavigation";
 import { ImageViewport } from "@/components/ImageViewport";
@@ -48,6 +48,8 @@ export function ImageDetailModal({
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [imageLoaded, setImageLoaded] = useState(false);
   const [annotationKey, setAnnotationKey] = useState(0); // Force re-render key
+  // Tracks the pending load-settle timeout so we can cancel it on navigation.
+  const loadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Always show original in popup (thumbnail used as fast placeholder until load)
   
   // Zoom and pan state
@@ -57,31 +59,40 @@ export function ImageDetailModal({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
-  // Reset zoom and pan when image changes
+  // Reset state when image changes; cancel any pending load-settle timeout so
+  // a slow-loading previous image cannot overwrite the current image's state.
   useEffect(() => {
+    if (loadTimeoutRef.current !== null) {
+      clearTimeout(loadTimeoutRef.current);
+      loadTimeoutRef.current = null;
+    }
     setImageLoaded(false);
     setImageDimensions({ width: 0, height: 0 });
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setIsDragging(false);
-    setAnnotationKey(prev => prev + 1); // Force annotations to re-render when image changes
+    setAnnotationKey(prev => prev + 1);
   }, [image?.id]);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
     const dimensions = {
       width: img.naturalWidth,
-      height: img.naturalHeight
+      height: img.naturalHeight,
     };
-    
-    console.log('ImageDetailModal: Image loaded with dimensions:', dimensions);
     setImageDimensions(dimensions);
-    
-    // Small delay to ensure the layout has settled before showing annotations
-    setTimeout(() => {
+
+    // Short settle delay so the browser completes layout after the image renders.
+    // We cancel any previous timeout (set by the previous image) before starting
+    // a new one, preventing a stale timeout from overwriting current state.
+    if (loadTimeoutRef.current !== null) {
+      clearTimeout(loadTimeoutRef.current);
+    }
+    loadTimeoutRef.current = setTimeout(() => {
+      loadTimeoutRef.current = null;
       setImageLoaded(true);
-      setAnnotationKey(prev => prev + 1); // Force annotations to re-render after image loads
-    }, 100);
+      setAnnotationKey(prev => prev + 1);
+    }, 50);
   };
 
   // Zoom functions
@@ -193,21 +204,13 @@ export function ImageDetailModal({
 
   // Extract filename from URL if fileName is empty
   const getImageName = () => {
-    console.log('getImageName: image.fileName =', image.fileName);
-    console.log('getImageName: image.url =', image.url);
-    
     if (image.fileName && image.fileName.trim() !== '') {
-      console.log('getImageName: Using fileName:', image.fileName);
       return image.fileName;
     }
-    // Extract filename from URL as fallback
     if (image.url) {
       const urlParts = image.url.split('/');
-      const filename = urlParts[urlParts.length - 1];
-      console.log('getImageName: Extracted from URL:', filename);
-      return filename || 'Unknown Image';
+      return urlParts[urlParts.length - 1] || 'Unknown Image';
     }
-    console.log('getImageName: No URL available, returning Unknown Image');
     return 'Unknown Image';
   };
 
@@ -220,10 +223,8 @@ export function ImageDetailModal({
   }));
 
   const handleImageClick = (e: React.MouseEvent) => {
-    // Only refresh annotations if we're not dragging and have annotations
     if (!isDragging && annotationsWithFileName.length > 0) {
-      console.log('ImageDetailModal: Refreshing annotations on click');
-      setAnnotationKey(prev => prev + 1); // Force re-render of annotations
+      setAnnotationKey(prev => prev + 1);
     }
   };
 
@@ -244,15 +245,6 @@ export function ImageDetailModal({
       window.open(image.url, "_blank", "noopener,noreferrer");
     }
   };
-
-  console.log('ImageDetailModal: Rendering with annotations:', {
-    imageId: image.id,
-    annotationsCount: annotations.length,
-    imageLoaded,
-    imageDimensions,
-    zoom,
-    pan
-  });
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>

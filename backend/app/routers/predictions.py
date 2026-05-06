@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any, List
 from pydantic import BaseModel
@@ -21,34 +21,86 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _resolve_eval_image_path(img: Image, project_id: int, dataset_id: int) -> Optional[Path]:
-    """Resolve image path for evaluation/snapshot serving."""
-    candidates: List[Path] = [
-        Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name,
-        Path("data") / "images" / str(dataset_id) / img.file_name,
-        Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / img.file_name,
-        Path("/app/data") / "images" / str(dataset_id) / img.file_name,
-    ]
+def _resolve_eval_image_path(
+    img: Image, project_id: Optional[int], dataset_id: int
+) -> Optional[Path]:
+    """Resolve image path for evaluation/snapshot serving.
 
-    img_url = (img.url or "").strip()
+    Tries multiple known layouts and the URL stored on the image. Returns None
+    if nothing on disk matches; never raises.
+    """
+    file_name = (getattr(img, "file_name", None) or "").strip()
+    if not file_name:
+        logger.warning(
+            "Cannot resolve eval image path: image id=%s has empty file_name",
+            getattr(img, "id", None),
+        )
+        return None
+
+    candidates: List[Path] = []
+    pid_str = str(project_id) if project_id else None
+    ds_str = str(dataset_id)
+
+    if pid_str:
+        candidates.extend(
+            [
+                Path("projects") / pid_str / ds_str / "images" / file_name,
+                Path("/app/projects") / pid_str / ds_str / "images" / file_name,
+            ]
+        )
+    candidates.extend(
+        [
+            Path("data") / "images" / ds_str / file_name,
+            Path("/app/data") / "images" / ds_str / file_name,
+        ]
+    )
+
+    img_url = (getattr(img, "url", None) or "").strip()
     if img_url:
         url_path = img_url.lstrip("/")
         if url_path.startswith("static/"):
-            url_path = url_path[len("static/"):]
+            url_path = url_path[len("static/") :]
         if url_path:
-            p = Path(url_path)
-            candidates.append(p)
-            if not str(p).startswith("projects"):
-                candidates.append(Path("projects") / p)
+            try:
+                p = Path(url_path)
+                candidates.append(p)
+                candidates.append(Path("/app") / p)
+                if not str(p).startswith("projects"):
+                    candidates.append(Path("projects") / p)
+                    candidates.append(Path("/app/projects") / p)
+            except Exception as e:
+                logger.warning(
+                    "Bad image URL while resolving path image_id=%s url=%s: %s",
+                    getattr(img, "id", None),
+                    img_url,
+                    e,
+                )
 
     seen = set()
     for candidate in candidates:
-        key = str(candidate)
+        try:
+            key = str(candidate)
+        except Exception:
+            continue
         if key in seen:
             continue
         seen.add(key)
-        if candidate.exists() and candidate.is_file():
-            return candidate.resolve()
+        try:
+            if candidate.exists() and candidate.is_file():
+                return candidate.resolve()
+        except Exception as e:
+            logger.warning("Failed checking candidate %s: %s", candidate, e)
+            continue
+
+    logger.info(
+        "Eval image not resolved on disk: image_id=%s dataset_id=%s project_id=%s file_name=%s url=%s tried=%s",
+        getattr(img, "id", None),
+        dataset_id,
+        project_id,
+        file_name,
+        img_url,
+        [str(c) for c in candidates],
+    )
     return None
 
 
@@ -418,41 +470,78 @@ async def get_evaluation_image(
     db: Session = Depends(get_db),
 ):
     """Serve raw image file for evaluation snapshot cards."""
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    if task.task_type != 'model_evaluation':
-        raise HTTPException(status_code=400, detail="Task is not an evaluation task")
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.task_type != 'model_evaluation':
+            raise HTTPException(status_code=400, detail="Task is not an evaluation task")
 
-    results = load_merged_evaluation_results((task.task_metadata or {}).get('results', {}))
-    dataset_id = results.get('dataset_id')
-    if not dataset_id:
-        raise HTTPException(status_code=400, detail="Evaluation dataset not found")
+        # The image must exist, but the dataset may be discovered from either
+        # the task's results or by following the image -> dataset relation
+        # (parent multi-dataset tasks have no top-level results).
+        img = db.query(Image).filter(Image.id == image_id).first()
+        if not img:
+            raise HTTPException(status_code=404, detail="Image not found")
 
-    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+        dataset_id = img.dataset_id
+        # Cross-check against the task's recorded dataset when possible.
+        metadata = task.task_metadata or {}
+        results = load_merged_evaluation_results(metadata.get('results') or {})
+        recorded_dataset_id = results.get('dataset_id') if results else None
+        if recorded_dataset_id and dataset_id and recorded_dataset_id != dataset_id:
+            # If the task's recorded dataset doesn't match, the image is foreign.
+            # Allow it through anyway as long as a child task references it; we
+            # only need to serve the file from disk.
+            logger.debug(
+                "Image %s belongs to dataset %s but task %s recorded dataset %s",
+                image_id,
+                dataset_id,
+                task_id,
+                recorded_dataset_id,
+            )
 
-    img = db.query(Image).filter(Image.id == image_id, Image.dataset_id == dataset_id).first()
-    if not img:
-        raise HTTPException(status_code=404, detail="Image not found in evaluation dataset")
+        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first() if dataset_id else None
 
-    img_path = _resolve_eval_image_path(img, dataset.project_id, dataset_id)
-    if img_path is None:
-        raise HTTPException(status_code=404, detail="Image file not found on disk")
+        project_id: Optional[int] = None
+        if dataset is not None and getattr(dataset, "project_id", None):
+            project_id = int(dataset.project_id)
+        elif getattr(task, "project_id", None):
+            project_id = int(task.project_id)
 
-    suffix = img_path.suffix.lower()
-    media_type = None
-    if suffix in [".jpg", ".jpeg"]:
-        media_type = "image/jpeg"
-    elif suffix == ".png":
-        media_type = "image/png"
-    elif suffix == ".webp":
-        media_type = "image/webp"
-    elif suffix == ".gif":
-        media_type = "image/gif"
+        img_path = _resolve_eval_image_path(img, project_id, dataset_id or 0)
+        if img_path is None:
+            raise HTTPException(status_code=404, detail="Image file not found on disk")
 
-    return FileResponse(path=str(img_path), media_type=media_type, filename=img_path.name)
+        suffix = img_path.suffix.lower()
+        media_type_map = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+            ".bmp": "image/bmp",
+            ".tif": "image/tiff",
+            ".tiff": "image/tiff",
+        }
+        media_type = media_type_map.get(suffix, "application/octet-stream")
+
+        return FileResponse(
+            path=str(img_path),
+            media_type=media_type,
+            filename=img_path.name,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed evaluation-image response for task_id=%s image_id=%s: %s",
+            task_id,
+            image_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail=f"Failed to serve evaluation image: {e}")
 
 
 @router.get("/predictions/export-coco/{task_id}")

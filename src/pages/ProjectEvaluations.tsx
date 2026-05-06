@@ -212,8 +212,6 @@ export default function ProjectEvaluations() {
   };
 
   const handleDelete = async (task: any) => {
-    const isMulti = !!task.task_metadata?.is_multi_dataset;
-    if (!confirm(`Are you sure you want to delete evaluation task "${task.name}"${isMulti ? ' and all its child evaluations' : ''}?`)) return;
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete task');

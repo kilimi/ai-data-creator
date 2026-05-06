@@ -138,6 +138,29 @@ def cmd_down(ns: argparse.Namespace) -> int:
     return _run(["docker", "compose", "down", *extra], root)
 
 
+def cmd_remove_images(ns: argparse.Namespace) -> int:
+    """
+    Remove Docker images used by this compose stack without touching data volumes.
+    Equivalent to: docker compose down --rmi all
+    """
+    root = get_bundle_root(force_download=ns.refresh)
+    extra = ns.docker_compose_args or []
+    cmd = ["docker", "compose", "down", "--rmi", "all", *extra]
+    rc = _run(cmd, root)
+
+    # Compose/BuildKit can leave tagged images behind (or other containers may still
+    # reference them), which can make subsequent builds fail with:
+    #   "failed to solve: image ... already exists"
+    # Force-remove the common local tags (ignore failures).
+    for tag in ("lai-backend:local", "lai-celery:local", "lai-frontend:local"):
+        try:
+            _run(["docker", "image", "rm", "-f", tag], root)
+        except Exception:
+            pass
+
+    return rc
+
+
 def cmd_compose(ns: argparse.Namespace) -> int:
     root = get_bundle_root(force_download=ns.refresh)
     args = ns.docker_compose_args or []
@@ -251,6 +274,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     sp.add_argument("--refresh", action="store_true")
     sp.set_defaults(func=cmd_down)
+
+    sp = sub.add_parser(
+        "remove",
+        help="Remove stack Docker images only (keeps data/volumes).",
+    )
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose down --rmi all",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_remove_images)
+
+    sp = sub.add_parser(
+        "delete",
+        help="Alias of 'remove' (remove stack Docker images, keep data).",
+    )
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose down --rmi all",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_remove_images)
 
     sp = sub.add_parser("compose", help="Run docker compose with arbitrary arguments")
     sp.add_argument(

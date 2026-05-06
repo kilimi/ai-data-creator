@@ -5,7 +5,9 @@ import os
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, Future
 import numpy as np
 import time
 from PIL import Image as PILImage
@@ -19,6 +21,166 @@ from app.evaluation_artifacts import write_evaluation_blobs
 from app.models import Task as TaskModel, Annotation, AnnotationClass, AnnotationFile, Dataset, Image
 
 logger = logging.getLogger(__name__)
+
+# -------------------------
+# Evaluation batching helpers
+# -------------------------
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _choose_eval_batch_size(imgsz: int = 640, half: bool = True) -> int:
+    """
+    Choose an evaluation batch size based on available GPU memory.
+
+    Tuned to use ~70% of free VRAM. Memory scales quadratically with imgsz and
+    halves with FP16. Override via LAI_EVAL_BATCH (int).
+    """
+    override = os.environ.get("LAI_EVAL_BATCH")
+    if override:
+        try:
+            v = int(override)
+            return max(1, v)
+        except Exception:
+            pass
+
+    try:
+        import torch  # type: ignore
+
+        if not torch.cuda.is_available():
+            return 1
+
+        free_bytes, _total_bytes = torch.cuda.mem_get_info()
+        free_gb = free_bytes / (1024**3)
+        # Memory scales ~quadratically with image size, ~half with FP16.
+        imgsz_scale = max(1.0, (float(imgsz) / 640.0) ** 2)
+        half_scale = 0.55 if half else 1.0
+        # Empirical per-image VRAM cost at 640 fp16 for YOLO-N..L: ~25-50MB
+        # (activations + NMS + I/O buffers). Pick a safe midpoint and let the
+        # OOM-backoff in the predict loop correct it if a model is heavier.
+        per_img_mb = 35.0 * imgsz_scale * half_scale
+        budget_mb = max(0.0, free_gb * 1024.0 * 0.7)  # 70% of free VRAM
+        base = int(budget_mb / max(1.0, per_img_mb))
+        # Sensible floor and ceiling.
+        return max(8, min(512, base))
+    except Exception:
+        return 8
+
+
+def _chunked(seq, size: int):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
+def _get_gpu_mem_info_gb() -> tuple[float, float]:
+    """Return (free_gb, total_gb) for current CUDA device, or (0, 0)."""
+    try:
+        import torch  # type: ignore
+
+        if not torch.cuda.is_available():
+            return 0.0, 0.0
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        return free_bytes / (1024**3), total_bytes / (1024**3)
+    except Exception:
+        return 0.0, 0.0
+
+
+def _resolve_eval_device() -> str:
+    """
+    Resolve target inference device.
+
+    Honors LAI_EVAL_DEVICE (e.g. "0", "cpu", "cuda:0"). Defaults to GPU 0 when
+    CUDA is available, else "cpu".
+    """
+    override = (os.environ.get("LAI_EVAL_DEVICE") or "").strip()
+    if override:
+        return override
+    try:
+        import torch  # type: ignore
+        return "0" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def _decode_image_bgr(path: str) -> Optional[np.ndarray]:
+    """Decode an image to a BGR numpy array. Returns None on failure.
+
+    Tries OpenCV first (fastest, releases GIL), falls back to PIL.
+    """
+    try:
+        import cv2  # type: ignore
+
+        arr = cv2.imread(path, cv2.IMREAD_COLOR)
+        if arr is not None:
+            return arr
+    except Exception:
+        pass
+
+    try:
+        with PILImage.open(path) as pil:
+            rgb = np.array(pil.convert("RGB"))
+        # Convert RGB -> BGR for Ultralytics (matches cv2 convention).
+        return rgb[:, :, ::-1].copy()
+    except Exception as e:
+        logger.warning("Failed to decode image %s: %s", path, e)
+        return None
+
+
+def _iter_prefetched_chunks(
+    items: List[Tuple[Image, Path]],
+    get_batch_size,
+    decode_workers: int,
+    prefetch: int,
+):
+    """
+    Yield (chunk_items, decoded_arrays) batches with parallel decoding and
+    overlap of next-chunk prefetch with current-chunk GPU work.
+
+    `get_batch_size()` is consulted at submit time so that ramp-up/backoff
+    in the predict loop affects subsequent chunks.
+    """
+    if not items:
+        return
+
+    decode_workers = max(1, decode_workers)
+    prefetch = max(1, prefetch)
+    pool = ThreadPoolExecutor(
+        max_workers=decode_workers,
+        thread_name_prefix="lai-eval-decode",
+    )
+    pending: deque[Tuple[List[Tuple[Image, Path]], List[Future]]] = deque()
+    pos = 0
+
+    def _submit_next() -> bool:
+        nonlocal pos
+        if pos >= len(items):
+            return False
+        try:
+            size = max(1, int(get_batch_size()))
+        except Exception:
+            size = 1
+        chunk = items[pos : pos + size]
+        pos += len(chunk)
+        futures = [pool.submit(_decode_image_bgr, str(p)) for (_img, p) in chunk]
+        pending.append((chunk, futures))
+        return True
+
+    try:
+        for _ in range(prefetch):
+            if not _submit_next():
+                break
+
+        while pending:
+            chunk, futures = pending.popleft()
+            arrays = [f.result() for f in futures]
+            yield chunk, arrays
+            _submit_next()
+    finally:
+        pool.shutdown(wait=True)
 
 # Database setup for Celery workers
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db/lai_db')
@@ -404,25 +566,28 @@ def evaluate_model(
         
         start_time = time.time()
         total_images = len(images)
-        
-        # Run inference on each image
-        for idx, img in enumerate(images):
-            img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
-            if img_path is None:
-                logger.warning(
-                    "Image file not found for evaluation: file=%s dataset_id=%s project_id=%s url=%s",
-                    img.file_name,
-                    dataset_id,
-                    project_id,
-                    getattr(img, "url", None),
-                )
-                continue
-            
-            # Store predictions for this image with bbox and segmentation
-            image_predictions = []
-            
-            # Grid-based or full-image inference
-            if use_grid:
+
+        # Inference path:
+        # - grid mode: keep existing per-image/tile behavior
+        # - non-grid: run model.predict on batches of image paths
+        if use_grid:
+            # Run inference on each image
+            for idx, img in enumerate(images):
+                img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
+                if img_path is None:
+                    logger.warning(
+                        "Image file not found for evaluation: file=%s dataset_id=%s project_id=%s url=%s",
+                        img.file_name,
+                        dataset_id,
+                        project_id,
+                        getattr(img, "url", None),
+                    )
+                    continue
+
+                # Store predictions for this image with bbox and segmentation
+                image_predictions = []
+
+                # Grid-based inference
                 # Load image to get dimensions
                 try:
                     pil_image = PILImage.open(img_path)
@@ -430,90 +595,60 @@ def evaluate_model(
                 except Exception as e:
                     logger.warning(f"Failed to load image {img_path}: {e}")
                     continue
-                
+
                 # Create grid_images directory
                 grid_output_dir = Path("projects") / str(project_id) / "training" / f"task_{training_task_id}" / "grid_images"
                 grid_output_dir.mkdir(parents=True, exist_ok=True)
-                
+
                 # Generate grid tiles
                 tiles = generate_grid_tiles(image_width, image_height, grid_size, grid_overlap)
-                
-                # Track all tile results for visualization
-                tile_results = []
-                
+
                 # Run inference on each tile
                 for tile_idx, tile in enumerate(tiles):
-                    # Crop tile from image
                     tile_image = pil_image.crop((
                         tile['x'],
                         tile['y'],
                         tile['x'] + tile['width'],
                         tile['y'] + tile['height']
                     ))
-                    
-                    # Run prediction on tile
+
                     try:
                         results = model.predict(
                             source=np.array(tile_image),
                             conf=conf_threshold,
                             iou=iou_threshold,
                             verbose=False,
-                            save=False  # Don't save via ultralytics
+                            save=False
                         )
                     except Exception as e:
                         logger.warning(f"Failed to run inference on tile {tile_idx} of {img_path}: {e}")
                         continue
-                    
+
                     if not results or len(results) == 0:
                         continue
-                    
+
                     result = results[0]
-                    
-                    # Save annotated tile image
-                    if result.boxes and len(result.boxes) > 0:
-                        try:
-                            # Get the annotated image from result
-                            annotated_img = result.plot()  # Returns numpy array with annotations
-                            annotated_pil = PILImage.fromarray(annotated_img)
-                            
-                            # Save with tile coordinates in filename
-                            tile_filename = f"{img.file_name.rsplit('.', 1)[0]}_tile_{tile_idx}_{tile['x']}_{tile['y']}.jpg"
-                            tile_save_path = grid_output_dir / tile_filename
-                            annotated_pil.save(tile_save_path, quality=90)
-                            
-                            tile_results.append({
-                                'tile_idx': tile_idx,
-                                'saved_path': str(tile_save_path),
-                                'detections': len(result.boxes)
-                            })
-                        except Exception as e:
-                            logger.warning(f"Failed to save tile image: {e}")
-                    
+
                     # Process predictions from this tile
                     if result.boxes:
                         for box_idx, box in enumerate(result.boxes):
                             pred_class_id = int(box.cls.item())
                             if pred_class_id < num_classes:
-                                # Get bbox in xyxy format (relative to tile)
                                 xyxy = box.xyxy[0].cpu().numpy()
                                 tile_x1, tile_y1, tile_x2, tile_y2 = xyxy
-                                
-                                # Convert to full image coordinates
+
                                 x1 = float(tile['x'] + tile_x1)
                                 y1 = float(tile['y'] + tile_y1)
                                 x2 = float(tile['x'] + tile_x2)
                                 y2 = float(tile['y'] + tile_y2)
-                                
-                                # Convert to xywh for COCO format
+
                                 bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
-                                
-                                # Get segmentation mask if available
+
                                 segmentation = []
                                 if hasattr(result, 'masks') and result.masks is not None:
                                     try:
                                         mask = result.masks.xy[box_idx]
                                         if len(mask) > 0:
-                                            # Adjust mask coordinates to full image
                                             segmentation = []
                                             for point in mask:
                                                 segmentation.extend([
@@ -522,237 +657,420 @@ def evaluate_model(
                                                 ])
                                     except (IndexError, AttributeError):
                                         pass
-                                
-                                pred_data = {
+
+                                image_predictions.append({
                                     'image_id': img.id,
                                     'class_id': pred_class_id,
                                     'bbox': bbox_xywh,
                                     'bbox_xyxy': [x1, y1, x2, y2],
                                     'conf': float(box.conf.item()),
                                     'segmentation': segmentation
-                                }
-                                
-                                image_predictions.append(pred_data)
-                
-                # Apply NMS to remove duplicates from overlapping tiles
+                                })
+
                 if image_predictions:
                     image_predictions = nms_predictions(image_predictions, iou_threshold=0.5)
                     predictions_count += len(image_predictions)
-                    
-                    # Save full image with all predictions overlaid
-                    try:
-                        import cv2
-                        img_array = np.array(pil_image)
-                        
-                        # Convert RGB to BGR for OpenCV
-                        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
-                            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+
+                # Store predictions for this image
+                if image_predictions:
+                    all_predictions.extend(image_predictions)
+
+                # Metrics + progress (unchanged logic)
+                if has_ground_truth and img.id in ground_truth_annotations:
+                    gt_boxes = ground_truth_annotations[img.id]
+                    pred_boxes = []
+
+                    for pred in image_predictions:
+                        pred_boxes.append({
+                            'class_id': pred['class_id'],
+                            'bbox': pred['bbox_xyxy'],
+                            'conf': pred['conf']
+                        })
+
+                    filtered_pred_boxes = [p for p in pred_boxes if p['class_id'] not in ignored_class_ids]
+                    filtered_gt_boxes = [g for g in gt_boxes if g['class_id'] not in ignored_class_ids and g['class_id'] >= 0]
+
+                    matched_gt = set()
+                    matched_pred = set()
+
+                    for i, pred in enumerate(filtered_pred_boxes):
+                        best_iou = 0
+                        best_gt_idx = -1
+
+                        for j, gt in enumerate(filtered_gt_boxes):
+                            if j in matched_gt:
+                                continue
+
+                            iou = calculate_iou(pred['bbox'], gt['bbox'])
+                            if iou > best_iou:
+                                best_iou = iou
+                                best_gt_idx = j
+
+                        if best_iou >= iou_threshold:
+                            matched_pred.add(i)
+                            matched_gt.add(best_gt_idx)
+
+                            gt_class = filtered_gt_boxes[best_gt_idx]['class_id']
+                            pred_class = pred['class_id']
+
+                            if gt_class >= 0 and pred_class >= 0:
+                                confusion_matrix[gt_class][pred_class] += 1
+                                _add_cm_sample(gt_class, pred_class, {
+                                    'image_id': img.id,
+                                    'file_name': img.file_name,
+                                    'pred_bbox': pred['bbox'],
+                                    'gt_bbox': filtered_gt_boxes[best_gt_idx]['bbox'],
+                                    'pred_class_name': class_names[pred_class],
+                                    'gt_class_name': class_names[gt_class],
+                                    'conf': float(pred['conf']),
+                                    'iou': float(best_iou),
+                                })
+                                if gt_class == pred_class:
+                                    true_positives += 1
+                                else:
+                                    false_positives += 1
                         else:
-                            img_bgr = img_array
-                        
-                        # Draw each prediction
-                        for pred in image_predictions:
-                            x1, y1, x2, y2 = [int(v) for v in pred['bbox_xyxy']]
-                            class_id = pred['class_id']
-                            conf = pred['conf']
-                            
-                            # Draw bounding box
-                            color = (0, 255, 0)  # Green
-                            cv2.rectangle(img_bgr, (x1, y1), (x2, y2), color, 2)
-                            
-                            # Draw label
-                            label = f"{class_names[class_id]}: {conf:.2f}"
-                            label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-                            cv2.rectangle(img_bgr, (x1, y1 - label_size[1] - 4), 
-                                        (x1 + label_size[0], y1), color, -1)
-                            cv2.putText(img_bgr, label, (x1, y1 - 2), 
-                                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-                            
-                            # Draw segmentation mask if available
-                            if pred['segmentation']:
-                                seg = pred['segmentation']
-                                points = np.array([[seg[i], seg[i+1]] for i in range(0, len(seg), 2)], np.int32)
-                                points = points.reshape((-1, 1, 2))
-                                cv2.polylines(img_bgr, [points], True, (255, 0, 0), 2)
-                        
-                        # Save full annotated image
-                        full_img_filename = f"{img.file_name.rsplit('.', 1)[0]}_grid_full.jpg"
-                        full_img_path = grid_output_dir / full_img_filename
-                        cv2.imwrite(str(full_img_path), img_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                        
-                        logger.info(f"Saved grid result: {full_img_path} with {len(image_predictions)} predictions")
-                    except Exception as e:
-                        logger.warning(f"Failed to save full annotated image: {e}")
-                
-            else:
-                # Full image inference (original behavior)
+                            false_positives += 1
+                            if pred['class_id'] < num_classes:
+                                confusion_matrix[num_classes][pred['class_id']] += 1
+                                _add_cm_sample(num_classes, pred['class_id'], {
+                                    'image_id': img.id,
+                                    'file_name': img.file_name,
+                                    'pred_bbox': pred['bbox'],
+                                    'gt_bbox': None,
+                                    'pred_class_name': class_names[pred['class_id']],
+                                    'gt_class_name': 'background',
+                                    'conf': float(pred['conf']),
+                                    'iou': float(best_iou),
+                                })
+
+                    for j in range(len(filtered_gt_boxes)):
+                        if j not in matched_gt:
+                            gt_class = filtered_gt_boxes[j]['class_id']
+                            if 0 <= gt_class < num_classes:
+                                confusion_matrix[gt_class][num_classes] += 1
+                                _add_cm_sample(gt_class, num_classes, {
+                                    'image_id': img.id,
+                                    'file_name': img.file_name,
+                                    'pred_bbox': None,
+                                    'gt_bbox': filtered_gt_boxes[j]['bbox'],
+                                    'pred_class_name': 'background',
+                                    'gt_class_name': class_names[gt_class],
+                                    'conf': 0.0,
+                                    'iou': 0.0,
+                                })
+
+                    false_negatives += len(filtered_gt_boxes) - len(matched_gt)
+
+                elif has_ground_truth:
+                    extra_fp = sum(1 for p in image_predictions if p['class_id'] not in ignored_class_ids)
+                    false_positives += extra_fp
+
+                if (idx + 1) % max(1, total_images // 10) == 0:
+                    progress = 30 + int((idx + 1) / total_images * 60)
+                    task.progress = progress
+                    db.commit()
+
+        else:
+            # Batched full-image inference
+            eval_imgsz = int(os.environ.get("LAI_EVAL_IMGSZ", "640") or 640)
+            eval_half = _env_bool("LAI_EVAL_HALF", True)
+            eval_device = _resolve_eval_device()
+            eval_batch = _choose_eval_batch_size(imgsz=eval_imgsz, half=eval_half)
+            max_batch = max(1, int(os.environ.get("LAI_EVAL_BATCH_MAX", "512") or 512))
+            eval_batch = min(eval_batch, max_batch)
+            decode_workers = max(
+                1, int(os.environ.get("LAI_EVAL_DECODE_WORKERS", "8") or 8)
+            )
+            prefetch_chunks = max(
+                1, int(os.environ.get("LAI_EVAL_PREFETCH_CHUNKS", "2") or 2)
+            )
+            free_gb, total_gb = _get_gpu_mem_info_gb()
+            logger.info(
+                "Evaluation batching: mode=batched imgsz=%s initial_batch=%s max_batch=%s "
+                "half=%s device=%s decode_workers=%s prefetch=%s free_gpu=%.2fGB total_gpu=%.2fGB",
+                eval_imgsz,
+                eval_batch,
+                max_batch,
+                eval_half,
+                eval_device,
+                decode_workers,
+                prefetch_chunks,
+                free_gb,
+                total_gb,
+            )
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "eval_batch_size": eval_batch,
+                "eval_imgsz": eval_imgsz,
+                "eval_half": eval_half,
+                "eval_device": eval_device,
+                "eval_decode_workers": decode_workers,
+                "eval_prefetch_chunks": prefetch_chunks,
+                "eval_gpu_free_gb": round(free_gb, 2),
+                "eval_gpu_total_gb": round(total_gb, 2),
+            }
+            db.commit()
+
+            valid_items: List[Tuple[Image, Path]] = []
+            for img in images:
+                img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
+                if img_path is None:
+                    logger.warning(
+                        "Image file not found for evaluation: file=%s dataset_id=%s project_id=%s url=%s",
+                        img.file_name,
+                        dataset_id,
+                        project_id,
+                        getattr(img, "url", None),
+                    )
+                    continue
+                valid_items.append((img, img_path))
+
+            # GPU warmup: cuDNN autotune + alloc pools cost is paid once instead
+            # of on the first user batch (which would otherwise look like a hang).
+            if eval_device != "cpu" and valid_items:
                 try:
-                    results = model.predict(
-                        source=str(img_path),
+                    warmup_paths = [str(valid_items[0][1])]
+                    model.predict(
+                        source=warmup_paths,
                         conf=conf_threshold,
                         iou=iou_threshold,
-                        verbose=False
+                        imgsz=eval_imgsz,
+                        half=eval_half,
+                        device=eval_device,
+                        verbose=False,
+                        batch=1,
                     )
                 except Exception as e:
-                    logger.warning(f"Failed to run inference on {img_path}: {e}")
-                    continue
-                
-                if not results or len(results) == 0:
-                    continue
-                
-                result = results[0]
-                
-                if result.boxes:
-                    for box_idx, box in enumerate(result.boxes):
-                        pred_class_id = int(box.cls.item())
+                    logger.debug("Warmup predict failed (non-fatal): %s", e)
 
-                        if pred_class_id < num_classes:
-                            # Get bbox in xyxy format
-                            xyxy = box.xyxy[0].cpu().numpy()
-                            x1, y1, x2, y2 = xyxy
-                            
-                            # Convert to xywh for COCO format
-                            bbox_xywh = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
-                            
-                            # Get segmentation mask if available
-                            segmentation = []
-                            if hasattr(result, 'masks') and result.masks is not None:
-                                try:
-                                    mask = result.masks.xy[box_idx]
-                                    if len(mask) > 0:
-                                        # Flatten the polygon points
-                                        segmentation = [float(coord) for point in mask for coord in point]
-                                except (IndexError, AttributeError):
-                                    pass
-                            
-                            pred_data = {
-                                'image_id': img.id,
-                                'class_id': pred_class_id,
-                                'bbox': bbox_xywh,
-                                'bbox_xyxy': [float(x1), float(y1), float(x2), float(y2)],
-                                'conf': float(box.conf.item()),
-                                'segmentation': segmentation
-                            }
-                            
-                            image_predictions.append(pred_data)
-                            predictions_count += 1
-            
-            # Store predictions for this image (filtered predictions only)
-            if image_predictions:
-                all_predictions.extend(image_predictions)
-            
-            # If we have ground truth, calculate metrics
-            if has_ground_truth and img.id in ground_truth_annotations:
-                gt_boxes = ground_truth_annotations[img.id]
-                pred_boxes = []
-                
-                for pred in image_predictions:
-                    pred_boxes.append({
-                        'class_id': pred['class_id'],
-                        'bbox': pred['bbox_xyxy'],
-                        'conf': pred['conf']
-                    })
-                
-                # Filter out ignored classes from predictions and ground truth for metrics
-                filtered_pred_boxes = [p for p in pred_boxes if p['class_id'] not in ignored_class_ids]
-                filtered_gt_boxes = [g for g in gt_boxes if g['class_id'] not in ignored_class_ids and g['class_id'] >= 0]
-                
-                logger.info(f"Image {img.id}: Matching {len(filtered_pred_boxes)} predictions (filtered from {len(pred_boxes)}) with {len(filtered_gt_boxes)} ground truth boxes (filtered from {len(gt_boxes)})")
-                
-                # Match predictions with ground truth (using filtered lists for metrics)
-                matched_gt = set()
-                matched_pred = set()
-                
-                for i, pred in enumerate(filtered_pred_boxes):
-                    best_iou = 0
-                    best_gt_idx = -1
-                    
-                    for j, gt in enumerate(filtered_gt_boxes):
-                        if j in matched_gt:
+            processed = 0
+            successful_chunks = 0
+            t_inference_start = time.time()
+
+            # Parallel decode + prefetch: overlaps disk I/O and JPEG decode with
+            # GPU forward passes. `get_batch_size` is consulted at submit time so
+            # ramp-up/back-off below adjusts the next chunk.
+            chunk_iter = _iter_prefetched_chunks(
+                valid_items,
+                get_batch_size=lambda: eval_batch,
+                decode_workers=decode_workers,
+                prefetch=prefetch_chunks,
+            )
+
+            for chunk, decoded_arrays in chunk_iter:
+                # Build inference inputs: prefer decoded arrays; fall back to
+                # path strings for any image that failed to decode (Ultralytics
+                # accepts a heterogeneous list).
+                infer_inputs: List[Any] = []
+                for (img, p), arr in zip(chunk, decoded_arrays):
+                    if isinstance(arr, np.ndarray):
+                        infer_inputs.append(arr)
+                    else:
+                        infer_inputs.append(str(p))
+
+                run_batch = min(eval_batch, len(infer_inputs))
+                results = None
+                while run_batch >= 1:
+                    try:
+                        results = model.predict(
+                            source=infer_inputs,
+                            conf=conf_threshold,
+                            iou=iou_threshold,
+                            imgsz=eval_imgsz,
+                            half=eval_half,
+                            device=eval_device,
+                            verbose=False,
+                            batch=run_batch,
+                        )
+                        successful_chunks += 1
+                        # Ramp up aggressively for the first few successful chunks
+                        # (cuDNN/alloc steady state reached) while VRAM allows.
+                        if eval_batch < max_batch:
+                            free_now, total_now = _get_gpu_mem_info_gb()
+                            free_ratio = (free_now / total_now) if total_now > 0 else 0.0
+                            if successful_chunks <= 3 and free_ratio > 0.35:
+                                eval_batch = min(max_batch, eval_batch * 2)
+                            elif free_ratio > 0.5:
+                                eval_batch = min(max_batch, int(eval_batch * 1.5))
+                        break
+                    except Exception as e:
+                        msg = str(e).lower()
+                        oom_like = (
+                            "out of memory" in msg
+                            or "cuda error" in msg
+                            or "cudnn" in msg
+                        )
+                        if oom_like and run_batch > 1:
+                            run_batch = max(1, run_batch // 2)
+                            eval_batch = run_batch
+                            successful_chunks = 0  # reset ramp-up
+                            logger.warning(
+                                "Evaluation batch OOM/backoff: retrying with batch=%s (task=%s)",
+                                run_batch,
+                                task_id,
+                            )
+                            try:
+                                import torch  # type: ignore
+                                torch.cuda.empty_cache()
+                            except Exception:
+                                pass
                             continue
-                        
-                        iou = calculate_iou(pred['bbox'], gt['bbox'])
-                        if iou > best_iou:
-                            best_iou = iou
-                            best_gt_idx = j
-                    
-                    if best_iou >= iou_threshold:
-                        matched_pred.add(i)
-                        matched_gt.add(best_gt_idx)
-                        
-                        gt_class = filtered_gt_boxes[best_gt_idx]['class_id']
-                        pred_class = pred['class_id']
-                        
-                        logger.debug(f"Match found: pred_class={pred_class}, gt_class={gt_class}, IoU={best_iou:.3f}")
-                        
-                        if gt_class >= 0 and pred_class >= 0:
-                            confusion_matrix[gt_class][pred_class] += 1
-                            _add_cm_sample(gt_class, pred_class, {
-                                'image_id': img.id,
-                                'file_name': img.file_name,
-                                'pred_bbox': pred['bbox'],
-                                'gt_bbox': filtered_gt_boxes[best_gt_idx]['bbox'],
-                                'pred_class_name': class_names[pred_class],
-                                'gt_class_name': class_names[gt_class],
-                                'conf': float(pred['conf']),
-                                'iou': float(best_iou),
+                        logger.warning(
+                            "Failed batched inference on %s images with batch=%s: %s",
+                            len(infer_inputs),
+                            run_batch,
+                            e,
+                        )
+                        results = [None] * len(infer_inputs)
+                        break
+
+                if results is None:
+                    results = [None] * len(infer_inputs)
+
+                for (img, _img_path), result in zip(chunk, results):
+                    image_predictions = []
+                    if result is not None and getattr(result, "boxes", None):
+                        for box_idx, box in enumerate(result.boxes):
+                            pred_class_id = int(box.cls.item())
+                            if pred_class_id < num_classes:
+                                xyxy = box.xyxy[0].cpu().numpy()
+                                x1, y1, x2, y2 = xyxy
+                                bbox_xywh = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
+
+                                segmentation = []
+                                if hasattr(result, 'masks') and result.masks is not None:
+                                    try:
+                                        mask = result.masks.xy[box_idx]
+                                        if len(mask) > 0:
+                                            segmentation = [float(coord) for point in mask for coord in point]
+                                    except (IndexError, AttributeError):
+                                        pass
+
+                                image_predictions.append({
+                                    'image_id': img.id,
+                                    'class_id': pred_class_id,
+                                    'bbox': bbox_xywh,
+                                    'bbox_xyxy': [float(x1), float(y1), float(x2), float(y2)],
+                                    'conf': float(box.conf.item()),
+                                    'segmentation': segmentation
+                                })
+                                predictions_count += 1
+
+                    if image_predictions:
+                        all_predictions.extend(image_predictions)
+
+                    if has_ground_truth and img.id in ground_truth_annotations:
+                        gt_boxes = ground_truth_annotations[img.id]
+                        pred_boxes = []
+                        for pred in image_predictions:
+                            pred_boxes.append({
+                                'class_id': pred['class_id'],
+                                'bbox': pred['bbox_xyxy'],
+                                'conf': pred['conf']
                             })
-                            if gt_class == pred_class:
-                                true_positives += 1
+
+                        filtered_pred_boxes = [p for p in pred_boxes if p['class_id'] not in ignored_class_ids]
+                        filtered_gt_boxes = [g for g in gt_boxes if g['class_id'] not in ignored_class_ids and g['class_id'] >= 0]
+
+                        matched_gt = set()
+                        matched_pred = set()
+
+                        for i, pred in enumerate(filtered_pred_boxes):
+                            best_iou = 0
+                            best_gt_idx = -1
+                            for j, gt in enumerate(filtered_gt_boxes):
+                                if j in matched_gt:
+                                    continue
+                                iou = calculate_iou(pred['bbox'], gt['bbox'])
+                                if iou > best_iou:
+                                    best_iou = iou
+                                    best_gt_idx = j
+
+                            if best_iou >= iou_threshold:
+                                matched_pred.add(i)
+                                matched_gt.add(best_gt_idx)
+                                gt_class = filtered_gt_boxes[best_gt_idx]['class_id']
+                                pred_class = pred['class_id']
+                                if gt_class >= 0 and pred_class >= 0:
+                                    confusion_matrix[gt_class][pred_class] += 1
+                                    _add_cm_sample(gt_class, pred_class, {
+                                        'image_id': img.id,
+                                        'file_name': img.file_name,
+                                        'pred_bbox': pred['bbox'],
+                                        'gt_bbox': filtered_gt_boxes[best_gt_idx]['bbox'],
+                                        'pred_class_name': class_names[pred_class],
+                                        'gt_class_name': class_names[gt_class],
+                                        'conf': float(pred['conf']),
+                                        'iou': float(best_iou),
+                                    })
+                                    if gt_class == pred_class:
+                                        true_positives += 1
+                                    else:
+                                        false_positives += 1
                             else:
                                 false_positives += 1
-                    else:
-                        false_positives += 1
-                        # Unmatched prediction → background GT row, predicted class col
-                        if pred['class_id'] < num_classes:
-                            confusion_matrix[num_classes][pred['class_id']] += 1
-                            _add_cm_sample(num_classes, pred['class_id'], {
-                                'image_id': img.id,
-                                'file_name': img.file_name,
-                                'pred_bbox': pred['bbox'],
-                                'gt_bbox': None,
-                                'pred_class_name': class_names[pred['class_id']],
-                                'gt_class_name': 'background',
-                                'conf': float(pred['conf']),
-                                'iou': float(best_iou),
-                            })
-                        if best_iou > 0:
-                            logger.debug(f"No match: best IoU={best_iou:.3f} < threshold={iou_threshold}")
-                
-                # Unmatched GT boxes → GT class row, background predicted col
-                for j in range(len(filtered_gt_boxes)):
-                    if j not in matched_gt:
-                        gt_class = filtered_gt_boxes[j]['class_id']
-                        if 0 <= gt_class < num_classes:
-                            confusion_matrix[gt_class][num_classes] += 1
-                            _add_cm_sample(gt_class, num_classes, {
-                                'image_id': img.id,
-                                'file_name': img.file_name,
-                                'pred_bbox': None,
-                                'gt_bbox': filtered_gt_boxes[j]['bbox'],
-                                'pred_class_name': 'background',
-                                'gt_class_name': class_names[gt_class],
-                                'conf': 0.0,
-                                'iou': 0.0,
-                            })
-                
-                false_negatives += len(filtered_gt_boxes) - len(matched_gt)
-                logger.info(f"Image {img.id} results: TP={len(matched_pred)}, FP={len(filtered_pred_boxes)-len(matched_pred)}, FN={len(filtered_gt_boxes)-len(matched_gt)}")
+                                if pred['class_id'] < num_classes:
+                                    confusion_matrix[num_classes][pred['class_id']] += 1
+                                    _add_cm_sample(num_classes, pred['class_id'], {
+                                        'image_id': img.id,
+                                        'file_name': img.file_name,
+                                        'pred_bbox': pred['bbox'],
+                                        'gt_bbox': None,
+                                        'pred_class_name': class_names[pred['class_id']],
+                                        'gt_class_name': 'background',
+                                        'conf': float(pred['conf']),
+                                        'iou': float(best_iou),
+                                    })
 
-            elif has_ground_truth:
-                # Image exists in dataset but not in GT file → treat as 0 GT objects.
-                # Any non-ignored predictions are false positives.
-                extra_fp = sum(1 for p in image_predictions if p['class_id'] not in ignored_class_ids)
-                false_positives += extra_fp
-                if extra_fp:
-                    logger.debug(f"Image {img.id} not in GT dict → {extra_fp} predictions counted as FP")
-            
-            # Update progress
-            if (idx + 1) % max(1, total_images // 10) == 0:
-                progress = 30 + int((idx + 1) / total_images * 60)
-                task.progress = progress
+                        for j in range(len(filtered_gt_boxes)):
+                            if j not in matched_gt:
+                                gt_class = filtered_gt_boxes[j]['class_id']
+                                if 0 <= gt_class < num_classes:
+                                    confusion_matrix[gt_class][num_classes] += 1
+                                    _add_cm_sample(gt_class, num_classes, {
+                                        'image_id': img.id,
+                                        'file_name': img.file_name,
+                                        'pred_bbox': None,
+                                        'gt_bbox': filtered_gt_boxes[j]['bbox'],
+                                        'pred_class_name': 'background',
+                                        'gt_class_name': class_names[gt_class],
+                                        'conf': 0.0,
+                                        'iou': 0.0,
+                                    })
+
+                        false_negatives += len(filtered_gt_boxes) - len(matched_gt)
+
+                    elif has_ground_truth:
+                        extra_fp = sum(1 for p in image_predictions if p['class_id'] not in ignored_class_ids)
+                        false_positives += extra_fp
+
+                    processed += 1
+                    if processed % max(1, total_images // 10) == 0:
+                        progress = 30 + int(processed / max(1, total_images) * 60)
+                        task.progress = progress
+                        db.commit()
+
+            # Final throughput summary so we can see batch ramp-up effect.
+            try:
+                infer_dt = max(1e-6, time.time() - t_inference_start)
+                logger.info(
+                    "Evaluation finished: images=%s final_batch=%s elapsed=%.2fs "
+                    "throughput=%.1f img/s",
+                    processed,
+                    eval_batch,
+                    infer_dt,
+                    processed / infer_dt,
+                )
+                task.task_metadata = {
+                    **(task.task_metadata or {}),
+                    "eval_final_batch_size": eval_batch,
+                    "eval_throughput_img_per_s": round(processed / infer_dt, 2),
+                }
                 db.commit()
-        
+            except Exception:
+                pass
+
         inference_time_ms = (time.time() - start_time) * 1000
         
         # Build flat ground-truth list for frontend threshold explorer

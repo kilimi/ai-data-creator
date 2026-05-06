@@ -15,7 +15,6 @@ import {
   RotateCw,
   TestTube,
   Trash2,
-  Terminal,
   X,
 } from "lucide-react";
 
@@ -107,7 +106,6 @@ export interface TrainingCardProps {
   onDelete?: () => void;
   onTestInference?: () => void;
   onDownload?: () => void;
-  onShowCli?: () => void;
   onStop?: () => void;
   onShowError?: () => void;
 }
@@ -122,7 +120,6 @@ export function TrainingCard({
   onDelete,
   onTestInference,
   onDownload,
-  onShowCli,
   onStop,
   onShowError,
 }: TrainingCardProps) {
@@ -289,12 +286,6 @@ export function TrainingCard({
                   <DropdownMenuItem onClick={onDownload}>
                     <Download className="w-4 h-4 mr-2" />
                     Download model
-                  </DropdownMenuItem>
-                )}
-                {onShowCli && (
-                  <DropdownMenuItem onClick={onShowCli}>
-                    <Terminal className="w-4 h-4 mr-2" />
-                    View CLI command
                   </DropdownMenuItem>
                 )}
                 {onRename && (

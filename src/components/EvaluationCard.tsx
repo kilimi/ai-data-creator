@@ -21,6 +21,7 @@ import {
   formatEvaluationModelDisplay,
   formatMetricPct,
   getEvaluationRowMetrics,
+  getEvaluationPredictionCount,
   type EvalMetrics,
 } from "@/lib/evaluationTableDisplay";
 
@@ -107,6 +108,25 @@ function MetricTile({
   );
 }
 
+function CountTile({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | null;
+}) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+        {label}
+      </span>
+      <span className="text-2xl font-semibold tabular-nums leading-tight text-foreground">
+        {value === null ? "—" : value.toLocaleString()}
+      </span>
+    </div>
+  );
+}
+
 export interface EvaluationCardProps {
   task: any;
   childTasks?: any[];
@@ -163,7 +183,23 @@ export function EvaluationCard({
     isMultiDataset,
     aggregateStatus,
   });
+  const predictionCountNoGt = getEvaluationPredictionCount(metadata, { isMultiDataset });
   const modelDisplay = formatEvaluationModelDisplay(metadata);
+
+  // Ground truth availability (single vs multi-dataset)
+  const rawHasGt =
+    isMultiDataset
+      ? metadata.aggregate_results?.has_ground_truth
+      : metadata.results?.has_ground_truth;
+  const hasGroundTruth: "yes" | "no" | "unknown" =
+    rawHasGt === true ? "yes" : rawHasGt === false ? "no" : "unknown";
+  const gtDisplayName =
+    (metadata.annotation_file_name as string | undefined)?.trim() ||
+    (metadata.annotation_file_id as string | undefined)?.trim() ||
+    null;
+  const collectionName =
+    (metadata.collection_name as string | undefined)?.trim() ||
+    (metadata.collection_id != null ? `#${metadata.collection_id}` : null);
 
   const isCompleted = aggregateStatus === "completed";
   const isFailed = aggregateStatus === "failed";
@@ -221,6 +257,30 @@ export function EvaluationCard({
               <span>#{task.id}</span>
               <span>·</span>
               <span title={task.created_at}>{timeAgo(task.created_at)}</span>
+              {hasGroundTruth !== "unknown" && (
+                <>
+                  <span>·</span>
+                  <span
+                    className={
+                      hasGroundTruth === "yes"
+                        ? "text-xs text-emerald-500 font-medium"
+                        : "text-xs text-amber-500 font-medium"
+                    }
+                  >
+                    {hasGroundTruth === "yes"
+                      ? `GT: ${gtDisplayName || "available"}`
+                      : "GT: not available"}
+                  </span>
+                </>
+              )}
+              {collectionName && (
+                <>
+                  <span>·</span>
+                  <span className="text-xs text-muted-foreground">
+                    Collection: {collectionName}
+                  </span>
+                </>
+              )}
             </div>
 
             {showProgress && (
@@ -245,10 +305,16 @@ export function EvaluationCard({
           </div>
 
           {/* Middle: metrics */}
-          <div className="hidden md:grid grid-cols-3 gap-6 px-2">
-            <MetricTile label="Precision" value={metrics?.precision ?? null} />
-            <MetricTile label="Recall" value={metrics?.recall ?? null} />
-            <MetricTile label="F1" value={metrics?.f1 ?? null} />
+          <div className={`hidden md:grid gap-6 px-2 ${metrics ? "grid-cols-3" : "grid-cols-1"}`}>
+            {metrics ? (
+              <>
+                <MetricTile label="Precision" value={metrics.precision} />
+                <MetricTile label="Recall" value={metrics.recall} />
+                <MetricTile label="F1" value={metrics.f1} />
+              </>
+            ) : (
+              <CountTile label="Predictions" value={predictionCountNoGt} />
+            )}
           </div>
 
           {/* Right: actions */}
@@ -332,10 +398,16 @@ export function EvaluationCard({
         </div>
 
         {/* Mobile metrics */}
-        <div className="mt-4 grid grid-cols-3 gap-4 md:hidden">
-          <MetricTile label="Precision" value={metrics?.precision ?? null} />
-          <MetricTile label="Recall" value={metrics?.recall ?? null} />
-          <MetricTile label="F1" value={metrics?.f1 ?? null} />
+        <div className={`mt-4 grid gap-4 md:hidden ${metrics ? "grid-cols-3" : "grid-cols-1"}`}>
+          {metrics ? (
+            <>
+              <MetricTile label="Precision" value={metrics.precision} />
+              <MetricTile label="Recall" value={metrics.recall} />
+              <MetricTile label="F1" value={metrics.f1} />
+            </>
+          ) : (
+            <CountTile label="Predictions" value={predictionCountNoGt} />
+          )}
         </div>
       </div>
     </div>

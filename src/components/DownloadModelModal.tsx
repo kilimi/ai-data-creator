@@ -99,7 +99,7 @@ export function DownloadModelModal({
 
       // Get filename from Content-Disposition header or use default
       const contentDisposition = response.headers.get('Content-Disposition');
-      let filename = `${taskName}_${selectedCheckpoint}.pt`;
+      let filename = `${taskName}_${selectedCheckpoint}.zip`;
       if (contentDisposition) {
         const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
         if (filenameMatch) {

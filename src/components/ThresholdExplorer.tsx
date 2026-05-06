@@ -121,6 +121,7 @@ function computeMetrics(
         const gc = gts[bestJ].class_id;
         cm[gc][pc]++;
         addSample(gc, pc, {
+          image_id: imgId,
           file_name: fileName,
           pred_bbox: preds[i].bbox_xyxy,
           gt_bbox: gts[bestJ].bbox,
@@ -135,6 +136,7 @@ function computeMetrics(
         fp++;
         cm[n][preds[i].class_id]++;
         addSample(n, preds[i].class_id, {
+          image_id: imgId,
           file_name: fileName,
           pred_bbox: preds[i].bbox_xyxy,
           gt_bbox: undefined,
@@ -151,6 +153,7 @@ function computeMetrics(
         fn++;
         cm[gts[j].class_id][n]++;
         addSample(gts[j].class_id, n, {
+          image_id: imgId,
           file_name: gts[j].file_name,
           pred_bbox: undefined,
           gt_bbox: gts[j].bbox,

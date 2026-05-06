@@ -13,7 +13,7 @@ celery_app = Celery(
     'lai',
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=['app.tasks.training_tasks', 'app.tasks.yolo_training', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks', 'app.tasks.export_tasks', 'app.tasks.depth_estimation_tasks', 'app.tasks.auto_annotation_tasks']
+    include=['app.tasks.training_tasks', 'app.tasks.yolo_training', 'app.tasks.evaluation_tasks', 'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks', 'app.tasks.export_tasks', 'app.tasks.depth_estimation_tasks', 'app.tasks.auto_annotation_tasks', 'app.tasks.task_monitoring']
 )
 
 # Celery configuration
@@ -70,7 +70,8 @@ celery_app.conf.update(
     include=['app.tasks.training_tasks', 'app.tasks.yolo_training', 'app.tasks.evaluation_tasks',
              'app.tasks.augmentation_tasks', 'app.tasks.dataset_tasks',
              'app.tasks.export_tasks', 'app.tasks.backup_tasks',
-             'app.tasks.depth_estimation_tasks', 'app.tasks.auto_annotation_tasks']
+             'app.tasks.depth_estimation_tasks', 'app.tasks.auto_annotation_tasks',
+             'app.tasks.task_monitoring']
 )
 
 # Periodic backup check - runs every hour to check if backup is due
@@ -78,5 +79,10 @@ celery_app.conf.beat_schedule = {
     'check-backup-schedule': {
         'task': 'app.tasks.backup_tasks.run_automatic_backup',
         'schedule': timedelta(hours=1),  # Check every hour
+    },
+    # Watchdog: auto-cancel stale pending/running tasks with no activity.
+    'auto-cancel-stale-tasks': {
+        'task': 'app.tasks.task_monitoring.auto_cancel_stale_tasks',
+        'schedule': timedelta(minutes=30),  # Detect stale tasks promptly
     },
 }

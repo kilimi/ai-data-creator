@@ -79,6 +79,17 @@ services:
       # Expose GPU to the container; use first GPU. Do not set CUDA_VISIBLE_DEVICES to empty or PyTorch will see no GPU.
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
+      # Model evaluation throughput tuning (all optional; sensible auto-defaults).
+      # See backend/app/tasks/evaluation_tasks.py for full semantics.
+      - LAI_EVAL_HALF=${LAI_EVAL_HALF:-1}                       # FP16 inference (1=on, 0=off)
+      - LAI_EVAL_IMGSZ=${LAI_EVAL_IMGSZ:-640}                   # Inference image size
+      - LAI_EVAL_BATCH=${LAI_EVAL_BATCH:-}                      # Force batch size (empty = auto)
+      - LAI_EVAL_BATCH_MAX=${LAI_EVAL_BATCH_MAX:-512}           # Cap on auto/ramp-up batch size
+      - LAI_EVAL_DEVICE=${LAI_EVAL_DEVICE:-}                    # "0", "cpu", "cuda:0"; empty = auto
+      - LAI_EVAL_DECODE_WORKERS=${LAI_EVAL_DECODE_WORKERS:-8}   # Parallel JPEG/PNG decoder threads
+      - LAI_EVAL_PREFETCH_CHUNKS=${LAI_EVAL_PREFETCH_CHUNKS:-2} # Decoded chunks queued ahead of GPU
+      # Stale-task watchdog (auto-cancel pending/running tasks idle this many hours).
+      - LAI_STALE_TASK_TIMEOUT_HOURS=${LAI_STALE_TASK_TIMEOUT_HOURS:-12}
     depends_on:
       db:
         condition: service_healthy
@@ -104,9 +115,6 @@ services:
   # Celery Flower - Web UI for monitoring tasks
   flower:
     image: ${LAI_CELERY_IMAGE:-lai-celery:local}
-    build:
-      context: .
-      dockerfile: Dockerfile.training
     command: celery -A app.celery_app flower --port=5555
     ports:
       - "5555:5555"

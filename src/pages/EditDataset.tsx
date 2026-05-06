@@ -187,8 +187,65 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [currentPage, setCurrentPage] = useState(1);
   const imagesPerPage = 20;
 
+  const normalizeAnnotationId = (value: unknown) => String(value ?? "");
+
+  const transformAnnotationFiles = (
+    apiAnnotations: any[],
+    coverageByFileId: Record<string, { total: number; present: number; missing: number }>
+  ): AnnotationFile[] =>
+    apiAnnotations.map((apiAnnotation: any) => {
+      const key = normalizeAnnotationId(apiAnnotation.id);
+      const coverageFromList = apiAnnotation.image_coverage;
+      const coverage =
+        coverageByFileId[key] ??
+        (coverageFromList
+          ? {
+              total: Number(coverageFromList.total_referenced ?? 0),
+              present: Number(coverageFromList.present ?? 0),
+              missing: Number(coverageFromList.missing ?? 0),
+            }
+          : undefined);
+
+      return {
+        id: apiAnnotation.id,
+        fileName: apiAnnotation.name || apiAnnotation.fileName,
+        fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
+        uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
+        type: apiAnnotation.type,
+        classStats: [],
+        samples: [],
+        matchedImageCount: coverage?.present ?? 0,
+        tags: apiAnnotation.tags || [],
+        annotation_count: apiAnnotation.annotation_count || 0,
+        processing_status: apiAnnotation.processing_status,
+        totalReferencedImages: coverage?.total,
+        presentCount: coverage?.present,
+        missingCount: coverage?.missing,
+      };
+    });
+
+  const fetchCoverageByFileId = async (): Promise<Record<string, { total: number; present: number; missing: number }>> => {
+    if (!api || !id) return {};
+    try {
+      const coverageRes = await api.getDatasetAnnotationsCoverage(id);
+      if (!coverageRes?.success || !Array.isArray(coverageRes.data)) return {};
+      const map: Record<string, { total: number; present: number; missing: number }> = {};
+      coverageRes.data.forEach((c: any) => {
+        map[normalizeAnnotationId(c.annotation_file_id)] = {
+          total: Number(c.total_referenced_images ?? 0),
+          present: Number(c.present_count ?? 0),
+          missing: Number(c.missing_count ?? 0),
+        };
+      });
+      return map;
+    } catch (error) {
+      console.warn("Failed to load coverage data:", error);
+      return {};
+    }
+  };
+
   // Polling function to check for processing completion
-  const pollForProcessingCompletion = async (annotationIds: number[]) => {
+  const pollForProcessingCompletion = async (annotationIds: Array<number | string>) => {
     let attempts = 0;
     const maxAttempts = 30; // Poll for up to 5 minutes (30 * 10 seconds)
     
@@ -210,23 +267,13 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         
         const annotationsRes = await api.getAnnotations(id);
         if (annotationsRes?.success && annotationsRes.data) {
-          const currentAnnotations = annotationsRes.data.map((apiAnnotation: any) => ({
-            id: apiAnnotation.id,
-            fileName: apiAnnotation.name || apiAnnotation.fileName,
-            fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
-            uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
-            type: apiAnnotation.type,
-            classStats: [],
-            samples: [],
-            matchedImageCount: 0,
-            tags: apiAnnotation.tags || [],
-            annotation_count: apiAnnotation.annotation_count || 0,
-            processing_status: apiAnnotation.processing_status,
-          }));
+          const coverageByFileId = await fetchCoverageByFileId();
+          const currentAnnotations = transformAnnotationFiles(annotationsRes.data, coverageByFileId);
+          const targetIds = new Set(annotationIds.map(normalizeAnnotationId));
           
           // Check if the target annotations are still processing
           const stillProcessing = currentAnnotations.filter(
-            ann => annotationIds.includes(ann.id) && 
+            ann => targetIds.has(normalizeAnnotationId(ann.id)) &&
                    (ann.processing_status === 'pending' || ann.processing_status === 'processing')
           );
           
@@ -306,49 +353,17 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             console.log('🔍 First item keys:', annotationsRes.data[0] ? Object.keys(annotationsRes.data[0]) : 'No items');
             
             // Transform API response to match our AnnotationFile type
-            const annotationsWithCoverage = annotationsRes.data.map((apiAnnotation: any, index: number) => {
+            const coverageByFileId = await fetchCoverageByFileId();
+            const annotationsWithCoverage = transformAnnotationFiles(annotationsRes.data, coverageByFileId).map((transformed, index) => {
+              const apiAnnotation = annotationsRes.data[index];
               console.log(`🔍 Processing annotation ${index}:`, apiAnnotation);
               console.log(`🔍 annotation_count field:`, apiAnnotation.annotation_count);
               console.log(`🔍 annotation_count type:`, typeof apiAnnotation.annotation_count);
               console.log(`🔍 All fields:`, Object.keys(apiAnnotation));
-              
-              const transformed: AnnotationFile = {
-                id: apiAnnotation.id,
-                fileName: apiAnnotation.name || apiAnnotation.fileName,
-                fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
-                uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
-                type: apiAnnotation.type,
-                classStats: [], // Will be populated if needed
-                samples: [], // Will be populated if needed
-                matchedImageCount: 0, // Will be calculated from coverage
-                tags: apiAnnotation.tags || [],
-                annotation_count: apiAnnotation.annotation_count || 0,
-                processing_status: apiAnnotation.processing_status,
-                // Coverage will be added below
-              };
-              
               console.log('🔍 Transformed annotation:', transformed);
               console.log('🔍 Final annotation_count in transformed:', transformed.annotation_count);
               return transformed;
             });
-            
-            // Load coverage data for each annotation file
-            try {
-              const coverageRes = await api.getDatasetAnnotationsCoverage(id);
-              if (coverageRes?.success && coverageRes.data) {
-                // Map coverage data to annotations
-                annotationsWithCoverage.forEach(annotation => {
-                  const coverage = coverageRes.data.find((c: any) => c.annotation_file_id === annotation.id);
-                  if (coverage) {
-                    annotation.totalReferencedImages = coverage.total_referenced_images;
-                    annotation.presentCount = coverage.present_count;
-                    annotation.missingCount = coverage.missing_count;
-                  }
-                });
-              }
-            } catch (error) {
-              console.warn('Failed to load coverage data:', error);
-            }
             
             setAnnotations(annotationsWithCoverage);
           }
@@ -553,22 +568,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         if (refreshedAnnotationsRes?.success && refreshedAnnotationsRes.data) {
           console.log('Refreshed annotations API response:', refreshedAnnotationsRes.data);
           // Transform API response to match our AnnotationFile type
-          const refreshedAnnotations = refreshedAnnotationsRes.data.map((apiAnnotation: any) => {
-            console.log('Processing refreshed annotation:', apiAnnotation);
-            return {
-              id: apiAnnotation.id,
-              fileName: apiAnnotation.name || apiAnnotation.fileName,
-              fileSize: apiAnnotation.size || apiAnnotation.fileSize || 0,
-              uploadedAt: apiAnnotation.created_at || apiAnnotation.uploadedAt || new Date().toISOString(),
-              type: apiAnnotation.type,
-              classStats: [], // Will be populated if needed
-              samples: [], // Will be populated if needed
-              matchedImageCount: 0, // Will be calculated from coverage
-              tags: apiAnnotation.tags || [],
-              annotation_count: apiAnnotation.annotation_count || 0,
-              processing_status: apiAnnotation.processing_status,
-            };
-          });
+          const coverageByFileId = await fetchCoverageByFileId();
+          const refreshedAnnotations = transformAnnotationFiles(refreshedAnnotationsRes.data, coverageByFileId);
           setAnnotations(refreshedAnnotations);
           
           // Check if any annotations are still processing

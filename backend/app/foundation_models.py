@@ -38,7 +38,12 @@ def ultralytics_foundation_pt_names() -> list[str]:
     """All .pt filenames for the full foundation matrix."""
     names: list[str] = []
     for arch, size in ARCH_SIZES:
-        base = f"{arch}{size}"
+        # YOLO-NAS uses an underscore before the size letter (yolo_nas_s.pt),
+        # other families use simple concatenation (yolo11n.pt, yolo26s.pt, rtdetrl.pt).
+        if arch == "yolo_nas":
+            base = f"{arch}_{size}"
+        else:
+            base = f"{arch}{size}"
         for suf in TASK_SUFFIXES:
             names.append(f"{base}{suf}.pt" if suf else f"{base}.pt")
     return names

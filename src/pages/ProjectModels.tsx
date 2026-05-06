@@ -93,7 +93,6 @@ export default function ProjectModels() {
   const [showTrainModelModal, setShowTrainModelModal] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [selectedTaskError, setSelectedTaskError] = useState<{ name: string; error: string; id: number } | null>(null);
-  const [selectedTaskCommand, setSelectedTaskCommand] = useState<{ name: string; command: string; id: number } | null>(null);
   const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
@@ -219,24 +218,6 @@ export default function ProjectModels() {
     } finally {
       setDeletingFailedTasks(false);
     }
-  };
-
-  const generateTrainingCommand = (task: any) => {
-    const metadata = task.task_metadata || {};
-    const modelConfig = metadata.model_config || {};
-    
-    let command = `# Training command for task: ${task.name}\n`;
-    command += `cd backend\n`;
-    command += `python -m yolo train \\\n`;
-    command += `  model=${modelConfig.model || 'yolo11n.pt'} \\\n`;
-    command += `  data=${metadata.dataset_path || 'data.yaml'} \\\n`;
-    command += `  epochs=${metadata.training_params?.epochs || 100} \\\n`;
-    command += `  imgsz=${metadata.training_params?.imgsz || 640} \\\n`;
-    command += `  batch=${metadata.training_params?.batch || 16} \\\n`;
-    command += `  project=runs/train \\\n`;
-    command += `  name=${task.name.replace(/\s+/g, '_')}`;
-    
-    return command;
   };
 
   // Filter tasks based on search
@@ -460,7 +441,6 @@ export default function ProjectModels() {
                 onDelete={() => handleDeleteTask(task)}
                 onTestInference={() => setTestInference({ id: task.id, name: task.name })}
                 onDownload={() => setDownloadModel({ id: task.id, name: task.name })}
-                onShowCli={() => setSelectedTaskCommand({ name: task.name, command: generateTrainingCommand(task), id: task.id })}
                 onStop={() => handleStopTask(task)}
                 onShowError={() => setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id })}
               />
@@ -515,44 +495,6 @@ export default function ProjectModels() {
                 {selectedTaskError?.error}
               </pre>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* CLI Command Modal */}
-      <Dialog open={!!selectedTaskCommand} onOpenChange={() => setSelectedTaskCommand(null)}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              CLI Commands - Task #{selectedTaskCommand?.id}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedTaskCommand?.name}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="mt-4 space-y-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Copy and paste these commands in your terminal to run training without the GUI:
-            </p>
-            <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-              <pre className="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
-                {selectedTaskCommand?.command}
-              </pre>
-            </div>
-            <Button
-              onClick={() => {
-                if (selectedTaskCommand?.command) {
-                  navigator.clipboard.writeText(selectedTaskCommand.command);
-                  toast({ title: "Copied!", description: "Command copied to clipboard" });
-                }
-              }}
-              className="w-full"
-            >
-              Copy All Commands
-            </Button>
           </div>
         </DialogContent>
       </Dialog>

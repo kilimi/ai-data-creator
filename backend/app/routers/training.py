@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -13,6 +13,8 @@ import tempfile
 import uuid
 import subprocess
 import sys
+import io
+import zipfile
 
 from ..database import get_db, SessionLocal
 from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection
@@ -1539,12 +1541,48 @@ async def download_checkpoint(
     
     # Add checkpoint name to filename
     checkpoint_name = checkpoint.replace('.pt', '')
-    download_filename = f"{safe_filename}_{checkpoint_name}.pt"
-    
-    return FileResponse(
-        path=str(model_path),
-        filename=download_filename,
-        media_type='application/octet-stream'
+    download_filename = f"{safe_filename}_{checkpoint_name}.zip"
+
+    # Collect class names from task metadata (best-effort fallbacks)
+    class_names = []
+    if isinstance(task_metadata.get("class_names"), list):
+        class_names = [str(c) for c in task_metadata.get("class_names", [])]
+    elif isinstance(task_metadata.get("dataset_info"), dict):
+        ds_info = task_metadata.get("dataset_info") or {}
+        if isinstance(ds_info.get("class_names"), list):
+            class_names = [str(c) for c in ds_info.get("class_names", [])]
+
+    # Build zip in-memory: selected .pt + class names text/json
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        model_filename = model_path.name if model_path.suffix.lower() == ".pt" else f"{checkpoint_name}.pt"
+        zf.write(str(model_path), arcname=model_filename)
+
+        if class_names:
+            zf.writestr("classes.txt", "\n".join(class_names) + "\n")
+            zf.writestr("classes.json", json.dumps({"class_names": class_names}, indent=2))
+        else:
+            zf.writestr("classes.txt", "")
+            zf.writestr("classes.json", json.dumps({"class_names": []}, indent=2))
+
+        zf.writestr(
+            "metadata.json",
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "task_name": task.name,
+                    "checkpoint": checkpoint_name,
+                    "model_file": model_filename,
+                },
+                indent=2,
+            ),
+        )
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
     )
 
 
