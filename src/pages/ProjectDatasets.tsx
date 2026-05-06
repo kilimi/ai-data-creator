@@ -375,12 +375,11 @@ export default function ProjectDatasets() {
           </HelpHint>
         </div>
 
-        {/* Project health stats strip */}
+        {/* Project health stats strip (1:N aware) */}
         {datasets.length > 0 && (() => {
           const totalImages = datasets.reduce((s, d) => s + (d.image_count || 0), 0);
-          const totalAnn = datasets.reduce((s, d) => s + Math.min(d.annotation_count || 0, d.image_count || 0), 0);
-          const pct = totalImages > 0 ? Math.round((totalAnn / totalImages) * 100) : 0;
-          const readyCount = datasets.filter(d => (d.annotation_file_count || 0) > 0 && (d.annotation_count || 0) >= (d.image_count || 0) && (d.image_count || 0) > 0).length;
+          const totalSets = datasets.reduce((s, d) => s + (d.annotation_file_count || 0), 0);
+          const datasetsWithSets = datasets.filter(d => (d.annotation_file_count || 0) > 0).length;
           return (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
               <span className="flex items-center gap-1.5">
@@ -390,12 +389,12 @@ export default function ProjectDatasets() {
               <span aria-hidden="true">·</span>
               <span className="flex items-center gap-1.5">
                 <Pencil className="h-4 w-4" />
-                {totalAnn.toLocaleString()} annotated <span className="text-xs">({pct}%)</span>
+                {totalSets} annotation set{totalSets === 1 ? "" : "s"} across {datasetsWithSets} dataset{datasetsWithSets === 1 ? "" : "s"}
               </span>
               <span aria-hidden="true">·</span>
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="h-4 w-4" />
-                {readyCount} ready to train
+                {datasets.length} total dataset{datasets.length === 1 ? "" : "s"}
               </span>
             </div>
           );
