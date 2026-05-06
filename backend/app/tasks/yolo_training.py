@@ -7,7 +7,7 @@ import shutil
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, Mapping
 
 from app.tasks.training_tasks import TrainingTask, SessionLocal
 from app.tasks.yolo_training_helpers import (
@@ -19,6 +19,36 @@ from app.models import Task as TaskModel
 from app.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+
+def _trainer_results_metrics_flat(model) -> Dict[str, float]:
+    """Best-effort: Ultralytics attaches final val metrics on model.trainer.metrics.results_dict."""
+    out: Dict[str, float] = {}
+    trainer = getattr(model, "trainer", None)
+    if not trainer:
+        return out
+    raw = getattr(trainer, "metrics", None)
+    if raw is None:
+        return out
+    rd = getattr(raw, "results_dict", None)
+    if callable(rd):
+        try:
+            rd = rd()
+        except Exception:
+            rd = None
+    if rd is None and isinstance(raw, Mapping):
+        rd = dict(raw)
+    if not isinstance(rd, Mapping):
+        return out
+    for k, v in rd.items():
+        try:
+            if isinstance(v, (int, float)) and v == v:
+                fv = float(v)
+                if abs(fv) != float("inf"):
+                    out[str(k)] = fv
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 class YOLOTrainingTask(TrainingTask):
@@ -477,7 +507,9 @@ class YOLOTrainingTask(TrainingTask):
         self.task.status = "completed"
         self.task.completed_at = datetime.utcnow()
         self.task.progress = 100
-        self.task.task_metadata = {
+        trainer_metrics = _trainer_results_metrics_flat(self.model)
+
+        merged_meta = {
             **self.task.task_metadata,
             "stage": "completed",
             "best_model": str(best_model_path) if best_model_path.exists() else None,
@@ -485,8 +517,11 @@ class YOLOTrainingTask(TrainingTask):
             "class_names": dataset_info['class_names'],
             "class_count": dataset_info['class_count'],
             "image_counts": dataset_info['image_counts'],
-            "results_dir": str(self.output_base / "training")
+            "results_dir": str(self.output_base / "training"),
         }
+        if trainer_metrics:
+            merged_meta["results"] = {"metrics": trainer_metrics}
+        self.task.task_metadata = merged_meta
         self.db.commit()
     
     def _handle_error(self, error: Exception):

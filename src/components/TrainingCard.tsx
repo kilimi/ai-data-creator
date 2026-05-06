@@ -45,6 +45,105 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
+/** Merge metrics from Ultralytics/tensorboard-shaped dicts and epoch snapshots. */
+function asFiniteNumberRecord(obj: unknown): Record<string, number> {
+  if (!obj || typeof obj !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
+
+function pickFirst(metrics: Record<string, number>, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = metrics[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function pickByKeyRegex(metrics: Record<string, number>, regex: RegExp): number | null {
+  for (const k of Object.keys(metrics)) {
+    const low = k.toLowerCase();
+    if (regex.test(low)) {
+      const v = metrics[k];
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+    }
+  }
+  return null;
+}
+
+type TrainingTiles =
+  | { mode: "map"; map50: number | null; map5095: number | null }
+  | { mode: "classify"; top1: number | null; top5: number | null }
+  | { mode: "empty" };
+
+function resolveTrainingTiles(metadata: Record<string, unknown>, modelYaml: string): TrainingTiles {
+  const resultsBlock = metadata.results as { metrics?: unknown } | undefined;
+  const tensorboard = asFiniteNumberRecord(resultsBlock?.metrics);
+  const latest = asFiniteNumberRecord(metadata.latest_metrics);
+  const hist = metadata.metrics_history;
+  const lastEpoch =
+    Array.isArray(hist) && hist.length > 0
+      ? asFiniteNumberRecord(hist[hist.length - 1])
+      : {};
+
+  const m = { ...lastEpoch, ...latest, ...tensorboard };
+
+  const model = (modelYaml || "").toLowerCase();
+  const isClsModel =
+    model.includes("-cls") || model.includes("cls.") || /\.cls\b/.test(model);
+
+  if (isClsModel) {
+    const top1 =
+      pickFirst(m, [
+        "metrics/accuracy/top1",
+        "metrics/top1_acc",
+        "top1_acc",
+        "accuracy_top1",
+        "accuracy",
+      ]) ??
+      pickByKeyRegex(m, /top[-_]?1|accuracy\(top\s*1\)|accuracy_top1/) ??
+      pickByKeyRegex(m, /metrics\/accuracy/);
+    const top5 =
+      pickFirst(m, ["metrics/accuracy/top5", "metrics/top5_acc", "top5_acc", "accuracy_top5"]) ??
+      pickByKeyRegex(m, /top[-_]?5|accuracy\(top\s*5\)|accuracy_top5/);
+    return { mode: "classify", top1, top5 };
+  }
+
+  const map50Seg =
+    pickFirst(m, ["metrics/mAP50(M)", "metrics/mAP50(Mask)", "mAP50(M)", "masks/mAP50"]) ??
+    pickByKeyRegex(m, /map50\(m\)|map@[\w.:-]*50.*\(m\)|\/map50\(m\)/);
+  const map5095Seg =
+    pickFirst(m, ["metrics/mAP50-95(M)", "metrics/mAP50-95(Mask)", "mAP50_95(M)"]) ??
+    pickByKeyRegex(m, /map50-95\(m\)|map@[\w.:-]*50-95.*\(m\)/);
+
+  const map50Box =
+    pickFirst(m, [
+      "metrics/mAP50(B)",
+      "metrics/mAP50",
+      "mAP50",
+      "mAP50(B)",
+      "boxes/mAP50",
+    ]) ?? pickByKeyRegex(m, /map50\(b\)/);
+  const map5095Box =
+    pickFirst(m, ["metrics/mAP50-95(B)", "metrics/mAP50-95", "mAP50_95", "mAP50-95(B)", "boxes/mAP50-95"]) ??
+    pickByKeyRegex(m, /map50-95\(b\)/);
+
+  const preferSeg =
+    model.includes("-seg") || model.includes("-segment") || model.includes("segmentation");
+
+  const map50 = preferSeg ? map50Seg ?? map50Box : map50Box ?? map50Seg;
+  const map5095 = preferSeg ? map5095Seg ?? map5095Box : map5095Box ?? map5095Seg;
+
+  if (map50 != null || map5095 != null) {
+    return { mode: "map", map50, map5095 };
+  }
+
+  return { mode: "empty" };
+}
+
 function metricColor(v: number): string {
   if (v >= 0.85) return "text-green-400";
   if (v >= 0.6) return "text-amber-400";
@@ -146,11 +245,12 @@ export function TrainingCard({
     return null;
   })();
 
-  // Metrics
-  const m: Record<string, number> | undefined = metadata.results?.metrics;
-  const map50 = m?.["metrics/mAP50(B)"] ?? m?.["metrics/mAP50(M)"] ?? null;
-  const map5095 =
-    m?.["metrics/mAP50-95(B)"] ?? m?.["metrics/mAP50-95(M)"] ?? null;
+  const modelYaml =
+    metadata.model_config?.model ||
+    metadata.model_type ||
+    task?.training_config?.model_type ||
+    "";
+  const tiles = resolveTrainingTiles(metadata as Record<string, unknown>, modelYaml);
 
   return (
     <div
@@ -234,10 +334,24 @@ export function TrainingCard({
             )}
           </div>
 
-          {/* Middle: metrics */}
+          {/* Middle: validation metrics — detection/segmentation: mAP; classification: top-k acc */}
           <div className="hidden md:grid grid-cols-2 gap-6 px-2">
-            <MetricTile label="mAP50" value={map50} />
-            <MetricTile label="mAP50-95" value={map5095} />
+            {tiles.mode === "map" ? (
+              <>
+                <MetricTile label="mAP@50" value={tiles.map50} />
+                <MetricTile label="mAP@50–95" value={tiles.map5095} />
+              </>
+            ) : tiles.mode === "classify" ? (
+              <>
+                <MetricTile label="Top-1 acc" value={tiles.top1} />
+                <MetricTile label="Top-5 acc" value={tiles.top5} />
+              </>
+            ) : (
+              <>
+                <MetricTile label="mAP@50" value={null} />
+                <MetricTile label="mAP@50–95" value={null} />
+              </>
+            )}
           </div>
 
           {/* Right: actions */}
@@ -313,8 +427,22 @@ export function TrainingCard({
 
         {/* Mobile metrics */}
         <div className="mt-4 grid grid-cols-2 gap-4 md:hidden">
-          <MetricTile label="mAP50" value={map50} />
-          <MetricTile label="mAP50-95" value={map5095} />
+          {tiles.mode === "map" ? (
+            <>
+              <MetricTile label="mAP@50" value={tiles.map50} />
+              <MetricTile label="mAP@50–95" value={tiles.map5095} />
+            </>
+          ) : tiles.mode === "classify" ? (
+            <>
+              <MetricTile label="Top-1 acc" value={tiles.top1} />
+              <MetricTile label="Top-5 acc" value={tiles.top5} />
+            </>
+          ) : (
+            <>
+              <MetricTile label="mAP@50" value={null} />
+              <MetricTile label="mAP@50–95" value={null} />
+            </>
+          )}
         </div>
       </div>
     </div>
