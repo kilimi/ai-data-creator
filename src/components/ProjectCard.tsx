@@ -123,14 +123,15 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
     <>
       <Card 
         className={cn(
-          "overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg glass-card flex flex-col h-full",
+          "group overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-lg hover:border-primary/40 glass-card flex flex-col h-full cursor-pointer",
           className
         )}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
+        onClick={() => navigate(`/projects/${project.id}/datasets`)}
       >
         <CardHeader className="p-0 flex-shrink-0">
-          <div className="relative h-44 w-full overflow-hidden">
+          <div className="relative h-44 w-full overflow-hidden bg-muted/30">
             {projectCover ? (
               <>
                 {!imageLoaded && (
@@ -150,6 +151,8 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                   )}
                 />
               </>
+            ) : project.datasets && project.datasets.length > 0 ? (
+              <DatasetMosaic datasets={project.datasets} />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
                 {isHovered ? (
@@ -159,17 +162,11 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                 )}
               </div>
             )}
-            
-            <div className="absolute inset-0 bg-gradient-to-t from-background/90 to-transparent" />
-            
-            <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between">
-              <div className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                {new Date(project.created_at).toLocaleDateString()}
-              </div>
-              
+
+            <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="secondary" size="icon" className="h-7 w-7">
+                  <Button variant="secondary" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur">
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -194,12 +191,10 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
         
         <CardContent className="p-4 flex-1 flex flex-col">
           <div className="space-y-2 flex-1">
-            <Link to={`/projects/${project.id}/datasets`}>
-              <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
-                {project.name}
-              </h3>
-            </Link>
-            <p className="text-sm text-muted-foreground line-clamp-2 min-h-[2.5rem]">
+            <h3 className="font-medium hover:text-primary transition-colors text-lg line-clamp-1">
+              {project.name}
+            </h3>
+            <p className="text-sm text-muted-foreground/90 line-clamp-2 min-h-[2.5rem]">
               {project.description || "No description provided"}
             </p>
             
@@ -221,15 +216,19 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
         
         <CardFooter className="p-4 pt-0 flex-shrink-0">
           <div className="flex justify-between items-center w-full">
-            <div className="flex items-center gap-2">
-              <Database className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5" />
                 {project.datasets.length} {project.datasets.length === 1 ? 'dataset' : 'datasets'}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span title={new Date(project.created_at).toLocaleString()}>
+                Updated {formatRelative(project.created_at)}
               </span>
             </div>
             
             {project.datasets.length > 0 && (
-              <div className="flex -space-x-2">
+              <div className="flex -space-x-2" onClick={(e) => e.stopPropagation()}>
                 {project.datasets.slice(0, 3).map((dataset) => (
                   <DatasetThumbnail key={dataset.id} dataset={dataset} projectId={project.id} />
                 ))}
