@@ -14,6 +14,69 @@ from ..database import SessionLocal
 router = APIRouter()
 
 
+def _filename_lookup_candidates(raw: Optional[str]) -> List[str]:
+    """Variants of a filesystem / COCO file_name useful for matching DB rows."""
+    if not raw:
+        return []
+    s = str(raw).strip().replace("\\", "/")
+    while s.startswith("./"):
+        s = s[2:]
+    out: List[str] = []
+    seen: set = set()
+
+    def push(x: str) -> None:
+        x = x.strip("/")
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+
+    push(s)
+    if "/" in s:
+        push(s.rsplit("/", 1)[-1])
+    basename = s.rsplit("/", 1)[-1]
+    if "." in basename:
+        push(basename.rsplit(".", 1)[0])
+    # Peel left path segments ("datasplit/images/foo.jpg" -> "images/foo.jpg" -> ...)
+    rest = s
+    while "/" in rest:
+        rest = rest.split("/", 1)[1]
+        push(rest)
+        if "." in rest:
+            push(rest.rsplit(".", 1)[0])
+    return out
+
+
+def _build_image_lookup_indexes(images: List[Image]) -> tuple[Dict[str, int], Dict[str, int]]:
+    """Exact and case-insensitive filename -> image id (first occurrence wins)."""
+    exact: Dict[str, int] = {}
+    ci: Dict[str, int] = {}
+    for img in images:
+        iid = img.id
+        for key in _filename_lookup_candidates(getattr(img, "file_name", None)):
+            if key not in exact:
+                exact[key] = iid
+            lk = key.lower()
+            if lk not in ci:
+                ci[lk] = iid
+    return exact, ci
+
+
+def _resolve_image_id_for_coco_filename(
+    exact_map: Dict[str, int],
+    ci_map: Dict[str, int],
+    coco_file_name: Any,
+) -> Optional[int]:
+    for key in _filename_lookup_candidates(
+        coco_file_name if coco_file_name is None else str(coco_file_name)
+    ):
+        if key in exact_map:
+            return exact_map[key]
+        lk = key.lower()
+        if lk in ci_map:
+            return ci_map[lk]
+    return None
+
+
 def resolve_dataset_image_by_filename(
     db: Session,
     dataset_id: int,
@@ -286,64 +349,28 @@ async def process_coco_annotation_file(
             # If sequence reset fails, continue anyway
             pass
         
-        # Create image name to ID mapping - prioritize default collection
-        image_mapping = {}
-        
-        # First, try to get images from the default collection
-        from ..models import ImageCollection
-        default_collection = db.query(ImageCollection).filter(
-            ImageCollection.dataset_id == annotation_file.dataset_id,
-            ImageCollection.is_default == True
-        ).first()
-        
-        if default_collection:
-            # Use only images from the default collection for coverage tracking
-            print(f"DEBUG: Using default collection '{default_collection.name}' for coverage tracking")
-            dataset_images = db.query(Image).filter(
-                Image.dataset_id == annotation_file.dataset_id,
-                Image.collection_id == default_collection.id
-            ).all()
-        else:
-            # If no default collection, get the first collection or all images
-            first_collection = db.query(ImageCollection).filter(
-                ImageCollection.dataset_id == annotation_file.dataset_id
-            ).first()
-            
-            if first_collection:
-                print(f"DEBUG: No default collection found, using first collection '{first_collection.name}' for coverage tracking")
-                dataset_images = db.query(Image).filter(
-                    Image.dataset_id == annotation_file.dataset_id,
-                    Image.collection_id == first_collection.id
-                ).all()
-            else:
-                # Fallback: use all images (for datasets without collections)
-                print(f"DEBUG: No collections found, using all images for coverage tracking")
-                dataset_images = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id).all()
-        
-        for img in dataset_images:
-            image_mapping[img.file_name] = img.id
-            # Also try without extension
-            base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
-            image_mapping[base_name] = img.id
-        
-        print(f"DEBUG: Created image mapping for {len(dataset_images)} images from collection")
+        # Index ALL dataset images so coverage reflects real matches (any collection).
+        # Previously only the default/first collection was indexed — COCO filenames then
+        # rarely matched → dataset_image_id stayed NULL everywhere → UI showed 0 coverage.
+        dataset_images = db.query(Image).filter(
+            Image.dataset_id == annotation_file.dataset_id
+        ).all()
+        image_exact, image_ci = _build_image_lookup_indexes(dataset_images)
+        print(
+            f"DEBUG: Image lookup index built from {len(dataset_images)} dataset images "
+            f"({len(image_exact)} exact keys)"
+        )
         
         # Process COCO images and create mapping
         coco_image_mapping = {}
         if 'images' in coco_data:
             for coco_img in coco_data['images']:
                 coco_image_id = coco_img['id']
-                file_name = coco_img['file_name']
-                
-                # Find matching dataset image
-                dataset_image_id = None
-                if file_name in image_mapping:
-                    dataset_image_id = image_mapping[file_name]
-                else:
-                    # Try without extension
-                    base_name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
-                    if base_name in image_mapping:
-                        dataset_image_id = image_mapping[base_name]
+                file_name = coco_img.get('file_name') or coco_img.get('name') or ''
+
+                dataset_image_id = _resolve_image_id_for_coco_filename(
+                    image_exact, image_ci, file_name
+                )
                 
                 # Persist per-file image mapping for coverage queries
                 afi = None

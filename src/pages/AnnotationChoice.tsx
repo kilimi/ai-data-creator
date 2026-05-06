@@ -101,7 +101,13 @@ export default function AnnotationChoice() {
                   <li>• Advanced annotation features</li>
                 </ul>
                 <Button asChild variant="secondary" className="w-full">
-                  <Link to={projectId ? `/projects/${projectId}/datasets/${id}/annotate` : `/datasets/${id}/annotate`}>
+                  <Link
+                    to={
+                      projectId
+                        ? `/projects/${projectId}/datasets/${id}/annotate/segmentation`
+                        : `/datasets/${id}/annotate/segmentation`
+                    }
+                  >
                     Start Segmentation
                   </Link>
                 </Button>
