@@ -130,9 +130,21 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   // Derived metrics
   const imgCount = dataset.image_count || 0;
   const fileCount = dataset.annotation_file_count || 0;
+  const annFiles = dataset.annotation_files || [];
 
-  // Only surface a status pill when the dataset has images but no annotation files yet.
-  // A dataset can have many annotation files, so we don't compute a 1:1 progress.
+  // Detect formats from filenames (best-effort)
+  const detectFormat = (name: string): string => {
+    const n = (name || "").toLowerCase();
+    if (n.includes("coco") || n.endsWith(".json")) return "COCO";
+    if (n.includes("yolo") || n.endsWith(".txt")) return "YOLO";
+    if (n.includes("mask") || n.includes("seg")) return "Masks";
+    if (n.includes("voc") || n.endsWith(".xml")) return "VOC";
+    return "Other";
+  };
+  const formats = Array.from(new Set(annFiles.map((f) => detectFormat(f.file_name || f.name))));
+  const isMultiFormat = formats.length > 1;
+
+  // Status pill: only Empty / Unannotated. With ≥1 set we surface set info instead.
   const status: { label: string; cls: string; Icon: typeof CheckCircle2 } | null =
     imgCount === 0
       ? { label: "Empty", cls: "bg-muted text-muted-foreground border-border", Icon: CircleDashed }
