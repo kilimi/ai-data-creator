@@ -286,7 +286,8 @@ export default function Index() {
                   onClick={handleRefresh}
                   disabled={loading}
                   className="h-10 w-10 bg-background/50 border-border/50"
-                  title="Refresh"
+                  title="Refresh projects"
+                  aria-label="Refresh projects"
                 >
                   <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                 </Button>
