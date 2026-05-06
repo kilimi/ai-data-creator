@@ -179,18 +179,20 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             </div>
           )}
 
-          {/* Status pill, top-left */}
-          <div className="absolute top-2 left-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur",
-                status.cls,
-              )}
-            >
-              <status.Icon className={cn("h-3 w-3", status.label === "In progress" && "animate-spin")} />
-              {status.label}
-            </span>
-          </div>
+          {/* Status pill, top-left (only shown for Empty / Unannotated) */}
+          {status && (
+            <div className="absolute top-2 left-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur",
+                  status.cls,
+                )}
+              >
+                <status.Icon className="h-3 w-3" />
+                {status.label}
+              </span>
+            </div>
+          )}
 
           {/* Actions menu, top-right */}
           <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
