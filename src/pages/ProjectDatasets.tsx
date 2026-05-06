@@ -344,18 +344,61 @@ export default function ProjectDatasets() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center gap-2">
-        <Database className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold">Datasets</h1>
-        <Badge variant="secondary" className="ml-2">
-          {datasets.length + datasetGroups.length} items
-        </Badge>
-        {datasetGroups.length > 0 && (
-          <Badge variant="outline" className="ml-1">
-            <Users className="h-3 w-3 mr-1" />
-            {datasetGroups.length} groups
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Database className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-bold">Datasets</h1>
+          <Badge variant="secondary" className="ml-2">
+            {datasets.length + datasetGroups.length} items
           </Badge>
-        )}
+          {datasetGroups.length > 0 && (
+            <Badge variant="outline" className="ml-1">
+              <Users className="h-3 w-3 mr-1" />
+              {datasetGroups.length} groups
+            </Badge>
+          )}
+          <HelpHint ariaLabel="What are datasets?" popover>
+            <div className="space-y-2 text-sm">
+              <p className="font-semibold text-foreground">Datasets</p>
+              <p>
+                A dataset is a collection of images and their annotations. Upload images,
+                label them, then use one or more datasets to train and evaluate models.
+              </p>
+              <Link
+                to="/help/dataset-view"
+                className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+              >
+                Read the full guide →
+              </Link>
+            </div>
+          </HelpHint>
+        </div>
+
+        {/* Project health stats strip */}
+        {datasets.length > 0 && (() => {
+          const totalImages = datasets.reduce((s, d) => s + (d.image_count || 0), 0);
+          const totalAnn = datasets.reduce((s, d) => s + Math.min(d.annotation_count || 0, d.image_count || 0), 0);
+          const pct = totalImages > 0 ? Math.round((totalAnn / totalImages) * 100) : 0;
+          const readyCount = datasets.filter(d => (d.annotation_file_count || 0) > 0 && (d.annotation_count || 0) >= (d.image_count || 0) && (d.image_count || 0) > 0).length;
+          return (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <ImageIcon className="h-4 w-4" />
+                {totalImages.toLocaleString()} images
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="flex items-center gap-1.5">
+                <Pencil className="h-4 w-4" />
+                {totalAnn.toLocaleString()} annotated <span className="text-xs">({pct}%)</span>
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4" />
+                {readyCount} ready to train
+              </span>
+            </div>
+          );
+        })()}
       </div>
       
       {/* Search and Filter Controls */}
