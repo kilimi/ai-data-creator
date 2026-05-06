@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, ExternalLink, Copy, Pencil, CheckCircle2, CircleDashed, Loader2 } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, ExternalLink, Copy, Pencil, CheckCircle2, CircleDashed, Loader2, ChevronDown, Plus, FolderOpen, Sparkles } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -130,9 +130,21 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   // Derived metrics
   const imgCount = dataset.image_count || 0;
   const fileCount = dataset.annotation_file_count || 0;
+  const annFiles = dataset.annotation_files || [];
 
-  // Only surface a status pill when the dataset has images but no annotation files yet.
-  // A dataset can have many annotation files, so we don't compute a 1:1 progress.
+  // Detect formats from filenames (best-effort)
+  const detectFormat = (name: string): string => {
+    const n = (name || "").toLowerCase();
+    if (n.includes("coco") || n.endsWith(".json")) return "COCO";
+    if (n.includes("yolo") || n.endsWith(".txt")) return "YOLO";
+    if (n.includes("mask") || n.includes("seg")) return "Masks";
+    if (n.includes("voc") || n.endsWith(".xml")) return "VOC";
+    return "Other";
+  };
+  const formats = Array.from(new Set(annFiles.map((f) => detectFormat(f.file_name || f.name))));
+  const isMultiFormat = formats.length > 1;
+
+  // Status pill: only Empty / Unannotated. With ≥1 set we surface set info instead.
   const status: { label: string; cls: string; Icon: typeof CheckCircle2 } | null =
     imgCount === 0
       ? { label: "Empty", cls: "bg-muted text-muted-foreground border-border", Icon: CircleDashed }
@@ -194,6 +206,16 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             </div>
           )}
 
+          {/* Multi-format badge, bottom-left */}
+          {isMultiFormat && (
+            <div className="absolute bottom-2 left-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/15 text-primary px-2 py-0.5 text-[10px] font-medium backdrop-blur">
+                <Sparkles className="h-3 w-3" />
+                Multi-format
+              </span>
+            </div>
+          )}
+
           {/* Actions menu, top-right */}
           <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
             <DropdownMenu>
@@ -236,7 +258,39 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             {dataset.description || "No description provided"}
           </p>
 
-          {/* Annotation progress removed: datasets can have many annotation files (1:N) */}
+          {/* Annotation sets summary (1:N) */}
+          {fileCount > 0 && (
+            <div className="pt-2 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Layers className="h-3 w-3" />
+                  {fileCount} annotation set{fileCount > 1 ? "s" : ""}
+                </span>
+                {formats.length > 0 && (
+                  <span className="tabular-nums">{formats.join(" · ")}</span>
+                )}
+              </div>
+              {annFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {annFiles.slice(0, 3).map((f) => (
+                    <span
+                      key={f.id}
+                      title={`${f.name || f.file_name} · ${f.annotation_count.toLocaleString()} annotations`}
+                      className="inline-flex items-center gap-1 max-w-[140px] truncate rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-foreground/80"
+                    >
+                      <span className="truncate">{f.name || f.file_name}</span>
+                      <span className="text-muted-foreground tabular-nums">{f.annotation_count}</span>
+                    </span>
+                  ))}
+                  {annFiles.length > 3 && (
+                    <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      +{annFiles.length - 3} more
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Tags */}
           {dataset.tags && dataset.tags.length > 0 && (
@@ -270,20 +324,67 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             · {formatRelative(dataset.updated_at || dataset.created_at)}
           </span>
         </div>
-        {fileCount === 0 && imgCount > 0 ? (
-          <Button
-            asChild
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-primary hover:text-primary"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Link to={annotateHref}>
-              <Pencil className="h-3.5 w-3.5 mr-1" />
-              Annotate
-            </Link>
-          </Button>
-        ) : null}
+        {imgCount > 0 && (
+          fileCount === 0 ? (
+            <Button
+              asChild
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-primary hover:text-primary"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Link to={annotateHref}>
+                <Pencil className="h-3.5 w-3.5 mr-1" />
+                Annotate
+              </Link>
+            </Button>
+          ) : (
+            <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
+              <Button
+                asChild
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-primary hover:text-primary rounded-r-none"
+              >
+                <Link to={annotateHref}>
+                  <Pencil className="h-3.5 w-3.5 mr-1" />
+                  Annotate
+                </Link>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-6 px-0 text-primary hover:text-primary rounded-l-none border-l border-border/50"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link to={annotateHref}>
+                      <Pencil className="h-4 w-4 mr-2" />
+                      Continue annotating
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={annotateHref}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New annotation set
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to={datasetHref}>
+                      <FolderOpen className="h-4 w-4 mr-2" />
+                      Browse {fileCount} set{fileCount > 1 ? "s" : ""}
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )
+        )}
       </CardFooter>
 
       <EditDatasetDialog
