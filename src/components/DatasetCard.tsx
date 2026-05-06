@@ -129,21 +129,16 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
   
   // Derived metrics
   const imgCount = dataset.image_count || 0;
-  const annCount = dataset.annotation_count || 0;
   const fileCount = dataset.annotation_file_count || 0;
-  // Treat annotation_count as "annotated images" approximation when no per-image data;
-  // bound to image count to avoid >100% display.
-  const annotated = Math.min(annCount, imgCount);
-  const progress = imgCount > 0 ? Math.round((annotated / imgCount) * 100) : 0;
 
-  const status: { label: string; cls: string; Icon: typeof CheckCircle2 } =
+  // Only surface a status pill when the dataset has images but no annotation files yet.
+  // A dataset can have many annotation files, so we don't compute a 1:1 progress.
+  const status: { label: string; cls: string; Icon: typeof CheckCircle2 } | null =
     imgCount === 0
       ? { label: "Empty", cls: "bg-muted text-muted-foreground border-border", Icon: CircleDashed }
       : fileCount === 0
         ? { label: "Unannotated", cls: "bg-amber-500/15 text-amber-500 border-amber-500/30", Icon: CircleDashed }
-        : progress >= 100
-          ? { label: "Ready to train", cls: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30", Icon: CheckCircle2 }
-          : { label: "In progress", cls: "bg-primary/15 text-primary border-primary/30", Icon: Loader2 };
+        : null;
 
   const datasetHref = dataset.project_id
     ? `/projects/${dataset.project_id}/datasets/${dataset.id}`
