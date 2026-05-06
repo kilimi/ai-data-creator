@@ -283,19 +283,6 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
               Annotate
             </Link>
           </Button>
-        ) : progress > 0 && progress < 100 ? (
-          <Button
-            asChild
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Link to={annotateHref}>
-              <Pencil className="h-3.5 w-3.5 mr-1" />
-              Resume
-            </Link>
-          </Button>
         ) : null}
       </CardFooter>
 
