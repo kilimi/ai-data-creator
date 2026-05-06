@@ -366,10 +366,6 @@ export default function Index() {
                 <EmptyOnboarding />
               )
             ) : (
-              <div className="space-y-4">{/* placeholder retained */}</div>
-            )}
-            {/* end conditional */}
-            {!stableLoading && !error && filteredAndSortedProjects().length > 0 && (
               <div className="space-y-4">
                 {/* Results Header */}
                 <div className="flex items-center justify-between">
@@ -382,34 +378,6 @@ export default function Index() {
                     )}
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredAndSortedProjects().map((project, index) => (
-                    <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
-                      <ProjectCard project={project} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* spacer */}
-            {false && (
-            ) : (
-              <div className="space-y-4">
-                {/* Results Header */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">
-                      {filteredAndSortedProjects().length} {filteredAndSortedProjects().length === 1 ? 'project' : 'projects'}
-                    </span>
-                    {(searchQuery || selectedTag) && (
-                      <Badge variant="secondary" className="text-xs">
-                        Filtered
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Projects Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filteredAndSortedProjects().map((project, index) => (
                     <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
