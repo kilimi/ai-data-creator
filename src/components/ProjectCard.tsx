@@ -39,6 +39,52 @@ interface ProjectCardProps {
   onUpdate?: (project: Project) => void;
 }
 
+function formatRelative(dateStr: string): string {
+  const d = new Date(dateStr).getTime();
+  const diff = Date.now() - d;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+function DatasetMosaic({ datasets }: { datasets: Dataset[] }) {
+  const withThumbs = datasets
+    .map((d) => ({ d, url: resolveBackendMediaUrl(d.thumbnailUrl) }))
+    .filter((x) => !!x.url)
+    .slice(0, 4);
+
+  if (withThumbs.length === 0) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-gradient-to-tr from-primary/5 to-secondary/5">
+        <Folder className="h-16 w-16 text-muted-foreground/20" />
+      </div>
+    );
+  }
+
+  if (withThumbs.length === 1) {
+    return <img src={withThumbs[0].url!} alt="" className="h-full w-full object-cover" loading="lazy" />;
+  }
+
+  const gridRows = withThumbs.length <= 2 ? "grid-rows-1" : "grid-rows-2";
+  return (
+    <div className={cn("grid h-full w-full gap-0.5 grid-cols-2", gridRows)}>
+      {withThumbs.map((x) => (
+        <div key={x.d.id} className="overflow-hidden bg-muted">
+          <img src={x.url!} alt="" className="h-full w-full object-cover" loading="lazy" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectCardProps) {
   const projectCover = resolveBackendMediaUrl(project.logo_url || project.thumbnailUrl);
   const { isLoaded: imageLoaded } = useImageLoad(projectCover);
