@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, ExternalLink, Copy, Pencil, CheckCircle2, CircleDashed, Loader2 } from "lucide-react";
+import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, ExternalLink, Copy, Pencil, CheckCircle2, CircleDashed, Loader2, ChevronDown, Plus, FolderOpen, Sparkles } from "lucide-react";
 import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
