@@ -24,7 +24,9 @@ import { AddGroupModal } from '@/components/AddGroupModal';
 import { EditGroupModal } from '@/components/EditGroupModal';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
 import { MergeDatasetsModal } from '@/components/MergeDatasetsModal';
-import { FolderPlus, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, GitMerge } from "lucide-react";
+import { FolderPlus, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, GitMerge, Image as ImageIcon, Brain, Pencil, Rocket, BookOpen, ArrowRight, CheckCircle2, Activity } from "lucide-react";
+import { HelpHint } from "@/components/ui/help-hint";
+import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Dataset, Project, DatasetGroup } from '@/types';
 import {
@@ -343,18 +345,60 @@ export default function ProjectDatasets() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex items-center gap-2">
-        <Database className="h-6 w-6 text-primary" />
-        <h1 className="text-2xl font-bold">Datasets</h1>
-        <Badge variant="secondary" className="ml-2">
-          {datasets.length + datasetGroups.length} items
-        </Badge>
-        {datasetGroups.length > 0 && (
-          <Badge variant="outline" className="ml-1">
-            <Users className="h-3 w-3 mr-1" />
-            {datasetGroups.length} groups
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Database className="h-6 w-6 text-primary" />
+          <h1 className="text-2xl font-bold">Datasets</h1>
+          <Badge variant="secondary" className="ml-2">
+            {datasets.length + datasetGroups.length} items
           </Badge>
-        )}
+          {datasetGroups.length > 0 && (
+            <Badge variant="outline" className="ml-1">
+              <Users className="h-3 w-3 mr-1" />
+              {datasetGroups.length} groups
+            </Badge>
+          )}
+          <HelpHint ariaLabel="What are datasets?" popover>
+            <div className="space-y-2 text-sm">
+              <p className="font-semibold text-foreground">Datasets</p>
+              <p>
+                A dataset is a collection of images and their annotations. Upload images,
+                label them, then use one or more datasets to train and evaluate models.
+              </p>
+              <Link
+                to="/help/dataset-view"
+                className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+              >
+                Read the full guide →
+              </Link>
+            </div>
+          </HelpHint>
+        </div>
+
+        {/* Project health stats strip (1:N aware) */}
+        {datasets.length > 0 && (() => {
+          const totalImages = datasets.reduce((s, d) => s + (d.image_count || 0), 0);
+          const totalSets = datasets.reduce((s, d) => s + (d.annotation_file_count || 0), 0);
+          const datasetsWithSets = datasets.filter(d => (d.annotation_file_count || 0) > 0).length;
+          return (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <ImageIcon className="h-4 w-4" />
+                {totalImages.toLocaleString()} images
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="flex items-center gap-1.5">
+                <Pencil className="h-4 w-4" />
+                {totalSets} annotation set{totalSets === 1 ? "" : "s"} across {datasetsWithSets} dataset{datasetsWithSets === 1 ? "" : "s"}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4" />
+                {datasets.length} total dataset{datasets.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          );
+        })()}
       </div>
       
       {/* Search and Filter Controls */}
@@ -502,14 +546,16 @@ export default function ProjectDatasets() {
           {/* Individual Datasets */}
           {filteredAndSortedDatasets().length > 0 && (
             <div>
-              <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
-                <Database className="h-5 w-5 text-primary" />
-                Individual Datasets
-              </h4>
+              {datasetGroups.length > 0 && (
+                <h4 className="text-lg font-medium mb-4 flex items-center gap-2">
+                  <Database className="h-5 w-5 text-primary" />
+                  Individual Datasets
+                </h4>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredAndSortedDatasets().map(dataset => (
-                  <DatasetCard 
-                    key={dataset.id} 
+                  <DatasetCard
+                    key={dataset.id}
                     dataset={dataset}
                     onDelete={handleDeleteDataset}
                     onDatasetUpdated={handleDatasetUpdated}
@@ -519,57 +565,108 @@ export default function ProjectDatasets() {
             </div>
           )}
         </div>
-      ) : (
+      ) : (searchQuery || selectedTag) ? (
         <div className="text-center py-16">
-          <Database className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-          <h3 className="text-lg font-medium mb-2">
-            {searchQuery || selectedTag ? 'No datasets match your search' : 'No datasets found'}
-          </h3>
+          <Search className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <h3 className="text-lg font-medium mb-2">No datasets match your search</h3>
           <p className="text-muted-foreground mb-6">
-            {searchQuery || selectedTag
-              ? `No datasets matching your search criteria`
-              : "This project doesn't have any datasets yet."
-            }
+            Try adjusting your search or clearing the tag filter.
           </p>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button>
-                <FolderPlus className="w-4 h-4 mr-2" />
-                Create Dataset
-                <ChevronDown className="w-4 h-4 ml-2" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="center">
-              <DropdownMenuItem 
-                onClick={() => setShowAddGroupModal(true)}
-                className="flex items-center cursor-pointer"
-              >
-                <Users className="w-4 h-4 mr-2 text-blue-600" />
-                <span className="text-blue-600">Dataset Group</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link 
-                  to="/projects/new/dataset" 
-                  state={{ projectId: id ? parseInt(id, 10) : undefined }}
-                  className="flex items-center cursor-pointer"
-                >
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  Dataset
-                </Link>
-              </DropdownMenuItem>
-              {datasets.length > 0 && (
-                <DropdownMenuItem asChild>
-                  <div
-                    onClick={() => setShowAugmentedModal(true)}
-                    className="flex items-center cursor-pointer"
+          <Button variant="outline" onClick={() => { setSearchQuery(""); setSelectedTag(null); }}>
+            Clear filters
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {/* Welcome Hero */}
+          <Card className="p-10 text-center relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 pointer-events-none" />
+            <div className="relative">
+              <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <Rocket className="w-8 h-8 text-primary" />
+              </div>
+              <h3 className="text-2xl font-semibold mb-2">Let's build your first dataset</h3>
+              <p className="text-muted-foreground max-w-lg mx-auto mb-6">
+                A dataset is a collection of images and labels. Add your data, annotate it, then train a model — all in one place.
+              </p>
+              <div className="flex gap-3 justify-center flex-wrap">
+                <Button asChild size="lg">
+                  <Link
+                    to="/projects/new/dataset"
+                    state={{ projectId: id ? parseInt(id, 10) : undefined }}
+                    className="gap-2"
                   >
-                    <FolderPlus className="w-4 h-4 mr-2 text-yellow-600" />
-                    <span className="text-yellow-600">Augmented Dataset</span>
+                    <FolderPlus className="w-4 h-4" />
+                    Create dataset
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="lg">
+                  <Link to="/help/dataset-view" className="gap-2">
+                    <BookOpen className="w-4 h-4" />
+                    Read the guide
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {/* 3-step path */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              {
+                icon: ImageIcon,
+                step: "Step 1",
+                title: "Add images",
+                desc: "Upload images, a video, or import an existing dataset (COCO, YOLO).",
+                cta: "Create dataset",
+                to: `/projects/new/dataset`,
+                primary: true,
+              },
+              {
+                icon: Pencil,
+                step: "Step 2",
+                title: "Annotate or auto-annotate",
+                desc: "Draw bounding boxes / polygons, or run a foundation model to pre-label.",
+                cta: "Learn how",
+                to: "/help/dataset-view",
+              },
+              {
+                icon: Brain,
+                step: "Step 3",
+                title: "Train & evaluate",
+                desc: "Train YOLO, Mask-RCNN, or RT-DETR and compare evaluation metrics.",
+                cta: "Browse docs",
+                to: "/help",
+              },
+            ].map(({ icon: Icon, step, title, desc, cta, to, primary }) => (
+              <Link
+                key={title}
+                to={to}
+                state={primary ? { projectId: id ? parseInt(id, 10) : undefined } : undefined}
+                className="group glass-card rounded-xl p-5 border border-border/50 hover:border-primary/40 transition-all hover:-translate-y-0.5"
+              >
+                <div className="flex items-start gap-3 mb-3">
+                  <div
+                    className={cn(
+                      "h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0",
+                      primary ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    <Icon className="h-5 w-5" />
                   </div>
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-muted-foreground mb-0.5">{step}</div>
+                    <h4 className="font-semibold text-foreground leading-tight">{title}</h4>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">{desc}</p>
+                <span className="inline-flex items-center gap-1 text-sm font-medium text-primary group-hover:gap-2 transition-all">
+                  {cta}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
       
