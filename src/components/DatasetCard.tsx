@@ -258,7 +258,39 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
             {dataset.description || "No description provided"}
           </p>
 
-          {/* Annotation progress removed: datasets can have many annotation files (1:N) */}
+          {/* Annotation sets summary (1:N) */}
+          {fileCount > 0 && (
+            <div className="pt-2 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Layers className="h-3 w-3" />
+                  {fileCount} annotation set{fileCount > 1 ? "s" : ""}
+                </span>
+                {formats.length > 0 && (
+                  <span className="tabular-nums">{formats.join(" · ")}</span>
+                )}
+              </div>
+              {annFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {annFiles.slice(0, 3).map((f) => (
+                    <span
+                      key={f.id}
+                      title={`${f.name || f.file_name} · ${f.annotation_count.toLocaleString()} annotations`}
+                      className="inline-flex items-center gap-1 max-w-[140px] truncate rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-foreground/80"
+                    >
+                      <span className="truncate">{f.name || f.file_name}</span>
+                      <span className="text-muted-foreground tabular-nums">{f.annotation_count}</span>
+                    </span>
+                  ))}
+                  {annFiles.length > 3 && (
+                    <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      +{annFiles.length - 3} more
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Tags */}
           {dataset.tags && dataset.tags.length > 0 && (
