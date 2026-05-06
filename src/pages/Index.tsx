@@ -346,36 +346,53 @@ export default function Index() {
                 </div>
               </Card>
             ) : filteredAndSortedProjects().length === 0 ? (
-              <Card className="glass-card p-12 text-center">
-                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-primary/10 via-accent/10 to-secondary/10 flex items-center justify-center">
-                  <FolderOpen className="w-10 h-10 text-primary" />
-                </div>
-                <h3 className="text-xl font-semibold mb-2">
-                  {searchQuery || selectedTag ? "No matching projects" : "No projects yet"}
-                </h3>
-                <p className="text-muted-foreground mb-6 max-w-md mx-auto">
-                  {searchQuery || selectedTag
-                    ? "Try adjusting your filters or search terms."
-                    : "Create your first project to get started."
-                  }
-                </p>
-                <div className="flex gap-3 justify-center">
-                  <Button asChild>
-                    <Link to="/projects/new" className="flex items-center gap-2">
-                      <Plus className="w-4 h-4" />
-                      Create Project
-                    </Link>
+              (searchQuery || selectedTag) ? (
+                <Card className="glass-card p-12 text-center">
+                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted/40 flex items-center justify-center">
+                    <Search className="w-10 h-10 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">No matching projects</h3>
+                  <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                    Try adjusting your filters or search terms.
+                  </p>
+                  <Button variant="outline" onClick={() => {
+                    setSearchQuery("");
+                    setSelectedTag(null);
+                  }}>
+                    Clear Filters
                   </Button>
-                  {(searchQuery || selectedTag) && (
-                    <Button variant="outline" onClick={() => {
-                      setSearchQuery("");
-                      setSelectedTag(null);
-                    }}>
-                      Clear Filters
-                    </Button>
-                  )}
+                </Card>
+              ) : (
+                <EmptyOnboarding />
+              )
+            ) : (
+              <div className="space-y-4">{/* placeholder retained */}</div>
+            )}
+            {/* end conditional */}
+            {!stableLoading && !error && filteredAndSortedProjects().length > 0 && (
+              <div className="space-y-4">
+                {/* Results Header */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      {filteredAndSortedProjects().length} {filteredAndSortedProjects().length === 1 ? 'project' : 'projects'}
+                    </span>
+                    {(searchQuery || selectedTag) && (
+                      <Badge variant="secondary" className="text-xs">Filtered</Badge>
+                    )}
+                  </div>
                 </div>
-              </Card>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredAndSortedProjects().map((project, index) => (
+                    <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
+                      <ProjectCard project={project} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* spacer */}
+            {false && (
             ) : (
               <div className="space-y-4">
                 {/* Results Header */}
