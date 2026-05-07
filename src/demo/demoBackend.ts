@@ -382,6 +382,79 @@ const routes: Route[] = [
   },
   {
     method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/([^/]+)\/classes/,
+    handler: (_u, _i, m) => {
+      const file = annotationFilesFor(Number(m[1])).find((f) => f.id === m[2]);
+      const classes = (file?.classes || []).map((c) => ({
+        className: c.name,
+        count: c.count,
+        color: c.color,
+        opacity: 0.35,
+        categoryId: c.id,
+      }));
+      return {
+        success: true,
+        data: {
+          classes,
+          totalClasses: classes.length,
+          totalAnnotations: classes.reduce((s, c) => s + c.count, 0),
+        },
+      };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/([^/]+)\/data/,
+    handler: () => ({
+      success: true,
+      data: { annotations: [], pagination: { page: 1, limit: 0, total: 0, pages: 0 } },
+    }),
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/summary/,
+    handler: (_u, _i, m) => {
+      const files = annotationFilesFor(Number(m[1]));
+      return {
+        success: true,
+        data: {
+          dataset_id: Number(m[1]),
+          file_count: files.length,
+          total_annotations: files.reduce((s, f) => s + f.annotation_count, 0),
+          files: files.map((f) => ({
+            id: f.id,
+            name: f.name,
+            stored_count: f.annotation_count,
+            actual_count: f.annotation_count,
+            image_count: f.image_count,
+            processing_status: "completed",
+          })),
+        },
+      };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/?($|\?)/,
+    handler: (_u, _i, m) => ({
+      success: true,
+      data: annotationFilesFor(Number(m[1])).map((f) => ({
+        id: f.id,
+        name: f.name,
+        format: "COCO",
+        type: f.type,
+        image_count: f.image_count,
+        annotation_count: f.annotation_count,
+        category_count: f.classes.length,
+        processing_status: "completed",
+        created_at: f.created_at,
+        updated_at: f.created_at,
+        tags: f.tags,
+      })),
+    }),
+  },
+  {
+    method: "GET",
     pattern: /^\/datasets\/\d+\/annotations/,
     handler: () => [],
   },
