@@ -4722,6 +4722,29 @@ export function AnnotationsContent({
           });
         })()}
 
+        {/* Sticky bulk action bar */}
+        {selectedForMerge.size > 0 && (
+          <div className="sticky bottom-2 z-10 mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-card shadow-lg px-3 py-2">
+            <span className="text-sm">
+              <strong className="tabular-nums">{selectedForMerge.size}</strong> file
+              {selectedForMerge.size === 1 ? '' : 's'} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={handleMergeAnnotations}
+                disabled={selectedForMerge.size < 2}
+              >
+                <Merge className="h-3.5 w-3.5 mr-1.5" />
+                Merge
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setSelectedForMerge(new Set()); setMergeMode(false); }}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Download Images Dialog */}
         <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] })}>
           <DialogContent className="max-w-md">
