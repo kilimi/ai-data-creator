@@ -4822,6 +4822,33 @@ const ImageAnnotation = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges, annotationId, autoSaveToDatabase]);
 
+  // Determine if an image (by name) has any annotations.
+  const isImageAnnotated = useCallback((imageName: string): boolean => {
+    if (!imageName) return false;
+    if (imageName === currentImageName && annotations.length > 0) return true;
+    try {
+      const storageKey = `annotations_${id}_${annotationStorageCollId}_${imageName}`;
+      const cached = localStorage.getItem(storageKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return true;
+      }
+    } catch { /* ignore */ }
+    try {
+      const ref = sessionStorage.getItem(`annotation_file_${id}`);
+      if (ref) {
+        const fileData = JSON.parse(ref);
+        const cocoData = fileData.cocoData;
+        const imageEntry = cocoData?.images?.find((img: any) => img.file_name === imageName);
+        if (imageEntry) {
+          const has = cocoData.annotations?.some((a: any) => String(a.image_id) === String(imageEntry.id));
+          if (has) return true;
+        }
+      }
+    } catch { /* ignore */ }
+    return false;
+  }, [id, annotationStorageCollId, currentImageName, annotations.length]);
+
   const goToImage = async (index: number) => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (index >= 0 && index < imageList.length) {
