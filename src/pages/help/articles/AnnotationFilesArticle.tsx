@@ -73,7 +73,7 @@ Thermal (1,200)           0        0         0`}
           image from that collection — usually expected when a file targets one
           modality.
         </p>
-        <ArticleCallout icon={AlertTriangle} variant="warning">
+        <ArticleCallout tone="warn">
           We deliberately do not show a single "completion %" at the dataset
           level. Any single denominator (images? images × files? images ×
           collections?) lies for some users. Counts and the coverage matrix
