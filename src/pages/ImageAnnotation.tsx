@@ -5791,6 +5791,72 @@ const ImageAnnotation = () => {
             );
             })()}
 
+            {/* Active-tool hint pill (top-center) — explains what the current tool does */}
+            {activeTool !== 'select' && currentImage && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-fade-in">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/90 backdrop-blur-sm px-3 py-1 text-xs font-medium shadow-sm">
+                  {activeTool === 'polygon' && (
+                    <>
+                      <Hexagon className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>Polygon</strong> — click to add points · <kbd className="px-1 bg-muted rounded">Enter</kbd> close · <kbd className="px-1 bg-muted rounded">Esc</kbd> cancel</span>
+                    </>
+                  )}
+                  {activeTool === 'pencil' && (
+                    <>
+                      <Pencil className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>Pencil</strong> — drag to free-draw outline · release to close</span>
+                    </>
+                  )}
+                  {activeTool === 'auto-segment' && (
+                    <>
+                      <Crosshair className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>SAM</strong> — click positive point · <kbd className="px-1 bg-muted rounded">Shift</kbd>+click negative · <kbd className="px-1 bg-muted rounded">Enter</kbd> accept</span>
+                    </>
+                  )}
+                  {activeTool === 'rectangle' && (
+                    <>
+                      <Square className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>Rectangle</strong> — drag to draw bounding box</span>
+                    </>
+                  )}
+                  {activeTool === 'circle' && (
+                    <>
+                      <span><strong>Circle</strong> — drag from center outward</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* On-canvas HUD chip (bottom-left) — zoom %, cursor px, current class */}
+            {currentImage && (
+              <div className="absolute bottom-3 left-3 z-20 pointer-events-none">
+                <div className="inline-flex items-center gap-3 rounded-md border border-border bg-card/85 backdrop-blur-sm px-2.5 py-1 text-[11px] font-mono shadow-sm">
+                  <span className="text-muted-foreground">
+                    <span className="text-foreground font-semibold">{Math.round(imageScale * 100)}%</span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    {cursorImagePosition
+                      ? <>x:<span className="text-foreground">{Math.round(cursorImagePosition.x)}</span> y:<span className="text-foreground">{Math.round(cursorImagePosition.y)}</span></>
+                      : <>x:— y:—</>}
+                  </span>
+                  {(() => {
+                    const cls = classes.find(c => c.id === selectedClass);
+                    if (!cls) return <span className="text-muted-foreground">no class</span>;
+                    return (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: cls.color }} />
+                        <span className="text-foreground">{cls.name}</span>
+                      </span>
+                    );
+                  })()}
+                  <span className="text-muted-foreground">
+                    <kbd className="px-1 bg-muted rounded text-[10px]">?</kbd> shortcuts
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* First-run onboarding overlay: shown over the canvas while no
                 classes have been defined. Walks the user through the
                 two-step flow: add classes → then annotate. */}
