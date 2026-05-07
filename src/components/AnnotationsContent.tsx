@@ -4331,10 +4331,9 @@ export function AnnotationsContent({
               <div className="space-y-2 text-sm">
                 <p className="font-semibold text-foreground">Annotation Files</p>
                 <p>
-                  A dataset can hold many annotation files — different formats
-                  (COCO, YOLO, masks…) and different label sets. Counts below
-                  show <strong>files</strong>, total <strong>instances</strong>{" "}
-                  and unique <strong>classes</strong>.
+                  A dataset can hold many annotation files (COCO format).
+                  Counts below show <strong>files</strong>, total{" "}
+                  <strong>instances</strong> and unique <strong>classes</strong>.
                 </p>
                 <Link
                   to="/help/annotation-files"
