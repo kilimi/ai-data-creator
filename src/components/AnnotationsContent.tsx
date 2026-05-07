@@ -4467,12 +4467,45 @@ export function AnnotationsContent({
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
 
-        {/* Search and filter controls */}
-        <div className="mb-4">
-          <AnnotationFilters
-            annotations={annotationFiles}
-            onFilterChange={setFilteredAnnotationFiles}
-          />
+        {/* Search, filter, sort, density */}
+        <div className="mb-4 flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <AnnotationFilters
+              annotations={annotationFiles}
+              onFilterChange={setFilteredAnnotationFiles}
+            />
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as any)}>
+              <SelectTrigger className="h-9 w-[140px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="date" className="text-xs">Sort: Date</SelectItem>
+                <SelectItem value="name" className="text-xs">Sort: Name</SelectItem>
+                <SelectItem value="instances" className="text-xs">Sort: Instances</SelectItem>
+                <SelectItem value="classes" className="text-xs">Sort: Classes</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+              title={`Sort ${sortDir === 'asc' ? 'descending' : 'ascending'}`}
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setDensity(density === 'comfortable' ? 'compact' : 'comfortable')}
+              title={density === 'comfortable' ? 'Compact rows' : 'Comfortable rows'}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-2">
