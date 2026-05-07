@@ -5192,15 +5192,27 @@ export function AnnotationsContent({
           </DialogContent>
         </Dialog>
         
-        {annotationFiles.length === 0 && (
-          <div className="flex flex-col items-center justify-center text-center p-8">
+        {annotationFiles.length === 0 && !isLoading && (
+          <div className="flex flex-col items-center justify-center text-center p-8 border border-dashed border-border rounded-lg bg-muted/20">
             <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
-              <Tag className="h-6 w-6 text-primary" />
+              <Files className="h-6 w-6 text-primary" />
             </div>
-            <h3 className="text-lg font-medium mb-2">No annotation files</h3>
-            <p className="text-sm text-muted-foreground max-w-xs">
-              Import annotation files to view and configure class statistics
+            <h3 className="text-lg font-medium mb-1">No annotation files yet</h3>
+            <p className="text-sm text-muted-foreground max-w-sm mb-4">
+              Datasets have a 1:N relationship with annotation files — upload an
+              existing file (COCO, YOLO, masks…) or start a new annotation
+              session.
             </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleImportClick}>
+                <Upload className="w-4 h-4 mr-2" />
+                Import Annotations
+              </Button>
+              <Button size="sm" onClick={() => setShowAnnotationChoiceModal(true)}>
+                <Brush className="w-4 h-4 mr-2" />
+                Annotate
+              </Button>
+            </div>
           </div>
         )}
         {annotationFiles.length > 0 && filteredAnnotationFiles.length === 0 && (
