@@ -4849,6 +4849,12 @@ export function AnnotationsContent({
           fileA={compareDialog.aId ? annotationFiles.find(f => f.id === compareDialog.aId) || null : null}
           fileB={compareDialog.bId ? annotationFiles.find(f => f.id === compareDialog.bId) || null : null}
         />
+        <MergeStrategyDialog
+          open={mergeStrategyDialogOpen}
+          onOpenChange={setMergeStrategyDialogOpen}
+          files={annotationFiles.filter((f) => selectedForMerge.has(f.id))}
+          onConfirm={handleConfirmMerge}
+        />
 
 
         {/* Download Images Dialog */}
