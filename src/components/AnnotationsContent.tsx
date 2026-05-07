@@ -4323,9 +4323,81 @@ export function AnnotationsContent({
   
   return (
     <div className={`h-full flex flex-col min-h-0 ${className}`}>
-      <div className="flex-shrink-0 flex justify-between items-center mb-4">
-        <div>
-          <h2 className="text-2xl font-bold">Annotations</h2>
+      <div className="flex-shrink-0 flex justify-between items-start mb-4 gap-4">
+        <div className="space-y-2 min-w-0">
+          <div className="flex items-center gap-2">
+            <Files className="h-5 w-5 text-primary" />
+            <h2 className="text-2xl font-bold">Annotation Files</h2>
+            <HelpHint ariaLabel="What are annotation files?" popover>
+              <div className="space-y-2 text-sm">
+                <p className="font-semibold text-foreground">Annotation Files</p>
+                <p>
+                  A dataset can hold many annotation files — different formats
+                  (COCO, YOLO, masks…) and different label sets. Counts below
+                  show <strong>files</strong>, total <strong>instances</strong>{" "}
+                  and unique <strong>classes</strong>.
+                </p>
+                <Link
+                  to="/help/annotation-files"
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                >
+                  Read the full guide →
+                </Link>
+              </div>
+            </HelpHint>
+          </div>
+          {annotationFiles.length > 0 && (() => {
+            const totalInstances = annotationFiles.reduce(
+              (s, f) => s + (f.totalSampleCount || (f.samples?.length ?? 0)),
+              0
+            );
+            const classSet = new Set<string>();
+            annotationFiles.forEach((f) => {
+              (f.classStats || []).forEach((c) => classSet.add(c.className));
+              (f.samples || []).forEach((s) => classSet.add(s.className));
+            });
+            const formats = Array.from(
+              new Set(annotationFiles.map((f) => (f.format || "").toUpperCase()).filter(Boolean))
+            );
+            return (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <Files className="h-3.5 w-3.5" />
+                  <strong className="text-foreground tabular-nums">{annotationFiles.length}</strong>{" "}
+                  file{annotationFiles.length === 1 ? "" : "s"}
+                </span>
+                <span aria-hidden>·</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Hash className="h-3.5 w-3.5" />
+                  <strong className="text-foreground tabular-nums">{totalInstances.toLocaleString()}</strong>{" "}
+                  instance{totalInstances === 1 ? "" : "s"}
+                </span>
+                <span aria-hidden>·</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Tag className="h-3.5 w-3.5" />
+                  <strong className="text-foreground tabular-nums">{classSet.size}</strong>{" "}
+                  class{classSet.size === 1 ? "" : "es"}
+                </span>
+                {formats.length > 0 && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span className="inline-flex items-center gap-1">
+                      {formats.slice(0, 4).map((f) => (
+                        <Badge key={f} variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                          {f}
+                        </Badge>
+                      ))}
+                      {formats.length > 1 && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-primary/15 text-primary border-primary/30">
+                          Multi-format
+                        </Badge>
+                      )}
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div className="flex gap-2">
           <Button 
