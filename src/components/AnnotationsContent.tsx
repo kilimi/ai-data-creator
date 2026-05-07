@@ -4755,6 +4755,32 @@ export function AnnotationsContent({
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
+                variant="outline"
+                onClick={() => {
+                  const id1 = Array.from(selectedForMerge)[0];
+                  setSplitDialog({ open: true, fileId: id1 });
+                }}
+                disabled={selectedForMerge.size !== 1}
+                title={selectedForMerge.size !== 1 ? "Select exactly 1 file to split" : "Split into subsets"}
+              >
+                <Split className="h-3.5 w-3.5 mr-1.5" />
+                Split
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const [a, b] = Array.from(selectedForMerge);
+                  setCompareDialog({ open: true, aId: a, bId: b });
+                }}
+                disabled={selectedForMerge.size !== 2}
+                title={selectedForMerge.size !== 2 ? "Select exactly 2 files to compare" : "Compare files"}
+              >
+                <GitCompare className="h-3.5 w-3.5 mr-1.5" />
+                Compare
+              </Button>
+              <Button
+                size="sm"
                 onClick={handleMergeAnnotations}
                 disabled={selectedForMerge.size < 2}
               >
@@ -4767,6 +4793,23 @@ export function AnnotationsContent({
             </div>
           </div>
         )}
+
+        {/* Split & Compare dialogs */}
+        <SplitAnnotationDialog
+          open={splitDialog.open}
+          onOpenChange={(o) => setSplitDialog({ open: o, fileId: o ? splitDialog.fileId : null })}
+          file={splitDialog.fileId ? annotationFiles.find(f => f.id === splitDialog.fileId) || null : null}
+          buildCOCO={buildSubsetCOCO}
+          uploadFile={uploadGeneratedFile}
+          onDone={() => { setSelectedForMerge(new Set()); setMergeMode(false); loadAnnotationFilesFromBackend(); }}
+        />
+        <CompareAnnotationsDialog
+          open={compareDialog.open}
+          onOpenChange={(o) => setCompareDialog({ open: o, aId: o ? compareDialog.aId : null, bId: o ? compareDialog.bId : null })}
+          fileA={compareDialog.aId ? annotationFiles.find(f => f.id === compareDialog.aId) || null : null}
+          fileB={compareDialog.bId ? annotationFiles.find(f => f.id === compareDialog.bId) || null : null}
+        />
+
 
         {/* Download Images Dialog */}
         <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] })}>
