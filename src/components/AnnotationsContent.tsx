@@ -977,6 +977,8 @@ export function AnnotationsContent({
     const res = await api.importAnnotations(id, file);
     if (!res.success) throw new Error(res.error || "Import failed");
   };
+
+  const handleOpenFiftyOne = async () => {
     if (!id?.trim()) {
       toast({
         title: "Cannot open FiftyOne",
