@@ -973,17 +973,16 @@ export function AnnotationsContent({
           description: `Kept ${report.kept.toLocaleString()} of ${report.total.toLocaleString()} instances · removed ${(report.removedExact + report.removedIou + report.removedCrossClass).toLocaleString()}`,
         });
       } else {
-        // ---- Fallback: backend merge (samples not loaded). Strategy info is sent for backend support. ----
+        // ---- Fallback: backend merge (samples not loaded). Strategy is applied client-side once contents load. ----
         const response = await api.mergeAnnotationFiles(
           id,
           Array.from(selectedForMerge),
           mergedFileName,
-          cfg as any,
         );
         if (!response.success) throw new Error(response.error || "Failed to start merge task");
         toast({
           title: "Annotation merge started",
-          description: `Merging ${filesToMerge.length} files into "${mergedFileName}". Open files first for instant client-side merge.`,
+          description: `Merging ${filesToMerge.length} files into "${mergedFileName}". Tip: open files first (eye icon) to apply your chosen strategy locally.`,
         });
       }
 
