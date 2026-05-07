@@ -7,9 +7,10 @@
  *   3. It will automatically appear in the sidebar and be routable at
  *      `/help/<slug>`.
  */
-import { LucideIcon, Target, BookOpen, Images } from "lucide-react";
+import { LucideIcon, Target, BookOpen, Images, Files } from "lucide-react";
 import { CollectionCalibrationArticle } from "./CollectionCalibrationArticle";
 import { DatasetViewArticle } from "./DatasetViewArticle";
+import { AnnotationFilesArticle } from "./AnnotationFilesArticle";
 
 export interface HelpArticle {
   slug: string;
@@ -28,6 +29,14 @@ export const helpArticles: HelpArticle[] = [
     category: "Datasets",
     icon: Images,
     Component: DatasetViewArticle,
+  },
+  {
+    slug: "annotation-files",
+    title: "Annotation Files",
+    description: "Files vs. instances vs. classes, formats, and the coverage matrix for multi-collection datasets.",
+    category: "Datasets",
+    icon: Files,
+    Component: AnnotationFilesArticle,
   },
   {
     slug: "collection-calibration",
