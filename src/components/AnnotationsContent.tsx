@@ -4463,10 +4463,31 @@ export function AnnotationsContent({
             <LayoutGrid className="w-4 h-4 mr-2" />
             FiftyOne
           </Button>
+          {annotationFiles.length > 0 && (
+            <Button
+              variant={showCoverage ? "default" : "outline"}
+              onClick={() => setShowCoverage((v) => !v)}
+              title="Show coverage of annotation files across image collections"
+            >
+              <Grid3x3 className="w-4 h-4 mr-2" />
+              Coverage
+            </Button>
+          )}
         </div>      </div>
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* Coverage matrix */}
+        {showCoverage && annotationFiles.length > 0 && (
+          <div className="mb-4">
+            <CoverageMatrix
+              annotationFiles={annotationFiles}
+              imageCollections={imageCollections}
+              images={images}
+            />
+          </div>
+        )}
+
         {/* Search and filter controls */}
         <div className="mb-4">
           <AnnotationFilters
