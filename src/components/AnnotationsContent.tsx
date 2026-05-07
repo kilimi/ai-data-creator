@@ -231,7 +231,7 @@ export function AnnotationsContent({
   
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
-  const [showCoverage, setShowCoverage] = useState(false);
+  
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showAnnotationChoiceModal, setShowAnnotationChoiceModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
