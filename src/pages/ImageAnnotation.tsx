@@ -59,7 +59,8 @@ import {
   Sun,
   Moon,
   Crosshair,
-  Pencil
+  Pencil,
+  SkipForward
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
@@ -4821,6 +4822,44 @@ const ImageAnnotation = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges, annotationId, autoSaveToDatabase]);
 
+  // Determine if an image (by name) has any annotations.
+  const isImageAnnotated = useCallback((imageName: string): boolean => {
+    if (!imageName) return false;
+    if (imageName === currentImageName && annotations.length > 0) return true;
+    try {
+      const storageKey = `annotations_${id}_${annotationStorageCollId}_${imageName}`;
+      const cached = localStorage.getItem(storageKey);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return true;
+      }
+    } catch { /* ignore */ }
+    try {
+      const ref = sessionStorage.getItem(`annotation_file_${id}`);
+      if (ref) {
+        const fileData = JSON.parse(ref);
+        const cocoData = fileData.cocoData;
+        const imageEntry = cocoData?.images?.find((img: any) => img.file_name === imageName);
+        if (imageEntry) {
+          const has = cocoData.annotations?.some((a: any) => String(a.image_id) === String(imageEntry.id));
+          if (has) return true;
+        }
+      }
+    } catch { /* ignore */ }
+    return false;
+  }, [id, annotationStorageCollId, currentImageName, annotations.length]);
+
+  const goToNextUnannotated = async () => {
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    for (let i = currentImageIndex + 1; i < imageList.length; i++) {
+      if (!isImageAnnotated(imageList[i])) {
+        await goToImage(i);
+        return;
+      }
+    }
+    toast({ title: 'No unannotated image found', description: 'All remaining images already have annotations.' });
+  };
+
   const goToImage = async (index: number) => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (index >= 0 && index < imageList.length) {
@@ -6050,6 +6089,18 @@ const ImageAnnotation = () => {
                 >
                   Next
                   <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={goToNextUnannotated}
+                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
+                  aria-label="Next unannotated image"
+                  title="Jump to the next image with no annotations"
+                >
+                  <SkipForward className="h-4 w-4 mr-1" />
+                  Next unannotated
                 </Button>
 
                 {/* Primary layer selector — kept next to Prev/Next so user knows which layer they're navigating */}
