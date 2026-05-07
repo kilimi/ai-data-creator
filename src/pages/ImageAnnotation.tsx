@@ -5605,6 +5605,8 @@ const ImageAnnotation = () => {
                   >
                     <X className="w-4 h-4" />
                   </Button>
+                </div>
+              )}
               {/* Class search — appears only when there are several classes to filter */}
               {classes.length >= 6 && (
                 <div className="mb-2">
@@ -5628,8 +5630,6 @@ const ImageAnnotation = () => {
                     Clear
                   </button>
                 </div>
-              )}
-            </div>
               )}
             </div>
 
