@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown, LayoutGrid, Files, Layers, Hash, Grid3x3 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
+import { AnnotationFileCard, AnnotationFileSkeleton } from "@/components/AnnotationFileCard";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
@@ -231,6 +232,9 @@ export function AnnotationsContent({
   
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
+  const [sortBy, setSortBy] = useState<'date' | 'name' | 'instances' | 'classes'>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showAnnotationChoiceModal, setShowAnnotationChoiceModal] = useState(false);
@@ -4463,12 +4467,45 @@ export function AnnotationsContent({
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
 
-        {/* Search and filter controls */}
-        <div className="mb-4">
-          <AnnotationFilters
-            annotations={annotationFiles}
-            onFilterChange={setFilteredAnnotationFiles}
-          />
+        {/* Search, filter, sort, density */}
+        <div className="mb-4 flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <AnnotationFilters
+              annotations={annotationFiles}
+              onFilterChange={setFilteredAnnotationFiles}
+            />
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as any)}>
+              <SelectTrigger className="h-9 w-[140px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="date" className="text-xs">Sort: Date</SelectItem>
+                <SelectItem value="name" className="text-xs">Sort: Name</SelectItem>
+                <SelectItem value="instances" className="text-xs">Sort: Instances</SelectItem>
+                <SelectItem value="classes" className="text-xs">Sort: Classes</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}
+              title={`Sort ${sortDir === 'asc' ? 'descending' : 'ascending'}`}
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              onClick={() => setDensity(density === 'comfortable' ? 'compact' : 'comfortable')}
+              title={density === 'comfortable' ? 'Compact rows' : 'Comfortable rows'}
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -4514,568 +4551,200 @@ export function AnnotationsContent({
           </div>
         )}
         
-        {filteredAnnotationFiles
-          .sort((a, b) => {
-            // Sort by date (newest first) - handle both full timestamps and date-only strings
-            const dateA = new Date(a.date);
-            const dateB = new Date(b.date);
-            const timeA = dateA.getTime();
-            const timeB = dateB.getTime();
-            
-            // If dates are exactly the same (same timestamp), sort by name for consistency
-            if (timeA === timeB) {
-              return a.name.localeCompare(b.name);
+        {/* Sorted + rendered list */}
+        {(() => {
+          const sorted = [...filteredAnnotationFiles].sort((a, b) => {
+            const dir = sortDir === 'asc' ? 1 : -1;
+            switch (sortBy) {
+              case 'name':
+                return a.name.localeCompare(b.name) * dir;
+              case 'instances':
+                return ((a.totalSampleCount || 0) - (b.totalSampleCount || 0)) * dir;
+              case 'classes':
+                return ((a.classCount || 0) - (b.classCount || 0)) * dir;
+              case 'date':
+              default: {
+                const ta = new Date(a.date).getTime();
+                const tb = new Date(b.date).getTime();
+                if (ta === tb) return a.name.localeCompare(b.name);
+                return (ta - tb) * dir;
+              }
             }
-            
-            return timeB - timeA; // Newest first
-          })
-          .map((file, index) => {
-            const isBboxOnly = detectAnnotationType(file) === 'Segmentation (bbox)';
-            const isOther = detectAnnotationType(file) === 'Other';
-            const isUnsupportedFormat = isBboxOnly || isOther;
+          });
+
+          // Loading skeletons
+          if (isLoadingFromBackend && sorted.length === 0) {
             return (
-              <div
-                key={file.id}
-                className={`border rounded-lg overflow-hidden ${
-                  isUnsupportedFormat
-                    ? 'border-yellow-500/50 bg-yellow-500/10 dark:bg-yellow-500/10'
-                    : 'border-border/60'
-                }`}
-              >
-                {/* Main annotation row */}
-                <div 
-                  className={`cursor-pointer p-4 hover:bg-accent/50 transition-colors ${selectedAnnotation === file.id ? 'bg-accent' : ''} ${isUnsupportedFormat ? 'hover:bg-yellow-500/20' : ''}`}
-                  onClick={() => handleAnnotationClick(file.id)}
-                >
-                   <div className="flex items-center justify-between">
-                      {/* Number indicator */}
-                      <div className="flex items-center mr-3 min-w-[24px]">
-                        <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">
-                          #{index + 1}
-                        </span>
-                      </div>
-                      
-                      {/* Checkbox for merge mode */}
-                      {mergeMode && (
-                        <div className="flex items-center mr-3">
-                          <input
-                            type="checkbox"
-                            checked={selectedForMerge.has(file.id)}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              const newSelected = new Set(selectedForMerge);
-                              if (e.target.checked) {
-                                newSelected.add(file.id);
-                              } else {
-                                newSelected.delete(file.id);
-                              }
-                              setSelectedForMerge(newSelected);
-                            }}
-                            className="w-4 h-4 rounded focus:ring-2 focus:ring-primary"
-                          />
-                        </div>
-                     )}
-                     <div className="flex-1">
-                       <div className="flex items-center gap-2 group">
-                         {editingName?.annotationId === file.id ? (
-                            <div className="flex items-center gap-2 flex-1">
-                              <Input
-                                value={editingName.newName}
-                                onChange={(e) => setEditingName({ ...editingName, newName: e.target.value })}
-                                onKeyDown={handleNameKeyDown}
-                                onBlur={handleSaveEditName}
-                                className="font-medium h-6 px-2 text-sm"
-                                autoFocus
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0 text-primary hover:text-primary/80"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSaveEditName();
-                                }}
-                              >
-                                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCancelEditName();
-                                }}
-                              >
-                               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                               </svg>
-                             </Button>
-                           </div>
-                         ) : (
-                           <>
-                             <div className="flex items-center gap-2">
-                               <div className="font-medium">{file.name}</div>
-                                {importingFiles.has(file.name) && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs bg-primary/20 text-primary border-primary flex items-center gap-1"
-                                    title="Importing file..."
-                                  >
-                                    <Loader className="h-3 w-3 animate-spin" />
-                                    Importing
-                                  </Badge>
-                                )}
-                                {processingFiles.has(file.id) && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border-yellow-500 flex items-center gap-1"
-                                    title="Processing annotations..."
-                                  >
-                                    <Loader className="h-3 w-3 animate-spin" />
-                                    Processing
-                                  </Badge>
-                                )}
-                                {(file as any).emergencyMode && (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs bg-destructive/20 text-destructive border-destructive"
-                                    title="Emergency mode: Minimal data only"
-                                  >
-                                    Limited
-                                  </Badge>
-                                )}
-                             </div>
-                             <Button
-                               variant="ghost"
-                               size="sm"
-                               className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                               onClick={(e) => handleStartEditName(file.id, file.name, e)}
-                               title="Edit annotation name"
-                             >
-                               <Edit className="h-3 w-3" />
-                             </Button>
-                           </>
-                         )}
-                       </div>
-                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                           <span className="inline-flex items-center gap-2 flex-wrap">
-                            <span title="Created">{new Date(file.date).toLocaleDateString()}</span>
-                            <span aria-hidden>·</span>
-                            <span className="inline-flex items-center gap-1" title="Total annotation instances in this file">
-                              <Hash className="h-3 w-3" />
-                              <span className="tabular-nums">{(file.totalSampleCount || 0).toLocaleString()}</span> instances
-                            </span>
-                            <span aria-hidden>·</span>
-                            <span className="inline-flex items-center gap-1" title="Unique classes in this file">
-                              <Tag className="h-3 w-3" />
-                              <span className="tabular-nums">{file.classCount}</span> classes
-                            </span>
-                            <span aria-hidden>·</span>
-                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 uppercase">{file.format}</Badge>
-                          </span>
-                          <Badge 
-                            variant="secondary" 
-                            className={`text-xs capitalize ${
-                              isUnsupportedFormat
-                                ? 'cursor-default bg-yellow-500/25 text-yellow-800 dark:text-yellow-200 border-yellow-500/60'
-                                : detectAnnotationType(file) === 'Classification'
-                                ? 'cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors bg-primary/20 text-primary border-primary/50' 
-                                : detectAnnotationType(file).startsWith('Segmentation')
-                                ? 'cursor-pointer hover:bg-accent-foreground hover:text-accent transition-colors bg-accent text-accent-foreground border-accent'
-                                : 'bg-muted text-muted-foreground border-border'
-                            }`}
-                            onClick={(e) => {
-                              if (isUnsupportedFormat) {
-                                e.stopPropagation();
-                                return;
-                              }
-                              if (detectAnnotationType(file) === 'Classification') {
-                                handleEditClassificationAnnotation(file.id, e);
-                              } else if (detectAnnotationType(file).startsWith('Segmentation')) {
-                                handleEditSegmentationAnnotation(file.id, e);
-                              }
-                            }}
-                            title={
-                              isBboxOnly
-                                ? 'Format not supported, missing masks'
-                                : isOther
-                                ? 'Format not supported'
-                                : detectAnnotationType(file) === 'Classification'
-                                ? 'Click to edit classification annotations'
-                                : detectAnnotationType(file).startsWith('Segmentation')
-                                ? 'Click to edit segmentation annotations'
-                                : `Type: ${detectAnnotationType(file)}`
-                            }
-                          >
-                            {(() => {
-                              const type = detectAnnotationType(file);
-                              
-                              // Ensure we always show a meaningful type
-                              let displayType = type;
-                              if (type === 'Other' && file.samples && file.samples.length > 0) {
-                                // Try to detect again based on actual sample content
-                                const hasSegmentation = file.samples.some(sample => 
-                                  sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-                                );
-                                const hasMeaningfulBbox = file.samples.some(sample => 
-                                  sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-                                  (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-                                );
-                                
-                                if (hasSegmentation && hasMeaningfulBbox) {
-                                  displayType = 'Segmentation (mask+bbox)';
-                                } else if (hasSegmentation) {
-                                  displayType = 'Segmentation (mask)';
-                                } else if (hasMeaningfulBbox) {
-                                  displayType = 'Segmentation (bbox)';
-                                } else {
-                                  displayType = 'Classification';
-                                }
-                              }
-                              
-                              switch (displayType) {
-                                case 'Classification':
-                                  return 'Classification';
-                                case 'Segmentation (mask+bbox)':
-                                  return 'Segmentation (mask+bbox)';
-                                case 'Segmentation (mask)':
-                                  return 'Segmentation (mask)';
-                                case 'Segmentation (bbox)':
-                                  return 'Segmentation (bbox)';
-                                case 'Other':
-                                  return 'Other';
-                                default:
-                                  return displayType || 'Other';
-                              }
-                            })()}
-                          </Badge>
-                          {isBboxOnly && (
-                            <span className="text-xs text-yellow-700 dark:text-yellow-300 ml-1" title="Edit segmentation is not supported for bbox-only annotations">
-                              Format not supported, missing masks
-                            </span>
-                          )}
-                          {isOther && (
-                            <span className="text-xs text-yellow-700 dark:text-yellow-300 ml-1" title="Edit is not supported for this annotation type">
-                              Format not supported
-                            </span>
-                          )}
-                          {file.processing_status === 'processing' && (
-                            <Badge
-                              variant="secondary"
-                              className="text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 border-yellow-500 flex items-center gap-1"
-                              title="File is being processed"
-                            >
-                              <Loader className="h-3 w-3 animate-spin" />
-                              Processing
-                            </Badge>
-                          )}
-                          {file.processing_status === 'failed' && (
-                            <Badge
-                              variant="secondary"
-                              className="text-xs bg-destructive/20 text-destructive border-destructive"
-                              title={file.error_message || "Processing failed"}
-                            >
-                              Failed
-                            </Badge>
-                          )}
-                        </div>
-                        {/* Tags display */}
-                        {file.tags && file.tags.length > 0 && (
-                          <div className="flex items-center gap-1 mt-2">
-                            {file.tags.slice(0, 3).map((tag) => (
-                              <Badge
-                                key={tag}
-                                variant="secondary"
-                                className="text-xs bg-primary/20 text-primary border-primary/30"
-                              >
-                                <Tag className="h-3 w-3 mr-1" />
-                                {tag}
-                              </Badge>
-                            ))}
-                            {file.tags.length > 3 && (
-                              <Badge
-                                variant="secondary"
-                                className="text-xs bg-muted text-muted-foreground border-border"
-                              >
-                                +{file.tags.length - 3} more
-                              </Badge>
-                            )}
-                          </div>
-                        )}
-                     </div>
-                    <div className="flex items-center gap-4">
-                      {/* Visibility toggles */}
-                      <div className="flex gap-1">
-                        {/* Individual segmentation masks toggle */}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-8 w-8 ${visibleAnnotations.has(file.id) ? 'text-primary' : 'text-muted-foreground'}`}
-                          onClick={(e) => handleToggleAnnotationVisibility(file.id, e)}
-                          title={visibleAnnotations.has(file.id) ? "Hide segmentation masks" : "Show segmentation masks"}
-                          disabled={loadingAnnotations.has(file.id)}
-                        >
-                          {loadingAnnotations.has(file.id) ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                          ) : (
-                            visibleAnnotations.has(file.id) ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />
-                          )}
-                        </Button>
-                        
-                        {/* Individual bounding boxes toggle */}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-8 w-8 ${file.showBboxes ? 'text-primary' : 'text-muted-foreground'}`}
-                          onClick={(e) => handleToggleAnnotationBboxes(file.id, e)}
-                          title={file.showBboxes ? "Hide bounding boxes" : "Show bounding boxes"}
-                          disabled={loadingAnnotations.has(file.id)}
-                        >
-                          {loadingAnnotations.has(file.id) ? (
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                          ) : (
-                            <Square className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                       {/* Actions */}
-                       <div className="flex gap-2">
-                         {/* Load buttons for preview mode */}
-                         {(file as any).previewOnly && api && (
-                           <>
-                             <Button 
-                               variant="ghost" 
-                               size="icon" 
-                               className="h-8 w-8 text-muted-foreground hover:text-primary"
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 if (currentPageImageIds.length > 0) {
-                                   console.log(`Manual loading annotations for current page. Page has ${currentPageImageIds.length} images.`);
-                                   loadAnnotationsForCurrentPage(file.id, true);
-                                 } else {
-                                   toast({
-                                     title: "No images on current page",
-                                     description: "Navigate to a page with images to load relevant annotations.",
-                                     variant: "default"
-                                   });
-                                 }
-                               }}
-                               title={`Load annotations for current page images (${currentPageImageIds.length} images)`}
-                             >
-                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                               </svg>
-                             </Button>
-                           </>
-                         )}
-                         
-                         {/* Tags button */}
-                         <Button 
-                           variant="ghost" 
-                           size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-primary"
-                           onClick={(e) => handleTagsClick(file.id, e)}
-                           title="Manage tags"
-                         >
-                           <Tag className="h-4 w-4" />
-                         </Button>
-                         {detectAnnotationType(file) === 'Classification' ? (
-                           <Button 
-                             variant="ghost" 
-                             size="icon" 
-                             className="h-8 w-8 text-muted-foreground hover:text-primary"
-                             onClick={(e) => handleEditClassificationAnnotation(file.id, e)}
-                             title="Edit classification annotations"
-                           >
-                             <Edit className="h-4 w-4" />
-                           </Button>
-                         ) : isBboxOnly ? (
-                           <Button
-                             variant="ghost"
-                             size="icon"
-                             className="h-8 w-8 text-muted-foreground/50 cursor-not-allowed"
-                             disabled
-                             title="Format not supported, missing masks"
-                           >
-                             <Brush className="h-4 w-4" />
-                           </Button>
-                         ) : isOther ? (
-                           <Button
-                             variant="ghost"
-                             size="icon"
-                             className="h-8 w-8 text-muted-foreground/50 cursor-not-allowed"
-                             disabled
-                             title="Format not supported"
-                           >
-                             <Edit className="h-4 w-4" />
-                           </Button>
-                         ) : detectAnnotationType(file).startsWith('Segmentation') ? (
-                           <Button 
-                             variant="ghost" 
-                             size="icon" 
-                             className="h-8 w-8 text-muted-foreground hover:text-primary"
-                             onClick={(e) => handleEditSegmentationAnnotation(file.id, e)}
-                             title="Edit segmentation annotations"
-                           >
-                             <Brush className="h-4 w-4" />
-                           </Button>
-                         ) : (
-                           <Button 
-                             variant="ghost" 
-                             size="icon" 
-                             className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                             onClick={(e) => handleStartEditName(file.id, file.name, e)}
-                             title="Edit annotation name"
-                           >
-                             <Edit className="h-4 w-4" />
-                           </Button>
-                         )}
-                         <Button
-                           variant="ghost"
-                           size="icon"
-                           className="h-8 w-8 text-muted-foreground hover:text-primary"
-                           onClick={(e) => handleDuplicateAnnotation(file.id, e)}
-                           title="Duplicate annotation file"
-                         >
-                           {/* Copy icon SVG */}
-                           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="9" y="9" width="13" height="13" rx="2" strokeWidth="2"/><rect x="3" y="3" width="13" height="13" rx="2" strokeWidth="2"/></svg>
-                         </Button>
-                         <Button 
-                           variant="ghost" 
-                           size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                           onClick={(e) => handleDeleteAnnotation(file.id, e)}
-                           title="Delete annotation file"
-                         >
-                           <Trash2 className="h-4 w-4" />
-                         </Button>
-                         <Button 
-                           variant="ghost" 
-                           size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-primary"
-                           onClick={(e) => handleDownloadImagesClick(file.id, e)}
-                           title="Download images by class"
-                         >
-                           <ImageDown className="h-4 w-4" />
-                         </Button>
-                         <Button 
-                           variant="ghost" 
-                           size="icon" 
-                           className="h-8 w-8 text-muted-foreground hover:text-primary"
-                           onClick={(e) => handleDownloadAnnotation(file.id, e)}
-                           title="Download annotation file"
-                         >
-                           <Download className="h-4 w-4" />
-                         </Button>
-                       </div>
-                    </div>
+              <>
+                {[0, 1, 2].map((i) => (
+                  <AnnotationFileSkeleton key={i} density={density} />
+                ))}
+              </>
+            );
+          }
+
+          return sorted.map((file, index) => {
+            const rawType = detectAnnotationType(file);
+            const isBboxOnly = rawType === 'Segmentation (bbox)';
+            const isOther = rawType === 'Other';
+            const isUnsupportedFormat = isBboxOnly || isOther;
+            const unsupportedReason = isBboxOnly
+              ? 'Format not supported, missing masks'
+              : isOther
+              ? 'Format not supported'
+              : undefined;
+            const isEditing = editingName?.annotationId === file.id;
+
+            // Inline rename UI replaces the card entirely while editing
+            if (isEditing) {
+              return (
+                <div key={file.id} className="border border-primary/40 rounded-lg p-3 bg-card">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={editingName!.newName}
+                      onChange={(e) => setEditingName({ ...editingName!, newName: e.target.value })}
+                      onKeyDown={handleNameKeyDown}
+                      onBlur={handleSaveEditName}
+                      className="font-medium h-8 text-sm flex-1"
+                      autoFocus
+                    />
+                    <Button size="sm" onClick={handleSaveEditName}>Save</Button>
+                    <Button size="sm" variant="outline" onClick={handleCancelEditName}>Cancel</Button>
                   </div>
                 </div>
-                
-                {/* Expandable statistics section */}
-                {selectedAnnotation === file.id && (
-                  <div className="border-t border-border bg-muted/30">
-                    <div className="p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">
-                          Classes & Statistics
-                        </h4>
-                        <div className="flex items-center gap-2">
-                          {(file.classStats?.length || 0) > 1 && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="text-xs h-7"
-                              onClick={() => setMergeDialogOpen(true)}
-                            >
-                              <Merge className="h-3 w-3 mr-1" />
-                              Merge
-                            </Button>
-                          )}
-                          {dirtyAnnotationIds.has(file.id) && (
-                            <Button size="sm" className="h-7" onClick={() => handleSaveAnnotationFile(file.id)}>
-                              Save Changes
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Combined statistics & config section */}
-                      <div className="mb-3">
-                        <ClassStatistics
-                          statistics={file.classStats || []}
-                          selectedClass={selectedClass}
-                          onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
-                        />
-                      </div>
-                      
-                      {/* Class Configuration - inline when selected */}
-                      <div>
-                        {selectedClass && file.classStats && (
-                            <div className="mt-4 pt-4 border-t border-border">
-                              <ClassColorOpacityPicker
-                                annotationId={file.id}
-                                className={selectedClass}
-                                color={file.classStats.find(s => s.className === selectedClass)?.color || generateRandomColor()}
-                                opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
-                                onColorOpacityChange={handleClassColorOpacityChange}
-                                onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
-                                onDeleteClass={(className) => handleDeleteClassClick(file.id, className)}
-                              />
-                            </div>
-                          )}
-                          {/* Rename Class Dialog */}
-                          <RenameClassDialog
-                            isOpen={renameClassDialog.isOpen}
-                            onClose={() => setRenameClassDialog({ isOpen: false, className: '', annotationId: '' })}
-                            className={renameClassDialog.className}
-                            annotations={annotationFiles.find(f => f.id === renameClassDialog.annotationId)?.samples || []}
-                            onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
-                          />
-                          {/* Delete Class Confirmation Dialog */}
-                          <Dialog open={deleteClassDialog.isOpen} onOpenChange={(open) => !open && setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' })}>
-                            <DialogContent>
-                              <DialogHeader>
-                                <DialogTitle>Delete All Annotations?</DialogTitle>
-                              </DialogHeader>
-                              <div className="py-4">
-                                <p className="text-sm text-muted-foreground">
-                                  Are you sure you want to delete all annotations for class <strong>"{deleteClassDialog.className}"</strong>?
-                                </p>
-                                <p className="text-sm text-destructive mt-2">
-                                  This action cannot be undone.
-                                </p>
-                              </div>
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  variant="outline"
-                                  onClick={() => setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' })}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  variant="destructive"
-                                  onClick={handleDeleteClass}
-                                >
-                                  Delete All
-                                </Button>
-                              </div>
-                            </DialogContent>
-                          </Dialog>
-                        </div>
-                      </div>
+              );
+            }
+
+            return (
+              <AnnotationFileCard
+                key={file.id}
+                file={file}
+                index={index}
+                density={density}
+                selectedAnnotation={selectedAnnotation}
+                visible={visibleAnnotations.has(file.id)}
+                showBboxes={!!file.showBboxes}
+                loading={loadingAnnotations.has(file.id)}
+                type={rawType as any}
+                isUnsupported={isUnsupportedFormat}
+                unsupportedReason={unsupportedReason}
+                importing={importingFiles.has(file.name)}
+                processing={processingFiles.has(file.id) || file.processing_status === 'processing'}
+                mergeMode={mergeMode}
+                selectedForMerge={selectedForMerge.has(file.id)}
+                onToggleSelect={() => {
+                  const next = new Set(selectedForMerge);
+                  if (next.has(file.id)) next.delete(file.id);
+                  else next.add(file.id);
+                  setSelectedForMerge(next);
+                }}
+                onOpen={() => handleAnnotationClick(file.id)}
+                onToggleVisibility={(e) => handleToggleAnnotationVisibility(file.id, e)}
+                onToggleBboxes={(e) => handleToggleAnnotationBboxes(file.id, e as any)}
+                onEditName={(e) => handleStartEditName(file.id, file.name, e as any)}
+                onEditAnnotations={(e) => {
+                  if (rawType === 'Classification') handleEditClassificationAnnotation(file.id, e as any);
+                  else handleEditSegmentationAnnotation(file.id, e as any);
+                }}
+                onTags={(e) => handleTagsClick(file.id, e as any)}
+                onDuplicate={(e) => handleDuplicateAnnotation(file.id, e as any)}
+                onDownload={(e) => handleDownloadAnnotation(file.id, e as any)}
+                onDownloadImages={(e) => handleDownloadImagesClick(file.id, e as any)}
+                onDelete={(e) => handleDeleteAnnotation(file.id, e as any)}
+              >
+                {/* Expanded statistics body */}
+                <div className="p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-medium">Classes & Statistics</h4>
+                    <div className="flex items-center gap-2">
+                      {(file.classStats?.length || 0) > 1 && (
+                        <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setMergeDialogOpen(true)}>
+                          <Merge className="h-3 w-3 mr-1" />
+                          Merge
+                        </Button>
+                      )}
+                      {dirtyAnnotationIds.has(file.id) && (
+                        <Button size="sm" className="h-7" onClick={() => handleSaveAnnotationFile(file.id)}>
+                          Save Changes
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+                  <div className="mb-3">
+                    <ClassStatistics
+                      statistics={file.classStats || []}
+                      selectedClass={selectedClass}
+                      onClassIconClick={(className) => setSelectedClass(selectedClass === className ? null : className)}
+                    />
+                  </div>
+                  {selectedClass && file.classStats && (
+                    <div className="mt-4 pt-4 border-t border-border">
+                      <ClassColorOpacityPicker
+                        annotationId={file.id}
+                        className={selectedClass}
+                        color={file.classStats.find(s => s.className === selectedClass)?.color || generateRandomColor()}
+                        opacity={(file.classStats.find(s => s.className === selectedClass) as any)?.opacity || 0.25}
+                        onColorOpacityChange={handleClassColorOpacityChange}
+                        onRenameClass={(className) => setRenameClassDialog({ isOpen: true, className, annotationId: file.id })}
+                        onDeleteClass={(className) => handleDeleteClassClick(file.id, className)}
+                      />
+                    </div>
+                  )}
+                  <RenameClassDialog
+                    isOpen={renameClassDialog.isOpen}
+                    onClose={() => setRenameClassDialog({ isOpen: false, className: '', annotationId: '' })}
+                    className={renameClassDialog.className}
+                    annotations={annotationFiles.find(f => f.id === renameClassDialog.annotationId)?.samples || []}
+                    onRename={(oldClassName, newClassName) => handleRenameClass(renameClassDialog.annotationId, oldClassName, newClassName)}
+                  />
+                  <Dialog open={deleteClassDialog.isOpen} onOpenChange={(open) => !open && setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' })}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Delete All Annotations?</DialogTitle>
+                      </DialogHeader>
+                      <div className="py-4">
+                        <p className="text-sm text-muted-foreground">
+                          Are you sure you want to delete all annotations for class <strong>"{deleteClassDialog.className}"</strong>?
+                        </p>
+                        <p className="text-sm text-destructive mt-2">This action cannot be undone.</p>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setDeleteClassDialog({ isOpen: false, className: '', annotationId: '' })}>
+                          Cancel
+                        </Button>
+                        <Button variant="destructive" onClick={handleDeleteClass}>Delete All</Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </AnnotationFileCard>
             );
-          })
-        }
-        
+          });
+        })()}
+
+        {/* Sticky bulk action bar */}
+        {selectedForMerge.size > 0 && (
+          <div className="sticky bottom-2 z-10 mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-card shadow-lg px-3 py-2">
+            <span className="text-sm">
+              <strong className="tabular-nums">{selectedForMerge.size}</strong> file
+              {selectedForMerge.size === 1 ? '' : 's'} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={handleMergeAnnotations}
+                disabled={selectedForMerge.size < 2}
+              >
+                <Merge className="h-3.5 w-3.5 mr-1.5" />
+                Merge
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setSelectedForMerge(new Set()); setMergeMode(false); }}>
+                Clear
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Download Images Dialog */}
         <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] })}>
           <DialogContent className="max-w-md">
