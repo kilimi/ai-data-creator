@@ -268,6 +268,8 @@ const ImageAnnotation = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Help popover visibility for zoom/pan instructions
   const [showHelp, setShowHelp] = useState(false);
+  // Full keyboard cheatsheet overlay (triggered by '?')
+  const [showCheatsheet, setShowCheatsheet] = useState(false);
 
   // State
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
