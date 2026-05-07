@@ -156,6 +156,11 @@ export default function ProjectExports() {
   // Filter and sort export tasks
   const filteredAndSortedTasks = exportTasks
     .filter(task => {
+      if (statusFilter !== "all") {
+        if (statusFilter === "running") {
+          if (task.status !== "running" && task.status !== "pending") return false;
+        } else if (task.status !== statusFilter) return false;
+      }
       if (!searchQuery) return true;
       const query = searchQuery.toLowerCase();
       return (
@@ -176,6 +181,31 @@ export default function ProjectExports() {
           return 0;
       }
     });
+
+  const statusCounts = {
+    all: exportTasks.length,
+    running: exportTasks.filter(t => t.status === "running" || t.status === "pending").length,
+    completed: exportTasks.filter(t => t.status === "completed").length,
+    failed: exportTasks.filter(t => t.status === "failed").length,
+  };
+
+  const handleDeleteFailedTasks = async () => {
+    const failed = exportTasks.filter(t => t.status === 'failed');
+    if (failed.length === 0) return;
+    if (!confirm(`Are you sure you want to delete ${failed.length} failed conversion task(s)?`)) return;
+    setDeletingFailedTasks(true);
+    try {
+      for (const t of failed) {
+        await fetch(`${getApiBaseUrl()}/tasks/${t.id}`, { method: 'DELETE', credentials: 'omit' });
+      }
+      toast({ title: "Tasks Deleted", description: `${failed.length} failed conversion task(s) have been deleted.` });
+      fetchTasks();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
+    } finally {
+      setDeletingFailedTasks(false);
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
