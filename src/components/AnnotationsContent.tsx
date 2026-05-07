@@ -231,6 +231,7 @@ export function AnnotationsContent({
   const [visibleAnnotations, setVisibleAnnotations] = useState<Set<string>>(new Set());
   
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
+  const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [sortBy, setSortBy] = useState<'date' | 'name' | 'instances' | 'classes'>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
