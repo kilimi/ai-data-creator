@@ -4331,10 +4331,9 @@ export function AnnotationsContent({
               <div className="space-y-2 text-sm">
                 <p className="font-semibold text-foreground">Annotation Files</p>
                 <p>
-                  A dataset can hold many annotation files — different formats
-                  (COCO, YOLO, masks…) and different label sets. Counts below
-                  show <strong>files</strong>, total <strong>instances</strong>{" "}
-                  and unique <strong>classes</strong>.
+                  A dataset can hold many annotation files (COCO format).
+                  Counts below show <strong>files</strong>, total{" "}
+                  <strong>instances</strong> and unique <strong>classes</strong>.
                 </p>
                 <Link
                   to="/help/annotation-files"
@@ -5175,9 +5174,8 @@ export function AnnotationsContent({
             </div>
             <h3 className="text-lg font-medium mb-1">No annotation files yet</h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-4">
-              Datasets have a 1:N relationship with annotation files — upload an
-              existing file (COCO, YOLO, masks…) or start a new annotation
-              session.
+              A dataset can hold multiple annotation files — upload an existing
+              COCO file or start a new annotation session.
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleImportClick}>
