@@ -5113,6 +5113,62 @@ const ImageAnnotation = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
+      {/* Keyboard cheatsheet overlay (toggle with '?') */}
+      {showCheatsheet && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-background/70 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowCheatsheet(false)}
+        >
+          <div
+            className="relative w-[min(720px,92vw)] max-h-[85vh] overflow-auto rounded-xl border border-border bg-card shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Keyboard shortcuts</h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowCheatsheet(false)} aria-label="Close">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5 text-sm">
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Tools</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Select</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">V</kbd></li>
+                  <li className="flex justify-between"><span>Polygon</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">P</kbd></li>
+                  <li className="flex justify-between"><span>SAM (auto-segment)</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">A</kbd></li>
+                </ul>
+              </section>
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Drawing</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Close polygon</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Enter</kbd></li>
+                  <li className="flex justify-between"><span>Cancel current shape</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Esc</kbd></li>
+                  <li className="flex justify-between"><span>SAM positive point</span><span className="text-muted-foreground text-xs">Click</span></li>
+                  <li className="flex justify-between"><span>SAM negative point</span><span className="text-muted-foreground text-xs">Shift + Click</span></li>
+                </ul>
+              </section>
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Zoom & Pan</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Zoom</span><span className="text-muted-foreground text-xs">Ctrl/⌘ + Scroll</span></li>
+                  <li className="flex justify-between"><span>Pan</span><span className="text-muted-foreground text-xs">Space + drag · Middle click</span></li>
+                  <li className="flex justify-between"><span>Reset view</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">R</kbd></li>
+                </ul>
+              </section>
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">General</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Save</span><span className="text-muted-foreground text-xs">Ctrl/⌘ + S</span></li>
+                  <li className="flex justify-between"><span>Toggle this panel</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">?</kbd></li>
+                  <li className="flex justify-between"><span>Close panel</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Esc</kbd></li>
+                </ul>
+              </section>
+            </div>
+            <p className="mt-5 text-xs text-muted-foreground">Tip: shortcuts are disabled while typing in inputs.</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between p-4 bg-card border-b border-border">
         <div className="flex items-center gap-4">
