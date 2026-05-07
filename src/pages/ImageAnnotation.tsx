@@ -3252,7 +3252,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation, getAnnotReferenceDimensions, annotationId]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, soloClassId, samPoints, imageScale, imageOffset, displayImage, currentImage, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation, getAnnotReferenceDimensions, annotationId]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
