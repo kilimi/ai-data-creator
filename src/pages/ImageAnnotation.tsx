@@ -979,6 +979,22 @@ const ImageAnnotation = () => {
     return () => window.removeEventListener('keydown', toggleHandler);
   }, []);
 
+  // Toggle keyboard cheatsheet with '?' (Shift+/) — ignored when typing in inputs
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setShowCheatsheet(v => !v);
+      } else if (e.key === 'Escape') {
+        setShowCheatsheet(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   // Save global classes to localStorage
   const saveGlobalClasses = (classesToSave: AnnotationClass[]) => {
     try {
