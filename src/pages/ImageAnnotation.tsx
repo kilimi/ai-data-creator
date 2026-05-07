@@ -352,6 +352,9 @@ const ImageAnnotation = () => {
   annotationsRef.current = annotations;
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  // Class panel: search filter + solo (single class isolated)
+  const [classSearch, setClassSearch] = useState('');
+  const [soloClassId, setSoloClassId] = useState<string | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [annotationName, setAnnotationName] = useState<string>("");
   const [datasetName, setDatasetName] = useState<string>("");
@@ -3122,6 +3125,14 @@ const ImageAnnotation = () => {
       if (!annotation.visible) {
         return;
       }
+      // Solo: when a class is isolated, hide annotations from other classes
+      if (soloClassId) {
+        const soloClassName = classes.find(c => c.id === soloClassId)?.name;
+        if (soloClassName && annotation.label !== soloClassName) return;
+      }
+      // Per-class visibility: hide annotations whose class is toggled off
+      const annClass = classes.find(c => c.name === annotation.label);
+      if (annClass && annClass.visible === false) return;
 
       ctx.strokeStyle = annotation.color;
       ctx.fillStyle = annotation.color + '30'; // Semi-transparent fill
@@ -3241,7 +3252,7 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
-  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, samPoints, imageScale, imageOffset, displayImage, currentImage, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation, getAnnotReferenceDimensions, annotationId]);
+  }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, soloClassId, samPoints, imageScale, imageOffset, displayImage, currentImage, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation, getAnnotReferenceDimensions, annotationId]);
 
   // Redraw canvas when dependencies change
   useEffect(() => {
@@ -5596,11 +5607,37 @@ const ImageAnnotation = () => {
                   </Button>
                 </div>
               )}
+              {/* Class search — appears only when there are several classes to filter */}
+              {classes.length >= 6 && (
+                <div className="mb-2">
+                  <Input
+                    placeholder="Search classes…"
+                    value={classSearch}
+                    onChange={(e) => setClassSearch(e.target.value)}
+                    className="h-7 text-xs"
+                  />
+                </div>
+              )}
+              {soloClassId && (
+                <div className="mb-2 flex items-center justify-between rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs">
+                  <span>
+                    Showing only <strong>{classes.find(c => c.id === soloClassId)?.name}</strong>
+                  </span>
+                  <button
+                    onClick={() => setSoloClassId(null)}
+                    className="text-primary hover:underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
             </div>
 
             <ScrollArea className="flex-1 scrollbar-thin">
               <div className="p-4 space-y-2">
-                  {classes.map((classObj, idx) => (
+                  {classes
+                    .filter(c => !classSearch || c.name.toLowerCase().includes(classSearch.toLowerCase()))
+                    .map((classObj, idx) => (
                     <div
                       key={classObj.id}
                       className={`p-2 rounded border cursor-pointer transition-colors ${
@@ -5712,6 +5749,36 @@ const ImageAnnotation = () => {
 
                         {editingClassId !== classObj.id && (
                           <div className="flex items-center gap-1">
+                            {/* Visibility toggle */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 hover:bg-muted"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setClasses(prev => {
+                                  const updated = prev.map(c => c.id === classObj.id ? { ...c, visible: c.visible === false ? true : false } : c);
+                                  saveGlobalClasses(updated);
+                                  return updated;
+                                });
+                              }}
+                              title={classObj.visible === false ? 'Show class' : 'Hide class'}
+                            >
+                              {classObj.visible === false ? <EyeOff className="w-3 h-3 text-muted-foreground" /> : <Eye className="w-3 h-3 text-muted-foreground" />}
+                            </Button>
+                            {/* Solo */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 hover:bg-muted"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSoloClassId(prev => prev === classObj.id ? null : classObj.id);
+                              }}
+                              title={soloClassId === classObj.id ? 'Exit solo (show all)' : 'Solo: show only this class'}
+                            >
+                              <Crosshair className={`w-3 h-3 ${soloClassId === classObj.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"
