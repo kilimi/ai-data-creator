@@ -4849,6 +4849,17 @@ const ImageAnnotation = () => {
     return false;
   }, [id, annotationStorageCollId, currentImageName, annotations.length]);
 
+  const goToNextUnannotated = async () => {
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    for (let i = currentImageIndex + 1; i < imageList.length; i++) {
+      if (!isImageAnnotated(imageList[i])) {
+        await goToImage(i);
+        return;
+      }
+    }
+    toast({ title: 'No unannotated image found', description: 'All remaining images already have annotations.' });
+  };
+
   const goToImage = async (index: number) => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (index >= 0 && index < imageList.length) {
