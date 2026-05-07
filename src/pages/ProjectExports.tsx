@@ -9,7 +9,8 @@ import { getApiBaseUrl } from '@/config/api';
 import { ExportModelModal } from '@/components/ExportModelModal';
 import { ExportDetailsModal } from '@/components/ExportDetailsModal';
 import { TestInferenceModal } from '@/components/TestInferenceModal';
-import { AlertCircle, Download, Brain, Trash2, Pencil, Search, SlidersHorizontal, TestTube } from "lucide-react";
+import { ExportCard } from '@/components/ExportCard';
+import { AlertCircle, Download, Trash2, Search, SlidersHorizontal } from "lucide-react";
 import { Project } from '@/types';
 import {
   Select,
