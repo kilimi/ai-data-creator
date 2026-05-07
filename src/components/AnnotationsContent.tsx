@@ -4687,7 +4687,7 @@ export function AnnotationsContent({
                          )}
                        </div>
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                          <span>
+                           <span className="inline-flex items-center gap-2 flex-wrap">
                             <span title="Created">{new Date(file.date).toLocaleDateString()}</span>
                             <span aria-hidden>·</span>
                             <span className="inline-flex items-center gap-1" title="Total annotation instances in this file">
