@@ -109,6 +109,115 @@ const datasetCollections: Record<number, any[]> = {
   6: [buildCollection(6, 601, "RGB Images", 0, "satellite", 24, true)],
 };
 
+interface DemoAnnotationFile {
+  id: string;
+  name: string;
+  type: string;
+  image_count: number;
+  annotation_count: number;
+  classes: Array<{ id: number; name: string; count: number; color: string }>;
+  created_at: string;
+  tags: string[];
+}
+
+const palette = ["#4F46E5", "#10B981", "#F59E0B", "#EF4444", "#06B6D4", "#8B5CF6", "#EC4899"];
+
+function makeClasses(names: string[], baseCount: number): DemoAnnotationFile["classes"] {
+  return names.map((name, i) => ({
+    id: i + 1,
+    name,
+    count: Math.round(baseCount * (0.6 + ((i * 37) % 100) / 100)),
+    color: palette[i % palette.length],
+  }));
+}
+
+const datasetAnnotationFiles: Record<number, DemoAnnotationFile[]> = {
+  1: [
+    {
+      id: "af-1-detect",
+      name: "city_detections_v2.json",
+      type: "Segmentation (bbox)",
+      image_count: 12,
+      annotation_count: 184,
+      classes: makeClasses(["car", "person", "bicycle", "traffic_light"], 46),
+      created_at: now(),
+      tags: ["detection", "v2"],
+    },
+    {
+      id: "af-1-seg",
+      name: "city_instances.json",
+      type: "Segmentation (mask+bbox)",
+      image_count: 9,
+      annotation_count: 132,
+      classes: makeClasses(["car", "person", "road", "sidewalk", "building"], 28),
+      created_at: now(),
+      tags: ["instance-seg"],
+    },
+  ],
+  2: [
+    {
+      id: "af-2-pedestrian",
+      name: "pedestrian_bboxes.json",
+      type: "Segmentation (bbox)",
+      image_count: 18,
+      annotation_count: 211,
+      classes: makeClasses(["pedestrian", "child", "wheelchair"], 70),
+      created_at: now(),
+      tags: ["pedestrian"],
+    },
+  ],
+  3: [
+    {
+      id: "af-3-birds",
+      name: "birds_rgb_v1.json",
+      type: "Segmentation (mask+bbox)",
+      image_count: 20,
+      annotation_count: 96,
+      classes: makeClasses(["sparrow", "robin", "eagle", "owl"], 24),
+      created_at: now(),
+      tags: ["birds"],
+    },
+    {
+      id: "af-3-birds-ir",
+      name: "birds_ir_v1.json",
+      type: "Segmentation (bbox)",
+      image_count: 20,
+      annotation_count: 88,
+      classes: makeClasses(["bird"], 88),
+      created_at: now(),
+      tags: ["infrared"],
+    },
+  ],
+  4: [
+    {
+      id: "af-4-trap",
+      name: "camera_trap_classification.json",
+      type: "Classification",
+      image_count: 16,
+      annotation_count: 16,
+      classes: makeClasses(["deer", "fox", "boar", "empty"], 4),
+      created_at: now(),
+      tags: ["classification"],
+    },
+  ],
+  6: [
+    {
+      id: "af-6-landuse",
+      name: "landuse_segmentation.json",
+      type: "Segmentation (mask)",
+      image_count: 24,
+      annotation_count: 312,
+      classes: makeClasses(["forest", "urban", "water", "farmland", "barren"], 62),
+      created_at: now(),
+      tags: ["land-use"],
+    },
+  ],
+};
+
+function annotationFilesFor(datasetId: number): DemoAnnotationFile[] {
+  return datasetAnnotationFiles[datasetId] || [];
+}
+
 function imagesFor(datasetId: number) {
   const cols = datasetCollections[datasetId] || [];
   return cols.flatMap((c) => c.images);
@@ -116,10 +225,13 @@ function imagesFor(datasetId: number) {
 
 function datasetWithPreview(dataset: any) {
   const firstImage = imagesFor(dataset.id)[0];
+  const files = annotationFilesFor(dataset.id);
   return {
     ...dataset,
     thumbnailUrl: firstImage?.thumbnailUrl,
     logo_url: firstImage?.thumbnailUrl,
+    annotation_file_count: files.length,
+    annotation_count: files.reduce((s, f) => s + f.annotation_count, 0),
   };
 }
 
@@ -379,6 +491,79 @@ const routes: Route[] = [
     method: "GET",
     pattern: /^\/datasets\/(\d+)\/image-collections\/?($|\?)/,
     handler: (_u, _i, m) => datasetCollections[Number(m[1])] || [],
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/([^/]+)\/classes/,
+    handler: (_u, _i, m) => {
+      const file = annotationFilesFor(Number(m[1])).find((f) => f.id === m[2]);
+      const classes = (file?.classes || []).map((c) => ({
+        className: c.name,
+        count: c.count,
+        color: c.color,
+        opacity: 0.35,
+        categoryId: c.id,
+      }));
+      return {
+        success: true,
+        data: {
+          classes,
+          totalClasses: classes.length,
+          totalAnnotations: classes.reduce((s, c) => s + c.count, 0),
+        },
+      };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/([^/]+)\/data/,
+    handler: () => ({
+      success: true,
+      data: { annotations: [], pagination: { page: 1, limit: 0, total: 0, pages: 0 } },
+    }),
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/summary/,
+    handler: (_u, _i, m) => {
+      const files = annotationFilesFor(Number(m[1]));
+      return {
+        success: true,
+        data: {
+          dataset_id: Number(m[1]),
+          file_count: files.length,
+          total_annotations: files.reduce((s, f) => s + f.annotation_count, 0),
+          files: files.map((f) => ({
+            id: f.id,
+            name: f.name,
+            stored_count: f.annotation_count,
+            actual_count: f.annotation_count,
+            image_count: f.image_count,
+            processing_status: "completed",
+          })),
+        },
+      };
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/datasets\/(\d+)\/annotations\/?($|\?)/,
+    handler: (_u, _i, m) => ({
+      success: true,
+      data: annotationFilesFor(Number(m[1])).map((f) => ({
+        id: f.id,
+        name: f.name,
+        format: "COCO",
+        type: f.type,
+        image_count: f.image_count,
+        annotation_count: f.annotation_count,
+        category_count: f.classes.length,
+        processing_status: "completed",
+        created_at: f.created_at,
+        updated_at: f.created_at,
+        tags: f.tags,
+      })),
+    }),
   },
   {
     method: "GET",
