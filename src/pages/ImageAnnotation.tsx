@@ -268,6 +268,8 @@ const ImageAnnotation = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Help popover visibility for zoom/pan instructions
   const [showHelp, setShowHelp] = useState(false);
+  // Full keyboard cheatsheet overlay (triggered by '?')
+  const [showCheatsheet, setShowCheatsheet] = useState(false);
 
   // State
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
@@ -975,6 +977,22 @@ const ImageAnnotation = () => {
     };
     window.addEventListener('keydown', toggleHandler);
     return () => window.removeEventListener('keydown', toggleHandler);
+  }, []);
+
+  // Toggle keyboard cheatsheet with '?' (Shift+/) — ignored when typing in inputs
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault();
+        setShowCheatsheet(v => !v);
+      } else if (e.key === 'Escape') {
+        setShowCheatsheet(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   // Save global classes to localStorage
@@ -5095,6 +5113,62 @@ const ImageAnnotation = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
+      {/* Keyboard cheatsheet overlay (toggle with '?') */}
+      {showCheatsheet && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-background/70 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowCheatsheet(false)}
+        >
+          <div
+            className="relative w-[min(720px,92vw)] max-h-[85vh] overflow-auto rounded-xl border border-border bg-card shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Keyboard shortcuts</h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowCheatsheet(false)} aria-label="Close">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5 text-sm">
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Tools</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Select</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">V</kbd></li>
+                  <li className="flex justify-between"><span>Polygon</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">P</kbd></li>
+                  <li className="flex justify-between"><span>SAM (auto-segment)</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">A</kbd></li>
+                </ul>
+              </section>
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Drawing</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Close polygon</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Enter</kbd></li>
+                  <li className="flex justify-between"><span>Cancel current shape</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Esc</kbd></li>
+                  <li className="flex justify-between"><span>SAM positive point</span><span className="text-muted-foreground text-xs">Click</span></li>
+                  <li className="flex justify-between"><span>SAM negative point</span><span className="text-muted-foreground text-xs">Shift + Click</span></li>
+                </ul>
+              </section>
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Zoom & Pan</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Zoom</span><span className="text-muted-foreground text-xs">Ctrl/⌘ + Scroll</span></li>
+                  <li className="flex justify-between"><span>Pan</span><span className="text-muted-foreground text-xs">Space + drag · Middle click</span></li>
+                  <li className="flex justify-between"><span>Reset view</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">R</kbd></li>
+                </ul>
+              </section>
+              <section>
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground mb-2">General</h3>
+                <ul className="space-y-1.5">
+                  <li className="flex justify-between"><span>Save</span><span className="text-muted-foreground text-xs">Ctrl/⌘ + S</span></li>
+                  <li className="flex justify-between"><span>Toggle this panel</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">?</kbd></li>
+                  <li className="flex justify-between"><span>Close panel</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">Esc</kbd></li>
+                </ul>
+              </section>
+            </div>
+            <p className="mt-5 text-xs text-muted-foreground">Tip: shortcuts are disabled while typing in inputs.</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between p-4 bg-card border-b border-border">
         <div className="flex items-center gap-4">
@@ -5772,6 +5846,72 @@ const ImageAnnotation = () => {
               </div>
             );
             })()}
+
+            {/* Active-tool hint pill (top-center) — explains what the current tool does */}
+            {activeTool !== 'select' && currentImage && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none animate-fade-in">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/90 backdrop-blur-sm px-3 py-1 text-xs font-medium shadow-sm">
+                  {activeTool === 'polygon' && (
+                    <>
+                      <Hexagon className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>Polygon</strong> — click to add points · <kbd className="px-1 bg-muted rounded">Enter</kbd> close · <kbd className="px-1 bg-muted rounded">Esc</kbd> cancel</span>
+                    </>
+                  )}
+                  {activeTool === 'pencil' && (
+                    <>
+                      <Pencil className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>Pencil</strong> — drag to free-draw outline · release to close</span>
+                    </>
+                  )}
+                  {activeTool === 'auto-segment' && (
+                    <>
+                      <Crosshair className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>SAM</strong> — click positive point · <kbd className="px-1 bg-muted rounded">Shift</kbd>+click negative · <kbd className="px-1 bg-muted rounded">Enter</kbd> accept</span>
+                    </>
+                  )}
+                  {activeTool === 'rectangle' && (
+                    <>
+                      <Square className="h-3.5 w-3.5 text-primary" />
+                      <span><strong>Rectangle</strong> — drag to draw bounding box</span>
+                    </>
+                  )}
+                  {activeTool === 'circle' && (
+                    <>
+                      <span><strong>Circle</strong> — drag from center outward</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* On-canvas HUD chip (bottom-left) — zoom %, cursor px, current class */}
+            {currentImage && (
+              <div className="absolute bottom-3 left-3 z-20 pointer-events-none">
+                <div className="inline-flex items-center gap-3 rounded-md border border-border bg-card/85 backdrop-blur-sm px-2.5 py-1 text-[11px] font-mono shadow-sm">
+                  <span className="text-muted-foreground">
+                    <span className="text-foreground font-semibold">{Math.round(imageScale * 100)}%</span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    {cursorImagePosition
+                      ? <>x:<span className="text-foreground">{Math.round(cursorImagePosition.x)}</span> y:<span className="text-foreground">{Math.round(cursorImagePosition.y)}</span></>
+                      : <>x:— y:—</>}
+                  </span>
+                  {(() => {
+                    const cls = classes.find(c => c.id === selectedClass);
+                    if (!cls) return <span className="text-muted-foreground">no class</span>;
+                    return (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: cls.color }} />
+                        <span className="text-foreground">{cls.name}</span>
+                      </span>
+                    );
+                  })()}
+                  <span className="text-muted-foreground">
+                    <kbd className="px-1 bg-muted rounded text-[10px]">?</kbd> shortcuts
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* First-run onboarding overlay: shown over the canvas while no
                 classes have been defined. Walks the user through the
