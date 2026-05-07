@@ -9,6 +9,9 @@ import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
 import { AnnotationFileCard, AnnotationFileSkeleton } from "@/components/AnnotationFileCard";
+import { SplitAnnotationDialog } from "@/components/SplitAnnotationDialog";
+import { CompareAnnotationsDialog } from "@/components/CompareAnnotationsDialog";
+import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
@@ -248,6 +251,8 @@ export function AnnotationsContent({
   // Merge functionality state
   const [mergeMode, setMergeMode] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
+  const [splitDialog, setSplitDialog] = useState<{ open: boolean; fileId: string | null }>({ open: false, fileId: null });
+  const [compareDialog, setCompareDialog] = useState<{ open: boolean; aId: string | null; bId: string | null }>({ open: false, aId: null, bId: null });
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
   const [downloadImagesDialog, setDownloadImagesDialog] = useState<{ isOpen: boolean; annotationId: string; categories: Array<{ id: number; name: string }>; selectedCategory: string | null; selectedCollectionIds: string[] }>({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] });
@@ -953,6 +958,24 @@ export function AnnotationsContent({
         variant: "destructive",
       });
     }
+  };
+
+  // Build COCO from a sample subset, reusing toCOCOFormat with a temporary file shape.
+  const buildSubsetCOCO = (file: AnnotationFile, sampleSubset: AnnotationSample[], imageIdSubset?: Set<string>) => {
+    const filteredImageMapping: { [imageId: string]: string } = {};
+    Object.entries(file.imageMapping || {}).forEach(([imgId, name]) => {
+      if (!imageIdSubset || imageIdSubset.has(imgId)) filteredImageMapping[imgId] = name;
+    });
+    return toCOCOFormat({ ...file, samples: sampleSubset, imageMapping: filteredImageMapping });
+  };
+
+  // Upload a generated COCO file as a brand-new annotation file.
+  const uploadGeneratedFile = async (name: string, coco: any) => {
+    if (!api) throw new Error("API not available");
+    const blob = new Blob([JSON.stringify(coco)], { type: "application/json" });
+    const file = new File([blob], name, { type: "application/json" });
+    const res = await api.importAnnotations(id, file);
+    if (!res.success) throw new Error(res.error || "Import failed");
   };
 
   const handleOpenFiftyOne = async () => {
@@ -4732,6 +4755,32 @@ export function AnnotationsContent({
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
+                variant="outline"
+                onClick={() => {
+                  const id1 = Array.from(selectedForMerge)[0];
+                  setSplitDialog({ open: true, fileId: id1 });
+                }}
+                disabled={selectedForMerge.size !== 1}
+                title={selectedForMerge.size !== 1 ? "Select exactly 1 file to split" : "Split into subsets"}
+              >
+                <Split className="h-3.5 w-3.5 mr-1.5" />
+                Split
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const [a, b] = Array.from(selectedForMerge);
+                  setCompareDialog({ open: true, aId: a, bId: b });
+                }}
+                disabled={selectedForMerge.size !== 2}
+                title={selectedForMerge.size !== 2 ? "Select exactly 2 files to compare" : "Compare files"}
+              >
+                <GitCompare className="h-3.5 w-3.5 mr-1.5" />
+                Compare
+              </Button>
+              <Button
+                size="sm"
                 onClick={handleMergeAnnotations}
                 disabled={selectedForMerge.size < 2}
               >
@@ -4744,6 +4793,23 @@ export function AnnotationsContent({
             </div>
           </div>
         )}
+
+        {/* Split & Compare dialogs */}
+        <SplitAnnotationDialog
+          open={splitDialog.open}
+          onOpenChange={(o) => setSplitDialog({ open: o, fileId: o ? splitDialog.fileId : null })}
+          file={splitDialog.fileId ? annotationFiles.find(f => f.id === splitDialog.fileId) || null : null}
+          buildCOCO={buildSubsetCOCO}
+          uploadFile={uploadGeneratedFile}
+          onDone={() => { setSelectedForMerge(new Set()); setMergeMode(false); loadAnnotationFilesFromBackend(); }}
+        />
+        <CompareAnnotationsDialog
+          open={compareDialog.open}
+          onOpenChange={(o) => setCompareDialog({ open: o, aId: o ? compareDialog.aId : null, bId: o ? compareDialog.bId : null })}
+          fileA={compareDialog.aId ? annotationFiles.find(f => f.id === compareDialog.aId) || null : null}
+          fileB={compareDialog.bId ? annotationFiles.find(f => f.id === compareDialog.bId) || null : null}
+        />
+
 
         {/* Download Images Dialog */}
         <Dialog open={downloadImagesDialog.isOpen} onOpenChange={(open) => !open && setDownloadImagesDialog({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] })}>
