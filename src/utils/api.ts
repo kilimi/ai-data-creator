@@ -420,7 +420,7 @@ export class ApiClient {
       return primary;
     }
 
-    const existing = await this.getDataset(datasetId);
+    const existing = await this.getDataset(String(datasetId));
     if (!existing.success || !existing.data) return primary;
 
     const formData = new FormData();

@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown, LayoutGrid } from "lucide-react";
+import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown, LayoutGrid, Files, Layers, Hash, Grid3x3 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { HelpHint } from "@/components/ui/help-hint";
+import { CoverageMatrix } from "@/components/CoverageMatrix";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
@@ -228,6 +231,7 @@ export function AnnotationsContent({
   
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
+  const [showCoverage, setShowCoverage] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showAnnotationChoiceModal, setShowAnnotationChoiceModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -4319,9 +4323,81 @@ export function AnnotationsContent({
   
   return (
     <div className={`h-full flex flex-col min-h-0 ${className}`}>
-      <div className="flex-shrink-0 flex justify-between items-center mb-4">
-        <div>
-          <h2 className="text-2xl font-bold">Annotations</h2>
+      <div className="flex-shrink-0 flex justify-between items-start mb-4 gap-4">
+        <div className="space-y-2 min-w-0">
+          <div className="flex items-center gap-2">
+            <Files className="h-5 w-5 text-primary" />
+            <h2 className="text-2xl font-bold">Annotation Files</h2>
+            <HelpHint ariaLabel="What are annotation files?" popover>
+              <div className="space-y-2 text-sm">
+                <p className="font-semibold text-foreground">Annotation Files</p>
+                <p>
+                  A dataset can hold many annotation files — different formats
+                  (COCO, YOLO, masks…) and different label sets. Counts below
+                  show <strong>files</strong>, total <strong>instances</strong>{" "}
+                  and unique <strong>classes</strong>.
+                </p>
+                <Link
+                  to="/help/annotation-files"
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                >
+                  Read the full guide →
+                </Link>
+              </div>
+            </HelpHint>
+          </div>
+          {annotationFiles.length > 0 && (() => {
+            const totalInstances = annotationFiles.reduce(
+              (s, f) => s + (f.totalSampleCount || (f.samples?.length ?? 0)),
+              0
+            );
+            const classSet = new Set<string>();
+            annotationFiles.forEach((f) => {
+              (f.classStats || []).forEach((c) => classSet.add(c.className));
+              (f.samples || []).forEach((s) => classSet.add(s.className));
+            });
+            const formats = Array.from(
+              new Set(annotationFiles.map((f) => (f.format || "").toUpperCase()).filter(Boolean))
+            );
+            return (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <Files className="h-3.5 w-3.5" />
+                  <strong className="text-foreground tabular-nums">{annotationFiles.length}</strong>{" "}
+                  file{annotationFiles.length === 1 ? "" : "s"}
+                </span>
+                <span aria-hidden>·</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Hash className="h-3.5 w-3.5" />
+                  <strong className="text-foreground tabular-nums">{totalInstances.toLocaleString()}</strong>{" "}
+                  instance{totalInstances === 1 ? "" : "s"}
+                </span>
+                <span aria-hidden>·</span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Tag className="h-3.5 w-3.5" />
+                  <strong className="text-foreground tabular-nums">{classSet.size}</strong>{" "}
+                  class{classSet.size === 1 ? "" : "es"}
+                </span>
+                {formats.length > 0 && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span className="inline-flex items-center gap-1">
+                      {formats.slice(0, 4).map((f) => (
+                        <Badge key={f} variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                          {f}
+                        </Badge>
+                      ))}
+                      {formats.length > 1 && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-primary/15 text-primary border-primary/30">
+                          Multi-format
+                        </Badge>
+                      )}
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div className="flex gap-2">
           <Button 
@@ -4387,10 +4463,31 @@ export function AnnotationsContent({
             <LayoutGrid className="w-4 h-4 mr-2" />
             FiftyOne
           </Button>
+          {annotationFiles.length > 0 && (
+            <Button
+              variant={showCoverage ? "default" : "outline"}
+              onClick={() => setShowCoverage((v) => !v)}
+              title="Show coverage of annotation files across image collections"
+            >
+              <Grid3x3 className="w-4 h-4 mr-2" />
+              Coverage
+            </Button>
+          )}
         </div>      </div>
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
+        {/* Coverage matrix */}
+        {showCoverage && annotationFiles.length > 0 && (
+          <div className="mb-4">
+            <CoverageMatrix
+              annotationFiles={annotationFiles}
+              imageCollections={imageCollections}
+              images={images}
+            />
+          </div>
+        )}
+
         {/* Search and filter controls */}
         <div className="mb-4">
           <AnnotationFilters
@@ -4590,8 +4687,20 @@ export function AnnotationsContent({
                          )}
                        </div>
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
-                          <span>
-                            {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.totalSampleCount || 0} annotations • {file.format}
+                           <span className="inline-flex items-center gap-2 flex-wrap">
+                            <span title="Created">{new Date(file.date).toLocaleDateString()}</span>
+                            <span aria-hidden>·</span>
+                            <span className="inline-flex items-center gap-1" title="Total annotation instances in this file">
+                              <Hash className="h-3 w-3" />
+                              <span className="tabular-nums">{(file.totalSampleCount || 0).toLocaleString()}</span> instances
+                            </span>
+                            <span aria-hidden>·</span>
+                            <span className="inline-flex items-center gap-1" title="Unique classes in this file">
+                              <Tag className="h-3 w-3" />
+                              <span className="tabular-nums">{file.classCount}</span> classes
+                            </span>
+                            <span aria-hidden>·</span>
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 uppercase">{file.format}</Badge>
                           </span>
                           <Badge 
                             variant="secondary" 
@@ -5083,15 +5192,27 @@ export function AnnotationsContent({
           </DialogContent>
         </Dialog>
         
-        {annotationFiles.length === 0 && (
-          <div className="flex flex-col items-center justify-center text-center p-8">
+        {annotationFiles.length === 0 && !isLoading && (
+          <div className="flex flex-col items-center justify-center text-center p-8 border border-dashed border-border rounded-lg bg-muted/20">
             <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
-              <Tag className="h-6 w-6 text-primary" />
+              <Files className="h-6 w-6 text-primary" />
             </div>
-            <h3 className="text-lg font-medium mb-2">No annotation files</h3>
-            <p className="text-sm text-muted-foreground max-w-xs">
-              Import annotation files to view and configure class statistics
+            <h3 className="text-lg font-medium mb-1">No annotation files yet</h3>
+            <p className="text-sm text-muted-foreground max-w-sm mb-4">
+              Datasets have a 1:N relationship with annotation files — upload an
+              existing file (COCO, YOLO, masks…) or start a new annotation
+              session.
             </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleImportClick}>
+                <Upload className="w-4 h-4 mr-2" />
+                Import Annotations
+              </Button>
+              <Button size="sm" onClick={() => setShowAnnotationChoiceModal(true)}>
+                <Brush className="w-4 h-4 mr-2" />
+                Annotate
+              </Button>
+            </div>
           </div>
         )}
         {annotationFiles.length > 0 && filteredAnnotationFiles.length === 0 && (
