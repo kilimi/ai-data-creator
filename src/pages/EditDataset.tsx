@@ -82,13 +82,9 @@ interface AnnotationFile {
     bbox?: [number, number, number, number];
     imageId?: string;
   }>;
-  matchedImageCount: number;
   tags: string[];
   annotation_count: number;
   processing_status?: string;
-  totalReferencedImages?: number;
-  presentCount?: number;
-  missingCount?: number;
 }
 
 interface EditDatasetProps {
@@ -169,11 +165,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const [showAnnotationsDialog, setShowAnnotationsDialog] = useState(false);
   const [annotationsToShow, setAnnotationsToShow] = useState<AnnotationSample[]>([]);
   const [annotationFileNameToShow, setAnnotationFileNameToShow] = useState("");
-  const [coverageData, setCoverageData] = useState<{
-    present: Array<{ image_id: number; file_name: string }>;
-    missing: Array<{ coco_image_id: number; file_name: string }>;
-  } | null>(null);
-  const [showCoverageDialog, setShowCoverageDialog] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showImageUploadDialog, setShowImageUploadDialog] = useState(false);
   const [showChunkedUploadDialog, setShowChunkedUploadDialog] = useState(false);
@@ -189,23 +180,8 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
 
   const normalizeAnnotationId = (value: unknown) => String(value ?? "");
 
-  const transformAnnotationFiles = (
-    apiAnnotations: any[],
-    coverageByFileId: Record<string, { total: number; present: number; missing: number }>
-  ): AnnotationFile[] =>
+  const transformAnnotationFiles = (apiAnnotations: any[]): AnnotationFile[] =>
     apiAnnotations.map((apiAnnotation: any) => {
-      const key = normalizeAnnotationId(apiAnnotation.id);
-      const coverageFromList = apiAnnotation.image_coverage;
-      const coverage =
-        coverageByFileId[key] ??
-        (coverageFromList
-          ? {
-              total: Number(coverageFromList.total_referenced ?? 0),
-              present: Number(coverageFromList.present ?? 0),
-              missing: Number(coverageFromList.missing ?? 0),
-            }
-          : undefined);
-
       return {
         id: apiAnnotation.id,
         fileName: apiAnnotation.name || apiAnnotation.fileName,
@@ -214,35 +190,11 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         type: apiAnnotation.type,
         classStats: [],
         samples: [],
-        matchedImageCount: coverage?.present ?? 0,
         tags: apiAnnotation.tags || [],
         annotation_count: apiAnnotation.annotation_count || 0,
         processing_status: apiAnnotation.processing_status,
-        totalReferencedImages: coverage?.total,
-        presentCount: coverage?.present,
-        missingCount: coverage?.missing,
       };
     });
-
-  const fetchCoverageByFileId = async (): Promise<Record<string, { total: number; present: number; missing: number }>> => {
-    if (!api || !id) return {};
-    try {
-      const coverageRes = await api.getDatasetAnnotationsCoverage(id);
-      if (!coverageRes?.success || !Array.isArray(coverageRes.data)) return {};
-      const map: Record<string, { total: number; present: number; missing: number }> = {};
-      coverageRes.data.forEach((c: any) => {
-        map[normalizeAnnotationId(c.annotation_file_id)] = {
-          total: Number(c.total_referenced_images ?? 0),
-          present: Number(c.present_count ?? 0),
-          missing: Number(c.missing_count ?? 0),
-        };
-      });
-      return map;
-    } catch (error) {
-      console.warn("Failed to load coverage data:", error);
-      return {};
-    }
-  };
 
   // Polling function to check for processing completion
   const pollForProcessingCompletion = async (annotationIds: Array<number | string>) => {
@@ -267,8 +219,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         
         const annotationsRes = await api.getAnnotations(id);
         if (annotationsRes?.success && annotationsRes.data) {
-          const coverageByFileId = await fetchCoverageByFileId();
-          const currentAnnotations = transformAnnotationFiles(annotationsRes.data, coverageByFileId);
+          const currentAnnotations = transformAnnotationFiles(annotationsRes.data);
           const targetIds = new Set(annotationIds.map(normalizeAnnotationId));
           
           // Check if the target annotations are still processing
@@ -353,8 +304,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
             console.log('🔍 First item keys:', annotationsRes.data[0] ? Object.keys(annotationsRes.data[0]) : 'No items');
             
             // Transform API response to match our AnnotationFile type
-            const coverageByFileId = await fetchCoverageByFileId();
-            const annotationsWithCoverage = transformAnnotationFiles(annotationsRes.data, coverageByFileId).map((transformed, index) => {
+            const annotationsWithCoverage = transformAnnotationFiles(annotationsRes.data).map((transformed, index) => {
               const apiAnnotation = annotationsRes.data[index];
               console.log(`🔍 Processing annotation ${index}:`, apiAnnotation);
               console.log(`🔍 annotation_count field:`, apiAnnotation.annotation_count);
@@ -568,8 +518,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         if (refreshedAnnotationsRes?.success && refreshedAnnotationsRes.data) {
           console.log('Refreshed annotations API response:', refreshedAnnotationsRes.data);
           // Transform API response to match our AnnotationFile type
-          const coverageByFileId = await fetchCoverageByFileId();
-          const refreshedAnnotations = transformAnnotationFiles(refreshedAnnotationsRes.data, coverageByFileId);
+          const refreshedAnnotations = transformAnnotationFiles(refreshedAnnotationsRes.data);
           setAnnotations(refreshedAnnotations);
           
           // Check if any annotations are still processing
@@ -764,37 +713,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         variant: "destructive",
         title: "Rename failed",
         description: error instanceof Error ? error.message : "There was an error renaming the annotation file.",
-      });
-    }
-  };
-
-  const handleShowCoverage = async (annotation: AnnotationFile) => {
-    if (!id) return;
-    
-    try {
-      if (api) {
-        const coverageRes = await api.getAnnotationFileCoverage(id, String(annotation.id));
-        if (coverageRes?.success && coverageRes.data) {
-          setCoverageData({
-            present: coverageRes.data.present,
-            missing: coverageRes.data.missing
-          });
-          setAnnotationFileNameToShow(annotation.fileName);
-          setShowCoverageDialog(true);
-        } else {
-          toast({
-            variant: "destructive",
-            title: "Failed to load coverage",
-            description: "Could not retrieve coverage information for this annotation file.",
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Error loading coverage:', error);
-      toast({
-        variant: "destructive",
-        title: "Coverage error",
-        description: "An error occurred while loading coverage data.",
       });
     }
   };
@@ -1376,7 +1294,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                             <TableHead className="text-gray-300">Classes</TableHead>
                             <TableHead className="text-gray-300">Annotations</TableHead>
                             <TableHead className="text-gray-300">Images</TableHead>
-                            <TableHead className="text-gray-300">Coverage</TableHead>
                             <TableHead className="w-[130px] text-gray-300">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -1456,49 +1373,10 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                 )}
                               </TableCell>
                               <TableCell className="text-gray-300">
-                                {annotation.matchedImageCount ? (
-                                  <Badge className="bg-blue-600/50">
-                                    {annotation.matchedImageCount} matches
-                                  </Badge>
-                                ) : "0 matches"}
-                              </TableCell>
-                              <TableCell className="text-gray-300">
-                                {annotation.totalReferencedImages !== undefined ? (
-                                  <button
-                                    className="text-xs hover:bg-gray-700 px-2 py-1 rounded transition-colors cursor-pointer"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleShowCoverage(annotation);
-                                    }}
-                                    title="Click to see image details"
-                                  >
-                                    <span className="text-green-400">{annotation.presentCount || 0}</span>
-                                    <span className="text-gray-500">/</span>
-                                    <span className="text-gray-300">{annotation.totalReferencedImages}</span>
-                                    {(annotation.missingCount || 0) > 0 && (
-                                      <span className="text-red-400"> ({annotation.missingCount} missing)</span>
-                                    )}
-                                  </button>
-                                ) : (
-                                  <span className="text-gray-500 text-xs">No data</span>
-                                )}
+                                {annotation.annotation_count > 0 ? "Used by annotations" : "—"}
                               </TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-1">
-                                  <Button 
-                                    variant="outline" 
-                                    size="icon" 
-                                    className={`h-8 w-8 border-gray-700 ${
-                                      annotation.matchedImageCount ? "bg-blue-900/50 hover:bg-blue-800/70" : "bg-gray-800 hover:bg-gray-700"
-                                    }`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleShowCoverage(annotation);
-                                    }}
-                                    title="Show image coverage"
-                                  >
-                                    <Tag className={`h-4 w-4 ${annotation.matchedImageCount ? "text-blue-300" : "text-gray-400"}`} />
-                                  </Button>
                                   {(() => {
                                     const annotationType = detectAnnotationType(annotation);
                                     console.log(`Annotation ${annotation.fileName} type:`, annotationType);
@@ -1740,15 +1618,9 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
               <Button
                 variant="outline"
                 className="border-gray-700 bg-gray-800 hover:bg-gray-700 text-white"
-                onClick={() => {
-                  if (selectedAnnotation) {
-                    handleShowCoverage(selectedAnnotation);
-                    setSelectedAnnotation(null);
-                  }
-                }}
+                onClick={() => setSelectedAnnotation(null)}
               >
-                <Tag className="mr-2 h-4 w-4" />
-                Show Coverage
+                Close
               </Button>
             </div>
             <Button
@@ -1845,58 +1717,6 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
           setShowAnnotationsDialog(false);
         }}
       />
-
-      <Dialog open={showCoverageDialog} onOpenChange={setShowCoverageDialog}>
-        <DialogContent className="bg-gray-900 text-white border-gray-700 max-w-lg max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle>Images for {annotationFileNameToShow}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 overflow-y-auto">
-            {coverageData && (
-              <>
-                {coverageData.present.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold text-green-400 mb-2">
-                      Present Images ({coverageData.present.length})
-                    </h3>
-                    <div className="space-y-1 max-h-40 overflow-y-auto">
-                      {coverageData.present.map((img, index) => (
-                        <div key={index} className="text-sm text-gray-300 pl-2">
-                          {img.file_name}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {coverageData.missing.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold text-red-400 mb-2">
-                      Missing Images ({coverageData.missing.length})
-                    </h3>
-                    <div className="space-y-1 max-h-40 overflow-y-auto">
-                      {coverageData.missing.map((img, index) => (
-                        <div key={index} className="text-sm text-gray-300 pl-2">
-                          {img.file_name || `COCO ID: ${img.coco_image_id}`}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setShowCoverageDialog(false)}
-              className="bg-gray-800 hover:bg-gray-700"
-            >
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent className="bg-gray-900 text-white border-gray-700">

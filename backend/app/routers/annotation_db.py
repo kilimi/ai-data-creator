@@ -1279,9 +1279,10 @@ def process_coco_annotation_file_task(
             task.progress = 20
             db.commit()
         
-        # Clear existing annotations and classes for this file
+        # Clear existing annotations/classes/image mapping for this file
         db.query(Annotation).filter(Annotation.annotation_file_id == file_id).delete()
         db.query(AnnotationClass).filter(AnnotationClass.annotation_file_id == file_id).delete()
+        db.query(AnnotationFileImage).filter(AnnotationFileImage.annotation_file_id == file_id).delete()
         
         # Reset sequence to prevent ID conflicts (important for merged files)
         try:
@@ -1297,60 +1298,42 @@ def process_coco_annotation_file_task(
             task.progress = 30
             db.commit()
         
-        # Create image name to ID mapping. Scope to the dataset's default
-        # collection so we don't attach annotations to depth/other derived
-        # collections that share filenames with the source images. Matches the
-        # resolver used elsewhere (see resolve_dataset_image_by_filename).
-        image_mapping = {}
-        default_collection = (
-            db.query(ImageCollection)
-            .filter(
-                ImageCollection.dataset_id == annotation_file.dataset_id,
-                ImageCollection.is_default.is_(True),
-            )
-            .order_by(ImageCollection.id.asc())
-            .first()
+        # Coverage + matching must consider all dataset images (any collection),
+        # then resolve by robust filename candidates.
+        dataset_images = (
+            db.query(Image)
+            .filter(Image.dataset_id == annotation_file.dataset_id)
+            .order_by(Image.id.asc())
+            .all()
         )
-        base_img_query = db.query(Image).filter(Image.dataset_id == annotation_file.dataset_id)
-        if default_collection is not None:
-            dataset_images = base_img_query.filter(
-                Image.collection_id == default_collection.id
-            ).order_by(Image.id.asc()).all()
-        else:
-            dataset_images = base_img_query.order_by(Image.id.asc()).all()
-        for img in dataset_images:
-            if not img.file_name:
-                continue
-            image_mapping.setdefault(img.file_name, img.id)
-            base_name = img.file_name.rsplit('.', 1)[0] if '.' in img.file_name else img.file_name
-            image_mapping.setdefault(base_name, img.id)
+        image_exact, image_ci = _build_image_lookup_indexes(dataset_images)
         
         # Process COCO images and create mapping
         coco_image_mapping = {}
         if 'images' in coco_data:
             for coco_img in coco_data['images']:
                 coco_image_id = coco_img['id']
-                file_name = coco_img['file_name']
-                
-                # Find matching dataset image
-                dataset_image_id = None
-                
-                # Try exact filename match first
-                if file_name in image_mapping:
-                    dataset_image_id = image_mapping[file_name]
-                else:
-                    # Try without extension
-                    base_name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
-                    if base_name in image_mapping:
-                        dataset_image_id = image_mapping[base_name]
-                    else:
-                        # Try partial matches
-                        for img_name, img_id in image_mapping.items():
-                            img_base = img_name.rsplit('.', 1)[0] if '.' in img_name else img_name
-                            if img_base == base_name or img_name == file_name:
-                                dataset_image_id = img_id
-                                break
-                
+                file_name = coco_img.get('file_name') or coco_img.get('name') or ''
+                dataset_image_id = _resolve_image_id_for_coco_filename(
+                    image_exact, image_ci, file_name
+                )
+
+                # Persist per-file image mapping for coverage queries regardless
+                # of whether a dataset image match was found.
+                try:
+                    db.add(
+                        AnnotationFileImage(
+                            annotation_file_id=file_id,
+                            coco_image_id=coco_image_id,
+                            file_name=file_name,
+                            dataset_image_id=dataset_image_id,
+                            width=coco_img.get('width', None),
+                            height=coco_img.get('height', None),
+                        )
+                    )
+                except Exception as e:
+                    print(f"ERROR: Failed to create AnnotationFileImage for {file_name}: {e}")
+
                 if dataset_image_id:
                     coco_image_mapping[coco_image_id] = {
                         'dataset_image_id': dataset_image_id,

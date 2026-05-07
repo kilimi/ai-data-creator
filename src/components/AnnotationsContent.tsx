@@ -2606,136 +2606,50 @@ export function AnnotationsContent({
 
   const handleImportClick = () => {
     setShowUploadDialog(true);
-  };  // Get present and missing image file names for an annotation file
+  };
+
+  // Checks whether annotation images can be resolved to current dataset images.
   const getImageFileLists = (file: AnnotationFile) => {
     if (!file.imageMapping && (!file.samples || file.samples.length === 0)) {
-      // No mapping and no samples - nothing to check
       return { presentFiles: [], missingFiles: [] };
     }
-    
+
     let allImageIds: string[] = [];
     let imageMapping: { [imageId: string]: string } = {};
-    
+
     if (file.imageMapping) {
-      // Use existing imageMapping if available
       allImageIds = Object.keys(file.imageMapping);
       imageMapping = file.imageMapping;
     } else if (file.samples && file.samples.length > 0) {
-      // Fallback: extract unique image IDs from samples
       allImageIds = Array.from(new Set(file.samples.map(sample => sample.imageId)));
-      // Create a basic mapping using image IDs as filenames (best guess)
       allImageIds.forEach(imageId => {
-        imageMapping[imageId] = imageId; // Will be compared directly with image IDs
+        imageMapping[imageId] = imageId;
       });
     }
-    
-    // Create a set of uploaded image info for quick lookup (both ID and fileName)
+
     const uploadedImageIds = new Set(imagesMemo.map(img => img.id));
     const uploadedImageNames = new Set(imagesMemo.map(img => img.fileName));
-    
     const presentFiles: string[] = [];
     const missingFiles: string[] = [];
-    
+
     allImageIds.forEach(imageId => {
       const fileName = imageMapping[imageId];
-      
       if (fileName) {
-        // Check if this image file exists in the current dataset
-        // Try both by fileName (for COCO files) and by imageId (for database images)
-        if (uploadedImageNames.has(fileName) || uploadedImageIds.has(fileName) || uploadedImageIds.has(imageId)) {
+        if (
+          uploadedImageNames.has(fileName) ||
+          uploadedImageIds.has(fileName) ||
+          uploadedImageIds.has(imageId)
+        ) {
           presentFiles.push(fileName);
         } else {
           missingFiles.push(fileName);
         }
       } else {
-        // Fallback for images without mapping
-        const fallbackName = `image_${imageId}.jpg`;
-        missingFiles.push(fallbackName);
+        missingFiles.push(`image_${imageId}.jpg`);
       }
     });
-    
+
     return { presentFiles, missingFiles };
-  };
-
-  const handleShowPresentImages = async (file: AnnotationFile) => {
-    // Redirect to breakdown view which will show all options
-    await handleShowImageBreakdown(file);
-  };
-
-  const handleShowImageBreakdown = async (file: AnnotationFile) => {
-    if (!api) {
-      setImageStatusDialog({
-        isOpen: true,
-        type: 'breakdown',
-        files: ['Backend connection required to calculate image coverage.'],
-        annotationFileName: file.name
-      });
-      return;
-    }
-
-    // Show loading dialog immediately
-    setImageStatusDialog({
-      isOpen: true,
-      type: 'breakdown',
-      files: [],
-      annotationFileName: file.name,
-      isLoading: true
-    });
-
-    try {
-      console.log(`Loading coverage data for ${file.name}...`);
-      
-      // Use the new coverage API instead of parsing COCO content
-      const coverageResponse = await api.getAnnotationFileCoverage(id, file.id);
-      
-      if (!coverageResponse || !coverageResponse.success || !coverageResponse.data) {
-        throw new Error('Failed to fetch coverage data');
-      }
-
-      const coverage = coverageResponse.data;
-      const presentImages = coverage.present.map(img => img.file_name);
-      const missingImages = coverage.missing.map(img => img.file_name || `COCO ID: ${img.coco_image_id}`);
-      
-      console.log(`Coverage: ${coverage.present_count} present, ${coverage.missing_count} missing`);
-      
-      // Show breakdown dialog with buttons for each category
-      const breakdownMessage = [
-        `📊 Image Coverage for "${file.name}":`,
-        ``,
-        `📁 Total Images Referenced: ${coverage.total_referenced_images}`,
-        `✅ Present in Dataset: ${coverage.present_count}`,
-        `❌ Missing from Dataset: ${coverage.missing_count}`,
-        ``,
-        `Click "Present Images" or "Missing Images" below to see the file lists.`
-      ];
-      
-      setImageStatusDialog({
-        isOpen: true,
-        type: 'breakdown',
-        files: breakdownMessage,
-        annotationFileName: file.name,
-        presentCount: coverage.present_count,
-        missingCount: coverage.missing_count,
-        presentFiles: presentImages,
-        missingFiles: missingImages,
-        isLoading: false
-      });
-      
-    } catch (error) {
-      console.error('Failed to calculate image coverage:', error);
-      setImageStatusDialog({
-        isOpen: true,
-        type: 'breakdown',
-        files: [`Failed to calculate image coverage: ${error instanceof Error ? error.message : 'Unknown error'}`],
-        annotationFileName: file.name,
-        isLoading: false
-      });
-    }
-  };
-
-  const handleShowMissingImages = async (file: AnnotationFile) => {
-    // Redirect to breakdown view which will show all options
-    await handleShowImageBreakdown(file);
   };
 
   // Keep activeTasksRef in sync so the polling interval never has a stale closure
@@ -3480,36 +3394,8 @@ export function AnnotationsContent({
             console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
           }
 
-          // Load coverage data for the file
-          let coverageData = {
-            totalReferencedImages: undefined as number | undefined,
-            presentCount: undefined as number | undefined,
-            missingCount: undefined as number | undefined
-          };
-          
-          // Use coverage data directly from backend response if available
-          if (fileSummary.image_coverage) {
-            coverageData = {
-              totalReferencedImages: fileSummary.image_coverage.total_referenced,
-              presentCount: fileSummary.image_coverage.present,
-              missingCount: fileSummary.image_coverage.missing
-            };
-          } else {
-            // Fallback to separate API call for older backends
-            try {
-              const coverageResponse = await api.getAnnotationFileCoverage(id, fileSummary.id);
-              if (coverageResponse && coverageResponse.success && coverageResponse.data) {
-                const coverage = coverageResponse.data;
-                coverageData = {
-                  totalReferencedImages: coverage.total_referenced_images,
-                  presentCount: coverage.present_count,
-                  missingCount: coverage.missing_count
-                };
-              }
-            } catch (error) {
-              console.warn(`Failed to load coverage for ${fileSummary.name}:`, error);
-            }
-          }
+          // Image coverage is intentionally removed from this view due to
+          // ambiguous semantics across multiple collections.
           
           // First, generate unique colors for all classes
           const uniqueClassColors = classStats.reduce((acc, stat) => {
@@ -3545,10 +3431,9 @@ export function AnnotationsContent({
             // Mark as lazy-loaded so we know content isn't loaded yet
             isContentLoaded: false,
             processing_status: fileSummary.processing_status,
-            // Add coverage properties
-            totalReferencedImages: coverageData.totalReferencedImages,
-            presentCount: coverageData.presentCount,
-            missingCount: coverageData.missingCount
+            totalReferencedImages: undefined,
+            presentCount: undefined,
+            missingCount: undefined
           };
           
           return annotationFile;
@@ -4838,48 +4723,9 @@ export function AnnotationsContent({
                           </div>
                         )}
                      </div>
-                    <div className="flex items-center gap-4">                      {/* Images count with coverage */}
+                    <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2 text-sm">
-                        {(() => {
-                          // If we have coverage data, show compact format
-                          if (file.totalReferencedImages !== undefined) {
-                            const presentCount = file.presentCount || 0;
-                            const totalCount = file.totalReferencedImages;
-                            const missingCount = file.missingCount || 0;
-                            
-                            return (
-                              <button
-                                className="hover:bg-accent px-2 py-1 rounded transition-colors cursor-pointer text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleShowImageBreakdown(file);
-                                }}
-                                title="Click to see image details"
-                              >
-                                <span className="text-green-600 dark:text-green-400">{presentCount}</span>
-                                <span className="text-muted-foreground">/</span>
-                                <span className="text-destructive">{missingCount}</span>
-                                <span className="text-muted-foreground ml-1">({totalCount} total)</span>
-                              </button>
-                            );
-                          } else {
-                            // Just show total image count for loading state
-                            const totalCount = file.imageCount || 0;
-                            
-                            return (
-                              <button
-                                className="hover:underline cursor-pointer text-primary hover:text-primary/80"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleShowImageBreakdown(file);
-                                }}
-                                title={`Click to see image coverage for ${totalCount} total images`}
-                              >
-                                {totalCount} images
-                              </button>
-                            );
-                          }
-                        })()}
+                        <span className="text-muted-foreground">{file.imageCount || 0} images</span>
                       </div>
                       {/* Visibility toggles */}
                       <div className="flex gap-1">
