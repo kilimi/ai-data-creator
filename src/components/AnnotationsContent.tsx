@@ -4688,7 +4688,19 @@ export function AnnotationsContent({
                        </div>
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
                           <span>
-                            {new Date(file.date).toLocaleDateString()} • {file.classCount} classes • {file.totalSampleCount || 0} annotations • {file.format}
+                            <span title="Created">{new Date(file.date).toLocaleDateString()}</span>
+                            <span aria-hidden>·</span>
+                            <span className="inline-flex items-center gap-1" title="Total annotation instances in this file">
+                              <Hash className="h-3 w-3" />
+                              <span className="tabular-nums">{(file.totalSampleCount || 0).toLocaleString()}</span> instances
+                            </span>
+                            <span aria-hidden>·</span>
+                            <span className="inline-flex items-center gap-1" title="Unique classes in this file">
+                              <Tag className="h-3 w-3" />
+                              <span className="tabular-nums">{file.classCount}</span> classes
+                            </span>
+                            <span aria-hidden>·</span>
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 uppercase">{file.format}</Badge>
                           </span>
                           <Badge 
                             variant="secondary" 
