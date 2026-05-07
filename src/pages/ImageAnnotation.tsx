@@ -5749,6 +5749,36 @@ const ImageAnnotation = () => {
 
                         {editingClassId !== classObj.id && (
                           <div className="flex items-center gap-1">
+                            {/* Visibility toggle */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 hover:bg-muted"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setClasses(prev => {
+                                  const updated = prev.map(c => c.id === classObj.id ? { ...c, visible: c.visible === false ? true : false } : c);
+                                  saveGlobalClasses(updated);
+                                  return updated;
+                                });
+                              }}
+                              title={classObj.visible === false ? 'Show class' : 'Hide class'}
+                            >
+                              {classObj.visible === false ? <EyeOff className="w-3 h-3 text-muted-foreground" /> : <Eye className="w-3 h-3 text-muted-foreground" />}
+                            </Button>
+                            {/* Solo */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 hover:bg-muted"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSoloClassId(prev => prev === classObj.id ? null : classObj.id);
+                              }}
+                              title={soloClassId === classObj.id ? 'Exit solo (show all)' : 'Solo: show only this class'}
+                            >
+                              <Crosshair className={`w-3 h-3 ${soloClassId === classObj.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"
