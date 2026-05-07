@@ -5635,7 +5635,9 @@ const ImageAnnotation = () => {
 
             <ScrollArea className="flex-1 scrollbar-thin">
               <div className="p-4 space-y-2">
-                  {classes.map((classObj, idx) => (
+                  {classes
+                    .filter(c => !classSearch || c.name.toLowerCase().includes(classSearch.toLowerCase()))
+                    .map((classObj, idx) => (
                     <div
                       key={classObj.id}
                       className={`p-2 rounded border cursor-pointer transition-colors ${
