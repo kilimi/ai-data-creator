@@ -145,35 +145,6 @@ export function DatasetHeader({
             </DropdownMenu>
           )}
 
-          {!isLoading &&
-            useTabbedImages &&
-            imageCollections.length > 0 &&
-            onDatasetUiModeChange != null && (
-              <div
-                className="flex items-center gap-2 flex-shrink-0 border border-border rounded-md px-2.5 py-1 bg-muted/30"
-                title="Advanced mode shows Calibrate Collections and related options for multi-collection datasets."
-              >
-                <Label htmlFor="dataset-header-mode" className="text-xs text-muted-foreground whitespace-nowrap">
-                  Mode
-                </Label>
-                <Select
-                  value={datasetUiMode}
-                  onValueChange={(v) => onDatasetUiModeChange(v as DatasetUiMode)}
-                >
-                  <SelectTrigger id="dataset-header-mode" className="h-8 w-[130px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent align="end">
-                    <SelectItem value="default" className="text-xs">
-                      Default
-                    </SelectItem>
-                    <SelectItem value="advanced" className="text-xs">
-                      Advanced
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
 
           {currentLayout && onLayoutChange && (
             <div className="flex-shrink-0">

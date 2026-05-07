@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown, LayoutGrid, Files, Layers, Hash, Grid3x3 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
-import { CoverageMatrix } from "@/components/CoverageMatrix";
+
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
@@ -231,7 +231,7 @@ export function AnnotationsContent({
   
   const [annotationFiles, setAnnotationFiles] = useState<AnnotationFile[]>([]);
   const [filteredAnnotationFiles, setFilteredAnnotationFiles] = useState<AnnotationFile[]>([]);
-  const [showCoverage, setShowCoverage] = useState(false);
+  
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showAnnotationChoiceModal, setShowAnnotationChoiceModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -4463,30 +4463,10 @@ export function AnnotationsContent({
             <LayoutGrid className="w-4 h-4 mr-2" />
             FiftyOne
           </Button>
-          {annotationFiles.length > 0 && (
-            <Button
-              variant={showCoverage ? "default" : "outline"}
-              onClick={() => setShowCoverage((v) => !v)}
-              title="Show coverage of annotation files across image collections"
-            >
-              <Grid3x3 className="w-4 h-4 mr-2" />
-              Coverage
-            </Button>
-          )}
         </div>      </div>
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {/* Coverage matrix */}
-        {showCoverage && annotationFiles.length > 0 && (
-          <div className="mb-4">
-            <CoverageMatrix
-              annotationFiles={annotationFiles}
-              imageCollections={imageCollections}
-              images={images}
-            />
-          </div>
-        )}
 
         {/* Search and filter controls */}
         <div className="mb-4">
