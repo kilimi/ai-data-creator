@@ -5605,7 +5605,31 @@ const ImageAnnotation = () => {
                   >
                     <X className="w-4 h-4" />
                   </Button>
+              {/* Class search — appears only when there are several classes to filter */}
+              {classes.length >= 6 && (
+                <div className="mb-2">
+                  <Input
+                    placeholder="Search classes…"
+                    value={classSearch}
+                    onChange={(e) => setClassSearch(e.target.value)}
+                    className="h-7 text-xs"
+                  />
                 </div>
+              )}
+              {soloClassId && (
+                <div className="mb-2 flex items-center justify-between rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs">
+                  <span>
+                    Showing only <strong>{classes.find(c => c.id === soloClassId)?.name}</strong>
+                  </span>
+                  <button
+                    onClick={() => setSoloClassId(null)}
+                    className="text-primary hover:underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
               )}
             </div>
 
