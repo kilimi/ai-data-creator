@@ -960,7 +960,23 @@ export function AnnotationsContent({
     }
   };
 
-  const handleOpenFiftyOne = async () => {
+  // Build COCO from a sample subset, reusing toCOCOFormat with a temporary file shape.
+  const buildSubsetCOCO = (file: AnnotationFile, sampleSubset: AnnotationSample[], imageIdSubset?: Set<string>) => {
+    const filteredImageMapping: { [imageId: string]: string } = {};
+    Object.entries(file.imageMapping || {}).forEach(([imgId, name]) => {
+      if (!imageIdSubset || imageIdSubset.has(imgId)) filteredImageMapping[imgId] = name;
+    });
+    return toCOCOFormat({ ...file, samples: sampleSubset, imageMapping: filteredImageMapping });
+  };
+
+  // Upload a generated COCO file as a brand-new annotation file.
+  const uploadGeneratedFile = async (name: string, coco: any) => {
+    if (!api) throw new Error("API not available");
+    const blob = new Blob([JSON.stringify(coco)], { type: "application/json" });
+    const file = new File([blob], name, { type: "application/json" });
+    const res = await api.importAnnotations(id, file);
+    if (!res.success) throw new Error(res.error || "Import failed");
+  };
     if (!id?.trim()) {
       toast({
         title: "Cannot open FiftyOne",
