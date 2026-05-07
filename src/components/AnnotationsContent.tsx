@@ -4326,7 +4326,6 @@ export function AnnotationsContent({
       <div className="flex-shrink-0 flex justify-between items-start mb-4 gap-4">
         <div className="space-y-2 min-w-0">
           <div className="flex items-center gap-2">
-            <Files className="h-5 w-5 text-primary" />
             <h2 className="text-2xl font-bold">Annotation Files</h2>
             <HelpHint ariaLabel="What are annotation files?" popover>
               <div className="space-y-2 text-sm">
@@ -4361,20 +4360,17 @@ export function AnnotationsContent({
             );
             return (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <Files className="h-3.5 w-3.5" />
+                <span>
                   <strong className="text-foreground tabular-nums">{annotationFiles.length}</strong>{" "}
                   file{annotationFiles.length === 1 ? "" : "s"}
                 </span>
                 <span aria-hidden>·</span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Hash className="h-3.5 w-3.5" />
+                <span>
                   <strong className="text-foreground tabular-nums">{totalInstances.toLocaleString()}</strong>{" "}
                   instance{totalInstances === 1 ? "" : "s"}
                 </span>
                 <span aria-hidden>·</span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Tag className="h-3.5 w-3.5" />
+                <span>
                   <strong className="text-foreground tabular-nums">{classSet.size}</strong>{" "}
                   class{classSet.size === 1 ? "" : "es"}
                 </span>
