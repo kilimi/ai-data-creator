@@ -352,6 +352,9 @@ const ImageAnnotation = () => {
   annotationsRef.current = annotations;
   const [classes, setClasses] = useState<AnnotationClass[]>([]);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
+  // Class panel: search filter + solo (single class isolated)
+  const [classSearch, setClassSearch] = useState('');
+  const [soloClassId, setSoloClassId] = useState<string | null>(null);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [annotationName, setAnnotationName] = useState<string>("");
   const [datasetName, setDatasetName] = useState<string>("");
