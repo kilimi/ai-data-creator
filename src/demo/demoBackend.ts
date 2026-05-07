@@ -225,10 +225,13 @@ function imagesFor(datasetId: number) {
 
 function datasetWithPreview(dataset: any) {
   const firstImage = imagesFor(dataset.id)[0];
+  const files = annotationFilesFor(dataset.id);
   return {
     ...dataset,
     thumbnailUrl: firstImage?.thumbnailUrl,
     logo_url: firstImage?.thumbnailUrl,
+    annotation_file_count: files.length,
+    annotation_count: files.reduce((s, f) => s + f.annotation_count, 0),
   };
 }
 
