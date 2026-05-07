@@ -5175,9 +5175,8 @@ export function AnnotationsContent({
             </div>
             <h3 className="text-lg font-medium mb-1">No annotation files yet</h3>
             <p className="text-sm text-muted-foreground max-w-sm mb-4">
-              Datasets have a 1:N relationship with annotation files — upload an
-              existing file (COCO, YOLO, masks…) or start a new annotation
-              session.
+              A dataset can hold multiple annotation files — upload an existing
+              COCO file or start a new annotation session.
             </p>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleImportClick}>
