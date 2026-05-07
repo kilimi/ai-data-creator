@@ -27,7 +27,6 @@ const ApiSettings = lazy(() =>
 );
 const NotFound = lazy(() => import("./pages/NotFound"));
 const HelpPage = lazy(() => import("./pages/help/HelpPage"));
-const Landing = lazy(() => import("./pages/Landing"));
 
 function RouteFallback() {
   return (
@@ -58,7 +57,6 @@ const App = () => (
           >
             <Suspense fallback={<RouteFallback />}>
               <Routes>
-                <Route path="/landing" element={<Landing />} />
                 <Route path="/" element={<Index />} />
                 <Route path="/projects/new" element={<CreateProject />} />
                 <Route path="/projects/new/dataset" element={<CreateDataset />} />
