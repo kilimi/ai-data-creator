@@ -6080,6 +6080,18 @@ const ImageAnnotation = () => {
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
 
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={goToNextUnannotated}
+                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
+                  aria-label="Next unannotated image"
+                  title="Jump to the next image with no annotations"
+                >
+                  <SkipForward className="h-4 w-4 mr-1" />
+                  Next unannotated
+                </Button>
+
                 {/* Primary layer selector — kept next to Prev/Next so user knows which layer they're navigating */}
                 {imageCollections.length > 0 && (
                   <div className="flex items-center gap-2 pl-2 ml-2 border-l border-border">
