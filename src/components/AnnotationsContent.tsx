@@ -255,6 +255,7 @@ export function AnnotationsContent({
   const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
   const [splitDialog, setSplitDialog] = useState<{ open: boolean; fileId: string | null }>({ open: false, fileId: null });
   const [compareDialog, setCompareDialog] = useState<{ open: boolean; aId: string | null; bId: string | null }>({ open: false, aId: null, bId: null });
+  const [mergeStrategyDialogOpen, setMergeStrategyDialogOpen] = useState(false);
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
   const [downloadImagesDialog, setDownloadImagesDialog] = useState<{ isOpen: boolean; annotationId: string; categories: Array<{ id: number; name: string }>; selectedCategory: string | null; selectedCollectionIds: string[] }>({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] });
