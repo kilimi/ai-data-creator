@@ -9,6 +9,9 @@ import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
 import { AnnotationFileCard, AnnotationFileSkeleton } from "@/components/AnnotationFileCard";
+import { SplitAnnotationDialog } from "@/components/SplitAnnotationDialog";
+import { CompareAnnotationsDialog } from "@/components/CompareAnnotationsDialog";
+import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
