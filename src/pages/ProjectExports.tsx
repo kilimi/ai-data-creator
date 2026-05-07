@@ -46,6 +46,8 @@ export default function ProjectExports() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
+  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
+  const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
   const [testInference, setTestInference] = useState<{ id: number; onnxFilePath: string } | null>(null);
