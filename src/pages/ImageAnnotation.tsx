@@ -3125,6 +3125,14 @@ const ImageAnnotation = () => {
       if (!annotation.visible) {
         return;
       }
+      // Solo: when a class is isolated, hide annotations from other classes
+      if (soloClassId) {
+        const soloClassName = classes.find(c => c.id === soloClassId)?.name;
+        if (soloClassName && annotation.label !== soloClassName) return;
+      }
+      // Per-class visibility: hide annotations whose class is toggled off
+      const annClass = classes.find(c => c.name === annotation.label);
+      if (annClass && annClass.visible === false) return;
 
       ctx.strokeStyle = annotation.color;
       ctx.fillStyle = annotation.color + '30'; // Semi-transparent fill
