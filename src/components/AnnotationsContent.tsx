@@ -906,9 +906,8 @@ export function AnnotationsContent({
     }
   };
 
-  // Merge annotations handler
-  const handleMergeAnnotations = async () => {
-    console.log("Merge button clicked, selected files:", selectedForMerge.size);
+  // Open the merge-strategy dialog (replaces direct merge call).
+  const handleMergeAnnotations = () => {
     if (selectedForMerge.size < 2) {
       toast({
         title: "Invalid selection",
@@ -917,44 +916,83 @@ export function AnnotationsContent({
       });
       return;
     }
+    setMergeStrategyDialogOpen(true);
+  };
 
-    const filesToMerge = annotationFiles.filter(file => selectedForMerge.has(file.id));
-    
+  // Perform the merge with the chosen strategy.
+  // Runs client-side dedup over loaded samples, builds a single COCO file, uploads it.
+  const handleConfirmMerge = async (cfg: MergeStrategyConfig, mergedFileName: string) => {
+    const filesToMerge = annotationFiles.filter((f) => selectedForMerge.has(f.id));
+    if (filesToMerge.length < 2) return;
+
+    const allLoaded = filesToMerge.every((f) => Array.isArray(f.samples));
     try {
-      if (!api) {
-        throw new Error("API not available");
-      }
+      if (!api) throw new Error("API not available");
 
-      // Generate merged filename
-      const mergedFileName = `merged_${filesToMerge.map(f => f.name.replace(/\.[^/.]+$/, '')).join('_')}.json`;
-      
-      // Call backend merge endpoint
-      const response = await api.mergeAnnotationFiles(
-        id, 
-        Array.from(selectedForMerge), 
-        mergedFileName
-      );
-      
-      if (response.success) {
+      if (allLoaded) {
+        // ---- Client-side merge with strategy ----
+        const tagged = collectTaggedSamples(filesToMerge);
+        const { kept, report } = applyMergeStrategy(tagged, cfg);
+
+        // Build a synthetic AnnotationFile that toCOCOFormat understands.
+        const mergedImageMapping: { [imageId: string]: string } = {};
+        const mergedImageDetails: { [imageId: string]: { fileName: string; width: number; height: number } } = {};
+        for (const f of filesToMerge) {
+          Object.entries(f.imageMapping || {}).forEach(([k, v]) => { mergedImageMapping[k] = v; });
+          Object.entries(f.imageDetails || {}).forEach(([k, v]) => { mergedImageDetails[k] = v; });
+        }
+        const synthetic: AnnotationFile = {
+          ...filesToMerge[0],
+          name: mergedFileName,
+          samples: kept,
+          imageMapping: mergedImageMapping,
+          imageDetails: mergedImageDetails,
+        };
+        const coco = toCOCOFormat(synthetic);
+        // Stamp merge report into COCO info for traceability.
+        (coco as any).info = {
+          ...(coco as any).info,
+          merge_strategy: cfg.strategy,
+          merge_iou_threshold: cfg.iouThreshold,
+          merge_tie_breaker: cfg.tieBreaker,
+          merge_cross_class: cfg.crossClass,
+          merge_priority_order: cfg.priorityOrder,
+          merge_report: {
+            sources: filesToMerge.map((f) => ({ id: f.id, name: f.name })),
+            total_in: report.total,
+            kept: report.kept,
+            removed_exact: report.removedExact,
+            removed_iou: report.removedIou,
+            removed_cross_class: report.removedCrossClass,
+            conflicts_flagged: report.conflicts.length,
+          },
+        };
+        await uploadGeneratedFile(mergedFileName, coco);
+        toast({
+          title: "Merge complete",
+          description: `Kept ${report.kept.toLocaleString()} of ${report.total.toLocaleString()} instances · removed ${(report.removedExact + report.removedIou + report.removedCrossClass).toLocaleString()}`,
+        });
+      } else {
+        // ---- Fallback: backend merge (samples not loaded). Strategy info is sent for backend support. ----
+        const response = await api.mergeAnnotationFiles(
+          id,
+          Array.from(selectedForMerge),
+          mergedFileName,
+          cfg as any,
+        );
+        if (!response.success) throw new Error(response.error || "Failed to start merge task");
         toast({
           title: "Annotation merge started",
-          description: `Merging ${filesToMerge.length} annotation files into "${mergedFileName}". Check tasks for progress.`,
+          description: `Merging ${filesToMerge.length} files into "${mergedFileName}". Open files first for instant client-side merge.`,
         });
-        
-        // Reset merge mode
-        setMergeMode(false);
-        setSelectedForMerge(new Set());
-        
-        // Refresh annotation files after a short delay to allow task to start
-        setTimeout(async () => {
-          await loadAnnotationFilesFromBackend();
-        }, 1000);
-      } else {
-        throw new Error(response.error || "Failed to start merge task");
       }
-      
+
+      setMergeStrategyDialogOpen(false);
+      setMergeMode(false);
+      setSelectedForMerge(new Set());
+      setTimeout(async () => { await loadAnnotationFilesFromBackend(); }, 1000);
     } catch (error) {
-      console.error('Error merging annotations:', error);
+      console.error("Error merging annotations:", error);
       toast({
         title: "Merge failed",
         description: error instanceof Error ? error.message : "Failed to merge annotation files.",
