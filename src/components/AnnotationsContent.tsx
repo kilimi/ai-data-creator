@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush, Merge, CheckSquare, X, ImageDown, LayoutGrid, Files, Layers, Hash, Grid3x3 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
-import { CoverageMatrix } from "@/components/CoverageMatrix";
+
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
