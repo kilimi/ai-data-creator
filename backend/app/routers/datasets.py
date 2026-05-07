@@ -304,6 +304,7 @@ async def update_dataset(
     name: str = Form(...),
     description: str | None = Form(None),
     tags: Optional[str] = Form(None),
+    project_id: Optional[int] = Form(None),
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
@@ -311,10 +312,25 @@ async def update_dataset(
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if dataset is None:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        old_project_id = dataset.project_id
         if tags:
             dataset.tags = json.loads(tags)
         dataset.name = name
         dataset.description = description
+        if project_id is not None and project_id != old_project_id:
+            target_project = db.query(models.Project).filter(models.Project.id == project_id).first()
+            if target_project is None:
+                raise HTTPException(status_code=404, detail="Target project not found")
+            dataset.project_id = project_id
+
+            # Keep dataset groups consistent in the source project.
+            if old_project_id is not None:
+                moved_id = int(dataset_id)
+                groups = db.query(models.DatasetGroup).filter(models.DatasetGroup.project_id == old_project_id).all()
+                for group in groups:
+                    ids = group.datasets_list or []
+                    if moved_id in ids:
+                        group.datasets_list = [x for x in ids if int(x) != moved_id]
         if logo:
             logo_data = await logo.read()
             dataset.logo = logo_data  # Store full image in binary field

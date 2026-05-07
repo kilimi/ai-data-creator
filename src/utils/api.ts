@@ -406,9 +406,32 @@ export class ApiClient {
     datasetId: string | number,
     targetProjectId: number
   ): Promise<ApiResponse<Dataset>> {
-    return this.request<Dataset>(`/datasets/${datasetId}/move`, {
+    const primary = await this.request<Dataset>(`/datasets/${datasetId}/move`, {
       method: 'POST',
       body: JSON.stringify({ project_id: targetProjectId }),
+    });
+
+    // Compatibility fallback for servers that have not picked up the dedicated move endpoint yet.
+    if (
+      primary.success ||
+      !primary.error ||
+      (!primary.error.includes('404') && !primary.error.toLowerCase().includes('not found'))
+    ) {
+      return primary;
+    }
+
+    const existing = await this.getDataset(datasetId);
+    if (!existing.success || !existing.data) return primary;
+
+    const formData = new FormData();
+    formData.append('name', existing.data.name || '');
+    formData.append('description', existing.data.description || '');
+    formData.append('tags', JSON.stringify(existing.data.tags || []));
+    formData.append('project_id', String(targetProjectId));
+
+    return this.request<Dataset>(`/datasets/${datasetId}`, {
+      method: 'PUT',
+      body: formData,
     });
   }
 

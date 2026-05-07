@@ -4724,9 +4724,6 @@ export function AnnotationsContent({
                         )}
                      </div>
                     <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2 text-sm">
-                        <span className="text-muted-foreground">{file.imageCount || 0} images</span>
-                      </div>
                       {/* Visibility toggles */}
                       <div className="flex gap-1">
                         {/* Individual segmentation masks toggle */}
