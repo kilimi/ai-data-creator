@@ -11,6 +11,8 @@ import { HelpHint } from "@/components/ui/help-hint";
 import { AnnotationFileCard, AnnotationFileSkeleton } from "@/components/AnnotationFileCard";
 import { SplitAnnotationDialog } from "@/components/SplitAnnotationDialog";
 import { CompareAnnotationsDialog } from "@/components/CompareAnnotationsDialog";
+import { MergeStrategyDialog } from "@/components/MergeStrategyDialog";
+import { applyMergeStrategy, collectTaggedSamples, type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
 import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
