@@ -223,15 +223,28 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
     celery_task_id = None
     if task.task_metadata and isinstance(task.task_metadata, dict):
         celery_task_id = task.task_metadata.get('celery_task_id')
+
+    # Graceful stop for training-like tasks: let the training loop observe the
+    # DB status change ('stopped') and exit cleanly so checkpoints are flushed.
+    training_task_types = {"yolo_training", "training", "rtdetr_training"}
+    use_graceful_stop = (task.task_type in training_task_types)
     
     # Update task status in database FIRST so training loop can detect it
     task.status = 'stopped'
     task.completed_at = datetime.utcnow()
     task.error_message = 'Task stopped by user'
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    if isinstance(task.task_metadata, dict):
+        task.task_metadata["stop_requested_at"] = datetime.utcnow().isoformat()
+        task.task_metadata["stop_mode"] = "graceful" if use_graceful_stop else "force"
+        flag_modified(task, "task_metadata")
     db.commit()
     
-    # Revoke the Celery task to kill the process
-    if celery_task_id:
+    # For non-training tasks, force termination as before.
+    # For training tasks we avoid immediate hard-kill to preserve checkpoints.
+    celery_task_revoked = False
+    if celery_task_id and not use_graceful_stop:
         try:
             # Use SIGTERM first for graceful shutdown, then SIGKILL as fallback
             celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')
@@ -242,14 +255,16 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
             time.sleep(0.5)  # Give it a moment to respond to SIGTERM
             celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
             logger.info(f"Sent SIGKILL to Celery task {celery_task_id} for task {task_id}")
+            celery_task_revoked = True
         except Exception as e:
             logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
     
     return {
         "success": True,
-        "message": "Task stopped successfully",
+        "message": "Task stop requested successfully",
         "task_id": task_id,
-        "celery_task_revoked": celery_task_id is not None
+        "celery_task_revoked": celery_task_revoked,
+        "stop_mode": "graceful" if use_graceful_stop else "force"
     }
 
 

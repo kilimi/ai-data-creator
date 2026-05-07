@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -264,6 +264,8 @@ const ImageAnnotation = () => {
 
   // Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const lastDrawnVisibleAnnotationsRef = useRef(0);
+  const lastDrawImageKeyRef = useRef<string>('');
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // Help popover visibility for zoom/pan instructions
@@ -3121,6 +3123,7 @@ const ImageAnnotation = () => {
     };
 
     // Draw annotations
+    let drawnVisibleAnnotations = 0;
     annotations.forEach((annotation, idx) => {
       if (!annotation.visible) {
         return;
@@ -3152,6 +3155,7 @@ const ImageAnnotation = () => {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        drawnVisibleAnnotations += 1;
         
         // Draw label
         ctx.fillStyle = annotation.color;
@@ -3252,6 +3256,8 @@ const ImageAnnotation = () => {
 
     // Restore context
     ctx.restore();
+    lastDrawnVisibleAnnotationsRef.current = drawnVisibleAnnotations;
+    lastDrawImageKeyRef.current = currentImage?.fileName || currentImageNameRef.current || '';
   }, [annotations, selectedAnnotation, isDrawing, currentPath, activeTool, selectedClass, classes, soloClassId, samPoints, imageScale, imageOffset, displayImage, currentImage, annotationLayerId, imageCollections, imageBrightness, imageContrast, imageSaturation, getAnnotReferenceDimensions, annotationId]);
 
   // Redraw canvas when dependencies change
@@ -3541,6 +3547,56 @@ const ImageAnnotation = () => {
       if (attemptsLeft > 0) scheduleRedraw(attemptsLeft - 1);
     });
   }, [redrawCanvas]);
+
+  const expectedVisibleAnnotationsCount = useMemo(() => {
+    let count = 0;
+    for (const annotation of annotations) {
+      if (!annotation.visible) continue;
+      if (annotation.type !== 'polygon' || annotation.points.length <= 2) continue;
+      if (soloClassId) {
+        const soloClassName = classes.find(c => c.id === soloClassId)?.name;
+        if (soloClassName && annotation.label !== soloClassName) continue;
+      }
+      const annClass = classes.find(c => c.name === annotation.label);
+      if (annClass && annClass.visible === false) continue;
+      count += 1;
+    }
+    return count;
+  }, [annotations, classes, soloClassId]);
+
+  // Watchdog: if annotations should be visible but last draw pass painted none,
+  // force extra redraw retries. This removes the "appears only after click" race
+  // that can still happen on large datasets when image/layout settles late.
+  useEffect(() => {
+    if (expectedVisibleAnnotationsCount <= 0) return;
+    if (!canvasRef.current || !imageRef.current) return;
+    if (isLayerSwitching) return;
+    const img = imageRef.current;
+    if (!img.complete || !img.naturalWidth) {
+      scheduleRedraw(10);
+      return;
+    }
+    const imageKey = currentImage?.fileName || currentImageNameRef.current || '';
+    const drawn = lastDrawnVisibleAnnotationsRef.current;
+    const lastKey = lastDrawImageKeyRef.current;
+    if (lastKey !== imageKey || drawn <= 0) {
+      scheduleRedraw(10);
+      const t1 = window.setTimeout(() => scheduleRedraw(10), 80);
+      const t2 = window.setTimeout(() => scheduleRedraw(10), 220);
+      return () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+      };
+    }
+    return;
+  }, [
+    expectedVisibleAnnotationsCount,
+    currentImage?.fileName,
+    isLayerSwitching,
+    imageScale,
+    imageOffset,
+    scheduleRedraw,
+  ]);
 
   const handleImageResize = (forceRefit = false) => {
     if (!imageRef.current || !canvasRef.current || !containerRef.current) return;

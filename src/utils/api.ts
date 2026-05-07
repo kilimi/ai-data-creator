@@ -402,6 +402,16 @@ export class ApiClient {
     }
   }
 
+  async moveDataset(
+    datasetId: string | number,
+    targetProjectId: number
+  ): Promise<ApiResponse<Dataset>> {
+    return this.request<Dataset>(`/datasets/${datasetId}/move`, {
+      method: 'POST',
+      body: JSON.stringify({ project_id: targetProjectId }),
+    });
+  }
+
   async mergeDatasets(projectId: string | number, name: string, datasetIds: number[]): Promise<ApiResponse<{
     id: number;
     name: string;

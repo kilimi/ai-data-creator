@@ -301,6 +301,13 @@ export default function ProjectDatasets() {
     fetchProjectDatasets();
   };
 
+  const handleDatasetMoved = (datasetId: number, _targetProjectId: number) => {
+    // Remove from current project list immediately, then refresh groups/lists.
+    setDatasets((prev) => prev.filter((d) => d.id !== datasetId));
+    fetchProjectDatasets();
+    fetchDatasetGroups();
+  };
+
   const handleGroupCreated = () => {
     fetchDatasetGroups();
     setShowAddGroupModal(false);
@@ -559,6 +566,7 @@ export default function ProjectDatasets() {
                     dataset={dataset}
                     onDelete={handleDeleteDataset}
                     onDatasetUpdated={handleDatasetUpdated}
+                    onDatasetMoved={handleDatasetMoved}
                   />
                 ))}
               </div>

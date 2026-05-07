@@ -18,18 +18,40 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ToastAction } from "@/components/ui/toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
   dataset: Dataset;
   className?: string;
   onDelete?: (dataset: Dataset) => Promise<void>;
   onDatasetUpdated?: (dataset: Dataset) => void;
+  onDatasetMoved?: (datasetId: number, targetProjectId: number) => void;
 }
 
-export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ...props }: DatasetCardProps) {
+export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, onDatasetMoved, ...props }: DatasetCardProps) {
   const thumbnailSrc = resolveBackendMediaUrl(dataset.thumbnailUrl);
   const imageLoaded = useImageLoad(thumbnailSrc);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
+  const [isMoveDialogOpen, setIsMoveDialogOpen] = React.useState(false);
+  const [projects, setProjects] = React.useState<Array<{ id: number; name: string }>>([]);
+  const [selectedTargetProject, setSelectedTargetProject] = React.useState<string>("");
+  const [loadingProjects, setLoadingProjects] = React.useState(false);
+  const [isMoving, setIsMoving] = React.useState(false);
   
   const { api } = useApi();
   const { toast } = useToast();
@@ -124,6 +146,70 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
         description: error instanceof Error ? error.message : "Failed to duplicate dataset",
         variant: "destructive",
       });
+    }
+  };
+
+  const openMoveDialog = async () => {
+    if (!api) return;
+    setIsMoveDialogOpen(true);
+    setLoadingProjects(true);
+    try {
+      const response = await api.getProjects();
+      if (!response.success || !response.data) {
+        throw new Error(response.error || "Failed to load projects");
+      }
+      const available = response.data
+        .map((p: any) => ({ id: Number(p.id), name: p.name as string }))
+        .filter((p) => Number.isFinite(p.id) && p.id !== Number(dataset.project_id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setProjects(available);
+      setSelectedTargetProject(available[0] ? String(available[0].id) : "");
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to load projects",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
+
+  const handleMoveDataset = async () => {
+    if (!api || !selectedTargetProject) return;
+    const targetProjectId = Number(selectedTargetProject);
+    if (!Number.isFinite(targetProjectId)) return;
+
+    setIsMoving(true);
+    try {
+      const response = await api.moveDataset(dataset.id, targetProjectId);
+      if (!response.success) {
+        throw new Error(response.error || "Failed to move dataset");
+      }
+      const targetProjectName =
+        projects.find((p) => p.id === targetProjectId)?.name || `Project ${targetProjectId}`;
+      onDatasetMoved?.(Number(dataset.id), targetProjectId);
+      setIsMoveDialogOpen(false);
+      toast({
+        title: "Dataset moved",
+        description: `"${dataset.name}" moved to "${targetProjectName}".`,
+        action: (
+          <ToastAction
+            altText="Open target project datasets"
+            onClick={() => navigate(`/projects/${targetProjectId}/datasets`)}
+          >
+            Open
+          </ToastAction>
+        ),
+      });
+    } catch (error) {
+      toast({
+        title: "Move failed",
+        description: error instanceof Error ? error.message : "Failed to move dataset",
+        variant: "destructive",
+      });
+    } finally {
+      setIsMoving(false);
     }
   };
   
@@ -236,6 +322,10 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
                 <DropdownMenuItem onClick={handleDuplicate}>
                   <Copy className="h-4 w-4 mr-2" />
                   Duplicate
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={openMoveDialog}>
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  Move
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="text-destructive"
@@ -393,6 +483,40 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, ..
         onOpenChange={setIsEditDialogOpen}
         onDatasetUpdated={handleDatasetUpdated}
       />
+
+      <Dialog open={isMoveDialogOpen} onOpenChange={setIsMoveDialogOpen}>
+        <DialogContent onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Move Dataset</DialogTitle>
+            <DialogDescription>
+              Select a target project for "{dataset.name}".
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Select value={selectedTargetProject} onValueChange={setSelectedTargetProject}>
+              <SelectTrigger>
+                <SelectValue placeholder={loadingProjects ? "Loading projects..." : "Select project"} />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={String(project.id)}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsMoveDialogOpen(false)} disabled={isMoving}>
+              Cancel
+            </Button>
+            <Button onClick={handleMoveDataset} disabled={!selectedTargetProject || isMoving || loadingProjects}>
+              {isMoving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Move
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

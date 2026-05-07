@@ -81,6 +81,10 @@ class ViewFiftyOneRequest(BaseModel):
     image_collection_id: Optional[int] = None
 
 
+class MoveDatasetRequest(BaseModel):
+    project_id: int
+
+
 def _create_thumbnail(image_data: bytes, mime_type: str, max_size: tuple = (200, 200)) -> str:
     """Create a thumbnail from image data and return base64 encoded string."""
     try:
@@ -570,6 +574,42 @@ async def duplicate_dataset(dataset_id: int, background_tasks: BackgroundTasks, 
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/datasets/{dataset_id}/move", response_model=schemas.Dataset)
+async def move_dataset(
+    dataset_id: int,
+    req: MoveDatasetRequest,
+    db: Session = Depends(get_db),
+):
+    """Move a dataset to another project."""
+    dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    target_project = db.query(models.Project).filter(models.Project.id == req.project_id).first()
+    if not target_project:
+        raise HTTPException(status_code=404, detail="Target project not found")
+
+    old_project_id = dataset.project_id
+    if old_project_id == req.project_id:
+        return dataset
+
+    dataset.project_id = req.project_id
+    dataset.updated_at = datetime.utcnow()
+
+    # Keep dataset groups consistent in the source project.
+    if old_project_id is not None:
+        moved_id = int(dataset_id)
+        groups = db.query(models.DatasetGroup).filter(models.DatasetGroup.project_id == old_project_id).all()
+        for group in groups:
+            ids = group.datasets_list or []
+            if moved_id in ids:
+                group.datasets_list = [x for x in ids if int(x) != moved_id]
+
+    db.commit()
+    db.refresh(dataset)
+    return dataset
 
 
 @router.post("/datasets/{dataset_id}/images")
