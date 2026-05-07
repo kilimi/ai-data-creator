@@ -59,7 +59,8 @@ import {
   Sun,
   Moon,
   Crosshair,
-  Pencil
+  Pencil,
+  SkipForward
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
