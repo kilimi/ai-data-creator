@@ -636,20 +636,6 @@ export function DatasetEvalPicker({
         <span className="text-muted-foreground">
           {totalImages.toLocaleString()} images
         </span>
-        {modelClasses.length > 0 && value.length > 0 && (
-          <>
-            <span className="text-muted-foreground">·</span>
-            <span
-              className={cn(
-                compatibleCount === value.length
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-amber-600 dark:text-amber-400"
-              )}
-            >
-              {compatibleCount}/{value.length} fully compatible
-            </span>
-          </>
-        )}
       </div>
     </div>
   );
