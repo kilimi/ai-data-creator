@@ -196,9 +196,7 @@ export function DatasetEvalPicker({
   onChange,
 }: Props) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "compatible" | "with-gt">(
-    "all"
-  );
+  const [filter, setFilter] = useState<"all" | "with-gt">("all");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
