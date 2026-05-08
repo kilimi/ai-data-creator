@@ -471,27 +471,11 @@ export function DatasetEvalPicker({
               className="pl-8 h-9"
             />
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={selectAllCompatible}
-            disabled={modelClasses.length === 0}
-            title={
-              modelClasses.length === 0
-                ? "Pick a model first"
-                : "Select all datasets whose classes match the model"
-            }
-          >
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-            Select compatible
-          </Button>
         </div>
         <div className="flex items-center gap-1 text-xs">
           {(
             [
               ["all", "All"],
-              ["compatible", "Compatible"],
               ["with-gt", "Has GT"],
             ] as const
           ).map(([k, label]) => (
