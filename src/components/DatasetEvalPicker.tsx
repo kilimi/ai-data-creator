@@ -278,27 +278,6 @@ export function DatasetEvalPicker({
     );
   }
 
-  function selectAllCompatible() {
-    const additions: DatasetSelection[] = [];
-    datasets.forEach((d) => {
-      if (selectionMap.has(d.id)) return;
-      const compat = datasetBestCompat(d);
-      if (compat.status === "match" || compat.status === "partial") {
-        const file = bestAnnotationFile(
-          d.annotationFiles,
-          modelClasses,
-          modelTaskType
-        );
-        const coll = d.collections.find((c) => c.isDefault) || d.collections[0];
-        additions.push({
-          datasetId: d.id,
-          annotationFileId: file?.id ?? null,
-          collectionId: coll?.id ?? null,
-        });
-      }
-    });
-    if (additions.length) onChange([...value, ...additions]);
-  }
 
   // ── Renderers ────────────────────────────────────────────────────────────
   function DatasetRow({ d }: { d: PickerDataset }) {
