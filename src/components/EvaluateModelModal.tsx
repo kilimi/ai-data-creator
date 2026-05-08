@@ -327,7 +327,8 @@ export function EvaluateModelModal({
           annotationFiles.forEach((f: any) => void loadFileClasses(sel.datasetId, String(f.id)));
 
           // Apply defaults: first annotation file (if exists) and first/default collection
-          const cols = await api.getDatasetCollections(sel.datasetId).catch(() => []);
+          const colsResp = await api.getImageCollections(sel.datasetId).catch(() => null);
+          const cols = (colsResp && (colsResp as any).success && (colsResp as any).data) || [];
           setDatasetCollections(prev => {
             const n = new Map(prev);
             n.set(sel.datasetId, cols as any[]);
@@ -335,7 +336,7 @@ export function EvaluateModelModal({
           });
           const defaultFileId = sel.annotationFileId
             ?? (annotationFiles.length > 0 ? String(annotationFiles[0].id) : null);
-          const defaultColl = (cols as any[]).find(c => c.is_default) || (cols as any[])[0];
+          const defaultColl = (cols as any[]).find((c: any) => c.is_default) || (cols as any[])[0];
           const defaultCollId = sel.collectionId ?? (defaultColl ? String(defaultColl.id) : null);
 
           if (defaultFileId !== sel.annotationFileId || defaultCollId !== sel.collectionId) {
