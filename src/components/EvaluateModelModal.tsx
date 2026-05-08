@@ -138,135 +138,29 @@ export function EvaluateModelModal({
     }
   };
 
-  // Add dataset to evaluation
-  const addDatasetSelection = async (dataset: Dataset) => {
-    // Check if already added
-    if (selectedDatasets.some(d => d.datasetId === dataset.id)) {
-      return;
-    }
-    
-    // Fetch annotation files for this dataset (lightweight - only ID and name)
-    let annotationFiles: any[] = [];
+  // Lazy-fetch enrichment for a single dataset (annotation file list + collections)
+  const enrichDataset = useCallback(async (dataset: Dataset) => {
+    let annotationFiles: any[] = dataset.annotation_files || [];
     let imageCollections: ImageCollection[] = [];
     try {
-      const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/annotation-files/list`);
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success && result.data) {
-          annotationFiles = result.data;
+      if (annotationFiles.length === 0) {
+        const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/annotation-files/list`);
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success && result.data) annotationFiles = result.data;
         }
       }
       const collectionsResponse = await api.getImageCollections(dataset.id);
       if (collectionsResponse.success && collectionsResponse.data) {
         imageCollections = collectionsResponse.data;
       }
-    } catch (error) {
-      console.error('Error fetching annotation files:', error);
+    } catch (e) {
+      console.error('Error enriching dataset:', e);
     }
-    
-    // Store enriched dataset with annotation files
-    const datasetWithAnnotations = {
-      ...dataset,
-      annotation_files: annotationFiles
-    };
-    setEnrichedDatasets(prev => new Map(prev).set(dataset.id, datasetWithAnnotations));
+    setEnrichedDatasets(prev => new Map(prev).set(dataset.id, { ...dataset, annotation_files: annotationFiles }));
     setDatasetCollections(prev => new Map(prev).set(dataset.id, imageCollections));
-
-    const preferredCollection = imageCollections.find(c => (c as any).is_default) || imageCollections[0] || null;
-    
-    const config: DatasetEvalConfig = {
-      datasetId: dataset.id,
-      datasetName: dataset.name,
-      annotationFileId: annotationFiles?.[0]?.id ? String(annotationFiles[0].id) : null,
-      annotationFileName: annotationFiles?.[0]?.file_name || annotationFiles?.[0]?.name || null,
-      collectionId: preferredCollection ? String(preferredCollection.id) : null,
-    };
-    
-    setSelectedDatasets(prev => [...prev, config]);
-    void fetchCollectionCountsForSelection(dataset.id, config.annotationFileId);
-  };
-
-  // Add all datasets from a group (fetch annotation file lists if not in lightweight group payload)
-  const addDatasetGroupSelection = async (group: DatasetGroup) => {
-    if (!group.datasets || group.datasets.length === 0) return;
-
-    const newConfigs: DatasetEvalConfig[] = [];
-    const groupInfoMap: Record<number, { groupName: string; groupId: number }> = {};
-    const mergedEnriched = new Map<number, Dataset & { annotation_files?: any[] }>();
-
-    for (const dataset of group.datasets) {
-      if (selectedDatasets.some((d) => d.datasetId === dataset.id)) continue;
-
-      let annFiles = dataset.annotation_files;
-      let imageCollections: ImageCollection[] = [];
-      if (!annFiles || annFiles.length === 0) {
-        try {
-          const response = await fetch(
-            `http://localhost:9999/datasets/${dataset.id}/annotation-files/list`
-          );
-          if (response.ok) {
-            const result = await response.json();
-            if (result.success && result.data) annFiles = result.data;
-          }
-        } catch (e) {
-          console.error("Error fetching annotation files for group dataset:", e);
-        }
-      }
-      try {
-        const collectionsResponse = await api.getImageCollections(dataset.id);
-        if (collectionsResponse.success && collectionsResponse.data) {
-          imageCollections = collectionsResponse.data;
-        }
-      } catch (e) {
-        console.error("Error fetching image collections for group dataset:", e);
-      }
-
-      const dsWith = { ...dataset, annotation_files: annFiles || [] };
-      mergedEnriched.set(dataset.id, dsWith);
-      setDatasetCollections(prev => new Map(prev).set(dataset.id, imageCollections));
-      const preferredCollection = imageCollections.find(c => (c as any).is_default) || imageCollections[0] || null;
-
-      newConfigs.push({
-        datasetId: dataset.id,
-        datasetName: dataset.name,
-        annotationFileId: annFiles?.[0]?.id ? String(annFiles[0].id) : null,
-        annotationFileName: annFiles?.[0]?.file_name || annFiles?.[0]?.name || null,
-        collectionId: preferredCollection ? String(preferredCollection.id) : null,
-      });
-      void fetchCollectionCountsForSelection(dataset.id, annFiles?.[0]?.id ? String(annFiles[0].id) : null);
-      groupInfoMap[dataset.id] = { groupName: group.name, groupId: group.id };
-    }
-
-    setEnrichedDatasets((prev) => {
-      const next = new Map(prev);
-      mergedEnriched.forEach((v, k) => next.set(k, v));
-      return next;
-    });
-    setSelectedDatasets((prev) => [...prev, ...newConfigs]);
-    setDatasetGroupInfo((prev) => ({ ...prev, ...groupInfoMap }));
-  };
-
-  // Remove dataset from evaluation
-  const removeDatasetSelection = (datasetId: number) => {
-    setSelectedDatasets(prev => prev.filter(d => d.datasetId !== datasetId));
-    setDatasetGroupInfo(prev => {
-      const newInfo = { ...prev };
-      delete newInfo[datasetId];
-      return newInfo;
-    });
-  };
-
-  const selectedDatasetData = datasets.find(d => d.id.toString() === selectedDataset);
-  
-  // Debug logging for selection changes
-  useEffect(() => {
-    if (selectedDataset) {
-      console.log('[EvaluateModelModal] Dataset selection changed to:', selectedDataset);
-      console.log('[EvaluateModelModal] Selected dataset data:', selectedDatasetData);
-      console.log('[EvaluateModelModal] Annotation files count:', selectedDatasetData?.annotation_files?.length || 0);
-      console.log('[EvaluateModelModal] Annotation files:', selectedDatasetData?.annotation_files);
-    }
-  }, [selectedDataset, selectedDatasetData]);
+    return { annotationFiles, imageCollections };
+  }, [api]);
 
   // Fetch model classes when model is selected
   useEffect(() => {
@@ -275,22 +169,17 @@ export function EvaluateModelModal({
       setIgnoredClasses([]);
       return;
     }
-    
-    const fetchModelClasses = async () => {
-      setLoadingModelClasses(true);
-      try {
-        const task = trainingTasks.find(t => t.id.toString() === selectedModel);
-        if (task?.task_metadata?.class_names) {
-          setModelClasses(task.task_metadata.class_names);
-        }
-      } catch (error) {
-        console.error('[EvaluateModelModal] Error fetching model classes:', error);
-      } finally {
-        setLoadingModelClasses(false);
+    setLoadingModelClasses(true);
+    try {
+      const task = trainingTasks.find(t => t.id.toString() === selectedModel);
+      if (task?.task_metadata?.class_names) {
+        setModelClasses(task.task_metadata.class_names);
       }
-    };
-    
-    fetchModelClasses();
+    } catch (error) {
+      console.error('[EvaluateModelModal] Error fetching model classes:', error);
+    } finally {
+      setLoadingModelClasses(false);
+    }
   }, [selectedModel, trainingTasks]);
 
   // Fetch annotation classes from the first selected dataset with ground truth
@@ -300,7 +189,6 @@ export function EvaluateModelModal({
       setAnnotationClasses([]);
       return;
     }
-    
     const fetchClasses = async () => {
       setLoadingClasses(true);
       try {
@@ -317,83 +205,133 @@ export function EvaluateModelModal({
         setLoadingClasses(false);
       }
     };
-    
     fetchClasses();
   }, [selectedDatasets]);
 
-  // Fetch annotation classes when annotation file is selected (for adding a new dataset)
-  useEffect(() => {
-    if (!selectedDataset || !selectedAnnotation || !useGroundTruth) {
-      return;
-    }
-    
-    const fetchClasses = async () => {
-      setLoadingClasses(true);
-      try {
-        const response = await fetch(`http://localhost:9999/datasets/${selectedDataset}/annotations/${selectedAnnotation}/classes`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.data?.classes) {
-            setAnnotationClasses(data.data.classes);
-          }
-        }
-      } catch (error) {
-        console.error('[EvaluateModelModal] Error fetching annotation classes:', error);
-      } finally {
-        setLoadingClasses(false);
-      }
-    };
-    
-    fetchClasses();
-  }, [selectedDataset, selectedAnnotation, useGroundTruth]);
-
-  // Reset ignored classes when annotation file changes
-  useEffect(() => {
-    setIgnoredClasses([]);
-  }, [selectedAnnotation]);
-
   const toggleIgnoredClass = (className: string) => {
-    setIgnoredClasses(prev => 
-      prev.includes(className) 
-        ? prev.filter(c => c !== className)
-        : [...prev, className]
+    setIgnoredClasses(prev =>
+      prev.includes(className) ? prev.filter(c => c !== className) : [...prev, className]
     );
   };
 
-  // Add selected dataset to the list
-  const addDatasetToEvaluation = () => {
-    if (!selectedDataset) return;
-    
-    const datasetData = datasets.find(d => d.id.toString() === selectedDataset);
-    if (!datasetData) return;
-    
-    // Check if already added
-    if (selectedDatasets.some(d => d.datasetId === parseInt(selectedDataset))) {
-      return;
+  // Lazy-load class lists for compatibility badges
+  const loadFileClasses = useCallback(async (datasetId: number, fileId: string) => {
+    if (fileClassesMap.has(fileId)) return;
+    try {
+      const response = await fetch(`http://localhost:9999/datasets/${datasetId}/annotations/${fileId}/classes`);
+      if (response.ok) {
+        const data = await response.json();
+        const classes = (data?.data?.classes || []).map((c: any) => c.className || c.name || c).filter(Boolean);
+        setFileClassesMap(prev => new Map(prev).set(fileId, classes));
+      }
+    } catch (e) {
+      console.error('Error loading file classes:', e);
     }
-    
-    const config: DatasetEvalConfig = {
-      datasetId: parseInt(selectedDataset),
-      datasetName: datasetData.name,
-      annotationFileId: useGroundTruth ? selectedAnnotation || null : null,
-      annotationFileName: useGroundTruth && selectedAnnotation 
-        ? datasetData.annotation_files?.find((f: any) => String(f.id) === selectedAnnotation)?.file_name || null
-        : null,
-      collectionId: null,
-    };
-    
-    setSelectedDatasets(prev => [...prev, config]);
-    void fetchCollectionCountsForSelection(parseInt(selectedDataset), config.annotationFileId);
-    
-    // Reset selection for adding more
-    setSelectedDataset('');
-    setSelectedAnnotation('');
-  };
+  }, [fileClassesMap]);
 
-  // Remove dataset from list
-  const removeDatasetFromEvaluation = (datasetId: number) => {
-    setSelectedDatasets(prev => prev.filter(d => d.datasetId !== datasetId));
-  };
+  // Build picker datasets from props + enriched data
+  const pickerDatasets: PickerDataset[] = useMemo(() => {
+    return datasets.map(d => {
+      const enriched = enrichedDatasets.get(d.id) || d;
+      const files = (enriched.annotation_files || []).map((f: any) => ({
+        id: String(f.id),
+        name: f.file_name || f.name,
+        classes: fileClassesMap.get(String(f.id)) || [],
+        taskType: f.task_type as any,
+        modifiedAt: f.created_at,
+        annotationCount: f.annotation_count,
+      }));
+      const collections = (datasetCollections.get(d.id) || []).map((c: any) => ({
+        id: String(c.id),
+        name: c.name,
+        isDefault: !!c.is_default,
+        imageCount: c.image_count,
+      }));
+      return {
+        id: d.id,
+        name: d.name,
+        imageCount: d.image_count || 0,
+        thumbnailUrl: d.thumbnailUrl || d.logo_url,
+        annotationFiles: files,
+        collections,
+      };
+    });
+  }, [datasets, enrichedDatasets, datasetCollections, fileClassesMap]);
+
+  const pickerGroups: PickerGroup[] = useMemo(
+    () => datasetGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      datasetIds: (g.datasets || []).map(d => d.id),
+    })),
+    [datasetGroups]
+  );
+
+  const pickerValue: DatasetSelection[] = useMemo(
+    () => selectedDatasets.map(s => ({
+      datasetId: s.datasetId,
+      annotationFileId: s.annotationFileId,
+      collectionId: s.collectionId,
+    })),
+    [selectedDatasets]
+  );
+
+  // Determine model task type from selected training task
+  const modelTaskType = useMemo(() => {
+    const task = trainingTasks.find(t => t.id.toString() === selectedModel);
+    const tt = task?.task_metadata?.task_type || task?.task_type || '';
+    if (typeof tt === 'string') {
+      if (tt.includes('segment')) return 'segmentation' as const;
+      if (tt.includes('classif')) return 'classification' as const;
+      return 'detection' as const;
+    }
+    return undefined;
+  }, [selectedModel, trainingTasks]);
+
+  // Picker change handler — reconciles add/remove/update with selectedDatasets state
+  const handlePickerChange = useCallback(async (next: DatasetSelection[]) => {
+    const prevIds = new Set(selectedDatasets.map(s => s.datasetId));
+    const nextIds = new Set(next.map(s => s.datasetId));
+
+    // Removed
+    selectedDatasets.forEach(s => {
+      if (!nextIds.has(s.datasetId)) {
+        setDatasetGroupInfo(prev => {
+          const n = { ...prev };
+          delete n[s.datasetId];
+          return n;
+        });
+      }
+    });
+
+    // Build the new selectedDatasets list with names looked up
+    const newConfigs: DatasetEvalConfig[] = next.map(sel => {
+      const ds = enrichedDatasets.get(sel.datasetId) || datasets.find(d => d.id === sel.datasetId);
+      const file = ds?.annotation_files?.find((f: any) => String(f.id) === sel.annotationFileId);
+      return {
+        datasetId: sel.datasetId,
+        datasetName: ds?.name || `Dataset ${sel.datasetId}`,
+        annotationFileId: sel.annotationFileId,
+        annotationFileName: file ? (file.file_name || file.name) : null,
+        collectionId: sel.collectionId,
+      };
+    });
+    setSelectedDatasets(newConfigs);
+
+    // Enrich any newly added datasets, then load classes & counts
+    for (const sel of next) {
+      if (!prevIds.has(sel.datasetId)) {
+        const dataset = datasets.find(d => d.id === sel.datasetId);
+        if (dataset) {
+          const { annotationFiles } = await enrichDataset(dataset);
+          // Load classes for all annotation files of this dataset (powers compat badges)
+          annotationFiles.forEach((f: any) => void loadFileClasses(sel.datasetId, String(f.id)));
+        }
+      }
+      if (sel.annotationFileId) void fetchCollectionCountsForSelection(sel.datasetId, sel.annotationFileId);
+    }
+  }, [selectedDatasets, enrichedDatasets, datasets, enrichDataset, loadFileClasses]);
+
 
   const handleSubmit = async () => {
     if (!selectedModel || selectedDatasets.length === 0) return;
