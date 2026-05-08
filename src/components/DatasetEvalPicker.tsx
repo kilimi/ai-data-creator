@@ -163,7 +163,7 @@ function CompatBadge({ compat }: { compat: Compatibility }) {
       ? "All model classes are present in this annotation file"
       : compat.status === "none"
       ? "None of the model classes appear in this annotation file"
-      : compat.label;
+      : cfg.label;
   return (
     <TooltipProvider delayDuration={200}>
       <Tooltip>
