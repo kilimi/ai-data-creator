@@ -82,16 +82,15 @@ export function EvaluateModelModal({
   const [evaluationName, setEvaluationName] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<'best' | 'last'>('best');
-  const [selectedDataset, setSelectedDataset] = useState('');
-  const [useGroundTruth, setUseGroundTruth] = useState(true);
-  const [selectedAnnotation, setSelectedAnnotation] = useState('');
   const [confThreshold, setConfThreshold] = useState(0.25);
   const [iouThreshold, setIouThreshold] = useState(0.45);
   const [useGrid, setUseGrid] = useState(false);
   const [gridSize, setGridSize] = useState(640);
   const [gridOverlap, setGridOverlap] = useState(0.2);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [loadingDatasets, setLoadingDatasets] = useState(false);
+
+  // Per-annotation-file class lists (populated lazily; powers compatibility badges)
+  const [fileClassesMap, setFileClassesMap] = useState<Map<string, string[]>>(new Map());
   
   // Multi-dataset selection state
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetEvalConfig[]>([]);
