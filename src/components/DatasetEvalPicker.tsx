@@ -558,20 +558,8 @@ export function DatasetEvalPicker({
                         const additions: DatasetSelection[] = [];
                         dsInGroup.forEach((d) => {
                           if (selectionMap.has(d.id)) return;
-                          const compat = datasetBestCompat(d);
-                          if (
-                            compat.status === "none" ||
-                            compat.status === "no-gt"
-                          )
-                            return;
-                          const file = bestAnnotationFile(
-                            d.annotationFiles,
-                            modelClasses,
-                            modelTaskType
-                          );
-                          const coll =
-                            d.collections.find((c) => c.isDefault) ||
-                            d.collections[0];
+                          const file = d.annotationFiles[0];
+                          const coll = d.collections[0];
                           additions.push({
                             datasetId: d.id,
                             annotationFileId: file?.id ?? null,
@@ -581,7 +569,7 @@ export function DatasetEvalPicker({
                         if (additions.length) onChange([...value, ...additions]);
                       }}
                     >
-                      Add compatible
+                      Add all
                     </Button>
                   </div>
                   {isOpen && visibleDs.length > 0 && (
