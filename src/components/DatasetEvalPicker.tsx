@@ -236,9 +236,6 @@ export function DatasetEvalPicker({
   function visible(d: PickerDataset) {
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
-    const compat = datasetBestCompat(d);
-    if (filter === "compatible" && !["match", "partial"].includes(compat.status))
-      return false;
     if (filter === "with-gt" && d.annotationFiles.length === 0) return false;
     return true;
   }
