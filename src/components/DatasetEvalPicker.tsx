@@ -456,12 +456,6 @@ export function DatasetEvalPicker({
     const d = datasetMap.get(s.datasetId);
     return sum + (d?.imageCount ?? 0);
   }, 0);
-  const compatibleCount = value.filter((s) => {
-    const d = datasetMap.get(s.datasetId);
-    if (!d) return false;
-    const f = d.annotationFiles.find((x) => x.id === s.annotationFileId);
-    return computeCompat(f, modelClasses).status === "match";
-  }).length;
 
   return (
     <div className="rounded-lg border border-border bg-card">
