@@ -90,7 +90,6 @@ const App = () => (
                 <Route path="/settings" element={<ApiSettings />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/help/:slug" element={<HelpPage />} />
-                <Route path="/eval-picker-demo" element={<EvalPickerDemo />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
