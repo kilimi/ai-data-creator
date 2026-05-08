@@ -256,13 +256,8 @@ export function DatasetEvalPicker({
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
-      const file = bestAnnotationFile(
-        d.annotationFiles,
-        modelClasses,
-        modelTaskType
-      );
-      const coll =
-        d.collections.find((c) => c.isDefault) || d.collections[0];
+      const file = d.annotationFiles[0];
+      const coll = d.collections[0];
       onChange([
         ...value,
         {
