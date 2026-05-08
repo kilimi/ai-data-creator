@@ -463,7 +463,7 @@ export function EvaluateModelModal({
           {/* Dataset Selection - Dropdown Menu with Cards */}
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              
               <CardTitle className="text-base flex items-center gap-2">
                 <Database className="w-4 h-4" />
                 Datasets to Evaluate
