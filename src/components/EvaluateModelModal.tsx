@@ -372,12 +372,9 @@ export function EvaluateModelModal({
       // Reset form
       setEvaluationName('');
       setSelectedModel('');
-      setSelectedDataset('');
-      setSelectedAnnotation('');
       setSelectedDatasets([]);
       setDatasetCollections(new Map());
       setCollectionAnnotationCounts(new Map());
-      setUseGroundTruth(true);
       setConfThreshold(0.25);
       setIouThreshold(0.45);
       setUseGrid(false);
