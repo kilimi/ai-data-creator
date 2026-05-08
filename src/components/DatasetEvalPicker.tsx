@@ -11,23 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Search,
   ChevronRight,
   ChevronDown,
   Folder,
   Database,
   ImageIcon,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-  FileWarning,
-  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +26,7 @@ export interface PickerAnnotationFile {
   name: string;
   classes: string[];
   taskType?: "detection" | "segmentation" | "classification";
-  modifiedAt?: string; // ISO; used for sorting
+  modifiedAt?: string;
   annotationCount?: number;
 }
 
@@ -55,7 +44,7 @@ export interface PickerDataset {
   thumbnailUrl?: string;
   annotationFiles: PickerAnnotationFile[];
   collections: PickerCollection[];
-  lastUsedAt?: string; // ISO — drives "recent" pinning
+  lastUsedAt?: string;
 }
 
 export interface PickerGroup {
@@ -73,125 +62,16 @@ export interface DatasetSelection {
 interface Props {
   datasets: PickerDataset[];
   groups?: PickerGroup[];
-  modelClasses: string[]; // empty = "no model picked yet"
+  modelClasses: string[];
   modelTaskType?: "detection" | "segmentation" | "classification";
   value: DatasetSelection[];
   onChange: (next: DatasetSelection[]) => void;
-}
-
-// ── Compatibility helpers ──────────────────────────────────────────────────
-type Compatibility = {
-  status: "match" | "partial" | "none" | "no-gt" | "unknown";
-  matched: string[];
-  missing: string[];
-};
-
-function computeCompat(
-  file: PickerAnnotationFile | undefined,
-  modelClasses: string[]
-): Compatibility {
-  if (!file) return { status: "no-gt", matched: [], missing: [] };
-  if (modelClasses.length === 0)
-    return { status: "unknown", matched: [], missing: [] };
-  const lower = new Set(file.classes.map((c) => c.toLowerCase()));
-  const matched = modelClasses.filter((c) => lower.has(c.toLowerCase()));
-  const missing = modelClasses.filter((c) => !lower.has(c.toLowerCase()));
-  if (matched.length === modelClasses.length) {
-    return { status: "match", matched, missing };
-  }
-  if (matched.length === 0) return { status: "none", matched, missing };
-  return { status: "partial", matched, missing };
-}
-
-function bestAnnotationFile(
-  files: PickerAnnotationFile[],
-  modelClasses: string[],
-  modelTaskType?: string
-): PickerAnnotationFile | undefined {
-  if (files.length === 0) return undefined;
-  const scored = files.map((f) => {
-    const compat = computeCompat(f, modelClasses);
-    let score = 0;
-    if (modelTaskType && f.taskType === modelTaskType) score += 100;
-    if (compat.status === "match") score += 50;
-    else if (compat.status === "partial") score += 20;
-    score += compat.matched.length;
-    if (f.modifiedAt) score += new Date(f.modifiedAt).getTime() / 1e13;
-    return { f, score };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0].f;
-}
-
-function CompatBadge({ compat }: { compat: Compatibility }) {
-  const map = {
-    match: {
-      icon: CheckCircle2,
-      label: "Classes match",
-      className:
-        "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-    },
-    partial: {
-      icon: AlertTriangle,
-      label: "Partial match",
-      className:
-        "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-    },
-    none: {
-      icon: XCircle,
-      label: "No matching classes",
-      className: "bg-destructive/15 text-destructive border-destructive/30",
-    },
-    "no-gt": {
-      icon: FileWarning,
-      label: "No annotations",
-      className:
-        "bg-muted text-muted-foreground border-border",
-    },
-    unknown: {
-      icon: Sparkles,
-      label: "Pick a model",
-      className: "bg-muted text-muted-foreground border-border",
-    },
-  } as const;
-  const cfg = map[compat.status];
-  const Icon = cfg.icon;
-  const tip =
-    compat.status === "partial"
-      ? `Missing: ${compat.missing.join(", ") || "—"}`
-      : compat.status === "match"
-      ? "All model classes are present in this annotation file"
-      : compat.status === "none"
-      ? "None of the model classes appear in this annotation file"
-      : cfg.label;
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-              cfg.className
-            )}
-          >
-            <Icon className="h-3 w-3" />
-            {cfg.label}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs text-xs">
-          {tip}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
 export function DatasetEvalPicker({
   datasets,
   groups = [],
-  modelClasses,
-  modelTaskType,
   value,
   onChange,
 }: Props) {
@@ -214,25 +94,6 @@ export function DatasetEvalPicker({
     return m;
   }, [datasets]);
 
-  // best-compatibility for a dataset = best across its files
-  function datasetBestCompat(d: PickerDataset): Compatibility {
-    if (d.annotationFiles.length === 0)
-      return { status: "no-gt", matched: [], missing: [] };
-    const compats = d.annotationFiles.map((f) => computeCompat(f, modelClasses));
-    const order: Compatibility["status"][] = [
-      "match",
-      "partial",
-      "unknown",
-      "no-gt",
-      "none",
-    ];
-    compats.sort(
-      (a, b) => order.indexOf(a.status) - order.indexOf(b.status)
-    );
-    return compats[0];
-  }
-
-  // Filter + search
   function visible(d: PickerDataset) {
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
@@ -243,7 +104,6 @@ export function DatasetEvalPicker({
   const groupedIds = new Set<number>(groups.flatMap((g) => g.datasetIds));
   const ungrouped = datasets.filter((d) => !groupedIds.has(d.id) && visible(d));
 
-  // recent: ungrouped sorted by lastUsedAt desc
   const recent = [...ungrouped]
     .filter((d) => d.lastUsedAt)
     .sort(
@@ -278,20 +138,10 @@ export function DatasetEvalPicker({
     );
   }
 
-
-  // ── Renderers ────────────────────────────────────────────────────────────
   function DatasetRow({ d }: { d: PickerDataset }) {
     const sel = selectionMap.get(d.id);
     const isSelected = !!sel;
     const isExpanded = expanded.has(d.id);
-    const compat = datasetBestCompat(d);
-    const disabled = compat.status === "none";
-
-    const file =
-      sel?.annotationFileId
-        ? d.annotationFiles.find((f) => f.id === sel.annotationFileId)
-        : undefined;
-    const fileCompat = computeCompat(file, modelClasses);
 
     return (
       <div
@@ -300,25 +150,14 @@ export function DatasetEvalPicker({
           isSelected ? "border-primary/50 bg-primary/[0.03]" : "border-border"
         )}
       >
-        <div
-          className={cn(
-            "flex items-center gap-3 px-3 py-2",
-            disabled && "opacity-50"
-          )}
-        >
+        <div className="flex items-center gap-3 px-3 py-2">
           <Checkbox
             checked={isSelected}
-            disabled={disabled}
             onCheckedChange={(c) => toggleSelected(d, !!c)}
           />
-          {/* thumb */}
           <div className="h-9 w-9 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center">
             {d.thumbnailUrl ? (
-              <img
-                src={d.thumbnailUrl}
-                alt=""
-                className="h-full w-full object-cover"
-              />
+              <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" />
             ) : (
               <ImageIcon className="h-4 w-4 text-muted-foreground" />
             )}
@@ -334,14 +173,13 @@ export function DatasetEvalPicker({
                   n.has(d.id) ? n.delete(d.id) : n.add(d.id);
                   return n;
                 });
-              } else if (!disabled) {
+              } else {
                 toggleSelected(d, true);
               }
             }}
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className="font-medium text-sm truncate">{d.name}</span>
-              <CompatBadge compat={compat} />
             </div>
             <div className="text-xs text-muted-foreground flex items-center gap-3 mt-0.5">
               <span>{d.imageCount.toLocaleString()} images</span>
@@ -382,12 +220,9 @@ export function DatasetEvalPicker({
         {isSelected && isExpanded && (
           <div className="border-t border-border/60 px-3 py-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-muted/30">
             <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
-                  Ground truth
-                </label>
-                {file && <CompatBadge compat={fileCompat} />}
-              </div>
+              <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
+                Ground truth
+              </label>
               <Select
                 value={sel?.annotationFileId ?? "none"}
                 onValueChange={(v) =>
@@ -401,20 +236,18 @@ export function DatasetEvalPicker({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">No ground truth</SelectItem>
-                  {d.annotationFiles.map((f) => {
-                    const c = computeCompat(f, modelClasses);
-                    return (
-                      <SelectItem key={f.id} value={f.id}>
-                        <div className="flex items-center gap-2">
-                          <span>{f.name}</span>
+                  {d.annotationFiles.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      <div className="flex items-center gap-2">
+                        <span>{f.name}</span>
+                        {f.taskType && (
                           <span className="text-[10px] text-muted-foreground">
-                            ({f.taskType ?? "?"} ·{" "}
-                            {c.matched.length}/{modelClasses.length || "?"} cls)
+                            ({f.taskType})
                           </span>
-                        </div>
-                      </SelectItem>
-                    );
-                  })}
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -451,7 +284,6 @@ export function DatasetEvalPicker({
     );
   }
 
-  // Footer summary
   const totalImages = value.reduce((sum, s) => {
     const d = datasetMap.get(s.datasetId);
     return sum + (d?.imageCount ?? 0);
@@ -459,7 +291,6 @@ export function DatasetEvalPicker({
 
   return (
     <div className="rounded-lg border border-border bg-card">
-      {/* Header */}
       <div className="p-3 border-b border-border space-y-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -496,7 +327,6 @@ export function DatasetEvalPicker({
         </div>
       </div>
 
-      {/* Body */}
       <div className="max-h-[420px] overflow-y-auto p-3 space-y-4">
         {recent.length > 0 && (
           <section className="space-y-2">
@@ -523,10 +353,7 @@ export function DatasetEvalPicker({
               const visibleDs = dsInGroup.filter(visible);
               const isOpen = openGroups.has(g.id);
               return (
-                <div
-                  key={g.id}
-                  className="rounded-md border border-border bg-background"
-                >
+                <div key={g.id} className="rounded-md border border-border bg-background">
                   <div className="flex items-center justify-between px-2 py-1.5">
                     <button
                       type="button"
@@ -615,7 +442,6 @@ export function DatasetEvalPicker({
           )}
       </div>
 
-      {/* Sticky summary */}
       <div className="border-t border-border px-3 py-2 flex items-center gap-3 text-xs bg-muted/40 rounded-b-lg">
         <span className="font-medium">
           {value.length} dataset{value.length === 1 ? "" : "s"}
