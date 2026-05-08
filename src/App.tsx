@@ -27,7 +27,6 @@ const ApiSettings = lazy(() =>
 );
 const NotFound = lazy(() => import("./pages/NotFound"));
 const HelpPage = lazy(() => import("./pages/help/HelpPage"));
-const EvalPickerDemo = lazy(() => import("./pages/EvalPickerDemo"));
 
 function RouteFallback() {
   return (
