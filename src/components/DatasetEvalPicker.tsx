@@ -196,9 +196,7 @@ export function DatasetEvalPicker({
   onChange,
 }: Props) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "compatible" | "with-gt">(
-    "all"
-  );
+  const [filter, setFilter] = useState<"all" | "with-gt">("all");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
@@ -238,9 +236,6 @@ export function DatasetEvalPicker({
   function visible(d: PickerDataset) {
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
-    const compat = datasetBestCompat(d);
-    if (filter === "compatible" && !["match", "partial"].includes(compat.status))
-      return false;
     if (filter === "with-gt" && d.annotationFiles.length === 0) return false;
     return true;
   }
@@ -261,13 +256,8 @@ export function DatasetEvalPicker({
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
-      const file = bestAnnotationFile(
-        d.annotationFiles,
-        modelClasses,
-        modelTaskType
-      );
-      const coll =
-        d.collections.find((c) => c.isDefault) || d.collections[0];
+      const file = d.annotationFiles[0];
+      const coll = d.collections[0];
       onChange([
         ...value,
         {
@@ -288,27 +278,6 @@ export function DatasetEvalPicker({
     );
   }
 
-  function selectAllCompatible() {
-    const additions: DatasetSelection[] = [];
-    datasets.forEach((d) => {
-      if (selectionMap.has(d.id)) return;
-      const compat = datasetBestCompat(d);
-      if (compat.status === "match" || compat.status === "partial") {
-        const file = bestAnnotationFile(
-          d.annotationFiles,
-          modelClasses,
-          modelTaskType
-        );
-        const coll = d.collections.find((c) => c.isDefault) || d.collections[0];
-        additions.push({
-          datasetId: d.id,
-          annotationFileId: file?.id ?? null,
-          collectionId: coll?.id ?? null,
-        });
-      }
-    });
-    if (additions.length) onChange([...value, ...additions]);
-  }
 
   // ── Renderers ────────────────────────────────────────────────────────────
   function DatasetRow({ d }: { d: PickerDataset }) {
@@ -487,12 +456,6 @@ export function DatasetEvalPicker({
     const d = datasetMap.get(s.datasetId);
     return sum + (d?.imageCount ?? 0);
   }, 0);
-  const compatibleCount = value.filter((s) => {
-    const d = datasetMap.get(s.datasetId);
-    if (!d) return false;
-    const f = d.annotationFiles.find((x) => x.id === s.annotationFileId);
-    return computeCompat(f, modelClasses).status === "match";
-  }).length;
 
   return (
     <div className="rounded-lg border border-border bg-card">
@@ -508,27 +471,11 @@ export function DatasetEvalPicker({
               className="pl-8 h-9"
             />
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={selectAllCompatible}
-            disabled={modelClasses.length === 0}
-            title={
-              modelClasses.length === 0
-                ? "Pick a model first"
-                : "Select all datasets whose classes match the model"
-            }
-          >
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-            Select compatible
-          </Button>
         </div>
         <div className="flex items-center gap-1 text-xs">
           {(
             [
               ["all", "All"],
-              ["compatible", "Compatible"],
               ["with-gt", "Has GT"],
             ] as const
           ).map(([k, label]) => (
@@ -611,20 +558,8 @@ export function DatasetEvalPicker({
                         const additions: DatasetSelection[] = [];
                         dsInGroup.forEach((d) => {
                           if (selectionMap.has(d.id)) return;
-                          const compat = datasetBestCompat(d);
-                          if (
-                            compat.status === "none" ||
-                            compat.status === "no-gt"
-                          )
-                            return;
-                          const file = bestAnnotationFile(
-                            d.annotationFiles,
-                            modelClasses,
-                            modelTaskType
-                          );
-                          const coll =
-                            d.collections.find((c) => c.isDefault) ||
-                            d.collections[0];
+                          const file = d.annotationFiles[0];
+                          const coll = d.collections[0];
                           additions.push({
                             datasetId: d.id,
                             annotationFileId: file?.id ?? null,
@@ -634,7 +569,7 @@ export function DatasetEvalPicker({
                         if (additions.length) onChange([...value, ...additions]);
                       }}
                     >
-                      Add compatible
+                      Add all
                     </Button>
                   </div>
                   {isOpen && visibleDs.length > 0 && (
@@ -689,20 +624,6 @@ export function DatasetEvalPicker({
         <span className="text-muted-foreground">
           {totalImages.toLocaleString()} images
         </span>
-        {modelClasses.length > 0 && value.length > 0 && (
-          <>
-            <span className="text-muted-foreground">·</span>
-            <span
-              className={cn(
-                compatibleCount === value.length
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-amber-600 dark:text-amber-400"
-              )}
-            >
-              {compatibleCount}/{value.length} fully compatible
-            </span>
-          </>
-        )}
       </div>
     </div>
   );
