@@ -5,20 +5,16 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Brain, Database, ChevronDown, ChevronUp, X, ImageIcon, FileText, CheckCircle2, Circle, Plus, Trash2, Users } from "lucide-react";
-import { useState, useEffect } from "react";
+import { Brain, Database, ChevronDown, ChevronUp, X } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useApi } from "@/hooks/use-api";
 import { Dataset, DatasetGroup, ImageCollection } from "@/types";
+import {
+  DatasetEvalPicker,
+  type DatasetSelection,
+  type PickerDataset,
+  type PickerGroup,
+} from "@/components/DatasetEvalPicker";
 
 interface AnnotationClass {
   className: string;
