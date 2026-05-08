@@ -353,9 +353,29 @@ export function AnnotationsContent({
           const usedColors = new Set(Object.values(file.classColors || {}));
           
           // Convert to our format
+          // Build a quick lookup so we can fall back to dataset-image dims when
+          // the backend's AnnotationFileImage row is missing width/height.
+          // Without a reference space, segmentation polygons (stored as raw
+          // pixel coords) get drawn outside the displayed image and appear
+          // invisible — the bug users hit on Segmentation files.
+          const imageDimsLookup: Record<string, { width: number; height: number }> = {};
+          imagesMemo.forEach(img => {
+            if (img.width && img.height) {
+              imageDimsLookup[String(img.id)] = { width: img.width, height: img.height };
+            }
+          });
+
           const currentPageAnnotations = annotationDataResponse.data.annotations.map((anno: any): AnnotationSample => {
             const color = getOrAssignClassColor(anno.className, file.classColors || {}, usedColors);
             usedColors.add(color); // Track this color as used
+            const fallbackDims = imageDimsLookup[String(anno.imageId)];
+            const refW = anno.imageWidth || fallbackDims?.width || undefined;
+            const refH = anno.imageHeight || fallbackDims?.height || undefined;
+            if (!anno.imageWidth || !anno.imageHeight) {
+              console.warn(
+                `Annotation ${anno.id} for image ${anno.imageId} missing imageWidth/Height from backend; falling back to dataset image dims (${refW}x${refH}). Run backend/repair_annotation_file_images.py if this is widespread.`
+              );
+            }
             const annotationSample = {
               id: anno.id || `annotation_${anno.cocoAnnotationId || Math.random()}`,
               imageId: anno.imageId,
@@ -368,8 +388,8 @@ export function AnnotationsContent({
               isVisible: true, // This controls mask visibility
               showBboxes: bboxState !== false,
               annotationFileName: file.name,
-              referenceImageWidth: anno.imageWidth || undefined,
-              referenceImageHeight: anno.imageHeight || undefined,
+              referenceImageWidth: refW,
+              referenceImageHeight: refH,
             };
             console.log(`Converted annotation for image ${anno.imageId}:`, annotationSample);
             return annotationSample;
