@@ -318,14 +318,42 @@ export function EvaluateModelModal({
     });
     setSelectedDatasets(newConfigs);
 
-    // Enrich any newly added datasets, then load classes & counts
+    // Enrich any newly added datasets, then load classes & counts and apply defaults
     for (const sel of next) {
       if (!prevIds.has(sel.datasetId)) {
         const dataset = datasets.find(d => d.id === sel.datasetId);
         if (dataset) {
           const { annotationFiles } = await enrichDataset(dataset);
-          // Load classes for all annotation files of this dataset (powers compat badges)
           annotationFiles.forEach((f: any) => void loadFileClasses(sel.datasetId, String(f.id)));
+
+          // Apply defaults: first annotation file (if exists) and first/default collection
+          const colsResp = await api.getImageCollections(sel.datasetId).catch(() => null);
+          const cols = (colsResp && (colsResp as any).success && (colsResp as any).data) || [];
+          setDatasetCollections(prev => {
+            const n = new Map(prev);
+            n.set(sel.datasetId, cols as any[]);
+            return n;
+          });
+          const defaultFileId = sel.annotationFileId
+            ?? (annotationFiles.length > 0 ? String(annotationFiles[0].id) : null);
+          const defaultColl = (cols as any[]).find((c: any) => c.is_default) || (cols as any[])[0];
+          const defaultCollId = sel.collectionId ?? (defaultColl ? String(defaultColl.id) : null);
+
+          if (defaultFileId !== sel.annotationFileId || defaultCollId !== sel.collectionId) {
+            const file = annotationFiles.find((f: any) => String(f.id) === defaultFileId);
+            setSelectedDatasets(prev => prev.map(s =>
+              s.datasetId === sel.datasetId
+                ? {
+                    ...s,
+                    annotationFileId: defaultFileId,
+                    annotationFileName: file ? (file.file_name || file.name) : s.annotationFileName,
+                    collectionId: defaultCollId,
+                  }
+                : s
+            ));
+          }
+          if (defaultFileId) void fetchCollectionCountsForSelection(sel.datasetId, defaultFileId);
+          continue;
         }
       }
       if (sel.annotationFileId) void fetchCollectionCountsForSelection(sel.datasetId, sel.annotationFileId);
