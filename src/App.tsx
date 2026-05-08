@@ -27,6 +27,7 @@ const ApiSettings = lazy(() =>
 );
 const NotFound = lazy(() => import("./pages/NotFound"));
 const HelpPage = lazy(() => import("./pages/help/HelpPage"));
+const EvalPickerDemo = lazy(() => import("./pages/EvalPickerDemo"));
 
 function RouteFallback() {
   return (
@@ -90,6 +91,7 @@ const App = () => (
                 <Route path="/settings" element={<ApiSettings />} />
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/help/:slug" element={<HelpPage />} />
+                <Route path="/eval-picker-demo" element={<EvalPickerDemo />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
