@@ -102,6 +102,7 @@ export default function ProjectModels() {
   const [modalResourcesLoading, setModalResourcesLoading] = useState(false);
   const [downloadModel, setDownloadModel] = useState<{ id: number; name: string } | null>(null);
   const [testInference, setTestInference] = useState<{ id: number; name: string } | null>(null);
+  const [trainModalCloneTaskId, setTrainModalCloneTaskId] = useState<number | null>(null);
 
   const trainingTasksRef = useRef<any[]>([]);
   trainingTasksRef.current = trainingTasks;
@@ -346,7 +347,10 @@ export default function ProjectModels() {
             variant="default" 
             size="sm" 
             className="whitespace-nowrap ml-2"
-            onClick={() => setShowTrainModelModal(true)}
+            onClick={() => {
+              setTrainModalCloneTaskId(null);
+              setShowTrainModelModal(true);
+            }}
           >
             <Brain className="w-4 h-4 mr-2" />
             Train Model
@@ -437,6 +441,10 @@ export default function ProjectModels() {
                   setRenamingTask({ id: task.id, name: task.name });
                   setNewTaskName(task.name);
                 }}
+                onDuplicateSettings={() => {
+                  setTrainModalCloneTaskId(task.id);
+                  setShowTrainModelModal(true);
+                }}
                 onRerun={() => handleRerunTask(task)}
                 onDelete={() => handleDeleteTask(task)}
                 onTestInference={() => setTestInference({ id: task.id, name: task.name })}
@@ -454,7 +462,13 @@ export default function ProjectModels() {
           <p className="text-muted-foreground mb-6">
             This project doesn't have any training tasks yet. Train your first model to get started.
           </p>
-          <Button variant="outline" onClick={() => setShowTrainModelModal(true)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setTrainModalCloneTaskId(null);
+              setShowTrainModelModal(true);
+            }}
+          >
             <Brain className="w-4 h-4 mr-2" />
             Train Model
           </Button>
@@ -467,6 +481,7 @@ export default function ProjectModels() {
         onOpenChange={(open) => {
           setShowTrainModelModal(open);
           if (!open) {
+            setTrainModalCloneTaskId(null);
             setTimeout(() => fetchTrainingTasks(), 1000);
           }
         }}
@@ -474,6 +489,7 @@ export default function ProjectModels() {
         datasetGroups={datasetGroups}
         resourcesLoading={modalResourcesLoading}
         projectId={id || ''}
+        cloneFromTaskId={trainModalCloneTaskId}
       />
 
       {/* Error Details Modal */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -37,6 +37,7 @@ import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from "@/hooks/use-toast";
+import { parseYoloPresetFromModelType, rtdetrVariantFromStored } from '@/utils/trainingCloneSettings';
 
 interface TrainModelModalProps {
   open: boolean;
@@ -46,6 +47,8 @@ interface TrainModelModalProps {
   /** When true, datasets/groups are still loading after the dialog opened */
   resourcesLoading?: boolean;
   projectId: string;
+  /** When set with `open`, load this task's saved training settings into the form (does not start training). */
+  cloneFromTaskId?: number | null;
 }
 
 interface DatasetSelection {
@@ -94,7 +97,7 @@ const LABEL_FOR_SIZE: Record<string, string> = {
   x: 'X-Large',
 };
 
-export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId }: TrainModelModalProps) {
+export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null }: TrainModelModalProps) {
   const { api } = useApi();
   const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
@@ -469,13 +472,203 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       project: '',
       entity: ''
     });
+    setCustomName('');
+    setRemoveImagesWithoutAnnotations(true);
   };
+
+  const fetchDataForSelectionRef = useRef(fetchDataForSelection);
+  fetchDataForSelectionRef.current = fetchDataForSelection;
+
+  const lastSuccessfulCloneKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       resetForm();
+      lastSuccessfulCloneKeyRef.current = null;
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || cloneFromTaskId == null || resourcesLoading) return;
+    if (datasets.length === 0) return;
+
+    const key = `task-${cloneFromTaskId}`;
+    if (lastSuccessfulCloneKeyRef.current === key) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const res = await fetch(`http://localhost:9999/tasks/${cloneFromTaskId}`);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const task = await res.json();
+        const md = task.task_metadata || {};
+        const rawCfgs = md.dataset_configs;
+        if (!Array.isArray(rawCfgs) || rawCfgs.length === 0) {
+          if (!cancelled) {
+            toast({
+              title: 'Could not copy settings',
+              description: 'This training task has no saved dataset configuration in metadata.',
+              variant: 'destructive',
+            });
+            lastSuccessfulCloneKeyRef.current = key;
+          }
+          return;
+        }
+
+        type CfgRow = {
+          dataset_id?: number | string;
+          annotation_file_id?: number | string;
+          image_collection?: string;
+          split?: { train: number; val: number; test: number };
+        };
+
+        const newSelections: DatasetSelection[] = [];
+        for (const row of rawCfgs as CfgRow[]) {
+          const dsId = Number(row.dataset_id);
+          const annRaw = row.annotation_file_id;
+          if (!Number.isFinite(dsId) || annRaw === undefined || annRaw === null) continue;
+
+          const dataset = datasets.find((d) => d.id === dsId);
+          if (!dataset) continue;
+
+          newSelections.push({
+            id: `clone-${cloneFromTaskId}-${dsId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            dataset,
+            imageCollection: row.image_collection || '',
+            annotation: String(annRaw),
+            imageCollections: [],
+            annotations: [],
+            loadingCollections: false,
+            loadingAnnotations: false,
+            split: row.split || { train: 80, val: 20, test: 0 },
+          });
+        }
+
+        if (newSelections.length === 0) {
+          if (!cancelled) {
+            toast({
+              title: 'Could not copy settings',
+              description:
+                'None of the saved datasets from this task are available in this project anymore.',
+              variant: 'destructive',
+            });
+            lastSuccessfulCloneKeyRef.current = key;
+          }
+          return;
+        }
+
+        const tp = md.training_params || {};
+        const rawModel =
+          (typeof md.model_variant === 'string' ? md.model_variant : null) ||
+          (typeof md.model_type === 'string' ? md.model_type : '') ||
+          (md.model_config && typeof md.model_config === 'object' ? (md.model_config as { model?: string }).model : '') ||
+          '';
+
+        const isRf =
+          String(md.model_type || '').toLowerCase() === 'rtdetr' || /rtdetr/i.test(String(rawModel));
+
+        const epochs = tp.epochs ?? md.epochs ?? (isRf ? 300 : 100);
+        const batchSize = tp.batch_size ?? 16;
+        const imageSize = tp.image_size ?? tp.imgsz ?? md.image_size ?? 640;
+        const device = tp.device ?? '0';
+        const patience = tp.patience ?? 50;
+        const savePeriod = tp.save_period ?? -1;
+
+        if (!cancelled) {
+          setSelectedDatasets(newSelections);
+          newSelections.forEach((sel) => fetchDataForSelectionRef.current(sel.id, sel.dataset.id));
+
+          const removeUnannotated =
+            md.remove_images_without_annotations !== undefined &&
+            md.remove_images_without_annotations !== null
+              ? Boolean(md.remove_images_without_annotations)
+              : true;
+          setRemoveImagesWithoutAnnotations(removeUnannotated);
+
+          if (isRf) {
+            const variant = rtdetrVariantFromStored(String(rawModel));
+            setSelectedModel('rf-detr');
+            setModelSettings({
+              variant,
+              epochs,
+              batchSize,
+              imageSize,
+              device,
+              patience,
+              optimizer: tp.optimizer ?? 'AdamW',
+              learningRate: tp.lr0 ?? tp.learning_rate ?? 0.0001,
+              weightDecay: tp.weight_decay ?? 0.0001,
+              savePeriod,
+            });
+          } else {
+            const preset = parseYoloPresetFromModelType(String(rawModel));
+            let taskKind: 'detection' | 'segmentation' | 'classification' =
+              preset?.task ?? 'segmentation';
+            const mcTask = md.model_config && typeof md.model_config === 'object' ? (md.model_config as { task?: string }).task : '';
+            const tLower = String(mcTask || '').toLowerCase();
+            if (tLower.includes('seg')) taskKind = 'segmentation';
+            else if (tLower.includes('cls') || tLower.includes('classif')) taskKind = 'classification';
+            else if (tLower.includes('detect') || tLower === 'detection' || tLower === 'detect') taskKind = 'detection';
+
+            const yoloPreset = preset ?? {
+              version: 'yolo11',
+              size: 'n',
+              task: taskKind,
+              modelSize: 'yolo11n-seg.pt',
+            };
+
+            const augmentationsClone =
+              md.model_config && typeof md.model_config === 'object'
+                ? (md.model_config as { augmentations?: Record<string, unknown> }).augmentations || {}
+                : {};
+
+            setSelectedModel('yolo');
+            setModelSettings({
+              version: yoloPreset.version,
+              size: yoloPreset.size,
+              task: taskKind,
+              modelSize: yoloPreset.modelSize,
+              epochs,
+              batchSize,
+              imageSize,
+              device,
+              patience,
+              optimizer: tp.optimizer ?? 'auto',
+              learningRate: tp.lr0 ?? tp.learning_rate ?? 0.01,
+              momentum: tp.momentum ?? 0.937,
+              weightDecay: tp.weight_decay ?? 0.0005,
+              savePeriod,
+              augmentations: augmentationsClone,
+            });
+          }
+
+          toast({
+            title: 'Training form filled',
+            description: 'Review settings and press Train Model when ready.',
+          });
+          lastSuccessfulCloneKeyRef.current = key;
+        }
+      } catch (e) {
+        if (!cancelled) {
+          toast({
+            title: 'Could not load task settings',
+            description: e instanceof Error ? e.message : 'Unknown error',
+            variant: 'destructive',
+          });
+          lastSuccessfulCloneKeyRef.current = key;
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, cloneFromTaskId, resourcesLoading, datasets, toast]);
 
   return (
     <>

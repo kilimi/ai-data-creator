@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
-from urllib.parse import urlparse
 import numpy as np
 import time
 from PIL import Image as PILImage
@@ -18,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.celery_app import celery_app
+from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.evaluation_artifacts import write_evaluation_blobs
 from app.models import Task as TaskModel, Annotation, AnnotationClass, AnnotationFile, Dataset, Image
 
@@ -189,70 +189,23 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def _resolve_evaluation_image_path(img: Image, project_id: int, dataset_id: int) -> Optional[Path]:
+def _resolve_evaluation_image_path(
+    img: Image,
+    project_id: int,
+    dataset_id: int,
+    collection_id: Optional[int] = None,
+) -> Optional[Path]:
     """
-    Resolve the on-disk image path for evaluation.
-
-    Supports both current storage (`projects/{project}/{dataset}/images/...`) and
-    legacy paths, plus URL-based resolution when metadata points to a static URL.
+    Resolve on-disk path for evaluation (delegates to dataset_media_paths).
+    Handles collection subfolders (c<id>/), URL-derived paths, and filesystem
+    drift after dataset moves (files under a different project folder).
     """
-    candidates: List[Path] = []
-    file_name = (getattr(img, "file_name", None) or "").strip()
-    file_basename = Path(file_name).name if file_name else ""
-
-    # Current canonical location.
-    if file_name:
-        candidates.append(Path("projects") / str(project_id) / str(dataset_id) / "images" / file_name)
-    if file_basename and file_basename != file_name:
-        candidates.append(Path("projects") / str(project_id) / str(dataset_id) / "images" / file_basename)
-    # Legacy location.
-    if file_name:
-        candidates.append(Path("data") / "images" / str(dataset_id) / file_name)
-    if file_basename and file_basename != file_name:
-        candidates.append(Path("data") / "images" / str(dataset_id) / file_basename)
-
-    # If URL is stored, convert /static/... and absolute variants back to local paths.
-    img_url = (img.url or "").strip()
-    if img_url:
-        parsed = urlparse(img_url)
-        url_path = (parsed.path or img_url).lstrip("/")
-        if url_path.startswith("static/"):
-            url_path = url_path[len("static/"):]
-        if url_path:
-            p = Path(url_path)
-            candidates.append(p)
-            if not str(p).startswith("projects"):
-                candidates.append(Path("projects") / p)
-
-    # Absolute in-container path (if any caller stores it directly).
-    if file_name:
-        candidates.append(Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / file_name)
-        candidates.append(Path("/app/data") / "images" / str(dataset_id) / file_name)
-    if file_basename and file_basename != file_name:
-        candidates.append(Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / file_basename)
-        candidates.append(Path("/app/data") / "images" / str(dataset_id) / file_basename)
-
-    seen = set()
-    for candidate in candidates:
-        key = str(candidate)
-        if key in seen:
-            continue
-        seen.add(key)
-        if candidate.exists():
-            return candidate.resolve()
-
-    # Last-chance fallback for legacy filename/url drift:
-    # search by basename inside the dataset images root.
-    if file_basename:
-        dataset_images_root = Path("projects") / str(project_id) / str(dataset_id) / "images"
-        if dataset_images_root.exists():
-            try:
-                for match in sorted(dataset_images_root.rglob(file_basename)):
-                    if match.is_file():
-                        return match.resolve()
-            except Exception:
-                pass
-    return None
+    return resolve_dataset_image_path_from_models(
+        img,
+        dataset_id=int(dataset_id),
+        project_id=int(project_id),
+        collection_id=collection_id,
+    )
 
 
 class EvaluationTask(Task):
@@ -599,7 +552,7 @@ def evaluate_model(
         if use_grid:
             # Run inference on each image
             for idx, img in enumerate(images):
-                img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
+                img_path = _resolve_evaluation_image_path(img, project_id, dataset_id, collection_id)
                 if img_path is None:
                     logger.warning(
                         "Image file not found for evaluation: file=%s dataset_id=%s project_id=%s url=%s",
@@ -841,7 +794,7 @@ def evaluate_model(
             valid_items: List[Tuple[Image, Path]] = []
             missing_paths = 0
             for img in images:
-                img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
+                img_path = _resolve_evaluation_image_path(img, project_id, dataset_id, collection_id)
                 if img_path is None:
                     missing_paths += 1
                     logger.warning(

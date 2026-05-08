@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
+  CopyPlus,
   Download,
   MoreHorizontal,
   Pencil,
@@ -201,6 +202,8 @@ export interface TrainingCardProps {
   modelSize: string;
   onOpen?: () => void;
   onRename?: () => void;
+  /** Open new training form pre-filled from this task (does not start training). */
+  onDuplicateSettings?: () => void;
   onRerun?: () => void;
   onDelete?: () => void;
   onTestInference?: () => void;
@@ -215,6 +218,7 @@ export function TrainingCard({
   modelSize,
   onOpen,
   onRename,
+  onDuplicateSettings,
   onRerun,
   onDelete,
   onTestInference,
@@ -406,6 +410,12 @@ export function TrainingCard({
                   <DropdownMenuItem onClick={onRename}>
                     <Pencil className="w-4 h-4 mr-2" />
                     Rename
+                  </DropdownMenuItem>
+                )}
+                {onDuplicateSettings && (
+                  <DropdownMenuItem onClick={onDuplicateSettings}>
+                    <CopyPlus className="w-4 h-4 mr-2" />
+                    Create new with same settings
                   </DropdownMenuItem>
                 )}
                 {onDelete && (

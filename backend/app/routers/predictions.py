@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any, List
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime
@@ -15,20 +15,40 @@ import io
 
 from ..database import get_db
 from ..evaluation_artifacts import load_merged_evaluation_results
+from ..dataset_media_paths import resolve_dataset_image_path_from_models
 from ..models import Task, Dataset, Image, ImageCollection
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _slug_for_attachment_filename(
+    part: Optional[str], default: str, max_len: int = 72
+) -> str:
+    """Stable ASCII-ish slug for downloadable filenames (avoid path / header issues)."""
+    if not part or not str(part).strip():
+        return default
+    raw = str(part).strip()
+    slug = "".join(
+        (c if c.isascii() and (c.isalnum() or c in ("_", "-")) else "_") for c in raw
+    )
+    slug = slug.strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    slug = slug[:max_len].strip("_")
+    return slug or default
+
+
+def _content_disposition_attachment(filename_safe: str) -> str:
+    """Content-Disposition for downloads (sanitize quotes)."""
+    safe = filename_safe.replace('"', "'")
+    return f'attachment; filename="{safe}"'
+
+
 def _resolve_eval_image_path(
     img: Image, project_id: Optional[int], dataset_id: int
 ) -> Optional[Path]:
-    """Resolve image path for evaluation/snapshot serving.
-
-    Tries multiple known layouts and the URL stored on the image. Returns None
-    if nothing on disk matches; never raises.
-    """
+    """Resolve image path for evaluation/snapshot serving (shared logic with Celery evaluation)."""
     file_name = (getattr(img, "file_name", None) or "").strip()
     if not file_name:
         logger.warning(
@@ -37,71 +57,21 @@ def _resolve_eval_image_path(
         )
         return None
 
-    candidates: List[Path] = []
-    pid_str = str(project_id) if project_id else None
-    ds_str = str(dataset_id)
-
-    if pid_str:
-        candidates.extend(
-            [
-                Path("projects") / pid_str / ds_str / "images" / file_name,
-                Path("/app/projects") / pid_str / ds_str / "images" / file_name,
-            ]
+    resolved = resolve_dataset_image_path_from_models(
+        img,
+        dataset_id=int(dataset_id),
+        project_id=project_id,
+    )
+    if resolved is None:
+        logger.info(
+            "Eval image not resolved on disk: image_id=%s dataset_id=%s project_id=%s file_name=%s url=%s",
+            getattr(img, "id", None),
+            dataset_id,
+            project_id,
+            file_name,
+            (getattr(img, "url", None) or "").strip(),
         )
-    candidates.extend(
-        [
-            Path("data") / "images" / ds_str / file_name,
-            Path("/app/data") / "images" / ds_str / file_name,
-        ]
-    )
-
-    img_url = (getattr(img, "url", None) or "").strip()
-    if img_url:
-        url_path = img_url.lstrip("/")
-        if url_path.startswith("static/"):
-            url_path = url_path[len("static/") :]
-        if url_path:
-            try:
-                p = Path(url_path)
-                candidates.append(p)
-                candidates.append(Path("/app") / p)
-                if not str(p).startswith("projects"):
-                    candidates.append(Path("projects") / p)
-                    candidates.append(Path("/app/projects") / p)
-            except Exception as e:
-                logger.warning(
-                    "Bad image URL while resolving path image_id=%s url=%s: %s",
-                    getattr(img, "id", None),
-                    img_url,
-                    e,
-                )
-
-    seen = set()
-    for candidate in candidates:
-        try:
-            key = str(candidate)
-        except Exception:
-            continue
-        if key in seen:
-            continue
-        seen.add(key)
-        try:
-            if candidate.exists() and candidate.is_file():
-                return candidate.resolve()
-        except Exception as e:
-            logger.warning("Failed checking candidate %s: %s", candidate, e)
-            continue
-
-    logger.info(
-        "Eval image not resolved on disk: image_id=%s dataset_id=%s project_id=%s file_name=%s url=%s tried=%s",
-        getattr(img, "id", None),
-        dataset_id,
-        project_id,
-        file_name,
-        img_url,
-        [str(c) for c in candidates],
-    )
-    return None
+    return resolved
 
 
 class DatasetEvalConfig(BaseModel):
@@ -645,14 +615,17 @@ async def export_coco_results(
                 "segmentation": segmentation
             })
         
-        # Create filename
-        filename = f"evaluation_{task_id}_coco.json"
-        
+        meta = task.task_metadata or {}
+        ds_label = dataset.name or meta.get("dataset_name") or ""
+        eval_slug = _slug_for_attachment_filename(task.name, f"evaluation_{task_id}")
+        ds_slug = _slug_for_attachment_filename(
+            str(ds_label) if ds_label else None, f"dataset_{dataset_id}"
+        )
+        filename = f"{eval_slug}_{task_id}_{ds_slug}_coco.json"
+
         return JSONResponse(
             content=coco_output,
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}"
-            }
+            headers={"Content-Disposition": _content_disposition_attachment(filename)},
         )
         
     except HTTPException:
@@ -687,7 +660,9 @@ async def export_all_coco_results(
         child_task_ids = metadata.get('child_task_ids', [])
         if not child_task_ids:
             raise HTTPException(status_code=404, detail="No child tasks found")
-        
+
+        eval_slug_zip = _slug_for_attachment_filename(task.name, f"evaluation_{task_id}")
+
         # Create a ZIP file in memory
         zip_buffer = io.BytesIO()
         
@@ -778,19 +753,26 @@ async def export_all_coco_results(
                         "segmentation": segmentation
                     })
                 
-                # Add to ZIP
-                safe_dataset_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in dataset_name)
-                filename = f"{safe_dataset_name}_coco.json"
-                zip_file.writestr(filename, json.dumps(coco_output, indent=2))
+                # Add to ZIP: parent-eval slug + parent id + child id + dataset slug
+                ds_slug_inner = _slug_for_attachment_filename(
+                    str(dataset_name) if dataset_name else None,
+                    f"dataset_{dataset_id}",
+                )
+                inner_name = (
+                    f"{eval_slug_zip}_{task_id}_{child_task.id}_{ds_slug_inner}_coco.json"
+                )
+                zip_file.writestr(inner_name, json.dumps(coco_output, indent=2))
         
         zip_buffer.seek(0)
-        
+
+        zip_filename = f"{eval_slug_zip}_{task_id}_coco_all.zip"
+
         return StreamingResponse(
             zip_buffer,
             media_type="application/zip",
             headers={
-                "Content-Disposition": f"attachment; filename=evaluation_{task_id}_all_coco.zip"
-            }
+                "Content-Disposition": _content_disposition_attachment(zip_filename),
+            },
         )
         
     except HTTPException:

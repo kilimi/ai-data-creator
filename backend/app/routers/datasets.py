@@ -27,6 +27,173 @@ from .. import models, schemas
 from ..database import get_db, SessionLocal
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _primary_projects_disk_root() -> Path:
+    """ Writable ``projects`` directory used for uploads (Docker: /app/projects ). """
+    candidates: List[Path] = []
+    env = os.environ.get("LAI_PROJECTS_ROOT", "").strip()
+    if env:
+        candidates.append(Path(env))
+    backend_root = Path(__file__).resolve().parents[2]  # .../backend
+    repo_root = backend_root.parent
+    candidates.extend(
+        [
+            Path("/app/projects"),
+            Path("projects"),
+            backend_root / "projects",
+            repo_root / "projects",
+            repo_root / ".lai-data" / "projects",
+        ]
+    )
+    seen = set()
+    for raw in candidates:
+        p = raw.resolve() if raw.exists() else raw
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if p.is_dir():
+                return p.resolve()
+        except OSError:
+            continue
+    base = Path("projects")
+    base.mkdir(parents=True, exist_ok=True)
+    return base.resolve()
+
+
+def _apply_storage_url_rewrite_for_project_move(
+    db: Session,
+    dataset: models.Dataset,
+    *,
+    dataset_id: int,
+    old_project_id: int,
+    new_project_id: int,
+) -> None:
+    """Update dataset + image rows so /static/projects/<old>/ paths match the new project folder."""
+    for field_name in ("logo_url", "thumbnailUrl", "url"):
+        val = getattr(dataset, field_name, None)
+        if val:
+            setattr(
+                dataset,
+                field_name,
+                _rewrite_dataset_storage_url_segment(
+                    val,
+                    old_project_id=old_project_id,
+                    new_project_id=new_project_id,
+                    dataset_id=dataset_id,
+                ),
+            )
+    for im in (
+        db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
+    ):
+        if im.url:
+            im.url = _rewrite_dataset_storage_url_segment(
+                im.url,
+                old_project_id=old_project_id,
+                new_project_id=new_project_id,
+                dataset_id=dataset_id,
+            )
+        if im.thumbnail_url:
+            im.thumbnail_url = _rewrite_dataset_storage_url_segment(
+                im.thumbnail_url,
+                old_project_id=old_project_id,
+                new_project_id=new_project_id,
+                dataset_id=dataset_id,
+            )
+
+
+def _rewrite_dataset_storage_url_segment(
+    value: Optional[str],
+    *,
+    old_project_id: int,
+    new_project_id: int,
+    dataset_id: int,
+) -> Optional[str]:
+    """Rewrite paths pointing at projects/<old_pid>/<dataset_id>/ to new project id."""
+    if value is None or value == "":
+        return value
+    pairs = (
+        (
+            f"/static/projects/{old_project_id}/{dataset_id}/",
+            f"/static/projects/{new_project_id}/{dataset_id}/",
+        ),
+        (
+            f"/projects/{old_project_id}/{dataset_id}/",
+            f"/projects/{new_project_id}/{dataset_id}/",
+        ),
+        (
+            f"projects/{old_project_id}/{dataset_id}/",
+            f"projects/{new_project_id}/{dataset_id}/",
+        ),
+        # Windows-style URLs occasionally stored incorrectly
+        (
+            f"/static/projects\\{old_project_id}\\{dataset_id}\\",
+            f"/static/projects/{new_project_id}/{dataset_id}/",
+        ),
+    )
+    out = value
+    for old_seg, new_seg in pairs:
+        out = out.replace(old_seg, new_seg)
+    return out
+
+
+def _filesystem_relocate_dataset_tree(
+    old_project_id: int,
+    new_project_id: int,
+    dataset_id: int,
+) -> tuple[bool, Optional[str]]:
+    """
+    Move ``projects/<old>/<dataset_id>/`` -> ``projects/<new>/<dataset_id>/``.
+    Returns (did_relocate_tree, None) or (False, error_message_on_failure).
+    ``did_relocate`` is False if source tree did not exist (nothing to move).
+    """
+    root = _primary_projects_disk_root()
+    src = root / str(old_project_id) / str(dataset_id)
+    dst_parent = root / str(new_project_id)
+    dst = dst_parent / str(dataset_id)
+
+    try:
+        if not src.exists():
+            logger.warning(
+                "Dataset move: no filesystem tree at %s (dataset_id=%s)",
+                src,
+                dataset_id,
+            )
+            return False, None
+
+        dst_parent.mkdir(parents=True, exist_ok=True)
+
+        if dst.exists():
+            try:
+                if dst.samefile(src):
+                    return False, None
+            except OSError:
+                pass
+            # Collision: refuse rather than merge silently.
+            if any(dst.iterdir()):
+                return False, (
+                    f"Target dataset directory already exists and is not empty: {dst}. "
+                    "Rename or remove it before moving this dataset."
+                )
+            try:
+                shutil.rmtree(dst)
+            except OSError as exc:
+                return False, f"Cannot clear empty target directory {dst}: {exc}"
+
+        shutil.move(str(src), str(dst))
+        logger.info(
+            "Moved dataset filesystem tree %s -> %s",
+            src,
+            dst,
+        )
+        return True, None
+
+    except OSError as exc:
+        return False, f"Failed to move dataset files from {src} to {dst}: {exc}"
+
 
 
 # --------------------------------------------------------------------------- #
@@ -308,6 +475,9 @@ async def update_dataset(
     logo: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
+    filesystem_moved = False
+    put_old_pid: Optional[int] = None
+    put_new_pid: Optional[int] = None
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if dataset is None:
@@ -321,16 +491,43 @@ async def update_dataset(
             target_project = db.query(models.Project).filter(models.Project.id == project_id).first()
             if target_project is None:
                 raise HTTPException(status_code=404, detail="Target project not found")
-            dataset.project_id = project_id
+            moved_id_put = int(dataset_id)
+            new_pid_put = int(project_id)
+            if old_project_id is not None:
+                did_move_put, fs_err_put = _filesystem_relocate_dataset_tree(
+                    int(old_project_id),
+                    new_pid_put,
+                    moved_id_put,
+                )
+                if fs_err_put:
+                    code = (
+                        409 if "already exists" in fs_err_put.lower() else 500
+                    )
+                    raise HTTPException(status_code=code, detail=fs_err_put)
+                if did_move_put:
+                    filesystem_moved = True
+                    put_old_pid = int(old_project_id)
+                    put_new_pid = new_pid_put
+            dataset.project_id = new_pid_put
+
+            if old_project_id is not None:
+                _apply_storage_url_rewrite_for_project_move(
+                    db,
+                    dataset,
+                    dataset_id=moved_id_put,
+                    old_project_id=int(old_project_id),
+                    new_project_id=new_pid_put,
+                )
 
             # Keep dataset groups consistent in the source project.
             if old_project_id is not None:
-                moved_id = int(dataset_id)
-                groups = db.query(models.DatasetGroup).filter(models.DatasetGroup.project_id == old_project_id).all()
+                groups = db.query(models.DatasetGroup).filter(
+                    models.DatasetGroup.project_id == old_project_id
+                ).all()
                 for group in groups:
                     ids = group.datasets_list or []
-                    if moved_id in ids:
-                        group.datasets_list = [x for x in ids if int(x) != moved_id]
+                    if moved_id_put in ids:
+                        group.datasets_list = [x for x in ids if int(x) != moved_id_put]
         if logo:
             logo_data = await logo.read()
             dataset.logo = logo_data  # Store full image in binary field
@@ -368,9 +565,32 @@ async def update_dataset(
             logo_url=dataset.logo_url,
             url=dataset.url
         )
+    except HTTPException as exc:
+        db.rollback()
+        if filesystem_moved and put_old_pid is not None and put_new_pid is not None:
+            _, rev_put = _filesystem_relocate_dataset_tree(
+                put_new_pid, put_old_pid, int(dataset_id)
+            )
+            if rev_put:
+                logger.critical(
+                    "update_dataset rollback: could not reverse filesystem move for dataset_id=%s: %s",
+                    dataset_id,
+                    rev_put,
+                )
+        raise exc
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        if filesystem_moved and put_old_pid is not None and put_new_pid is not None:
+            _, rev_put = _filesystem_relocate_dataset_tree(
+                put_new_pid, put_old_pid, int(dataset_id)
+            )
+            if rev_put:
+                logger.critical(
+                    "update_dataset rollback: could not reverse filesystem move for dataset_id=%s: %s",
+                    dataset_id,
+                    rev_put,
+                )
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/datasets/{dataset_id}/augmented-datasets")
@@ -598,7 +818,11 @@ async def move_dataset(
     req: MoveDatasetRequest,
     db: Session = Depends(get_db),
 ):
-    """Move a dataset to another project."""
+    """
+    Move a dataset to another project: updates DB, rewrites static image URLs,
+    and physically relocates ``projects/<old_project>/<dataset_id>/`` (entire tree)
+    under the target project folder when ``old_project_id`` is known and the tree exists.
+    """
     dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -608,24 +832,65 @@ async def move_dataset(
         raise HTTPException(status_code=404, detail="Target project not found")
 
     old_project_id = dataset.project_id
-    if old_project_id == req.project_id:
+    new_project_id = int(req.project_id)
+    moved_id = int(dataset_id)
+
+    if old_project_id == new_project_id:
         return dataset
 
-    dataset.project_id = req.project_id
-    dataset.updated_at = datetime.utcnow()
-
-    # Keep dataset groups consistent in the source project.
+    filesystem_moved = False
     if old_project_id is not None:
-        moved_id = int(dataset_id)
-        groups = db.query(models.DatasetGroup).filter(models.DatasetGroup.project_id == old_project_id).all()
-        for group in groups:
-            ids = group.datasets_list or []
-            if moved_id in ids:
-                group.datasets_list = [x for x in ids if int(x) != moved_id]
+        did_move, fs_err = _filesystem_relocate_dataset_tree(
+            int(old_project_id), new_project_id, moved_id
+        )
+        if fs_err:
+            code = 409 if "already exists" in fs_err.lower() else 500
+            raise HTTPException(status_code=code, detail=fs_err)
+        filesystem_moved = bool(did_move)
 
-    db.commit()
-    db.refresh(dataset)
-    return dataset
+    try:
+        dataset.project_id = new_project_id
+        dataset.updated_at = datetime.utcnow()
+
+        if old_project_id is not None:
+            _apply_storage_url_rewrite_for_project_move(
+                db,
+                dataset,
+                dataset_id=moved_id,
+                old_project_id=int(old_project_id),
+                new_project_id=new_project_id,
+            )
+            groups = (
+                db.query(models.DatasetGroup)
+                .filter(models.DatasetGroup.project_id == old_project_id)
+                .all()
+            )
+            for group in groups:
+                ids = group.datasets_list or []
+                if moved_id in ids:
+                    group.datasets_list = [x for x in ids if int(x) != moved_id]
+
+        db.commit()
+        db.refresh(dataset)
+        return dataset
+    except Exception as exc:
+        db.rollback()
+        if filesystem_moved and old_project_id is not None:
+            rev_ok, rev_err = _filesystem_relocate_dataset_tree(
+                new_project_id, int(old_project_id), moved_id
+            )
+            if rev_err or not rev_ok:
+                logger.critical(
+                    "Dataset move DB failed after relocating files; rollback move may be incomplete "
+                    "(dataset_id=%s new_project=%s old_project=%s): %s — reverse_error=%s",
+                    moved_id,
+                    new_project_id,
+                    old_project_id,
+                    exc,
+                    rev_err,
+                )
+        logger.exception("move_dataset failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Failed to move dataset: {exc}") from exc
 
 
 @router.post("/datasets/{dataset_id}/images")

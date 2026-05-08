@@ -78,3 +78,61 @@ export function formatMetricPct(v: number | undefined): string {
   if (v === undefined || Number.isNaN(v)) return "—";
   return `${(v * 100).toFixed(1)}%`;
 }
+
+/** Slug for safe download basename (ASCII; matches backend heuristics). */
+export function slugForDownloadFilename(
+  segment: string | undefined | null,
+  fallback: string,
+  maxLen = 72
+): string {
+  const raw = (segment ?? "").trim();
+  if (!raw) return fallback;
+  let slug = "";
+  for (const c of raw) {
+    const code = c.charCodeAt(0);
+    if (code < 128 && (/[a-zA-Z0-9]/.test(c) || c === "_" || c === "-")) {
+      slug += c;
+    } else {
+      slug += "_";
+    }
+  }
+  slug = slug.replace(/_+/g, "_").replace(/^_|_$/g, "").slice(0, maxLen).replace(/^_|_$/g, "");
+  return slug || fallback;
+}
+
+export function evaluationCocoJsonDownloadName(opts: {
+  taskId: number;
+  evaluationName?: string | null;
+  datasetName?: string | null;
+}): string {
+  const evalSlug = slugForDownloadFilename(opts.evaluationName ?? "", `evaluation_${opts.taskId}`);
+  const dsSlug = slugForDownloadFilename(opts.datasetName ?? "", `dataset_${opts.taskId}`);
+  return `${evalSlug}_${opts.taskId}_${dsSlug}_coco.json`;
+}
+
+export function evaluationCocoZipDownloadName(opts: {
+  taskId: number;
+  evaluationName?: string | null;
+}): string {
+  const evalSlug = slugForDownloadFilename(opts.evaluationName ?? "", `evaluation_${opts.taskId}`);
+  return `${evalSlug}_${opts.taskId}_coco_all.zip`;
+}
+
+/** Prefer server Content-Disposition when visible to fetch (same-origin). */
+export function attachmentFilenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const starMatch = /\bfilename\*=(?:UTF-8''|utf-8'')([^;\s]+)/i.exec(header);
+  if (starMatch?.[1]) {
+    try {
+      const s = decodeURIComponent(starMatch[1].trim()).trim();
+      if (s) return s;
+    } catch {
+      //
+    }
+  }
+  const qMatch = /\bfilename="((?:[^"\\]|\\.)*)"\s*[;\s]?/i.exec(header);
+  if (qMatch?.[1]) return qMatch[1].replace(/\\(.)/g, "$1").trim();
+  const plainMatch = /\bfilename=([^;\s]+)/i.exec(header);
+  if (plainMatch?.[1]) return plainMatch[1].replace(/^["']|["']$/g, "").trim();
+  return null;
+}

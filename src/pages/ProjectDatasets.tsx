@@ -75,6 +75,10 @@ export default function ProjectDatasets() {
   const [deleteAugmented, setDeleteAugmented] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const [showDeleteGroupConfirm, setShowDeleteGroupConfirm] = useState(false);
+  const [groupToDelete, setGroupToDelete] = useState<DatasetGroup | null>(null);
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
+
   // Fetch datasets for the project
   const fetchProjectDatasets = async () => {
     if (!id) return;
@@ -325,28 +329,45 @@ export default function ProjectDatasets() {
   };
 
   const handleDeleteGroup = (group: DatasetGroup) => {
-    const deleteGroup = async () => {
-      try {
-        const response = await fetch(`${getApiBaseUrl()}/projects/${id}/dataset-groups/${group.id}`, {
-          credentials: 'omit',
-          method: 'DELETE'
-        });
-        if (response.ok) {
-          toast({
-            title: "Group Deleted",
-            description: "The dataset group has been deleted."
-          });
-          fetchDatasetGroups();
-        }
-      } catch (error) {
+    setGroupToDelete(group);
+    setShowDeleteGroupConfirm(true);
+  };
+
+  const confirmDeleteDatasetGroup = async () => {
+    if (!groupToDelete || !id) return;
+    setIsDeletingGroup(true);
+    try {
+      const response = await fetch(
+        `${getApiBaseUrl()}/projects/${id}/dataset-groups/${groupToDelete.id}`,
+        { credentials: 'omit', method: 'DELETE' },
+      );
+      if (response.ok) {
         toast({
-          title: "Error",
-          description: "Failed to delete group",
-          variant: "destructive"
+          title: "Group deleted",
+          description: `"${groupToDelete.name}" has been removed. Member datasets were not deleted.`,
         });
+        setShowDeleteGroupConfirm(false);
+        setGroupToDelete(null);
+        fetchDatasetGroups();
+      } else {
+        let detail = 'Failed to delete group';
+        try {
+          const body = await response.json();
+          if (body.detail) detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+        } catch {
+          //
+        }
+        toast({ title: 'Error', description: detail, variant: 'destructive' });
       }
-    };
-    deleteGroup();
+    } catch {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete group',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDeletingGroup(false);
+    }
   };
 
   return (
@@ -714,6 +735,41 @@ export default function ProjectDatasets() {
       />
       
       {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={showDeleteGroupConfirm}
+        onOpenChange={(open) => {
+          setShowDeleteGroupConfirm(open);
+          if (!open) setGroupToDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete dataset group?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span>
+                Are you sure you want to delete the group{' '}
+                <span className="font-semibold text-foreground">{groupToDelete?.name}</span>? This removes the
+                group record (and optional group folders on disk). Datasets listed in this group remain in
+                the project.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingGroup}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteDatasetGroup();
+              }}
+              disabled={isDeletingGroup}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingGroup ? 'Deleting…' : 'Delete group'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>

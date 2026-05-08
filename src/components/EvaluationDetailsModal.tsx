@@ -6,6 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { ThresholdExplorer, type RawPrediction, type RawGTBox } from "@/components/ThresholdExplorer";
+import { getApiBaseUrl } from "@/config/api";
+import {
+  attachmentFilenameFromContentDisposition,
+  evaluationCocoJsonDownloadName,
+  evaluationCocoZipDownloadName,
+} from "@/lib/evaluationTableDisplay";
 
 interface EvaluationDetailsModalProps {
   open: boolean;
@@ -510,7 +516,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
     
     setDownloading(true);
     try {
-      const response = await fetch(`http://localhost:9999/predictions/export-coco/${downloadTaskId}`);
+      const response = await fetch(`${getApiBaseUrl()}/predictions/export-coco/${downloadTaskId}`);
       
       if (!response.ok) {
         let message = 'Failed to download results';
@@ -528,7 +534,16 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `evaluation_${downloadTaskId}_coco.json`;
+      const evalLabel = isChild ? (task?.name ?? "") : (sourceTask?.name ?? task?.name ?? "");
+      const datasetLabel = sourceTask?.task_metadata?.dataset_name ?? undefined;
+      const fallbackJson = evaluationCocoJsonDownloadName({
+        taskId: downloadTaskId,
+        evaluationName: evalLabel || sourceTask?.name || task?.name,
+        datasetName: datasetLabel,
+      });
+      a.download =
+        attachmentFilenameFromContentDisposition(response.headers.get("content-disposition")) ??
+        fallbackJson;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -567,7 +582,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
     
     setDownloadingAll(true);
     try {
-      const response = await fetch(`http://localhost:9999/predictions/export-coco-all/${taskId}`);
+      const response = await fetch(`${getApiBaseUrl()}/predictions/export-coco-all/${taskId}`);
       
       if (!response.ok) {
         let message = 'Failed to download results';
@@ -585,7 +600,13 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `evaluation_${taskId}_all_coco.zip`;
+      const fallbackZip = evaluationCocoZipDownloadName({
+        taskId,
+        evaluationName: task?.name,
+      });
+      a.download =
+        attachmentFilenameFromContentDisposition(response.headers.get("content-disposition")) ??
+        fallbackZip;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

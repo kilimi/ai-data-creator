@@ -30,7 +30,11 @@ import {
   formatEvaluationModelDisplay,
   formatMetricPct,
   getEvaluationRowMetrics,
+  attachmentFilenameFromContentDisposition,
+  evaluationCocoJsonDownloadName,
+  evaluationCocoZipDownloadName,
 } from "@/lib/evaluationTableDisplay";
+import { getApiBaseUrl } from "@/config/api";
 
 interface OutletContext {
   project: Project | null;
@@ -247,15 +251,22 @@ export default function ProjectEvaluations() {
 
   const handleDownloadCoco = async (task: any, multi = false) => {
     const m = task.task_metadata || {};
+    const base = getApiBaseUrl();
     if (multi) {
-      const url = `http://localhost:9999/predictions/export-coco-all/${task.id}`;
+      const url = `${base}/predictions/export-coco-all/${task.id}`;
       try {
         const r = await fetch(url);
         if (!r.ok) throw new Error('Failed to download');
         const blob = await r.blob();
         const u = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = u; a.download = `evaluation_${task.id}_all_coco.zip`;
+        a.href = u;
+        const fallback = evaluationCocoZipDownloadName({
+          taskId: task.id,
+          evaluationName: task.name,
+        });
+        a.download =
+          attachmentFilenameFromContentDisposition(r.headers.get('content-disposition')) ?? fallback;
         document.body.appendChild(a); a.click();
         window.URL.revokeObjectURL(u); document.body.removeChild(a);
         toast({ title: "Download Complete", description: "All COCO files downloaded" });
@@ -270,12 +281,19 @@ export default function ProjectEvaluations() {
       return;
     }
     try {
-      const r = await fetch(`http://localhost:9999/predictions/export-coco/${task.id}`);
+      const r = await fetch(`${base}/predictions/export-coco/${task.id}`);
       if (!r.ok) throw new Error('Failed to download');
       const blob = await r.blob();
       const u = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = u; a.download = `evaluation_${task.id}_coco.json`;
+      a.href = u;
+      const fallback = evaluationCocoJsonDownloadName({
+        taskId: task.id,
+        evaluationName: task.name,
+        datasetName: m.dataset_name,
+      });
+      a.download =
+        attachmentFilenameFromContentDisposition(r.headers.get('content-disposition')) ?? fallback;
       document.body.appendChild(a); a.click();
       window.URL.revokeObjectURL(u); document.body.removeChild(a);
       toast({ title: "Download Complete", description: "COCO results downloaded" });

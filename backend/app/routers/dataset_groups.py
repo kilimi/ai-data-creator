@@ -1,14 +1,39 @@
 from fastapi import APIRouter, Depends, HTTPException, Form
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
+from pathlib import Path
 from typing import List, Optional, Dict
 import json
+import logging
+import shutil
 
 from .. import models, schemas
 from ..database import get_db
 from ..dataset_list_helpers import first_preview_url_by_dataset
+from ..dataset_media_paths import iter_projects_roots
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _remove_dataset_group_filesystem_tree(project_id: Optional[int], group_id: int) -> None:
+    """
+    Remove optional on-disk artifacts for this group under
+    ``<projects_root>/<project_id>/dataset_groups/<group_id>/``.
+    Dataset groups are primarily a DB row; this clears any exported or future cache paths.
+    """
+    if project_id is None:
+        return
+    for root in iter_projects_roots():
+        rel = Path(str(project_id)) / "dataset_groups" / str(group_id)
+        path = root / rel
+        try:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=False)
+                logger.info("Removed dataset group directory %s", path)
+        except OSError as e:
+            logger.warning("Could not remove dataset group dir %s: %s", path, e)
 
 
 def _list_thumbnail(url: str | None) -> str | None:
@@ -420,7 +445,7 @@ async def delete_dataset_group(
     group_id: int,
     db: Session = Depends(get_db)
 ):
-    """Delete a dataset group"""
+    """Delete a dataset group row and any optional on-disk ``dataset_groups/<id>/`` tree."""
     
     group = db.query(models.DatasetGroup).filter(
         models.DatasetGroup.id == group_id
@@ -428,11 +453,34 @@ async def delete_dataset_group(
     
     if not group:
         raise HTTPException(status_code=404, detail="Dataset group not found")
-    
+
+    pid = group.project_id
     db.delete(group)
     db.commit()
-    
+
+    _remove_dataset_group_filesystem_tree(pid, group_id)
+
     return {"success": True, "message": "Dataset group deleted successfully"}
+
+
+@router.delete("/projects/{project_id}/dataset-groups/{group_id}")
+async def delete_dataset_group_under_project(
+    project_id: int,
+    group_id: int,
+    db: Session = Depends(get_db),
+):
+    """Same as ``DELETE /dataset-groups/{group_id}``; verifies the group belongs to ``project_id``."""
+    group = db.query(models.DatasetGroup).filter(
+        models.DatasetGroup.id == group_id
+    ).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Dataset group not found")
+    if int(group.project_id) != int(project_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Dataset group does not belong to this project",
+        )
+    return await delete_dataset_group(group_id, db)
 
 
 @router.get("/projects/{project_id}/search")
