@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, Future
+from urllib.parse import urlparse
 import numpy as np
 import time
 from PIL import Image as PILImage
@@ -196,16 +197,25 @@ def _resolve_evaluation_image_path(img: Image, project_id: int, dataset_id: int)
     legacy paths, plus URL-based resolution when metadata points to a static URL.
     """
     candidates: List[Path] = []
+    file_name = (getattr(img, "file_name", None) or "").strip()
+    file_basename = Path(file_name).name if file_name else ""
 
     # Current canonical location.
-    candidates.append(Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name)
+    if file_name:
+        candidates.append(Path("projects") / str(project_id) / str(dataset_id) / "images" / file_name)
+    if file_basename and file_basename != file_name:
+        candidates.append(Path("projects") / str(project_id) / str(dataset_id) / "images" / file_basename)
     # Legacy location.
-    candidates.append(Path("data") / "images" / str(dataset_id) / img.file_name)
+    if file_name:
+        candidates.append(Path("data") / "images" / str(dataset_id) / file_name)
+    if file_basename and file_basename != file_name:
+        candidates.append(Path("data") / "images" / str(dataset_id) / file_basename)
 
     # If URL is stored, convert /static/... and absolute variants back to local paths.
     img_url = (img.url or "").strip()
     if img_url:
-        url_path = img_url.lstrip("/")
+        parsed = urlparse(img_url)
+        url_path = (parsed.path or img_url).lstrip("/")
         if url_path.startswith("static/"):
             url_path = url_path[len("static/"):]
         if url_path:
@@ -215,8 +225,12 @@ def _resolve_evaluation_image_path(img: Image, project_id: int, dataset_id: int)
                 candidates.append(Path("projects") / p)
 
     # Absolute in-container path (if any caller stores it directly).
-    candidates.append(Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / img.file_name)
-    candidates.append(Path("/app/data") / "images" / str(dataset_id) / img.file_name)
+    if file_name:
+        candidates.append(Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / file_name)
+        candidates.append(Path("/app/data") / "images" / str(dataset_id) / file_name)
+    if file_basename and file_basename != file_name:
+        candidates.append(Path("/app/projects") / str(project_id) / str(dataset_id) / "images" / file_basename)
+        candidates.append(Path("/app/data") / "images" / str(dataset_id) / file_basename)
 
     seen = set()
     for candidate in candidates:
@@ -226,6 +240,18 @@ def _resolve_evaluation_image_path(img: Image, project_id: int, dataset_id: int)
         seen.add(key)
         if candidate.exists():
             return candidate.resolve()
+
+    # Last-chance fallback for legacy filename/url drift:
+    # search by basename inside the dataset images root.
+    if file_basename:
+        dataset_images_root = Path("projects") / str(project_id) / str(dataset_id) / "images"
+        if dataset_images_root.exists():
+            try:
+                for match in sorted(dataset_images_root.rglob(file_basename)):
+                    if match.is_file():
+                        return match.resolve()
+            except Exception:
+                pass
     return None
 
 
@@ -813,9 +839,11 @@ def evaluate_model(
             db.commit()
 
             valid_items: List[Tuple[Image, Path]] = []
+            missing_paths = 0
             for img in images:
                 img_path = _resolve_evaluation_image_path(img, project_id, dataset_id)
                 if img_path is None:
+                    missing_paths += 1
                     logger.warning(
                         "Image file not found for evaluation: file=%s dataset_id=%s project_id=%s url=%s",
                         img.file_name,
@@ -825,6 +853,13 @@ def evaluate_model(
                     )
                     continue
                 valid_items.append((img, img_path))
+
+            if not valid_items:
+                raise ValueError(
+                    f"No readable image files found for evaluation "
+                    f"(dataset_id={dataset_id}, collection_id={collection_id}, "
+                    f"total_images={len(images)}, missing_paths={missing_paths})"
+                )
 
             # GPU warmup: cuDNN autotune + alloc pools cost is paid once instead
             # of on the first user batch (which would otherwise look like a hang).
