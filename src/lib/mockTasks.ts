@@ -96,6 +96,7 @@ export const MOCK_EVALUATION_TASKS: any[] = [
       training_task_name: "Road signs v2",
       dataset_name: "Road signs (test)",
       collection_name: "RGB",
+      annotation_file_name: "road_signs_v1.coco.json",
       results: {
         precision: 0.913,
         recall: 0.876,
