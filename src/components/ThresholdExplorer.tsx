@@ -466,6 +466,8 @@ export function ThresholdExplorer({
       description: `COCO export with ${annotations.length} predictions (conf ≥ ${confThreshold.toFixed(2)}${hasPerClassOverride ? ", per-class overrides applied" : ""}).`,
     });
   }
+
+  const resetDefaults = () => {
     setConfThreshold(initialConf);
     setIouThreshold(initialIou);
     setPerClassConf(Array(numRealClasses).fill(-1));
