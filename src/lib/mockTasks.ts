@@ -262,4 +262,18 @@ export const MOCK_EVALUATION_TASKS: any[] = [
       results: { has_ground_truth: false, predictions_count: 422, images_processed: 210 },
     },
   },
+  {
+    id: 8010,
+    name: "Pothole detection — highway (v2 GT)",
+    status: "completed",
+    progress: 100,
+    created_at: day(2),
+    task_metadata: {
+      model_type: "yolo11n.pt",
+      training_task_name: "Pothole detection",
+      dataset_name: "Potholes — Highway",
+      annotation_file_name: "potholes_gt_v2.coco.json",
+      results: { precision: 0.811, recall: 0.752, f1_score: 0.781, images_processed: 540, predictions_count: 1024, has_ground_truth: true },
+    },
+  },
 ];
