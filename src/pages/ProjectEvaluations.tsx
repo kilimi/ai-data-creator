@@ -440,17 +440,19 @@ export default function ProjectEvaluations() {
               </button>
             ))}
           </div>
-          <Button
-            variant={compareMode ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setCompareMode(v => !v);
-              if (compareMode) setSelectedForCompare(new Set());
-            }}
-          >
-            <GitCompare className="w-4 h-4 mr-2" />
-            {compareMode ? "Exit compare" : "Compare"}
-          </Button>
+          {viewMode === "list" && (
+            <Button
+              variant={compareMode ? "default" : "outline"}
+              size="sm"
+              onClick={() => {
+                setCompareMode(v => !v);
+                if (compareMode) setSelectedForCompare(new Set());
+              }}
+            >
+              <GitCompare className="w-4 h-4 mr-2" />
+              {compareMode ? "Exit compare" : "Compare"}
+            </Button>
+          )}
         </div>
       </div>
 
