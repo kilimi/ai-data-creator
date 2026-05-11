@@ -508,18 +508,28 @@ export function ThresholdExplorer({
             — adjust Confidence &amp; IoU and see live Precision / Recall / Confusion Matrix
           </span>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors ${
-            saved
-              ? "bg-green-700/40 text-green-300 border border-green-700"
-              : "bg-blue-700/40 text-blue-300 border border-blue-700 hover:bg-blue-700/60"
-          } disabled:opacity-50`}
-        >
-          {saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-          {saved ? "Saved" : saving ? "Saving…" : "Save"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDownloadCoco}
+            title="Download predictions filtered by the current Confidence & per-class thresholds as COCO JSON"
+            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors bg-gray-800 text-gray-200 border border-gray-700 hover:bg-gray-700"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download COCO
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors ${
+              saved
+                ? "bg-green-700/40 text-green-300 border border-green-700"
+                : "bg-blue-700/40 text-blue-300 border border-blue-700 hover:bg-blue-700/60"
+            } disabled:opacity-50`}
+          >
+            {saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+            {saved ? "Saved" : saving ? "Saving…" : "Save"}
+          </button>
+        </div>
       </div>
 
       {/* Error Display */}
