@@ -260,6 +260,8 @@ interface ThresholdExplorerProps {
   initialPerClassConf?: Record<string, number>;
   taskId: number;
   onSaved?: () => void;
+  evaluationName?: string;
+  datasetName?: string;
 }
 
 export function ThresholdExplorer({
