@@ -419,6 +419,27 @@ export default function ProjectEvaluations() {
           })}
         </div>
         <div className="flex items-center gap-2">
+          {/* View mode toggle */}
+          <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+            {([
+              { key: "by-model", label: "By model", Icon: LayoutGrid },
+              { key: "matrix", label: "Matrix", Icon: Grid3x3 },
+              { key: "list", label: "List", Icon: List },
+            ] as const).map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                onClick={() => setViewMode(key)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors ${
+                  viewMode === key
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
           <Button
             variant={compareMode ? "default" : "outline"}
             size="sm"
