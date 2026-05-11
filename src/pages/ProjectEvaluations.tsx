@@ -8,9 +8,11 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal, RotateCw, GitCompare } from "lucide-react";
+import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal, RotateCw, GitCompare, List, LayoutGrid, Grid3x3 } from "lucide-react";
 import { EvaluationCard } from "@/components/EvaluationCard";
 import { EvaluationComparePanel } from "@/components/EvaluationComparePanel";
+import { EvaluationsMatrix } from "@/components/EvaluationsMatrix";
+import { EvaluationsByModel } from "@/components/EvaluationsByModel";
 import { Project, DatasetGroup } from '@/types';
 import {
   Select,
@@ -64,6 +66,7 @@ export default function ProjectEvaluations() {
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<Set<number>>(new Set());
+  const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("by-model");
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
@@ -416,6 +419,27 @@ export default function ProjectEvaluations() {
           })}
         </div>
         <div className="flex items-center gap-2">
+          {/* View mode toggle */}
+          <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5">
+            {([
+              { key: "by-model", label: "By model", Icon: LayoutGrid },
+              { key: "matrix", label: "Matrix", Icon: Grid3x3 },
+              { key: "list", label: "List", Icon: List },
+            ] as const).map(({ key, label, Icon }) => (
+              <button
+                key={key}
+                onClick={() => setViewMode(key)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors ${
+                  viewMode === key
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
           <Button
             variant={compareMode ? "default" : "outline"}
             size="sm"
@@ -453,67 +477,92 @@ export default function ProjectEvaluations() {
           </div>
         </div>
       ) : visibleEvaluations.length > 0 ? (
-        <div className={`space-y-3 ${selectedTasksForCompare.length > 0 ? "pb-48" : ""}`}>
-          {visibleEvaluations.map((task) => {
-            const metadata = task.task_metadata || {};
-            const isMultiDataset = !!metadata.is_multi_dataset;
-            const childTaskIds = metadata.child_task_ids || [];
-            const childTasks = isMultiDataset
-              ? evaluationTasks.filter(t => childTaskIds.includes(t.id))
-              : [];
-            const isExpanded = expandedEvaluations.has(task.id);
-            return (
-              <React.Fragment key={task.id}>
-                <EvaluationCard
-                  task={task}
-                  childTasks={childTasks}
-                  isExpanded={isExpanded}
-                  onToggleExpand={() => {
-                    setExpandedEvaluations(prev => {
-                      const next = new Set(prev);
-                      if (next.has(task.id)) next.delete(task.id);
-                      else next.add(task.id);
-                      return next;
-                    });
-                  }}
-                  onOpen={() => {
-                    if (compareMode) {
-                      toggleCompareSelect(task.id);
-                    } else if (isMultiDataset) {
-                      setExpandedEvaluations(prev => {
-                        const next = new Set(prev);
-                        if (next.has(task.id)) next.delete(task.id);
-                        else next.add(task.id);
-                        return next;
-                      });
-                    } else {
-                      setSelectedTaskId(task.id);
-                    }
-                  }}
-                  onRename={() => handleRename(task)}
-                  onRerun={() => handleRerun(task)}
-                  onDelete={() => handleDelete(task)}
-                  onDownloadCoco={
-                    isMultiDataset
-                      ? () => handleDownloadCoco(task, true)
-                      : () => handleDownloadCoco(task, false)
-                  }
-                  compareMode={compareMode}
-                  selected={selectedForCompare.has(task.id)}
-                  onToggleSelect={() => toggleCompareSelect(task.id)}
-                />
-                {isMultiDataset && isExpanded && childTasks.map((childTask) => (
-                  <EvaluationCard
-                    key={childTask.id}
-                    task={childTask}
-                    variant="child"
-                    onOpen={() => setSelectedTaskId(childTask.id)}
-                    onDownloadCoco={() => handleDownloadCoco(childTask, false)}
-                  />
-                ))}
-              </React.Fragment>
-            );
-          })}
+        <div className={selectedTasksForCompare.length > 0 ? "pb-48" : ""}>
+          {viewMode === "matrix" && (
+            <EvaluationsMatrix
+              tasks={[
+                ...visibleEvaluations.filter(t => !t.task_metadata?.is_multi_dataset),
+                ...evaluationTasks.filter(t => t.task_metadata?.parent_task_id),
+              ]}
+              onCellOpen={(taskId) => setSelectedTaskId(taskId)}
+              onCellEvaluate={() => setShowEvaluationModal(true)}
+              onNewEvaluation={() => setShowEvaluationModal(true)}
+            />
+          )}
+          {viewMode === "by-model" && (
+            <EvaluationsByModel
+              tasks={[
+                ...visibleEvaluations.filter(t => !t.task_metadata?.is_multi_dataset),
+                ...evaluationTasks.filter(t => t.task_metadata?.parent_task_id),
+              ]}
+              onOpenTask={(taskId) => setSelectedTaskId(taskId)}
+              onNewEvaluation={() => setShowEvaluationModal(true)}
+            />
+          )}
+          {viewMode === "list" && (
+            <div className="space-y-3">
+              {visibleEvaluations.map((task) => {
+                const metadata = task.task_metadata || {};
+                const isMultiDataset = !!metadata.is_multi_dataset;
+                const childTaskIds = metadata.child_task_ids || [];
+                const childTasks = isMultiDataset
+                  ? evaluationTasks.filter(t => childTaskIds.includes(t.id))
+                  : [];
+                const isExpanded = expandedEvaluations.has(task.id);
+                return (
+                  <React.Fragment key={task.id}>
+                    <EvaluationCard
+                      task={task}
+                      childTasks={childTasks}
+                      isExpanded={isExpanded}
+                      onToggleExpand={() => {
+                        setExpandedEvaluations(prev => {
+                          const next = new Set(prev);
+                          if (next.has(task.id)) next.delete(task.id);
+                          else next.add(task.id);
+                          return next;
+                        });
+                      }}
+                      onOpen={() => {
+                        if (compareMode) {
+                          toggleCompareSelect(task.id);
+                        } else if (isMultiDataset) {
+                          setExpandedEvaluations(prev => {
+                            const next = new Set(prev);
+                            if (next.has(task.id)) next.delete(task.id);
+                            else next.add(task.id);
+                            return next;
+                          });
+                        } else {
+                          setSelectedTaskId(task.id);
+                        }
+                      }}
+                      onRename={() => handleRename(task)}
+                      onRerun={() => handleRerun(task)}
+                      onDelete={() => handleDelete(task)}
+                      onDownloadCoco={
+                        isMultiDataset
+                          ? () => handleDownloadCoco(task, true)
+                          : () => handleDownloadCoco(task, false)
+                      }
+                      compareMode={compareMode}
+                      selected={selectedForCompare.has(task.id)}
+                      onToggleSelect={() => toggleCompareSelect(task.id)}
+                    />
+                    {isMultiDataset && isExpanded && childTasks.map((childTask) => (
+                      <EvaluationCard
+                        key={childTask.id}
+                        task={childTask}
+                        variant="child"
+                        onOpen={() => setSelectedTaskId(childTask.id)}
+                        onDownloadCoco={() => handleDownloadCoco(childTask, false)}
+                      />
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-center py-16">
