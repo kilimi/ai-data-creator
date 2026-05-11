@@ -477,67 +477,92 @@ export default function ProjectEvaluations() {
           </div>
         </div>
       ) : visibleEvaluations.length > 0 ? (
-        <div className={`space-y-3 ${selectedTasksForCompare.length > 0 ? "pb-48" : ""}`}>
-          {visibleEvaluations.map((task) => {
-            const metadata = task.task_metadata || {};
-            const isMultiDataset = !!metadata.is_multi_dataset;
-            const childTaskIds = metadata.child_task_ids || [];
-            const childTasks = isMultiDataset
-              ? evaluationTasks.filter(t => childTaskIds.includes(t.id))
-              : [];
-            const isExpanded = expandedEvaluations.has(task.id);
-            return (
-              <React.Fragment key={task.id}>
-                <EvaluationCard
-                  task={task}
-                  childTasks={childTasks}
-                  isExpanded={isExpanded}
-                  onToggleExpand={() => {
-                    setExpandedEvaluations(prev => {
-                      const next = new Set(prev);
-                      if (next.has(task.id)) next.delete(task.id);
-                      else next.add(task.id);
-                      return next;
-                    });
-                  }}
-                  onOpen={() => {
-                    if (compareMode) {
-                      toggleCompareSelect(task.id);
-                    } else if (isMultiDataset) {
-                      setExpandedEvaluations(prev => {
-                        const next = new Set(prev);
-                        if (next.has(task.id)) next.delete(task.id);
-                        else next.add(task.id);
-                        return next;
-                      });
-                    } else {
-                      setSelectedTaskId(task.id);
-                    }
-                  }}
-                  onRename={() => handleRename(task)}
-                  onRerun={() => handleRerun(task)}
-                  onDelete={() => handleDelete(task)}
-                  onDownloadCoco={
-                    isMultiDataset
-                      ? () => handleDownloadCoco(task, true)
-                      : () => handleDownloadCoco(task, false)
-                  }
-                  compareMode={compareMode}
-                  selected={selectedForCompare.has(task.id)}
-                  onToggleSelect={() => toggleCompareSelect(task.id)}
-                />
-                {isMultiDataset && isExpanded && childTasks.map((childTask) => (
-                  <EvaluationCard
-                    key={childTask.id}
-                    task={childTask}
-                    variant="child"
-                    onOpen={() => setSelectedTaskId(childTask.id)}
-                    onDownloadCoco={() => handleDownloadCoco(childTask, false)}
-                  />
-                ))}
-              </React.Fragment>
-            );
-          })}
+        <div className={selectedTasksForCompare.length > 0 ? "pb-48" : ""}>
+          {viewMode === "matrix" && (
+            <EvaluationsMatrix
+              tasks={[
+                ...visibleEvaluations.filter(t => !t.task_metadata?.is_multi_dataset),
+                ...evaluationTasks.filter(t => t.task_metadata?.parent_task_id),
+              ]}
+              onCellOpen={(taskId) => setSelectedTaskId(taskId)}
+              onCellEvaluate={() => setShowEvaluationModal(true)}
+              onNewEvaluation={() => setShowEvaluationModal(true)}
+            />
+          )}
+          {viewMode === "by-model" && (
+            <EvaluationsByModel
+              tasks={[
+                ...visibleEvaluations.filter(t => !t.task_metadata?.is_multi_dataset),
+                ...evaluationTasks.filter(t => t.task_metadata?.parent_task_id),
+              ]}
+              onOpenTask={(taskId) => setSelectedTaskId(taskId)}
+              onNewEvaluation={() => setShowEvaluationModal(true)}
+            />
+          )}
+          {viewMode === "list" && (
+            <div className="space-y-3">
+              {visibleEvaluations.map((task) => {
+                const metadata = task.task_metadata || {};
+                const isMultiDataset = !!metadata.is_multi_dataset;
+                const childTaskIds = metadata.child_task_ids || [];
+                const childTasks = isMultiDataset
+                  ? evaluationTasks.filter(t => childTaskIds.includes(t.id))
+                  : [];
+                const isExpanded = expandedEvaluations.has(task.id);
+                return (
+                  <React.Fragment key={task.id}>
+                    <EvaluationCard
+                      task={task}
+                      childTasks={childTasks}
+                      isExpanded={isExpanded}
+                      onToggleExpand={() => {
+                        setExpandedEvaluations(prev => {
+                          const next = new Set(prev);
+                          if (next.has(task.id)) next.delete(task.id);
+                          else next.add(task.id);
+                          return next;
+                        });
+                      }}
+                      onOpen={() => {
+                        if (compareMode) {
+                          toggleCompareSelect(task.id);
+                        } else if (isMultiDataset) {
+                          setExpandedEvaluations(prev => {
+                            const next = new Set(prev);
+                            if (next.has(task.id)) next.delete(task.id);
+                            else next.add(task.id);
+                            return next;
+                          });
+                        } else {
+                          setSelectedTaskId(task.id);
+                        }
+                      }}
+                      onRename={() => handleRename(task)}
+                      onRerun={() => handleRerun(task)}
+                      onDelete={() => handleDelete(task)}
+                      onDownloadCoco={
+                        isMultiDataset
+                          ? () => handleDownloadCoco(task, true)
+                          : () => handleDownloadCoco(task, false)
+                      }
+                      compareMode={compareMode}
+                      selected={selectedForCompare.has(task.id)}
+                      onToggleSelect={() => toggleCompareSelect(task.id)}
+                    />
+                    {isMultiDataset && isExpanded && childTasks.map((childTask) => (
+                      <EvaluationCard
+                        key={childTask.id}
+                        task={childTask}
+                        variant="child"
+                        onOpen={() => setSelectedTaskId(childTask.id)}
+                        onDownloadCoco={() => handleDownloadCoco(childTask, false)}
+                      />
+                    ))}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-center py-16">
