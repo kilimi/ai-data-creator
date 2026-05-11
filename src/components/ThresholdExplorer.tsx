@@ -34,26 +34,56 @@ interface MetricsResult {
 
 // ── IoU helper ─────────────────────────────────────────────────────────────
 
-function iou(
+/**
+ * Calculate Intersection over Union between two bounding boxes.
+ * @param a First bbox in [x1, y1, x2, y2] format
+ * @param b Second bbox in [x1, y1, x2, y2] format
+ * @returns IoU value between 0 and 1, or 0 if inputs are invalid
+ */
+export function iou(
   a: [number, number, number, number],
   b: [number, number, number, number]
 ): number {
+  // Validate input arrays
+  if (!a || !b || a.length !== 4 || b.length !== 4) return 0;
+  
+  // Validate all values are finite numbers
+  if (!a.every(v => Number.isFinite(v)) || !b.every(v => Number.isFinite(v))) return 0;
+  
   const x1 = Math.max(a[0], b[0]);
   const y1 = Math.max(a[1], b[1]);
   const x2 = Math.min(a[2], b[2]);
   const y2 = Math.min(a[3], b[3]);
   const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
   if (inter === 0) return 0;
-  const aA = (a[2] - a[0]) * (a[3] - a[1]);
-  const bA = (b[2] - b[0]) * (b[3] - b[1]);
-  return inter / (aA + bA - inter);
+  
+  const aW = a[2] - a[0];
+  const aH = a[3] - a[1];
+  const bW = b[2] - b[0];
+  const bH = b[3] - b[1];
+  
+  // Guard against zero or negative area boxes
+  if (aW <= 1e-6 || aH <= 1e-6 || bW <= 1e-6 || bH <= 1e-6) return 0;
+  
+  const aA = aW * aH;
+  const bA = bW * bH;
+  const union = aA + bA - inter;
+  
+  // Guard against division by zero
+  if (union <= 0) return 0;
+  
+  return inter / union;
 }
 
 // ── Core matching ──────────────────────────────────────────────────────────
 
 const MAX_SAMPLES = 20;
 
-function computeMetrics(
+/**
+ * Compute precision, recall, F1, and confusion matrix from predictions and ground truth.
+ * @returns MetricsResult with all computed metrics
+ */
+export function computeMetrics(
   predictions: RawPrediction[],
   groundTruth: RawGTBox[],
   globalConf: number,
@@ -63,10 +93,24 @@ function computeMetrics(
   classNames: string[],   // includes 'background' as last entry
   imageIdToFilename: Record<string, string>
 ): MetricsResult {
-  // Filter by confidence
+  // Filter by confidence with bounds checking
   const filtered = predictions.filter((p) => {
-    if (p.class_id >= numRealClasses) return false;
-    const thr = perClassConf[p.class_id] >= 0 ? perClassConf[p.class_id] : globalConf;
+    // Validate image_id
+    if (!Number.isFinite(p.image_id)) {
+      console.warn(`Invalid image_id: ${p.image_id}`);
+      return false;
+    }
+    
+    // Bounds check for class_id
+    if (!Number.isFinite(p.class_id) || p.class_id < 0 || p.class_id >= numRealClasses) {
+      console.warn(`Invalid class_id ${p.class_id}, must be between 0 and ${numRealClasses - 1}`);
+      return false;
+    }
+    
+    // Safe access to perClassConf with bounds check
+    const thr = (p.class_id >= 0 && p.class_id < perClassConf.length && perClassConf[p.class_id] >= 0) 
+      ? perClassConf[p.class_id] 
+      : globalConf;
     return p.conf >= thr;
   });
 
@@ -78,7 +122,18 @@ function computeMetrics(
   }
   const gtByImg: Record<number, RawGTBox[]> = {};
   for (const g of groundTruth) {
-    if (g.class_id < 0 || g.class_id >= numRealClasses) continue;
+    // Validate image_id
+    if (!Number.isFinite(g.image_id)) {
+      console.warn(`Invalid GT image_id: ${g.image_id}`);
+      continue;
+    }
+    
+    // Validate and warn about invalid class_ids
+    if (!Number.isFinite(g.class_id) || g.class_id < 0 || g.class_id >= numRealClasses) {
+      console.warn(`Invalid GT class_id ${g.class_id} for image ${g.image_id}, must be between 0 and ${numRealClasses - 1}`);
+      continue;
+    }
+    
     if (!gtByImg[g.image_id]) gtByImg[g.image_id] = [];
     gtByImg[g.image_id].push(g);
   }
@@ -228,8 +283,11 @@ export function ThresholdExplorer({
     const arr = Array(numRealClasses).fill(-1);
     if (initialPerClassConf) {
       for (let i = 0; i < numRealClasses; i++) {
-        const v = initialPerClassConf[classNames[i]];
-        if (v !== undefined && v >= 0) arr[i] = v;
+        // Bounds check: ensure classNames[i] exists before accessing
+        if (i < classNames.length) {
+          const v = initialPerClassConf[classNames[i]];
+          if (v !== undefined && v >= 0) arr[i] = v;
+        }
       }
     }
     return arr;
@@ -238,30 +296,54 @@ export function ThresholdExplorer({
   const [cmCell, setCmCell] = useState<{ row: number; col: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+
+  // Track mounted state for cleanup
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Debounced recompute whenever any threshold changes
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      setMetrics(
-        computeMetrics(
-          predictions, groundTruth, confThreshold, iouThreshold,
-          numRealClasses, perClassConf, classNames, imageIdToFilename
-        )
-      );
+      // Only update state if component is still mounted
+      if (mountedRef.current) {
+        setMetrics(
+          computeMetrics(
+            predictions, groundTruth, confThreshold, iouThreshold,
+            numRealClasses, perClassConf, classNames, imageIdToFilename
+          )
+        );
+      }
+      timerRef.current = null;
     }, 120);
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [confThreshold, iouThreshold, perClassConf, predictions, groundTruth]);
+    return () => { 
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [confThreshold, iouThreshold, perClassConf, predictions, groundTruth, numRealClasses, classNames, imageIdToFilename]);
 
   async function handleSave() {
     setSaving(true);
+    setSaveError(null);
     try {
       const per_class_conf: Record<string, number> = {};
       perClassConf.forEach((v, i) => {
-        if (v >= 0) per_class_conf[classNames[i]] = v;
+        // Bounds check before accessing classNames
+        if (v >= 0 && i < classNames.length) {
+          per_class_conf[classNames[i]] = v;
+        }
       });
-      await fetch(`http://localhost:9999/tasks/${taskId}/eval-thresholds`, {
+      
+      const response = await fetch(`http://localhost:9999/tasks/${taskId}/eval-thresholds`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -273,11 +355,28 @@ export function ThresholdExplorer({
           f1_score: metrics?.f1 ?? null,
         }),
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+      
+      if (mountedRef.current) {
+        setSaved(true);
+        setTimeout(() => {
+          if (mountedRef.current) setSaved(false);
+        }, 3000);
+      }
       onSaved?.();
+    } catch (error) {
+      console.error('Failed to save thresholds:', error);
+      if (mountedRef.current) {
+        setSaveError(error instanceof Error ? error.message : 'Failed to save thresholds');
+      }
     } finally {
-      setSaving(false);
+      if (mountedRef.current) {
+        setSaving(false);
+      }
     }
   }
 
@@ -335,6 +434,13 @@ export function ThresholdExplorer({
           {saved ? "Saved" : saving ? "Saving…" : "Save"}
         </button>
       </div>
+
+      {/* Error Display */}
+      {saveError && (
+        <div className="mx-4 mt-2 px-3 py-2 bg-red-900/20 border border-red-700 rounded text-sm text-red-300">
+          Failed to save: {saveError}
+        </div>
+      )}
 
       <div className="px-4 pb-4 space-y-5 pt-4">
           {/* ── Sliders ── */}
