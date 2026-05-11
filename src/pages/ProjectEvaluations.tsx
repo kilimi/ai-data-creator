@@ -66,6 +66,7 @@ export default function ProjectEvaluations() {
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<Set<number>>(new Set());
+  const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("by-model");
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
