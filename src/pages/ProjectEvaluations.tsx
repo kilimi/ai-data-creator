@@ -8,9 +8,11 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
-import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal, RotateCw, GitCompare } from "lucide-react";
+import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal, RotateCw, GitCompare, List, LayoutGrid, Grid3x3 } from "lucide-react";
 import { EvaluationCard } from "@/components/EvaluationCard";
 import { EvaluationComparePanel } from "@/components/EvaluationComparePanel";
+import { EvaluationsMatrix } from "@/components/EvaluationsMatrix";
+import { EvaluationsByModel } from "@/components/EvaluationsByModel";
 import { Project, DatasetGroup } from '@/types';
 import {
   Select,
