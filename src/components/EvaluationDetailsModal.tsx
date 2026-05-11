@@ -982,6 +982,8 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                   initialPerClassConf={results.per_class_conf}
                   taskId={taskId}
                   onSaved={refreshTaskMetadata}
+                  evaluationName={task.name}
+                  datasetName={metadata.dataset_name}
                 />
               )}
             </>
