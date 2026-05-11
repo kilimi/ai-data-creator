@@ -746,24 +746,6 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                       </>
                     )}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => downloadCocoResults()}
-                    disabled={downloading}
-                  >
-                    {downloading ? (
-                      <>
-                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-current mr-2" />
-                        Downloading...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 mr-2" />
-                        Download COCO
-                      </>
-                    )}
-                  </Button>
                 </>
               )}
               {/* Download All for multi-dataset evaluations */}
@@ -1000,6 +982,8 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                   initialPerClassConf={results.per_class_conf}
                   taskId={taskId}
                   onSaved={refreshTaskMetadata}
+                  evaluationName={task.name}
+                  datasetName={metadata.dataset_name}
                 />
               )}
             </>
