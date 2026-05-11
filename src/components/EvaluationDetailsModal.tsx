@@ -819,6 +819,15 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
               <div>
                 <span className="text-muted-foreground">IoU Threshold:</span>
                 <span className="ml-2 text-foreground font-medium">{metadata.iou_threshold || 0.45}</span>
+              <div>
+                <span className="text-muted-foreground">Image Size:</span>
+                <span className="ml-2 text-foreground font-medium">
+                  {(() => {
+                    const m: any = metadata;
+                    const sz = m.image_size ?? m.imgsz ?? m.training_params?.image_size ?? m.training_params?.imgsz;
+                    return sz ? `${sz}px` : '-';
+                  })()}
+                </span>
               </div>
               <div>
                 <span className="text-muted-foreground">Ground Truth:</span>
