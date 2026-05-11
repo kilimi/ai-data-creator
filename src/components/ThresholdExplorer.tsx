@@ -276,7 +276,10 @@ export function ThresholdExplorer({
   initialPerClassConf,
   taskId,
   onSaved,
+  evaluationName,
+  datasetName,
 }: ThresholdExplorerProps) {
+  const { toast } = useToast();
   const numRealClasses = classNames.length - 1; // last is 'background'
 
   const [showPerClass, setShowPerClass] = useState(false);
