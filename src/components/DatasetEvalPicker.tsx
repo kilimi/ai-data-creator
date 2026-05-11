@@ -41,6 +41,7 @@ export interface PickerDataset {
   id: number;
   name: string;
   imageCount: number;
+  annotationFileCount?: number;
   thumbnailUrl?: string;
   annotationFiles: PickerAnnotationFile[];
   collections: PickerCollection[];
@@ -97,7 +98,8 @@ export function DatasetEvalPicker({
   function visible(d: PickerDataset) {
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
-    if (filter === "with-gt" && d.annotationFiles.length === 0) return false;
+    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
+    if (filter === "with-gt" && gtCount === 0) return false;
     return true;
   }
 
@@ -143,6 +145,8 @@ export function DatasetEvalPicker({
     const isSelected = !!sel;
     const isExpanded = expanded.has(d.id);
 
+    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
+
     return (
       <div
         className={cn(
@@ -184,8 +188,8 @@ export function DatasetEvalPicker({
             <div className="text-xs text-muted-foreground flex items-center gap-3 mt-0.5">
               <span>{d.imageCount.toLocaleString()} images</span>
               <span>
-                {d.annotationFiles.length} GT file
-                {d.annotationFiles.length === 1 ? "" : "s"}
+                {gtCount} GT file
+                {gtCount === 1 ? "" : "s"}
               </span>
               {d.lastUsedAt && (
                 <span className="text-muted-foreground/70">

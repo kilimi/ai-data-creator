@@ -99,6 +99,7 @@ class EvaluationRequest(BaseModel):
     grid_overlap: float = 0.2  # Overlap ratio (0.0 to 0.5)
     # Ignored classes for metric calculation
     ignored_classes: Optional[List[str]] = None  # List of class names to ignore in metrics
+    image_size: Optional[int] = None  # Inference image size (defaults to trained model size)
 
 
 class MultiDatasetEvaluationRequest(BaseModel):
@@ -115,6 +116,7 @@ class MultiDatasetEvaluationRequest(BaseModel):
     grid_overlap: float = 0.2  # Overlap ratio (0.0 to 0.5)
     # Ignored classes for metric calculation
     ignored_classes: Optional[List[str]] = None  # List of class names to ignore in metrics
+    image_size: Optional[int] = None  # Inference image size (defaults to trained model size)
 
 
 @router.post("/predictions/evaluate")
@@ -178,6 +180,7 @@ async def evaluate_model(
                 "annotation_file_id": request.annotation_file_id,
                 "annotation_file_name": annotation_file_name,
                 "checkpoint": request.checkpoint,
+                "image_size": request.image_size,
                 "conf_threshold": request.conf_threshold,
                 "iou_threshold": request.iou_threshold,
                 "model_type": model_type,
@@ -207,7 +210,8 @@ async def evaluate_model(
             request.grid_size,
             request.grid_overlap,
             request.collection_id,
-            request.ignored_classes or []
+            request.ignored_classes or [],
+            request.image_size,
         )
         
         # Update task with Celery ID
@@ -279,6 +283,7 @@ async def evaluate_model_multiple_datasets(
                 "dataset_count": len(request.datasets),
                 "dataset_names": dataset_names,
                 "checkpoint": request.checkpoint,
+                "image_size": request.image_size,
                 "conf_threshold": request.conf_threshold,
                 "iou_threshold": request.iou_threshold,
                 "model_type": model_type,
@@ -341,6 +346,7 @@ async def evaluate_model_multiple_datasets(
                     "annotation_file_id": dataset_config.annotationFileId,
                     "annotation_file_name": annotation_file_name,
                     "checkpoint": request.checkpoint,
+                    "image_size": request.image_size,
                     "conf_threshold": request.conf_threshold,
                     "iou_threshold": request.iou_threshold,
                     "model_type": model_type,
@@ -370,7 +376,8 @@ async def evaluate_model_multiple_datasets(
                 request.grid_size,
                 request.grid_overlap,
                 dataset_config.collectionId,
-                request.ignored_classes or []
+                request.ignored_classes or [],
+                request.image_size,
             )
             
             # Update child task with Celery ID

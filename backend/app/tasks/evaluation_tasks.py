@@ -323,7 +323,8 @@ def evaluate_model(
     grid_size: int = 640,
     grid_overlap: float = 0.2,
     collection_id: Optional[int] = None,
-    ignored_classes: Optional[List[str]] = None
+    ignored_classes: Optional[List[str]] = None,
+    image_size: Optional[int] = None,
 ):
     """
     Run model evaluation as a background task
@@ -752,7 +753,15 @@ def evaluate_model(
 
         else:
             # Batched full-image inference
-            eval_imgsz = int(os.environ.get("LAI_EVAL_IMGSZ", "640") or 640)
+            # Resolve evaluation image size in this order:
+            # request override -> trained model config -> env default.
+            trained_imgsz = (
+                (task_metadata.get("training_params") or {}).get("image_size")
+                or (task_metadata.get("training_params") or {}).get("imgsz")
+                or task_metadata.get("image_size")
+            )
+            eval_imgsz_raw = image_size or trained_imgsz or os.environ.get("LAI_EVAL_IMGSZ", "640")
+            eval_imgsz = int(eval_imgsz_raw or 640)
             eval_half = _env_bool("LAI_EVAL_HALF", True)
             eval_device = _resolve_eval_device()
             eval_batch = _choose_eval_batch_size(imgsz=eval_imgsz, half=eval_half)
@@ -782,6 +791,11 @@ def evaluate_model(
                 **(task.task_metadata or {}),
                 "eval_batch_size": eval_batch,
                 "eval_imgsz": eval_imgsz,
+                "eval_imgsz_source": (
+                    "request"
+                    if image_size
+                    else ("training_task" if trained_imgsz else "env_default")
+                ),
                 "eval_half": eval_half,
                 "eval_device": eval_device,
                 "eval_decode_workers": decode_workers,

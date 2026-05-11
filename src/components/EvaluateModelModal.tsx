@@ -43,6 +43,7 @@ interface EvaluateModelModalProps {
     taskId: number;
     datasetId: number;
     annotationFileId: string | null;
+    imageSize: number;
     checkpoint: 'best' | 'last';
     confThreshold: number;
     iouThreshold: number;
@@ -56,6 +57,7 @@ interface EvaluateModelModalProps {
   onEvaluateMultiple?: (params: {
     taskId: number;
     datasets: DatasetEvalConfig[];
+    imageSize: number;
     checkpoint: 'best' | 'last';
     confThreshold: number;
     iouThreshold: number;
@@ -251,6 +253,10 @@ export function EvaluateModelModal({
         id: d.id,
         name: d.name,
         imageCount: d.image_count || 0,
+        annotationFileCount:
+          typeof d.annotation_file_count === "number"
+            ? d.annotation_file_count
+            : files.length,
         thumbnailUrl: d.thumbnailUrl || d.logo_url,
         annotationFiles: files,
         collections,
@@ -286,6 +292,19 @@ export function EvaluateModelModal({
       return 'detection' as const;
     }
     return undefined;
+  }, [selectedModel, trainingTasks]);
+
+  const selectedModelImageSize = useMemo(() => {
+    const task = trainingTasks.find((t) => t.id.toString() === selectedModel);
+    const md = task?.task_metadata || {};
+    const tp = md.training_params || {};
+    const raw =
+      tp.image_size ??
+      tp.imgsz ??
+      md.image_size ??
+      md.imgsz;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 640;
   }, [selectedModel, trainingTasks]);
 
   // Picker change handler — reconciles add/remove/update with selectedDatasets state
@@ -370,6 +389,7 @@ export function EvaluateModelModal({
         await onEvaluateMultiple({
           taskId: parseInt(selectedModel),
           datasets: selectedDatasets,
+          imageSize: selectedModelImageSize,
           checkpoint: selectedCheckpoint,
           confThreshold,
           iouThreshold,
@@ -385,6 +405,7 @@ export function EvaluateModelModal({
           taskId: parseInt(selectedModel),
           datasetId: selectedDatasets[0].datasetId,
           annotationFileId: selectedDatasets[0].annotationFileId,
+          imageSize: selectedModelImageSize,
           checkpoint: selectedCheckpoint,
           confThreshold,
           iouThreshold,
