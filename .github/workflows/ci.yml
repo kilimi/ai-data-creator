@@ -24,19 +24,26 @@ jobs:
         run: npx vitest run --coverage
 
       - name: Print coverage summary
+        if: always()
         run: |
-          echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          node -e "
-            const c = require('./coverage/coverage-summary.json').total;
-            const badge = (pct) => pct >= 80 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
-            const lines = [
-              '| Metric | Coverage |',
-              '|--------|----------|',
-              \`| Statements | \${badge(c.statements.pct)} \${c.statements.pct}% (\${c.statements.covered}/\${c.statements.total}) |\`,
-              \`| Branches   | \${badge(c.branches.pct)} \${c.branches.pct}% (\${c.branches.covered}/\${c.branches.total}) |\`,
-              \`| Functions  | \${badge(c.functions.pct)} \${c.functions.pct}% (\${c.functions.covered}/\${c.functions.total}) |\`,
-              \`| Lines      | \${badge(c.lines.pct)} \${c.lines.pct}% (\${c.lines.covered}/\${c.lines.total}) |\`,
-            ];
-            console.log(lines.join('\n'));
-          " >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "./coverage/coverage-summary.json" ]; then
+            echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            node -e "
+              const c = require('./coverage/coverage-summary.json').total;
+              const badge = (pct) => pct >= 80 ? '🟢' : pct >= 50 ? '🟡' : '🔴';
+              const lines = [
+                '| Metric | Coverage |',
+                '|--------|----------|',
+                \`| Statements | \${badge(c.statements.pct)} \${c.statements.pct}% (\${c.statements.covered}/\${c.statements.total}) |\`,
+                \`| Branches   | \${badge(c.branches.pct)} \${c.branches.pct}% (\${c.branches.covered}/\${c.branches.total}) |\`,
+                \`| Functions  | \${badge(c.functions.pct)} \${c.functions.pct}% (\${c.functions.covered}/\${c.functions.total}) |\`,
+                \`| Lines      | \${badge(c.lines.pct)} \${c.lines.pct}% (\${c.lines.covered}/\${c.lines.total}) |\`,
+              ];
+              console.log(lines.join('\n'));
+            " >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "⚠️ Coverage report not generated" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -96,6 +96,11 @@ class YOLOTrainingTask(TrainingTask):
             dataset_info = self._prepare_dataset()
             logger.info(f"Dataset prepared: {len(dataset_info.get('class_names', []))} classes, {dataset_info.get('image_counts', {})}")
             
+            # Create training examples visualization
+            logger.info(f"Step 3.5: Creating training examples visualization for task {task_id}")
+            self._create_training_examples(dataset_info)
+            logger.info(f"Training examples created")
+            
             # Load model
             logger.info(f"Step 4: Loading YOLO model for task {task_id}")
             self._load_model()
@@ -194,6 +199,44 @@ class YOLOTrainingTask(TrainingTask):
         self.db.commit()
         
         return dataset_info
+    
+    def _create_training_examples(self, dataset_info: Dict[str, Any]):
+        """Create visualization examples of training data with annotations"""
+        from app.tasks.training_visualization import create_training_examples
+        
+        try:
+            dataset_dir = self.output_base / "dataset"
+            examples_dir = self.output_base / "examples"
+            
+            # Get class names and model type
+            class_names = dataset_info.get('class_names', [])
+            model_type = self.training_config.get('model_type', 'yolo11n-seg.pt')
+            is_segmentation = '-seg' in model_type.lower()
+            
+            logger.info(f"Creating training examples - model_type: {model_type}, is_seg: {is_segmentation}")
+            logger.info(f"Dataset dir: {dataset_dir}, Examples dir: {examples_dir}")
+            
+            create_training_examples(
+                dataset_dir=dataset_dir,
+                output_dir=examples_dir,
+                class_names=class_names,
+                num_examples=16,
+                is_segmentation=is_segmentation,
+                grid_size=(4, 4)
+            )
+            
+            logger.info(f"Training examples created successfully in {examples_dir}")
+            
+            # Update task metadata with examples path
+            self.task.task_metadata = {
+                **self.task.task_metadata,
+                "examples_path": str(examples_dir)
+            }
+            self.db.commit()
+            
+        except Exception as e:
+            # Don't fail the training if visualization fails
+            logger.warning(f"Failed to create training examples: {e}", exc_info=True)
     
     def _load_model(self):
         """Load YOLO model"""
