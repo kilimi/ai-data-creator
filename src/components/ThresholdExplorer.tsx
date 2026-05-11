@@ -511,11 +511,11 @@ export function ThresholdExplorer({
         <div className="flex items-center gap-2">
           <button
             onClick={handleDownloadCoco}
-            title="Download predictions filtered by the current Confidence & per-class thresholds as COCO JSON"
+            title="Download the predictions that pass the current Confidence & per-class thresholds as a COCO JSON file"
             className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors bg-gray-800 text-gray-200 border border-gray-700 hover:bg-gray-700"
           >
             <Download className="w-3.5 h-3.5" />
-            Download COCO
+            Export filtered predictions
           </button>
           <button
             onClick={handleSave}
