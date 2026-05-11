@@ -428,7 +428,13 @@ export default function ProjectEvaluations() {
             ] as const).map(({ key, label, Icon }) => (
               <button
                 key={key}
-                onClick={() => setViewMode(key)}
+                onClick={() => {
+                  setViewMode(key);
+                  if (key !== "list") {
+                    setCompareMode(false);
+                    setSelectedForCompare(new Set());
+                  }
+                }}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors ${
                   viewMode === key
                     ? "bg-background text-foreground shadow-sm"
@@ -440,17 +446,19 @@ export default function ProjectEvaluations() {
               </button>
             ))}
           </div>
-          <Button
-            variant={compareMode ? "default" : "outline"}
-            size="sm"
-            onClick={() => {
-              setCompareMode(v => !v);
-              if (compareMode) setSelectedForCompare(new Set());
-            }}
-          >
-            <GitCompare className="w-4 h-4 mr-2" />
-            {compareMode ? "Exit compare" : "Compare"}
-          </Button>
+          {viewMode === "list" && (
+            <Button
+              variant={compareMode ? "default" : "outline"}
+              size="sm"
+              onClick={() => {
+                setCompareMode(v => !v);
+                if (compareMode) setSelectedForCompare(new Set());
+              }}
+            >
+              <GitCompare className="w-4 h-4 mr-2" />
+              {compareMode ? "Exit compare" : "Compare"}
+            </Button>
+          )}
         </div>
       </div>
 
