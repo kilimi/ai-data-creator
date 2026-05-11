@@ -428,7 +428,13 @@ export default function ProjectEvaluations() {
             ] as const).map(({ key, label, Icon }) => (
               <button
                 key={key}
-                onClick={() => setViewMode(key)}
+                onClick={() => {
+                  setViewMode(key);
+                  if (key !== "list") {
+                    setCompareMode(false);
+                    setSelectedForCompare(new Set());
+                  }
+                }}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors ${
                   viewMode === key
                     ? "bg-background text-foreground shadow-sm"
