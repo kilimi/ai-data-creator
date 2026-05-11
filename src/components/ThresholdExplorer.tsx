@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Slider } from "@/components/ui/slider";
-import { SlidersHorizontal, RotateCcw, X, Save, Check } from "lucide-react";
+import { SlidersHorizontal, RotateCcw, X, Save, Check, Download } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
+import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
+import { useToast } from "@/hooks/use-toast";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
