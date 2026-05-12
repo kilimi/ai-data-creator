@@ -65,6 +65,19 @@ export function EditGroupModal({
 
   const currentGroupId = group?.id;
 
+  // Merge datasets prop with any datasets nested inside datasetGroups
+  // (backend sometimes returns grouped datasets only inside the group object)
+  const allProjectDatasets = useMemo(() => {
+    const map = new Map<number, Dataset>();
+    allDatasets.forEach(d => map.set(d.id, d));
+    datasetGroups.forEach(g => {
+      (g.datasets || []).forEach(d => {
+        if (!map.has(d.id)) map.set(d.id, d);
+      });
+    });
+    return Array.from(map.values());
+  }, [allDatasets, datasetGroups]);
+
   // Map dataset ID -> names of OTHER groups it belongs to
   const datasetToOtherGroupNames = useMemo(() => {
     const map = new Map<number, string[]>();
@@ -84,14 +97,14 @@ export function EditGroupModal({
   }, [group]);
 
   const filteredDatasets = useMemo(() => {
-    if (!datasetSearch.trim()) return allDatasets;
+    if (!datasetSearch.trim()) return allProjectDatasets;
     const q = datasetSearch.toLowerCase();
-    return allDatasets.filter(d =>
+    return allProjectDatasets.filter(d =>
       d.name.toLowerCase().includes(q) ||
       (d.description && d.description.toLowerCase().includes(q)) ||
       (d.tags && d.tags.some(t => t.toLowerCase().includes(q)))
     );
-  }, [allDatasets, datasetSearch]);
+  }, [allProjectDatasets, datasetSearch]);
 
   const currentMembers = filteredDatasets.filter(d => currentGroupDatasetIds.has(d.id));
   const availableOnly = filteredDatasets.filter(d => !currentGroupDatasetIds.has(d.id) && !datasetToOtherGroupNames.has(d.id));
