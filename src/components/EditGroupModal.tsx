@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,9 @@ import {
   Image as ImageIcon, 
   Layers,
   Edit,
-  Tag as TagIcon
+  Tag as TagIcon,
+  Search,
+  Users
 } from "lucide-react";
 import { Dataset, DatasetGroup } from "@/types";
 import { useToast } from "@/hooks/use-toast";
@@ -31,6 +33,7 @@ interface EditGroupModalProps {
   onOpenChange: (open: boolean) => void;
   group: DatasetGroup | null;
   availableDatasets: Dataset[];
+  datasetGroups?: DatasetGroup[];
   onGroupUpdated?: () => void;
 }
 
@@ -38,7 +41,8 @@ export function EditGroupModal({
   open,
   onOpenChange,
   group,
-  availableDatasets,
+  availableDatasets: allDatasets,
+  datasetGroups = [],
   onGroupUpdated
 }: EditGroupModalProps) {
   const [name, setName] = useState("");
@@ -46,6 +50,7 @@ export function EditGroupModal({
   const [url, setUrl] = useState("");
   const [selectedDatasets, setSelectedDatasets] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [datasetSearch, setDatasetSearch] = useState("");
   const { toast } = useToast();
 
   useEffect(() => {
@@ -54,8 +59,56 @@ export function EditGroupModal({
       setDescription(group.description || "");
       setUrl(group.url || "");
       setSelectedDatasets(group.dataset_ids || []);
+      setDatasetSearch("");
     }
   }, [group]);
+
+  const currentGroupId = group?.id;
+
+  // Merge datasets prop with any datasets nested inside datasetGroups
+  // (backend sometimes returns grouped datasets only inside the group object)
+  const allProjectDatasets = useMemo(() => {
+    const map = new Map<number, Dataset>();
+    allDatasets.forEach(d => map.set(d.id, d));
+    datasetGroups.forEach(g => {
+      (g.datasets || []).forEach(d => {
+        if (!map.has(d.id)) map.set(d.id, d);
+      });
+    });
+    return Array.from(map.values());
+  }, [allDatasets, datasetGroups]);
+
+  // Map dataset ID -> names of OTHER groups it belongs to
+  const datasetToOtherGroupNames = useMemo(() => {
+    const map = new Map<number, string[]>();
+    datasetGroups.forEach(g => {
+      if (g.id === currentGroupId) return;
+      const members = g.datasets || [];
+      members.forEach(d => {
+        if (!map.has(d.id)) map.set(d.id, []);
+        map.get(d.id)!.push(g.name);
+      });
+    });
+    return map;
+  }, [datasetGroups, currentGroupId]);
+
+  const currentGroupDatasetIds = useMemo(() => {
+    return new Set(group?.dataset_ids || []);
+  }, [group]);
+
+  const filteredDatasets = useMemo(() => {
+    if (!datasetSearch.trim()) return allProjectDatasets;
+    const q = datasetSearch.toLowerCase();
+    return allProjectDatasets.filter(d =>
+      d.name.toLowerCase().includes(q) ||
+      (d.description && d.description.toLowerCase().includes(q)) ||
+      (d.tags && d.tags.some(t => t.toLowerCase().includes(q)))
+    );
+  }, [allProjectDatasets, datasetSearch]);
+
+  const currentMembers = filteredDatasets.filter(d => currentGroupDatasetIds.has(d.id));
+  const availableOnly = filteredDatasets.filter(d => !currentGroupDatasetIds.has(d.id) && !datasetToOtherGroupNames.has(d.id));
+  const otherGroupMembers = filteredDatasets.filter(d => !currentGroupDatasetIds.has(d.id) && datasetToOtherGroupNames.has(d.id));
 
   const handleDatasetToggle = (datasetId: number) => {
     setSelectedDatasets(prev => 
@@ -93,8 +146,6 @@ export function EditGroupModal({
       formData.append('name', name);
       formData.append('description', description);
       formData.append('url', url);
-      
-      // Send dataset IDs as comma-separated string
       formData.append('dataset_ids', selectedDatasets.join(','));
 
       const response = await fetch(`${getApiBaseUrl()}/dataset-groups/${group.id}`, {
@@ -115,7 +166,6 @@ export function EditGroupModal({
           description: `Group "${name}" updated successfully`,
         });
         
-        // Close modal and refresh data
         onOpenChange(false);
         onGroupUpdated?.();
       } else {
@@ -134,7 +184,7 @@ export function EditGroupModal({
   };
 
   const getTotalStats = () => {
-    const selected = availableDatasets.filter(d => selectedDatasets.includes(d.id));
+    const selected = allDatasets.filter(d => selectedDatasets.includes(d.id));
     return {
       images: selected.reduce((sum, d) => sum + (d.image_count || 0), 0),
       annotations: selected.reduce((sum, d) => sum + (d.annotation_count || 0), 0)
@@ -145,9 +195,100 @@ export function EditGroupModal({
 
   if (!group) return null;
 
+  const renderDatasetCard = (dataset: Dataset, opts?: { showOtherGroupBadge?: boolean; isMember?: boolean }) => {
+    const thumb = resolveBackendMediaUrl(dataset.thumbnailUrl);
+    const otherGroupNames = datasetToOtherGroupNames.get(dataset.id) || [];
+    const isSelected = selectedDatasets.includes(dataset.id);
+
+    return (
+      <Card
+        key={dataset.id}
+        className={`cursor-pointer transition-colors ${
+          opts?.isMember
+            ? 'border-primary bg-primary/5'
+            : isSelected
+              ? 'border-primary bg-primary/5'
+              : 'hover:border-gray-400'
+        }`}
+        onClick={() => handleDatasetToggle(dataset.id)}
+      >
+        <CardContent className="p-3">
+          <div className="flex items-start gap-3">
+            <Checkbox
+              checked={isSelected}
+              onChange={() => handleDatasetToggle(dataset.id)}
+              className="mt-0.5"
+            />
+
+            {thumb ? (
+              <img
+                src={thumb}
+                alt={dataset.name}
+                className="w-12 h-12 rounded object-cover flex-shrink-0"
+              />
+            ) : (
+              <div className="w-12 h-12 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                <Database className="h-6 w-6 text-muted-foreground" />
+              </div>
+            )}
+
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h4 className="font-medium truncate">{dataset.name}</h4>
+                {opts?.showOtherGroupBadge && otherGroupNames.length > 0 && (
+                  <Badge variant="outline" className="text-xs shrink-0 flex items-center gap-1">
+                    <Users className="h-2.5 w-2.5" />
+                    {otherGroupNames.join(", ")}
+                  </Badge>
+                )}
+                {opts?.isMember && (
+                  <Badge variant="default" className="text-[10px] shrink-0">
+                    In group
+                  </Badge>
+                )}
+              </div>
+              {dataset.description && (
+                <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                  {dataset.description}
+                </p>
+              )}
+
+              <div className="flex items-center gap-3 mt-2">
+                <Badge variant="secondary" className="text-xs">
+                  <ImageIcon className="w-3 h-3 mr-1" />
+                  {dataset.image_count || 0} images
+                </Badge>
+                <Badge variant="outline" className="text-xs">
+                  <Layers className="w-3 h-3 mr-1" />
+                  {dataset.annotation_count || 0} annotations
+                </Badge>
+              </div>
+
+              {dataset.tags && dataset.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {dataset.tags.slice(0, 3).map(tag => (
+                    <Badge key={tag} variant="secondary" className="text-xs">
+                      <TagIcon className="w-2 h-2 mr-1" />
+                      {tag}
+                    </Badge>
+                  ))}
+                  {dataset.tags.length > 3 && (
+                    <Badge variant="secondary" className="text-xs">
+                      +{dataset.tags.length - 3} more
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh]">
+      <DialogContent className="max-w-2xl max-h-[85vh]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Edit className="h-5 w-5" />
@@ -158,7 +299,7 @@ export function EditGroupModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6">
+        <div className="space-y-5">
           {/* Group Info */}
           <div className="space-y-4">
             <div>
@@ -180,7 +321,7 @@ export function EditGroupModal({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe this group..."
                 className="mt-1"
-                rows={3}
+                rows={2}
               />
             </div>
             
@@ -214,81 +355,72 @@ export function EditGroupModal({
                 </div>
               )}
             </div>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4" />
+              <Input
+                placeholder="Search datasets..."
+                className="pl-9"
+                value={datasetSearch}
+                onChange={(e) => setDatasetSearch(e.target.value)}
+              />
+            </div>
             
-            <ScrollArea className="h-[300px]">
-              <div className="space-y-3">
-                {availableDatasets.map((dataset) => {
-                  const thumb = resolveBackendMediaUrl(dataset.thumbnailUrl);
-                  return (
-                  <Card 
-                    key={dataset.id}
-                    className={`cursor-pointer transition-colors ${
-                      selectedDatasets.includes(dataset.id)
-                        ? 'border-primary bg-primary/5'
-                        : 'hover:border-gray-400'
-                    }`}
-                    onClick={() => handleDatasetToggle(dataset.id)}
-                  >
-                    <CardContent className="p-3">
-                      <div className="flex items-start gap-3">
-                        <Checkbox 
-                          checked={selectedDatasets.includes(dataset.id)}
-                          onChange={() => handleDatasetToggle(dataset.id)}
-                          className="mt-0.5"
-                        />
-                        
-                        {thumb ? (
-                          <img
-                            src={thumb}
-                            alt={dataset.name}
-                            className="w-12 h-12 rounded object-cover flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-12 h-12 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                            <Database className="h-6 w-6 text-muted-foreground" />
-                          </div>
-                        )}
-                        
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-medium truncate">{dataset.name}</h4>
-                          {dataset.description && (
-                            <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
-                              {dataset.description}
-                            </p>
-                          )}
-                          
-                          <div className="flex items-center gap-3 mt-2">
-                            <Badge variant="secondary" className="text-xs">
-                              <ImageIcon className="w-3 h-3 mr-1" />
-                              {dataset.image_count || 0} images
-                            </Badge>
-                            <Badge variant="outline" className="text-xs">
-                              <Layers className="w-3 h-3 mr-1" />
-                              {dataset.annotation_count || 0} annotations
-                            </Badge>
-                          </div>
-                          
-                          {dataset.tags && dataset.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {dataset.tags.slice(0, 3).map(tag => (
-                                <Badge key={tag} variant="secondary" className="text-xs">
-                                  <TagIcon className="w-2 h-2 mr-1" />
-                                  {tag}
-                                </Badge>
-                              ))}
-                              {dataset.tags.length > 3 && (
-                                <Badge variant="secondary" className="text-xs">
-                                  +{dataset.tags.length - 3} more
-                                </Badge>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-                })}
+            <ScrollArea className="h-[320px]">
+              <div className="space-y-4">
+                {/* Current group members */}
+                {currentMembers.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="sticky top-0 bg-background z-10 pb-1">
+                      <h5 className="text-xs font-semibold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5" />
+                        Current group members
+                        <Badge variant="secondary" className="text-[10px]">{currentMembers.length}</Badge>
+                      </h5>
+                    </div>
+                    <div className="space-y-2">
+                      {currentMembers.map(d => renderDatasetCard(d, { isMember: true }))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Available only */}
+                {availableOnly.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="sticky top-0 bg-background z-10 pb-1">
+                      <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Database className="h-3.5 w-3.5" />
+                        Available datasets
+                        <Badge variant="secondary" className="text-[10px]">{availableOnly.length}</Badge>
+                      </h5>
+                    </div>
+                    <div className="space-y-2">
+                      {availableOnly.map(d => renderDatasetCard(d))}
+                    </div>
+                  </div>
+                )}
+
+                {/* In other groups */}
+                {otherGroupMembers.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="sticky top-0 bg-background z-10 pb-1">
+                      <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Users className="h-3.5 w-3.5" />
+                        In other groups
+                        <Badge variant="secondary" className="text-[10px]">{otherGroupMembers.length}</Badge>
+                      </h5>
+                    </div>
+                    <div className="space-y-2">
+                      {otherGroupMembers.map(d => renderDatasetCard(d, { showOtherGroupBadge: true }))}
+                    </div>
+                  </div>
+                )}
+
+                {currentMembers.length === 0 && availableOnly.length === 0 && otherGroupMembers.length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground text-sm">
+                    No datasets match your search.
+                  </div>
+                )}
               </div>
             </ScrollArea>
           </div>
