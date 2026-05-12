@@ -53,6 +53,19 @@ export function AddGroupModal({
   const [datasetSearch, setDatasetSearch] = useState("");
   const { toast } = useToast();
 
+  // Merge datasets prop with any datasets nested inside datasetGroups
+  // (backend sometimes returns grouped datasets only inside the group object)
+  const allDatasets = useMemo(() => {
+    const map = new Map<number, Dataset>();
+    datasets.forEach(d => map.set(d.id, d));
+    datasetGroups.forEach(g => {
+      (g.datasets || []).forEach(d => {
+        if (!map.has(d.id)) map.set(d.id, d);
+      });
+    });
+    return Array.from(map.values());
+  }, [datasets, datasetGroups]);
+
   // Map dataset ID -> group names it belongs to
   const datasetToGroupNames = useMemo(() => {
     const map = new Map<number, string[]>();
@@ -67,14 +80,14 @@ export function AddGroupModal({
   }, [datasetGroups]);
 
   const filteredDatasets = useMemo(() => {
-    if (!datasetSearch.trim()) return datasets;
+    if (!datasetSearch.trim()) return allDatasets;
     const q = datasetSearch.toLowerCase();
-    return datasets.filter(d =>
+    return allDatasets.filter(d =>
       d.name.toLowerCase().includes(q) ||
       (d.description && d.description.toLowerCase().includes(q)) ||
       (d.tags && d.tags.some(t => t.toLowerCase().includes(q)))
     );
-  }, [datasets, datasetSearch]);
+  }, [allDatasets, datasetSearch]);
 
   const availableDatasets = filteredDatasets.filter(d => !datasetToGroupNames.has(d.id));
   const groupedDatasets = filteredDatasets.filter(d => datasetToGroupNames.has(d.id));
