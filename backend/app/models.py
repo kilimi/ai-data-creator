@@ -112,6 +112,10 @@ class Image(Base):
     __table_args__ = (
         Index('idx_image_dataset_filename', 'dataset_id', 'file_name'),
         Index('idx_image_dataset_collection', 'dataset_id', 'collection_id'),
+        # Supports get_or_create_group_id: find images by dataset + group_id
+        Index('idx_image_dataset_groupid', 'dataset_id', 'group_id'),
+        # Supports _set_random_image_as_logo: filtered scan on dataset + url
+        Index('idx_image_dataset_url', 'dataset_id', 'url'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -280,6 +284,8 @@ class AnnotationFileImage(Base):
     __tablename__ = "annotation_file_images"
     __table_args__ = (
         Index('idx_afi_file_datasetimg', 'annotation_file_id', 'dataset_image_id'),
+        # Supports COCO image-id lookup during annotation processing
+        Index('idx_afi_file_cocoimgid', 'annotation_file_id', 'coco_image_id'),
     )
 
     id = Column(Integer, primary_key=True, index=True)

@@ -12,6 +12,7 @@ import { EditDatasetDialog } from "@/components/EditDatasetDialog";
 import { useApi } from "@/hooks/use-api";
 import { resolveBackendMediaUrl } from "@/config/api";
 import { useToast } from "@/hooks/use-toast";
+import { detectFormat } from "@/utils/detectFormat";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +57,23 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
   const { api } = useApi();
   const { toast } = useToast();
   const navigate = useNavigate();
+  
+  // Refs for cleanup
+  const pollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  const maxTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const navTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = React.useRef(true);
+
+  // Cleanup on unmount
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (maxTimeoutRef.current) clearTimeout(maxTimeoutRef.current);
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
+    };
+  }, []);
 
   const handleDatasetUpdated = (updatedDataset: Dataset) => {
     if (onDatasetUpdated) {
@@ -89,16 +107,27 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
           duration: 5000,
         });
         
+        // Clear any existing polling intervals
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        if (maxTimeoutRef.current) clearTimeout(maxTimeoutRef.current);
+        
         // Poll task status to navigate when complete
-        const pollInterval = setInterval(async () => {
+        pollIntervalRef.current = setInterval(async () => {
+          if (!isMountedRef.current) {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+            return;
+          }
+          
           try {
             const taskResponse = await api.getTask(responseData.task_id);
             if (taskResponse.success && taskResponse.data) {
               const taskData = taskResponse.data as any;
               
               if (taskData.status === 'completed') {
-                clearInterval(pollInterval);
-                const newDatasetId = taskData.task_metadata?.new_dataset_id;
+                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                if (maxTimeoutRef.current) clearTimeout(maxTimeoutRef.current);
+                
+                if (!isMountedRef.current) return;
                 
                 toast({
                   title: "✅ Dataset Duplicated",
@@ -106,14 +135,20 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
                   duration: 4000,
                 });
                 
-                // Navigate to the project datasets page
-                if (dataset.project_id) {
-                  setTimeout(() => {
-                    navigate(`/projects/${dataset.project_id}/datasets`);
+                // Navigate to the project datasets page with cleanup
+                if (dataset.project_id && isMountedRef.current) {
+                  navTimeoutRef.current = setTimeout(() => {
+                    if (isMountedRef.current) {
+                      navigate(`/projects/${dataset.project_id}/datasets`);
+                    }
                   }, 500);
                 }
               } else if (taskData.status === 'failed') {
-                clearInterval(pollInterval);
+                if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                if (maxTimeoutRef.current) clearTimeout(maxTimeoutRef.current);
+                
+                if (!isMountedRef.current) return;
+                
                 toast({
                   title: "❌ Duplication Failed",
                   description: taskData.error_message || "Dataset duplication failed",
@@ -126,7 +161,11 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
           }
         }, 2000);
         
-        setTimeout(() => clearInterval(pollInterval), 300000);
+        // Set maximum polling duration (5 minutes)
+        maxTimeoutRef.current = setTimeout(() => {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          console.warn('Dataset duplication polling stopped after 5 minutes');
+        }, 300000);
       } else {
         const duplicatedDataset = responseData;
         toast({
@@ -180,6 +219,17 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
     const targetProjectId = Number(selectedTargetProject);
     if (!Number.isFinite(targetProjectId)) return;
 
+    // Validate dataset.id before calling callback
+    const datasetId = Number(dataset.id);
+    if (!Number.isFinite(datasetId)) {
+      toast({
+        title: "Error",
+        description: "Invalid dataset ID",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsMoving(true);
     try {
       const response = await api.moveDataset(dataset.id, targetProjectId);
@@ -188,7 +238,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
       }
       const targetProjectName =
         projects.find((p) => p.id === targetProjectId)?.name || `Project ${targetProjectId}`;
-      onDatasetMoved?.(Number(dataset.id), targetProjectId);
+      onDatasetMoved?.(datasetId, targetProjectId);
       setIsMoveDialogOpen(false);
       toast({
         title: "Dataset moved",
@@ -218,15 +268,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
   const fileCount = dataset.annotation_file_count || 0;
   const annFiles = dataset.annotation_files || [];
 
-  // Detect formats from filenames (best-effort)
-  const detectFormat = (name: string): string => {
-    const n = (name || "").toLowerCase();
-    if (n.includes("coco") || n.endsWith(".json")) return "COCO";
-    if (n.includes("yolo") || n.endsWith(".txt")) return "YOLO";
-    if (n.includes("mask") || n.includes("seg")) return "Masks";
-    if (n.includes("voc") || n.endsWith(".xml")) return "VOC";
-    return "Other";
-  };
+  // Detect formats from filenames using utility function
   const formats = Array.from(new Set(annFiles.map((f) => detectFormat(f.file_name || f.name))));
   const isMultiFormat = formats.length > 1;
 
@@ -309,6 +351,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
                 <Button
                   variant="secondary"
                   size="icon"
+                  aria-label="Dataset actions"
                   className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur"
                 >
                   <MoreHorizontal className="h-4 w-4" />

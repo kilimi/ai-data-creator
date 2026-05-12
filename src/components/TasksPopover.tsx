@@ -215,7 +215,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'yolo_training':
         return `/projects/${taskProjectId}/models?taskId=${task.id}`;
       case 'evaluation':
-        return `/projects/${taskProjectId}/evaluations`;
+      case 'model_evaluation':
+        return `/projects/${taskProjectId}/evaluations?taskId=${task.id}`;
       case 'augmentation':
       case 'duplication':
         return `/projects/${taskProjectId}/datasets`;
@@ -348,7 +349,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                       <th className="px-3 py-3 font-medium text-muted-foreground">Task Name</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground">Status</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground w-28">Progress</th>
-                      <th className="px-3 py-3 font-medium text-muted-foreground w-20"></th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-32">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -413,11 +414,11 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 text-xs gap-1"
+                              className="h-7 px-2 text-xs gap-1.5 flex items-center whitespace-nowrap"
                               onClick={(e) => handleGoToTask(task, e)}
                             >
-                              Go to
-                              <ExternalLink className="w-3 h-3" />
+                              <span>Go to</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
                             </Button>
                           )}
                         </td>

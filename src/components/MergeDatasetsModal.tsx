@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Dataset } from "@/types";
 import { useToast } from "@/hooks/use-toast";
+import { getApiBaseUrl } from "@/config/api";
 
 interface MergeDatasetsModalProps {
   open: boolean;
@@ -90,7 +91,7 @@ export function MergeDatasetsModal({
     setIsLoading(true);
 
     try {
-      const response = await fetch(`http://localhost:9999/projects/${projectId}/datasets/merge`, {
+      const response = await fetch(`${getApiBaseUrl()}/projects/${projectId}/datasets/merge`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

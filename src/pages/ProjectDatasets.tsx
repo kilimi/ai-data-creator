@@ -46,11 +46,12 @@ import {
 interface OutletContext {
   project: Project | null;
   loading: boolean;
+  refreshProject?: () => void;
 }
 
 export default function ProjectDatasets() {
   const { id } = useParams<{ id: string }>();
-  const { project } = useOutletContext<OutletContext>();
+  const { project, refreshProject } = useOutletContext<OutletContext>();
   const { api } = useApi();
   const { toast } = useToast();
   const { tasks } = useTasks(id ? parseInt(id) : undefined);
@@ -86,7 +87,8 @@ export default function ProjectDatasets() {
     setIsLoading(true);
     try {
       const response = await fetch(
-        `${getApiBaseUrl()}/projects/${id}/datasets/list?include_thumbnails=true`,
+        // Omit data: URLs from list JSON — server returns ?thumb=300 file previews instead (faster, smaller).
+        `${getApiBaseUrl()}/projects/${id}/datasets/list?include_thumbnails=false`,
         { credentials: 'omit' },
       );
       if (response.ok) {
@@ -274,7 +276,9 @@ export default function ProjectDatasets() {
             ? `Successfully deleted ${result.deleted_count} datasets.`
             : "The dataset has been deleted successfully."
         });
-        fetchProjectDatasets();
+        void fetchProjectDatasets();
+        void fetchDatasetGroups();
+        refreshProject?.();
       } else {
         const error = await response.json();
         throw new Error(error.detail || 'Failed to delete dataset');

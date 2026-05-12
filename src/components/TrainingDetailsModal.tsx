@@ -2,9 +2,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, Activity, Zap, Target, Gauge, Settings, ChevronDown, ChevronUp } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useApi } from "@/hooks/use-api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { formatDuration } from "@/utils/formatDuration";
+import { StatusBadge } from "@/components/StatusBadge";
+import { getApiBaseUrl } from "@/config/api";
 
 interface TrainingDetailsModalProps {
   open: boolean;
@@ -68,11 +71,50 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   const [showAllSettings, setShowAllSettings] = useState(false);
   const [showStatusReason, setShowStatusReason] = useState(false);
 
-  useEffect(() => {
-    if (open && taskId) {
-      fetchTaskDetails();
+  const fetchTaskDetails = useCallback(async (signal?: AbortSignal) => {
+    if (!api) {
+      setLoading(false);
+      setError('API not available');
+      return;
     }
-  }, [open, taskId, api]);
+    
+    try {
+      setLoading(true);
+      setError(null);
+      const base = getApiBaseUrl();
+      const response = await fetch(`${base}/tasks/${taskId}`, { signal });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch task details: ${response.status}`);
+      }
+      
+      if (signal?.aborted) return;
+      
+      const data = await response.json();
+      if (signal?.aborted) return;
+      
+      setTask(data);
+    } catch (err) {
+      if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+      console.error('Error fetching task details:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load training details');
+    } finally {
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
+    }
+  }, [api, taskId]);
+
+  useEffect(() => {
+    if (!open || !taskId) return;
+    
+    const ac = new AbortController();
+    void fetchTaskDetails(ac.signal);
+    
+    return () => {
+      ac.abort();
+    };
+  }, [open, taskId, fetchTaskDetails]);
 
   useEffect(() => {
     if (!open) {
@@ -83,67 +125,15 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   useEffect(() => {
     if (!open || !taskId) return;
     
-    // Poll for updates if task is running
+    // Only poll if task is running
+    if (task?.status !== 'running') return;
+    
     const interval = setInterval(() => {
-      if (task?.status === 'running') {
-        fetchTaskDetails();
-      }
+      void fetchTaskDetails();
     }, 3000);
+    
     return () => clearInterval(interval);
-  }, [open, taskId, task?.status]);
-
-  const fetchTaskDetails = async () => {
-    if (!api) {
-      setLoading(false);
-      setError('API not available');
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch task details: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('Task metadata structure:', data.task_metadata);
-      console.log('Training params:', data.task_metadata?.training_params);
-      setTask(data);
-    } catch (err) {
-      console.error('Error fetching task details:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load training details');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const formatDuration = (start: string, end?: string) => {
-    const startDate = new Date(start);
-    const endDate = end ? new Date(end) : new Date();
-    const duration = endDate.getTime() - startDate.getTime();
-    
-    const hours = Math.floor(duration / (1000 * 60 * 60));
-    const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((duration % (1000 * 60)) / 1000);
-    
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    if (minutes > 0) return `${minutes}m ${seconds}s`;
-    return `${seconds}s`;
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, { className: string; label: string }> = {
-      running: { className: 'bg-primary/15 text-primary border-primary/30', label: 'Running' },
-      completed: { className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30', label: 'Completed' },
-      failed: { className: 'bg-destructive/15 text-destructive border-destructive/30', label: 'Failed' },
-      pending: { className: 'bg-muted text-muted-foreground border-border', label: 'Pending' },
-    };
-    const variant = variants[status] || variants.pending;
-    return <Badge className={`${variant.className} border`}>{variant.label}</Badge>;
-  };
+  }, [open, taskId, task?.status, fetchTaskDetails]);
 
   const renderMetricCard = (title: string, value: number | string | undefined, icon: React.ReactNode, format?: 'percent' | 'decimal') => {
     if (value === undefined) return null;
@@ -211,7 +201,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 <div>
                   <div className="text-sm text-muted-foreground mb-1">Status</div>
                   <div className="flex items-center gap-2">
-                    {getStatusBadge(task.status)}
+                    <StatusBadge status={task.status} />
                     {(task.status === 'failed' || task.status === 'stopped') && statusReason && (
                       <Button
                         variant="ghost"

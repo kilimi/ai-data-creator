@@ -204,7 +204,7 @@ export function ProjectLayout() {
               />
               
               {/* Page Content - Rendered via Outlet */}
-              <Outlet context={{ project, loading }} />
+              <Outlet context={{ project, loading, refreshProject: refetch }} />
             </div>
           </main>
         </div>

@@ -243,13 +243,15 @@ def list_project_datasets(
     """
     Lightweight datasets for grid/list views: metadata + counts + one preview image URL each.
 
-    Row thumbnails / dataset logos are stored as optimized ~200×200 JPEG data URLs — included by default.
-    Set include_thumbnails=false to omit base64 (smaller JSON; cards fall back to first image preview only).
+    ``include_thumbnails``: when true, small ``data:image/...`` logos (under ~500k chars) are included;
+    larger legacy base64 values are omitted in favor of the first-image preview with ``?thumb=300``.
+    Relative ``/static/...`` paths always get a ``thumb`` query when missing so full originals are not loaded.
+    Set include_thumbnails=false to omit all data URLs (smaller JSON; cards use file previews only).
     """
     from sqlalchemy import func
     from sqlalchemy.orm import load_only
 
-    from ..dataset_list_helpers import first_preview_url_by_dataset
+    from ..dataset_list_helpers import first_preview_url_by_dataset, resolve_dataset_list_thumbnail
 
     project = db.query(models.Project).filter(models.Project.id == project_id).first()
     if not project:
@@ -298,9 +300,11 @@ def list_project_datasets(
 
     result = []
     for dataset in datasets:
-        thumb = _truncate_base64_url(dataset.thumbnailUrl, include_thumbnails)
-        if not thumb:
-            thumb = preview_by_ds.get(dataset.id)
+        thumb = resolve_dataset_list_thumbnail(
+            dataset.thumbnailUrl,
+            preview_by_ds.get(dataset.id),
+            include_base64_thumbnails=include_thumbnails,
+        )
 
         result.append(
             {

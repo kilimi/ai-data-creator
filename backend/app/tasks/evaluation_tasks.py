@@ -319,6 +319,7 @@ def evaluate_model(
     checkpoint: str,
     conf_threshold: float,
     iou_threshold: float,
+    nms_iou_threshold: float = 0.45,
     use_grid: bool = False,
     grid_size: int = 640,
     grid_overlap: float = 0.2,
@@ -329,7 +330,12 @@ def evaluate_model(
     """
     Run model evaluation as a background task
     Supports grid-based inference for high-resolution images
-    ignored_classes: List of class names to ignore when calculating metrics
+    
+    Args:
+        conf_threshold: Minimum confidence score for predictions
+        iou_threshold: IoU threshold for matching predictions to ground truth
+        nms_iou_threshold: IoU threshold for Non-Maximum Suppression (default 0.45)
+        ignored_classes: List of class names to ignore when calculating metrics
     """
     db = SessionLocal()
     task = None
@@ -381,6 +387,11 @@ def evaluate_model(
         
         # Load model
         model = YOLO(model_path)
+        
+        # Detect model type (detection vs segmentation)
+        model_task_type = getattr(model, 'task', 'detect')
+        is_segmentation_model = 'seg' in str(model_path).lower() or model_task_type == 'segment'
+        logger.info(f"Model type: {model_task_type}, is_segmentation: {is_segmentation_model}, path: {model_path}")
         
         # Get dataset
         dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
@@ -596,7 +607,7 @@ def evaluate_model(
                         results = model.predict(
                             source=np.array(tile_image),
                             conf=conf_threshold,
-                            iou=iou_threshold,
+                            iou=nms_iou_threshold,
                             verbose=False,
                             save=False
                         )
@@ -627,16 +638,25 @@ def evaluate_model(
                                 segmentation = []
                                 if hasattr(result, 'masks') and result.masks is not None:
                                     try:
-                                        mask = result.masks.xy[box_idx]
-                                        if len(mask) > 0:
-                                            segmentation = []
-                                            for point in mask:
-                                                segmentation.extend([
-                                                    float(tile['x'] + point[0]),
-                                                    float(tile['y'] + point[1])
-                                                ])
-                                    except (IndexError, AttributeError):
-                                        pass
+                                        if hasattr(result.masks, 'xy') and len(result.masks.xy) > box_idx:
+                                            mask = result.masks.xy[box_idx]
+                                            if len(mask) > 0:
+                                                for point in mask:
+                                                    segmentation.extend([
+                                                        float(tile['x'] + point[0]),
+                                                        float(tile['y'] + point[1])
+                                                    ])
+                                                logger.debug(f"Extracted mask with {len(mask)} points for box {box_idx}")
+                                            else:
+                                                logger.debug(f"Empty mask for box {box_idx}")
+                                        else:
+                                            logger.debug(f"No mask.xy or index {box_idx} out of range")
+                                    except (IndexError, AttributeError) as e:
+                                        logger.warning(f"Failed to extract mask for box {box_idx}: {e}")
+                                elif is_segmentation_model:
+                                    # Log once per image if segmentation model but no masks
+                                    if box_idx == 0:
+                                        logger.warning(f"Segmentation model but no masks in result for image {img.id}")
 
                                 image_predictions.append({
                                     'image_id': img.id,
@@ -836,7 +856,7 @@ def evaluate_model(
                     model.predict(
                         source=warmup_paths,
                         conf=conf_threshold,
-                        iou=iou_threshold,
+                        iou=nms_iou_threshold,
                         imgsz=eval_imgsz,
                         half=eval_half,
                         device=eval_device,
@@ -878,7 +898,7 @@ def evaluate_model(
                         results = model.predict(
                             source=infer_inputs,
                             conf=conf_threshold,
-                            iou=iou_threshold,
+                            iou=nms_iou_threshold,
                             imgsz=eval_imgsz,
                             half=eval_half,
                             device=eval_device,
@@ -943,11 +963,21 @@ def evaluate_model(
                                 segmentation = []
                                 if hasattr(result, 'masks') and result.masks is not None:
                                     try:
-                                        mask = result.masks.xy[box_idx]
-                                        if len(mask) > 0:
-                                            segmentation = [float(coord) for point in mask for coord in point]
-                                    except (IndexError, AttributeError):
-                                        pass
+                                        if hasattr(result.masks, 'xy') and len(result.masks.xy) > box_idx:
+                                            mask = result.masks.xy[box_idx]
+                                            if len(mask) > 0:
+                                                segmentation = [float(coord) for point in mask for coord in point]
+                                                logger.debug(f"Extracted mask with {len(mask)} points for box {box_idx}")
+                                            else:
+                                                logger.debug(f"Empty mask for box {box_idx}")
+                                        else:
+                                            logger.debug(f"No mask.xy or index {box_idx} out of range")
+                                    except (IndexError, AttributeError) as e:
+                                        logger.warning(f"Failed to extract mask for box {box_idx}: {e}")
+                                elif is_segmentation_model:
+                                    # Log once per image if segmentation model but no masks
+                                    if box_idx == 0:
+                                        logger.warning(f"Segmentation model but no masks in result for image {img.id}")
 
                                 image_predictions.append({
                                     'image_id': img.id,
@@ -1120,6 +1150,13 @@ def evaluate_model(
                     class_prediction_counts[class_name] = class_prediction_counts.get(class_name, 0) + 1
 
         # Store results in task metadata (heavy lists go to disk — see artifacts)
+        # Check if any predictions have segmentation masks
+        predictions_with_masks = sum(1 for pred in all_predictions if pred.get('segmentation') and len(pred.get('segmentation', [])) > 0)
+        if is_segmentation_model:
+            logger.info(f"Segmentation model: {predictions_with_masks}/{len(all_predictions)} predictions have masks")
+            if predictions_with_masks == 0 and len(all_predictions) > 0:
+                logger.warning(f"Segmentation model produced NO masks! Model path: {model_path}")
+        
         results = {
             'precision': float(precision),
             'recall': float(recall),
@@ -1143,6 +1180,7 @@ def evaluate_model(
             'checkpoint': checkpoint,
             'conf_threshold': conf_threshold,
             'iou_threshold': iou_threshold,
+            'nms_iou_threshold': nms_iou_threshold,
             'use_grid': use_grid,
             'grid_size': grid_size if use_grid else None,
             'grid_overlap': grid_overlap if use_grid else None,

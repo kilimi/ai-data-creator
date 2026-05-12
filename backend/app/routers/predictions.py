@@ -109,6 +109,7 @@ class MultiDatasetEvaluationRequest(BaseModel):
     checkpoint: str = "best"  # "best" or "last"
     conf_threshold: float = 0.25
     iou_threshold: float = 0.45
+    nms_iou_threshold: float = 0.45  # IoU threshold for Non-Maximum Suppression
     evaluation_name: Optional[str] = None  # Custom name for evaluation
     # Grid inference settings
     use_grid: bool = False  # Enable grid-based inference
@@ -206,6 +207,7 @@ async def evaluate_model(
             request.checkpoint,
             request.conf_threshold,
             request.iou_threshold,
+            request.nms_iou_threshold,
             request.use_grid,
             request.grid_size,
             request.grid_overlap,
@@ -372,6 +374,7 @@ async def evaluate_model_multiple_datasets(
                 request.checkpoint,
                 request.conf_threshold,
                 request.iou_threshold,
+                request.nms_iou_threshold,
                 request.use_grid,
                 request.grid_size,
                 request.grid_overlap,
@@ -524,6 +527,9 @@ async def get_evaluation_image(
 @router.get("/predictions/export-coco/{task_id}")
 async def export_coco_results(
     task_id: int,
+    conf_threshold: Optional[float] = None,
+    iou_threshold: Optional[float] = None,
+    per_class_conf: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Export evaluation results in COCO format"""
@@ -544,17 +550,64 @@ async def export_coco_results(
         if not results:
             raise HTTPException(status_code=404, detail="No evaluation results found")
         
+        # DEBUG: Log first prediction to check segmentation data
+        predictions_raw = results.get('predictions', [])
+        if predictions_raw:
+            logger.info(f"DEBUG - First prediction from results: {predictions_raw[0]}")
+            logger.info(f"DEBUG - First prediction segmentation length: {len(predictions_raw[0].get('segmentation', []))}")
+        else:
+            logger.warning(f"DEBUG - No predictions found in results")
+        
         # Get evaluation parameters
         dataset_id = results.get('dataset_id')
         collection_id = results.get('collection_id')
         class_names = results.get('class_names', [])
         predictions = results.get('predictions', [])
-        conf_threshold = results.get('conf_threshold', 0.25)
-        iou_threshold = results.get('iou_threshold', 0.45)
         checkpoint = results.get('checkpoint', 'best')
+        
+        # Use provided thresholds or fall back to saved values
+        conf_threshold_value = conf_threshold if conf_threshold is not None else results.get('conf_threshold', 0.25)
+        iou_threshold_value = iou_threshold if iou_threshold is not None else results.get('iou_threshold', 0.45)
+        
+        # Parse per-class confidence from JSON string if provided
+        per_class_conf_dict = None
+        if per_class_conf:
+            try:
+                per_class_conf_dict = json.loads(per_class_conf)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse per_class_conf parameter: {per_class_conf}")
+        if not per_class_conf_dict:
+            per_class_conf_dict = results.get('per_class_conf', None)
         
         if not predictions:
             raise HTTPException(status_code=404, detail="No predictions found in evaluation results")
+        
+        # Filter predictions based on confidence thresholds
+        logger.info(f"Filtering predictions with conf_threshold={conf_threshold_value}, iou_threshold={iou_threshold_value}, per_class_conf={per_class_conf_dict}")
+        filtered_predictions = []
+        for pred in predictions:
+            pred_conf = pred.get('conf', 0)
+            pred_class_id = pred.get('class_id', 0)
+            
+            # Check per-class threshold first, fall back to global threshold
+            if per_class_conf_dict and pred_class_id < len(class_names):
+                class_name = class_names[pred_class_id]
+                threshold = per_class_conf_dict.get(class_name, conf_threshold_value)
+            else:
+                threshold = conf_threshold_value
+            
+            # Include prediction if it meets the threshold
+            if pred_conf >= threshold:
+                filtered_predictions.append(pred)
+        
+        # Use filtered predictions for export
+        predictions = filtered_predictions
+        
+        if not predictions:
+            raise HTTPException(status_code=404, detail="No predictions pass the confidence threshold")
+        
+        # Check if model has segmentation masks
+        has_masks = any(pred.get('segmentation') and len(pred.get('segmentation', [])) > 0 for pred in predictions)
         
         # Get dataset
         dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
@@ -573,14 +626,17 @@ async def export_coco_results(
         image_dict = {img.id: img for img in images}
         
         # Initialize COCO structure
+        task_type = "segmentation" if has_masks else "detection"
         coco_output = {
             "info": {
-                "description": f"Evaluation results for task {task_id}",
+                "description": f"Evaluation results for task {task_id} (thresholded export)",
                 "date_created": datetime.utcnow().isoformat(),
                 "task_name": task.name,
                 "model_checkpoint": checkpoint,
-                "conf_threshold": conf_threshold,
-                "iou_threshold": iou_threshold
+                "task_type": task_type,
+                "conf_threshold": conf_threshold_value,
+                "iou_threshold": iou_threshold_value,
+                "per_class_conf": per_class_conf_dict if per_class_conf_dict else None
             },
             "images": [],
             "annotations": [],

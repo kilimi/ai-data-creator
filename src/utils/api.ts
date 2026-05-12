@@ -19,8 +19,6 @@ export class ApiClient {
     
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        console.log(`Making request to: ${url} (attempt ${attempt}/${retries})`);
-        
         // Set default headers if not provided
         if (!options.headers) {
           options.headers = {
@@ -215,7 +213,7 @@ export class ApiClient {
    * Lightweight health check.  Called once (shared across all useApi hooks) so
    * 30+ components don't each fire 3 × 15 s retries.
    */
-  async testConnection(retries: number = 2): Promise<ApiResponse<{ status: string; database?: string }>> {
+  async testConnection(retries: number = 1): Promise<ApiResponse<{ status: string; database?: string }>> {
     const url = `${this.config.baseUrl}/health-check`;
 
     if (this.config.baseUrl.includes(':8080')) {
@@ -310,12 +308,6 @@ export class ApiClient {
   }
 
   async createProject(formData: FormData): Promise<ApiResponse<Project>> {
-    console.log("Creating project with FormData:", formData);
-    // Log formData contents for debugging
-    for (const pair of formData.entries()) {
-      console.log(`${pair[0]}: ${pair[1] instanceof File ? `File: ${pair[1].name}` : pair[1]}`);
-    }
-    
     return this.request<Project>('/projects/', {
       method: 'POST',
       body: formData,
@@ -323,12 +315,6 @@ export class ApiClient {
   }
 
   async updateProject(id: string | number, formData: FormData): Promise<ApiResponse<Project>> {
-    console.log(`Updating project ${id} with FormData:`, formData);
-    // Log formData contents for debugging
-    for (const pair of formData.entries()) {
-      console.log(`${pair[0]}: ${pair[1] instanceof File ? `File: ${pair[1].name}` : pair[1]}`);
-    }
-    
     return this.request<Project>(`/projects/${id}`, {
       method: 'PUT',
       body: formData,
@@ -634,11 +620,7 @@ export class ApiClient {
 
   // Annotations endpoints
   async getAnnotations(datasetId: string | number): Promise<ApiResponse<any[]>> {
-    console.log('🔗 Making getAnnotations request for dataset:', datasetId);
-    console.log('🔗 Request URL will be:', `/datasets/${datasetId}/annotations`);
-    const result = await this.request<any[]>(`/datasets/${datasetId}/annotations`);
-    console.log('🔗 getAnnotations response:', result);
-    return result;
+    return this.request<any[]>(`/datasets/${datasetId}/annotations`);
   }
 
   async getAnnotationsSummary(datasetId: string | number): Promise<ApiResponse<{
@@ -1067,17 +1049,20 @@ export class ApiClient {
     datasetId: string | number, 
     annotationId: string,
     options?: {
+      /** @deprecated No longer sent — server uses fixed limits for this endpoint */
       limit?: number;
       include_images?: boolean;
       include_annotations?: boolean;
     }
   ): Promise<ApiResponse<{
     content: string | null;
-    filename: string;
+    filename?: string;
     format: string;
     size: number;
     source: string;
     is_large?: boolean;
+    is_processing?: boolean;
+    processing_status?: string;
     total_annotations?: number;
     annotation_count?: number;
     image_count?: number;
@@ -1085,7 +1070,6 @@ export class ApiClient {
     message?: string;
   }>> {
     const searchParams = new URLSearchParams();
-    if (options?.limit) searchParams.append('limit', options.limit.toString());
     if (options?.include_images !== undefined) searchParams.append('include_images', options.include_images.toString());
     if (options?.include_annotations !== undefined) searchParams.append('include_annotations', options.include_annotations.toString());
     

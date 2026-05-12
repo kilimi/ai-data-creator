@@ -66,6 +66,8 @@ export interface Image {
 export interface ImageCollection {
   id: string;
   name: string;
+  /** Total images in this layer (from API); can exceed loaded `images.length` when paginated. */
+  totalImageCount?: number;
   /** When true, backend default collection (e.g. RGB Images). */
   is_default?: boolean;
   /** Left-to-right layer order persisted in backend. */

@@ -13,6 +13,7 @@ import { CalibrationDialog } from "@/components/CalibrationDialog";
 import { AnnotationSample, processCOCOAnnotations } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
+import { AddImageTabDialog } from "@/components/AddImageTabDialog";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 import { 
   imageCollectionsApi, 
@@ -58,8 +59,15 @@ export default function Dataset() {
   const [videoTargetCollectionName, setVideoTargetCollectionName] = useState<string>("");
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [collectionToDelete, setCollectionToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [collectionToDelete, setCollectionToDelete] = useState<{
+    id: string;
+    name: string;
+    imageCount?: number;
+    isDefault?: boolean;
+  } | null>(null);
+  const [isDeletingCollection, setIsDeletingCollection] = useState(false);
   const [isCalibrationDialogOpen, setIsCalibrationDialogOpen] = useState(false);
+  const [addCollectionDialogOpen, setAddCollectionDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
   // Existing calibrations between collections (used to badge calibrated
@@ -83,6 +91,14 @@ export default function Dataset() {
   // Captures which collection tab was active when "Upload Video" was clicked
   // so the backend can drop extracted frames into the same collection.
   const handleOpenVideoUploadDialog = (collectionId?: string | number) => {
+    if (useTabbedImages && imageCollections.length === 0) {
+      toast({
+        title: "Create an image layer first",
+        description: "Add an image collection before uploading video or images.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (collectionId !== undefined && collectionId !== null && collectionId !== '') {
       setVideoTargetCollectionId(collectionId);
       const collection = imageCollections.find(c => String(c.id) === String(collectionId));
@@ -147,18 +163,19 @@ export default function Dataset() {
 
       setImageCollections(frontendCollections);
 
-      // If no collections exist, initialize default collection then reload
-      if (backendCollections.length === 0) {
-        await imageCollectionsApi.initializeDefaultCollection(datasetId);
-        const reloadResponse = await api.getImageCollections(datasetId);
-        if (reloadResponse.success && reloadResponse.data) {
-          const newCollections = reloadResponse.data as unknown as ImageCollectionData[];
-          setImageCollections(
-            newCollections.map((c) =>
-              convertToFrontendImageCollection(c, settings.imagesPerPage)
-            )
-          );
+      // Tabbed mode already receives every image via collections — avoid a second full GET /images.
+      if (useTabbedImages) {
+        const seen = new Set<string>();
+        const flat: Image[] = [];
+        for (const c of frontendCollections) {
+          for (const img of c.images) {
+            const sid = String(img.id);
+            if (seen.has(sid)) continue;
+            seen.add(sid);
+            flat.push(img);
+          }
         }
+        setImages(flat);
       }
     } catch (error) {
       console.error('Error loading image collections:', error);
@@ -231,7 +248,7 @@ export default function Dataset() {
       loadImageCollections();
       refreshCalibrations();
     }
-  }, [dataset, settingsLoaded, api]);
+  }, [dataset, settingsLoaded, api, useTabbedImages]);
 
   // Update collections pagination when settings change
   useEffect(() => {
@@ -247,7 +264,11 @@ export default function Dataset() {
     if (!datasetId) return;
     
     try {
-      await imageCollectionsApi.createImageCollection(datasetId, { name });
+      const isFirstLayer = imageCollections.length === 0;
+      await imageCollectionsApi.createImageCollection(datasetId, {
+        name,
+        ...(isFirstLayer ? { is_default: true } : {}),
+      });
       await loadImageCollections(); // Reload to get updated data
       toast({
         title: "Success",
@@ -265,17 +286,23 @@ export default function Dataset() {
   const handleRemoveImageTab = (collectionId: string): void => {
     const collection = imageCollections.find(c => String(c.id) === String(collectionId));
     if (!collection) return;
-    setCollectionToDelete({ id: collectionId, name: collection.name });
+    setCollectionToDelete({
+      id: collectionId,
+      name: collection.name,
+      imageCount: collection.totalImageCount ?? collection.images.length,
+      isDefault: collection.is_default,
+    });
   };
 
   const handleConfirmDeleteCollection = async (): Promise<void> => {
     if (!datasetId || !collectionToDelete) return;
+    setIsDeletingCollection(true);
     try {
-      await imageCollectionsApi.deleteImageCollection(datasetId, parseInt(collectionToDelete.id));
+      await imageCollectionsApi.deleteImageCollection(datasetId, parseInt(collectionToDelete.id, 10));
       await loadImageCollections();
       toast({
-        title: "Success",
-        description: `Image collection "${collectionToDelete.name}" and all its images were deleted.`,
+        title: "Collection removed",
+        description: `Deleted layer "${collectionToDelete.name}" and its images from disk and the database.`,
       });
     } catch (error: any) {
       toast({
@@ -284,6 +311,7 @@ export default function Dataset() {
         variant: "destructive",
       });
     } finally {
+      setIsDeletingCollection(false);
       setCollectionToDelete(null);
     }
   };
@@ -365,7 +393,15 @@ export default function Dataset() {
 
   const handleTabUploadImages = async (collectionId: string, files: File[]): Promise<void> => {
     if (!datasetId) return;
-    
+    if (useTabbedImages && imageCollections.length === 0) {
+      toast({
+        title: "Create an image layer first",
+        description: "Add an image collection before uploading images.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       const collectionIdNum = parseInt(collectionId);
       if (isNaN(collectionIdNum)) {
@@ -460,10 +496,13 @@ export default function Dataset() {
             setProjectName(projectResponse.data.name);
           }
         }
-        
-        const imagesResponse = await api.getImages(id);
-        if (imagesResponse.success && imagesResponse.data) {
-          setImages(imagesResponse.data);
+
+        // Non-tabbed: load flat image list. Tabbed: images come from loadImageCollections (same data, one round-trip).
+        if (!useTabbedImages) {
+          const imagesResponse = await api.getImages(id);
+          if (imagesResponse.success && imagesResponse.data) {
+            setImages(imagesResponse.data);
+          }
         }
       } else {
         toast({
@@ -487,7 +526,7 @@ export default function Dataset() {
   // Refetch when route params or api change — include api so we refetch when api becomes available (useApi starts with null)
   useEffect(() => {
     fetchDataset();
-  }, [id, projectId, api]);
+  }, [id, projectId, api, useTabbedImages]);
 
   // Re-evaluate annotations when images change (fixes issue when annotations are uploaded before images)
   useEffect(() => {
@@ -528,6 +567,14 @@ export default function Dataset() {
 
   const handleUploadImages = async (files: File[]) => {
     if (!api || !id) return;
+    if (useTabbedImages && imageCollections.length === 0) {
+      toast({
+        title: "Create an image layer first",
+        description: "Add an image collection before uploading images.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     const CHUNK_SIZE = 1000; // Upload in chunks of 1000 files
     const totalFiles = files.length;
@@ -716,6 +763,14 @@ export default function Dataset() {
     }
   ) => {
     if (!api || !id) return;
+    if (useTabbedImages && imageCollections.length === 0) {
+      toast({
+        title: "Create an image layer first",
+        description: "Add an image collection before uploading video.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsVideoUploading(true);
     setVideoUploadPercent(0);
     setVideoUploadedBytes(0);
@@ -1195,7 +1250,18 @@ export default function Dataset() {
                 onImageSizeChange={handleImageSizeChange}
                 onSliderPositionChange={updateSliderPosition}
                 onPageChange={setCurrentPage}
-                onOpenUploadDialog={() => setIsUploadDialogOpen(true)}
+                onOpenUploadDialog={() => {
+                  if (useTabbedImages && imageCollections.length === 0) {
+                    toast({
+                      title: "Create an image layer first",
+                      description: "Add an image collection before uploading images.",
+                      variant: "destructive",
+                    });
+                    return;
+                  }
+                  setIsUploadDialogOpen(true);
+                }}
+                onCreateImageCollection={() => setAddCollectionDialogOpen(true)}
                 onOpenVideoUploadDialog={handleOpenVideoUploadDialog}
                 onDeleteImage={handleDeleteImage}
                 paginatedImages={paginatedImages}
@@ -1234,6 +1300,14 @@ export default function Dataset() {
                 datasetUiMode={settings.mode}
               />
             </div>
+            <AddImageTabDialog
+              open={addCollectionDialogOpen}
+              onOpenChange={setAddCollectionDialogOpen}
+              onTabAdded={(name) => {
+                void handleAddImageTab(name);
+              }}
+              existingTabNames={imageCollections.map((c) => c.name)}
+            />
             <ImageUploadDialog 
           open={isUploadDialogOpen}
           onOpenChange={setIsUploadDialogOpen}
@@ -1296,22 +1370,57 @@ export default function Dataset() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <AlertDialog open={!!collectionToDelete} onOpenChange={(open) => !open && setCollectionToDelete(null)}>
-          <AlertDialogContent>
+        <AlertDialog
+          open={!!collectionToDelete}
+          onOpenChange={(open) => {
+            if (!open && !isDeletingCollection) setCollectionToDelete(null);
+          }}
+        >
+          <AlertDialogContent
+            onPointerDownOutside={(e) => {
+              if (isDeletingCollection) e.preventDefault();
+            }}
+            onEscapeKeyDown={(e) => {
+              if (isDeletingCollection) e.preventDefault();
+            }}
+          >
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete image collection?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Are you sure? This will delete the collection &quot;{collectionToDelete?.name}&quot; and all images in it.
-                This action cannot be undone.
+              <AlertDialogTitle>Delete this image layer?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <p>
+                    You are about to permanently delete the layer{' '}
+                    <span className="font-medium text-foreground">
+                      {(collectionToDelete?.name || '').trim() || 'Untitled'}
+                    </span>
+                    {typeof collectionToDelete?.imageCount === 'number' && collectionToDelete.imageCount > 0
+                      ? ` and all ${collectionToDelete.imageCount.toLocaleString()} image${collectionToDelete.imageCount === 1 ? '' : 's'} stored in it.`
+                      : ' and every image stored in it.'}
+                  </p>
+                  <p>
+                    This removes image files from disk (including thumbnails and cached previews where present),
+                    deletes the corresponding database rows, and removes segmentation annotations tied to those images.
+                    This action cannot be undone.
+                  </p>
+                  {collectionToDelete?.isDefault ? (
+                    <p className="text-amber-600 dark:text-amber-500">
+                      This is the default layer. If another layer exists, it will become the new default after deletion.
+                    </p>
+                  ) : null}
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction 
-                onClick={handleConfirmDeleteCollection}
-                className="bg-destructive hover:bg-destructive/90"
+              <AlertDialogCancel disabled={isDeletingCollection}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={isDeletingCollection}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleConfirmDeleteCollection();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
-                Delete collection and images
+                {isDeletingCollection ? 'Deleting…' : 'Yes, delete layer and images'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

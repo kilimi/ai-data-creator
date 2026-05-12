@@ -4,6 +4,7 @@ import { SlidersHorizontal, RotateCcw, X, Save, Check, Download } from "lucide-r
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
 import { useToast } from "@/hooks/use-toast";
+import { getApiBaseUrl } from "@/config/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -350,7 +351,7 @@ export function ThresholdExplorer({
         }
       });
       
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}/eval-thresholds`, {
+      const response = await fetch(`${getApiBaseUrl()}/tasks/${taskId}/eval-thresholds`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -388,83 +389,31 @@ export function ThresholdExplorer({
   }
 
   function handleDownloadCoco() {
-    // Filter predictions using the current threshold-explorer values.
-    const kept = predictions.filter((p) => {
-      const thr = (p.class_id >= 0 && p.class_id < perClassConf.length && perClassConf[p.class_id] >= 0)
-        ? perClassConf[p.class_id]
-        : confThreshold;
-      return p.conf >= thr;
-    });
-
-    // Build image entries from filenames map (width/height unknown client-side → 0).
-    const imageIds = new Set<number>();
-    kept.forEach((p) => imageIds.add(p.image_id));
-    groundTruth.forEach((g) => imageIds.add(g.image_id));
-    const images = Array.from(imageIds).map((id) => ({
-      id,
-      file_name: imageIdToFilename[String(id)] ?? `image_${id}`,
-      width: 0,
-      height: 0,
-    }));
-
-    const realClassNames = classNames.slice(0, numRealClasses);
-    const categories = realClassNames.map((name, idx) => ({
-      id: idx,
-      name,
-      supercategory: "object",
-    }));
-
-    const annotations = kept.map((p, idx) => {
-      const [x1, y1, x2, y2] = p.bbox_xyxy;
-      return {
-        id: idx + 1,
-        image_id: p.image_id,
-        category_id: p.class_id,
-        bbox: [x1, y1, Math.max(0, x2 - x1), Math.max(0, y2 - y1)],
-        score: p.conf,
-        segmentation: [],
-      };
-    });
-
-    const perClassConfOut: Record<string, number> = {};
+    // Use backend API for export to avoid memory issues with large datasets
+    const url = new URL(`${getApiBaseUrl()}/predictions/export-coco/${taskId}`);
+    
+    // Pass current threshold values as query parameters
+    url.searchParams.set('conf_threshold', confThreshold.toString());
+    url.searchParams.set('iou_threshold', iouThreshold.toString());
+    
+    // Include per-class confidence overrides if any
+    const activePerClass: Record<string, number> = {};
     perClassConf.forEach((v, i) => {
-      if (v >= 0 && i < realClassNames.length) perClassConfOut[realClassNames[i]] = v;
+      if (v >= 0 && i < classNames.length) {
+        activePerClass[classNames[i]] = v;
+      }
     });
-
-    const coco = {
-      info: {
-        description: `Evaluation results for task ${taskId} (thresholded export)`,
-        date_created: new Date().toISOString(),
-        task_name: evaluationName ?? `evaluation_${taskId}`,
-        conf_threshold: confThreshold,
-        iou_threshold: iouThreshold,
-        per_class_conf: Object.keys(perClassConfOut).length > 0 ? perClassConfOut : null,
-      },
-      images,
-      annotations,
-      categories,
-    };
-
-    const filename = evaluationCocoJsonDownloadName({
-      taskId,
-      evaluationName: evaluationName ?? null,
-      datasetName: datasetName ?? null,
-    });
-
-    const blob = new Blob([JSON.stringify(coco, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    toast({
-      title: "Download Complete",
-      description: `COCO export with ${annotations.length} predictions (conf ≥ ${confThreshold.toFixed(2)}${hasPerClassOverride ? ", per-class overrides applied" : ""}).`,
-    });
+    if (Object.keys(activePerClass).length > 0) {
+      url.searchParams.set('per_class_conf', JSON.stringify(activePerClass));
+    }
+    
+    // Create a temporary link and trigger download
+    const link = document.createElement('a');
+    link.href = url.toString();
+    link.download = `evaluation_${taskId}_coco.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   const resetDefaults = () => {

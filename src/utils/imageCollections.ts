@@ -212,6 +212,7 @@ export function convertToFrontendImageCollection(
   return {
     id: String(backendCollection.id),
     name: backendCollection.name,
+    totalImageCount: backendCollection.image_count,
     is_default: backendCollection.is_default,
     position: backendCollection.position ?? 0,
     images,

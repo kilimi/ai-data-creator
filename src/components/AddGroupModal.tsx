@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { Dataset } from "@/types";
 import { useToast } from "@/hooks/use-toast";
-import { resolveBackendMediaUrl } from "@/config/api";
+import { resolveBackendMediaUrl, getApiBaseUrl } from "@/config/api";
 
 interface AddGroupModalProps {
   open: boolean;
@@ -86,7 +86,7 @@ export function AddGroupModal({
       // Send dataset IDs as comma-separated string
       formData.append('dataset_ids', selectedDatasets.join(','));
 
-      const response = await fetch(`http://localhost:9999/projects/${projectId}/dataset-groups/`, {
+      const response = await fetch(`${getApiBaseUrl()}/projects/${projectId}/dataset-groups/`, {
         method: 'POST',
         body: formData
       });

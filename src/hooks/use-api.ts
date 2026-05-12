@@ -45,6 +45,7 @@ export const useApi = (config?: Partial<ApiConfig>) => {
     setApiClient(client);
     setIsConfigured(true);
 
+    // Use only 1 attempt — caller already passes retries=1, no need for double wait
     getSharedHealthCheck(client, mergedConfig.baseUrl).then((ok) => {
       if (mounted.current) setIsConnected(ok);
     });

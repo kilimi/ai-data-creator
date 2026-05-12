@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users } from 'lucide-react';
 import { Dataset, DatasetGroup, ImageCollection } from '@/types';
+import { getApiBaseUrl } from "@/config/api";
 
 interface CreateAugmentedDatasetModalProps {
   open: boolean;
@@ -304,7 +305,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     ));
     
     try {
-      const response = await fetch(`http://localhost:9999/datasets/${datasetId}/annotation-files/list`);
+      const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/annotation-files/list`);
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data) {

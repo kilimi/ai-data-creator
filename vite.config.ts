@@ -78,9 +78,12 @@ export default defineConfig(async ({ mode }) => {
         output: {
           manualChunks: (id: string) => {
             if (id.includes("node_modules/onnxruntime-web")) return "onnx";
-            if (id.includes("node_modules/jszip")) return "jszip";
+            // jszip is only dynamically imported (await import('jszip')); do NOT assign it to
+            // a named chunk here — doing so causes Vite to emit a <link rel="modulepreload">
+            // for it in index.html, eagerly downloading it on every page load.
             // One vendor chunk for all other node_modules so React is never undefined in
-            // auto-split shared chunks (e.g. ui-*.js) — fixes forwardRef runtime errors.
+            // auto-split shared chunks (e.g. ui-*.js) — fixes forwardRef / createContext
+            // runtime errors caused by parallel chunk loading order being non-deterministic.
             if (id.includes("node_modules/")) return "vendor";
           },
           // Ensure WASM files are treated as assets
@@ -99,6 +102,7 @@ export default defineConfig(async ({ mode }) => {
       setupFiles: "./src/test/setup.ts",
       include: ["src/**/*.{test,spec}.{ts,tsx}"],
       exclude: ["tests/**", "node_modules/**", "dist/**"],
+      silent: true,
     },
   };
 });

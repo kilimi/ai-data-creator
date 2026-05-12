@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from '@/hooks/use-toast';
+import { getApiBaseUrl } from "@/config/api";
 
 interface DownloadModelModalProps {
   open: boolean;
@@ -53,7 +54,7 @@ export function DownloadModelModal({
   const fetchCheckpoints = async () => {
     setLoadingCheckpoints(true);
     try {
-      const response = await fetch(`http://localhost:9999/training/${taskId}/checkpoints`);
+      const response = await fetch(`${getApiBaseUrl()}/training/${taskId}/checkpoints`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -89,7 +90,7 @@ export function DownloadModelModal({
     setLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:9999/training/${taskId}/download?checkpoint=${encodeURIComponent(selectedCheckpoint)}`,
+        `${getApiBaseUrl()}/training/${taskId}/download?checkpoint=${encodeURIComponent(selectedCheckpoint)}`,
         { method: 'GET' }
       );
 

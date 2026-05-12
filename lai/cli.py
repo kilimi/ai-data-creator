@@ -138,6 +138,12 @@ def cmd_down(ns: argparse.Namespace) -> int:
     return _run(["docker", "compose", "down", *extra], root)
 
 
+def cmd_restart(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    extra = ns.docker_compose_args or []
+    return _run(["docker", "compose", "restart", *extra], root)
+
+
 def cmd_remove_images(ns: argparse.Namespace) -> int:
     """
     Remove Docker images used by this compose stack without touching data volumes.
@@ -274,6 +280,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     sp.add_argument("--refresh", action="store_true")
     sp.set_defaults(func=cmd_down)
+
+    sp = sub.add_parser("restart", help="docker compose restart (restart all containers)")
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose (e.g., service names to restart specific services)",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_restart)
 
     sp = sub.add_parser(
         "remove",

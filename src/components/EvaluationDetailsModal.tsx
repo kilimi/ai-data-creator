@@ -7,11 +7,17 @@ import { useToast } from "@/hooks/use-toast";
 import { type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { ThresholdExplorer, type RawPrediction, type RawGTBox } from "@/components/ThresholdExplorer";
 import { getApiBaseUrl } from "@/config/api";
+import { formatDuration } from "@/utils/formatDuration";
+import { StatusBadge } from "@/components/StatusBadge";
 import {
   attachmentFilenameFromContentDisposition,
   evaluationCocoJsonDownloadName,
   evaluationCocoZipDownloadName,
 } from "@/lib/evaluationTableDisplay";
+import {
+  drawPredictionSnapshotCrop,
+  getPredictionBboxXyxy,
+} from "@/utils/evaluationPredictionDisplay";
 
 interface EvaluationDetailsModalProps {
   open: boolean;
@@ -77,128 +83,7 @@ interface EvalBlobPayload {
   confusion_matrix_samples?: Record<string, CmSample[]>;
 }
 
-type PredWithBBox = RawPrediction & { bbox?: number[] };
-
-function getPredictionBboxXyxy(pred: PredWithBBox): [number, number, number, number] | null {
-  const xyxy = pred.bbox_xyxy;
-  if (Array.isArray(xyxy) && xyxy.length >= 4) {
-    return [Number(xyxy[0]), Number(xyxy[1]), Number(xyxy[2]), Number(xyxy[3])];
-  }
-  const bb = pred.bbox;
-  if (Array.isArray(bb) && bb.length >= 4) {
-    const x = Number(bb[0]);
-    const y = Number(bb[1]);
-    const w = Number(bb[2]);
-    const h = Number(bb[3]);
-    return [x, y, x + w, y + h];
-  }
-  return null;
-}
-
-/** Expand bbox by padFrac of box size for context; clamp to image bounds. */
-function paddedCropRegion(
-  [x1, y1, x2, y2]: [number, number, number, number],
-  nw: number,
-  nh: number,
-  padFrac = 0.22
-): { sx: number; sy: number; sw: number; sh: number } {
-  const bw = Math.max(1e-6, x2 - x1);
-  const bh = Math.max(1e-6, y2 - y1);
-  const padX = bw * padFrac;
-  const padY = bh * padFrac;
-  let sx = x1 - padX;
-  let sy = y1 - padY;
-  let sw = bw + 2 * padX;
-  let sh = bh + 2 * padY;
-  if (sx < 0) {
-    sw += sx;
-    sx = 0;
-  }
-  if (sy < 0) {
-    sh += sy;
-    sy = 0;
-  }
-  if (sx + sw > nw) sw = nw - sx;
-  if (sy + sh > nh) sh = nh - sy;
-  sw = Math.max(1, sw);
-  sh = Math.max(1, sh);
-  return { sx, sy, sw, sh };
-}
-
-/** Draw cropped region around bbox (natural pixels) scaled to cw×ch like object-contain, then bbox + label. */
-function drawPredictionSnapshotCrop(
-  canvas: HTMLCanvasElement,
-  img: HTMLImageElement,
-  bbox: [number, number, number, number],
-  label: string,
-  cw: number,
-  ch: number
-) {
-  const nw = img.naturalWidth;
-  const nh = img.naturalHeight;
-  if (!nw || !nh || !cw || !ch) return;
-
-  const { sx, sy, sw, sh } = paddedCropRegion(bbox, nw, nh);
-  const scale = Math.min(cw / sw, ch / sh);
-  const dw = sw * scale;
-  const dh = sh * scale;
-  const ox = (cw - dw) / 2;
-  const oy = (ch - dh) / 2;
-
-  const [x1, y1, x2, y2] = bbox;
-  const mapX = (x: number) => ox + (x - sx) * scale;
-  const mapY = (y: number) => oy + (y - sy) * scale;
-  let px1 = mapX(x1);
-  let py1 = mapY(y1);
-  let px2 = mapX(x2);
-  let py2 = mapY(y2);
-  const rx1 = Math.min(px1, px2);
-  const ry1 = Math.min(py1, py2);
-  const rx2 = Math.max(px1, px2);
-  const ry2 = Math.max(py1, py2);
-  px1 = rx1;
-  py1 = ry1;
-  px2 = rx2;
-  py2 = ry2;
-
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
-  canvas.style.width = `${cw}px`;
-  canvas.style.height = `${ch}px`;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.scale(dpr, dpr);
-  ctx.fillStyle = "#0a0a0a";
-  ctx.fillRect(0, 0, cw, ch);
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, sx, sy, sw, sh, ox, oy, dw, dh);
-
-  const lineW = Math.max(2, Math.round(Math.min(cw, ch) / 90));
-  ctx.strokeStyle = "#22c55e";
-  ctx.lineWidth = lineW;
-  ctx.strokeRect(px1, py1, px2 - px1, py2 - py1);
-
-  const fontPx = Math.max(11, Math.round(Math.min(cw, ch) / 28));
-  ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
-  const pad = 4;
-  const textW = ctx.measureText(label).width;
-  const labelH = fontPx + pad;
-  let ly = py1 - labelH - 2;
-  if (ly < oy + 2) ly = py1 + lineW + 2;
-  ly = Math.max(oy + 2, Math.min(oy + dh - labelH - 2, ly));
-  const lx = Math.max(ox + 2, Math.min(ox + dw - textW - pad * 2 - 2, px1));
-
-  ctx.fillStyle = "rgba(34, 197, 94, 0.95)";
-  ctx.fillRect(lx, ly, textW + pad * 2, labelH);
-  ctx.fillStyle = "#0a0a0a";
-  ctx.fillText(label, lx + pad, ly + fontPx - 1);
-}
-
-function PredictionSnapshotCard({
+export function PredictionSnapshotCard({
   imageUrls,
   fileName,
   className,
@@ -228,23 +113,37 @@ function PredictionSnapshotCard({
     const img = imgRef.current;
     const canvas = canvasRef.current;
     const box = containerRef.current;
-    if (!img || !canvas || !box || !bbox || img.naturalWidth === 0) return;
+    if (!img || !canvas || !box || !bbox) return;
+    
+    // Validate image dimensions
+    if (!img.naturalWidth || !img.naturalHeight || img.naturalWidth === 0 || img.naturalHeight === 0) return;
+    
+    // Validate container dimensions
     const cw = box.clientWidth;
     const ch = box.clientHeight;
-    if (!cw || !ch) return;
-    drawPredictionSnapshotCrop(canvas, img, bbox, label, cw, ch);
+    if (!cw || !ch || cw <= 0 || ch <= 0) return;
+    
+    try {
+      drawPredictionSnapshotCrop(canvas, img, bbox, label, cw, ch);
+    } catch (err) {
+      // Silent catch for canvas errors during rapid resize/unmount
+      console.warn("Error drawing prediction snapshot:", err);
+    }
   }, [bbox, label]);
+
+  const redrawRef = useRef(redraw);
+  redrawRef.current = redraw;
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       const img = imgRef.current;
-      if (img && img.naturalWidth > 0) redraw();
+      if (img && img.naturalWidth > 0) redrawRef.current();
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [redraw]);
+  }, []);
 
   useEffect(() => {
     redraw();
@@ -300,11 +199,64 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
   const [evalBlobsError, setEvalBlobsError] = useState<string | null>(null);
   const { toast } = useToast();
 
+  const loadTaskDetails = useCallback(
+    async (opts?: { silent?: boolean; signal?: AbortSignal }) => {
+      const silent = opts?.silent ?? false;
+      const signal = opts?.signal;
+      const base = getApiBaseUrl();
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const response = await fetch(`${base}/tasks/${taskId}`, { signal });
+        if (!response.ok) {
+          throw new Error(`Failed to fetch evaluation details: ${response.status}`);
+        }
+        const data = (await response.json()) as TaskDetails;
+        if (signal?.aborted) return;
+        setTask(data);
+
+        if (data.task_metadata?.is_multi_dataset && data.task_metadata?.child_task_ids?.length) {
+          const ids = data.task_metadata.child_task_ids;
+          const children = await Promise.all(
+            ids.map((id: number) =>
+              fetch(`${base}/tasks/${id}`, { signal }).then((r) => {
+                if (!r.ok) throw new Error(`Child task ${id}: HTTP ${r.status}`);
+                return r.json() as Promise<TaskDetails>;
+              })
+            )
+          );
+          if (signal?.aborted) return;
+          setChildTasks(children);
+        } else {
+          setChildTasks([]);
+        }
+      } catch (err) {
+        if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        if (!silent) {
+          console.error("Error fetching evaluation details:", err);
+          setError(err instanceof Error ? err.message : "Failed to load evaluation details");
+        }
+      } finally {
+        if (!silent && !signal?.aborted) setLoading(false);
+      }
+    },
+    [taskId]
+  );
+
   useEffect(() => {
-    if (open && taskId) {
-      fetchTaskDetails();
+    if (!open || !taskId) {
+      setLoading(false);
+      return;
     }
-  }, [open, taskId]);
+    const ac = new AbortController();
+    void loadTaskDetails({ signal: ac.signal });
+    return () => {
+      ac.abort();
+      setLoading(false);
+    };
+  }, [open, taskId, loadTaskDetails]);
 
   /** Large predictions/GT live in gzip JSON on disk; fetch after task row loads. */
   useEffect(() => {
@@ -321,38 +273,35 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       setEvalBlobsError(null);
       return;
     }
-    let cancelled = false;
+    const ac = new AbortController();
+    const base = getApiBaseUrl();
     setEvalBlobsLoading(true);
     setEvalBlobsError(null);
-    fetch(`http://localhost:9999/predictions/evaluation-blobs/${taskId}`)
+    fetch(`${base}/predictions/evaluation-blobs/${taskId}`, { signal: ac.signal })
       .then(async (res) => {
         if (!res.ok) {
           const t = await res.text();
           throw new Error(t || `HTTP ${res.status}`);
         }
-        return res.json();
+        return res.json() as Promise<EvalBlobPayload>;
       })
-      .then((data: EvalBlobPayload) => {
-        if (!cancelled) {
-          setEvalBlobPayload({
-            predictions: data.predictions ?? [],
-            all_ground_truth: data.all_ground_truth ?? [],
-            confusion_matrix_samples: data.confusion_matrix_samples,
-          });
-        }
+      .then((data) => {
+        if (ac.signal.aborted) return;
+        setEvalBlobPayload({
+          predictions: data.predictions ?? [],
+          all_ground_truth: data.all_ground_truth ?? [],
+          confusion_matrix_samples: data.confusion_matrix_samples,
+        });
       })
       .catch((err) => {
-        if (!cancelled) {
-          setEvalBlobPayload(null);
-          setEvalBlobsError(err instanceof Error ? err.message : "Failed to load evaluation blobs");
-        }
+        if (ac.signal.aborted) return;
+        setEvalBlobPayload(null);
+        setEvalBlobsError(err instanceof Error ? err.message : "Failed to load evaluation blobs");
       })
       .finally(() => {
-        if (!cancelled) setEvalBlobsLoading(false);
+        if (!ac.signal.aborted) setEvalBlobsLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, [open, taskId, task?.id, task?.status, task?.task_metadata?.results?.artifacts?.blobs, task?.task_metadata?.results?.predictions]);
 
   const mergedResults = useMemo(() => {
@@ -400,12 +349,13 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
         const fileName = mergedResults.image_id_to_filename?.[String(pred.image_id)] || "";
         const className = mergedResults.class_names?.[pred.class_id] || `Class ${pred.class_id}`;
         const encodedName = encodeFilePath(fileName);
+        const base = getApiBaseUrl();
         const imageUrls = [
-          `http://localhost:9999/predictions/evaluation-image/${taskId}/${pred.image_id}`,
-          `http://localhost:9999/static/projects/${projectId}/${datasetId}/images/${encodedName}`,
-          `http://localhost:9999/static/data/images/${datasetId}/${encodedName}`,
+          `${base}/predictions/evaluation-image/${taskId}/${pred.image_id}`,
+          `${base}/static/projects/${projectId}/${datasetId}/images/${encodedName}`,
+          `${base}/static/data/images/${datasetId}/${encodedName}`,
         ];
-        const bbox = getPredictionBboxXyxy(pred as PredWithBBox);
+        const bbox = getPredictionBboxXyxy(pred);
         return {
           imageId: pred.image_id,
           fileName,
@@ -416,87 +366,36 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
         };
       })
       .filter((item) => !!item.fileName);
-  }, [mergedResults]);
+  }, [mergedResults, taskId]);
 
   useEffect(() => {
     if (!open || !taskId) return;
+
+    // Check if any task is running
+    const hasRunningTask = task?.status === "running" || childTasks.some((ct) => ct.status === "running");
     
-    // Poll for updates if task is running
+    if (!hasRunningTask) return;
+
     const interval = setInterval(() => {
-      if (task?.status === 'running' || childTasks.some(ct => ct.status === 'running')) {
-        fetchTaskDetails();
-      }
+      void loadTaskDetails({ silent: true });
     }, 3000);
     return () => clearInterval(interval);
-  }, [open, taskId, task?.status, childTasks]);
+  }, [open, taskId, task?.status, childTasks, loadTaskDetails]);
 
-  const fetchTaskDetails = async () => {
+  const refreshTaskMetadata = useCallback(async (signal?: AbortSignal) => {
     try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch evaluation details: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      console.log('Evaluation task details:', data);
-      setTask(data);
-      
-      // Fetch child tasks if this is a multi-dataset evaluation
-      if (data.task_metadata?.is_multi_dataset && data.task_metadata?.child_task_ids?.length > 0) {
-        const childPromises = data.task_metadata.child_task_ids.map((id: number) =>
-          fetch(`http://localhost:9999/tasks/${id}`).then(r => r.json())
-        );
-        const children = await Promise.all(childPromises);
-        setChildTasks(children);
-      } else {
-        setChildTasks([]);
-      }
-    } catch (err) {
-      console.error('Error fetching evaluation details:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load evaluation details');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const refreshTaskMetadata = useCallback(async () => {
-    try {
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
+      const response = await fetch(`${getApiBaseUrl()}/tasks/${taskId}`, { signal });
       if (!response.ok) return;
-      const data = await response.json();
+      if (signal?.aborted) return;
+      const data = (await response.json()) as TaskDetails;
+      if (signal?.aborted) return;
       setTask(data);
-    } catch { /* silent */ }
-    onSaved?.();
+      onSaved?.();
+    } catch (err) {
+      if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+      /* silent */
+    }
   }, [taskId, onSaved]);
-
-  const formatDuration = (start: string, end?: string) => {
-    const startDate = new Date(start);
-    const endDate = end ? new Date(end) : new Date();
-    const duration = endDate.getTime() - startDate.getTime();
-    
-    const hours = Math.floor(duration / (1000 * 60 * 60));
-    const minutes = Math.floor((duration % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((duration % (1000 * 60)) / 1000);
-    
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    if (minutes > 0) return `${minutes}m ${seconds}s`;
-    return `${seconds}s`;
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, { className: string; label: string }> = {
-      running: { className: 'bg-primary/15 text-primary border-primary/30', label: 'Running' },
-      completed: { className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30', label: 'Completed' },
-      failed: { className: 'bg-destructive/15 text-destructive border-destructive/30', label: 'Failed' },
-      pending: { className: 'bg-muted text-muted-foreground border-border', label: 'Pending' },
-      stopped: { className: 'bg-amber-500/15 text-amber-500 border-amber-500/30', label: 'Stopped' },
-    };
-    const variant = variants[status] || variants.pending;
-    return <Badge className={`${variant.className} border`}>{variant.label}</Badge>;
-  };
 
   const downloadCocoResults = async (taskIdToDownload?: number) => {
     const downloadTaskId = taskIdToDownload || taskId;
@@ -646,8 +545,8 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       description: "Please wait 10-60 seconds while FiftyOne initializes. Keep this page open.",
     });
     try {
-      const response = await fetch(`http://localhost:9999/predictions/view-fiftyone/${taskId}`, {
-        method: 'POST'
+      const response = await fetch(`${getApiBaseUrl()}/predictions/view-fiftyone/${taskId}`, {
+        method: "POST",
       });
       
       if (!response.ok) {
@@ -724,7 +623,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {getStatusBadge(task.status)}
+              <StatusBadge status={task.status} />
               {task.status === 'completed' && results && (
                 <>
                   <Button
@@ -1022,7 +921,7 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
                         <div className="flex items-center gap-3">
                           <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
                           <span className="font-medium">{childMetadata.dataset_name || `Dataset ${childTask.id}`}</span>
-                          {getStatusBadge(childTask.status)}
+                          <StatusBadge status={childTask.status} />
                         </div>
                         <div className="flex items-center gap-4 text-sm text-muted-foreground">
                           {childTask.status === 'completed' && childResults && (

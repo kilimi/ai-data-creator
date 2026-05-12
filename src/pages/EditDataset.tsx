@@ -632,12 +632,22 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
       // Get the annotation content from backend
       const contentResponse = await api.getAnnotationContent(id, String(annotation.id));
       
-      if (!contentResponse.success || !contentResponse.data.content) {
+      if (!contentResponse.success || !contentResponse.data) {
+        throw new Error("Failed to load annotation content");
+      }
+      const cd = contentResponse.data;
+      if (cd.is_processing || cd.is_large) {
+        throw new Error(cd.message || "Annotation file is not available as a full download yet.");
+      }
+      const rawC = cd.content;
+      const contentJson =
+        typeof rawC === "string" ? rawC : rawC != null ? JSON.stringify(rawC) : null;
+      if (!contentJson) {
         throw new Error("Failed to load annotation content");
       }
 
       // Parse and re-upload as new file
-      const cocoData = JSON.parse(contentResponse.data.content);
+      const cocoData = JSON.parse(contentJson);
       const jsonContent = JSON.stringify(cocoData, null, 2);
       const file = new File([jsonContent], newName, { type: 'application/json' });
       

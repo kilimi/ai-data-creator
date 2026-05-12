@@ -498,6 +498,7 @@ const ImageAnnotation = () => {
   const [isSamProcessing, setIsSamProcessing] = useState(false);
   const [segmentModel, setSegmentModel] = useState<'sam2' | 'sam3'>('sam2');
   const [segmentTextPrompt, setSegmentTextPrompt] = useState('');
+  const [samMinArea, setSamMinArea] = useState<number>(100);
 
   const { data: sam3Available = false } = useQuery({
     queryKey: ['sam3-available'],
@@ -646,6 +647,9 @@ const ImageAnnotation = () => {
         const scaleBack = 1 / sendScale;
         polygons = polygons.map(poly => poly.map(p => ({ x: p.x * scaleBack, y: p.y * scaleBack })));
       }
+      if (samMinArea > 0) {
+        polygons = polygons.filter(poly => calculatePolygonArea(poly) >= samMinArea);
+      }
       if (polygons.length > 0 && polygons[0].length > 0) {
         setPreview(polygons, json.maskBase64);
       } else {
@@ -664,7 +668,7 @@ const ImageAnnotation = () => {
     } finally {
       setIsSamProcessing(false);
     }
-  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints, segmentModel, segmentTextPrompt]);
+  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints, segmentModel, segmentTextPrompt, samMinArea]);
 
   const acceptAutoSegment = () => {
     if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
@@ -1902,6 +1906,7 @@ const ImageAnnotation = () => {
         const firstPoly = rawPolygons[0];
         const points: Point[] = firstPoly.map((p: number[]) => ({ x: p[0], y: p[1] }));
         if (points.length < 3) continue;
+        if (samMinArea > 0 && calculatePolygonArea(points) < samMinArea) continue;
 
         const imageName = img.fileName;
         const newAnn: AnnotationShape = {
@@ -1982,6 +1987,7 @@ const ImageAnnotation = () => {
     sam3Available,
     segmentModel,
     segmentTextPrompt,
+    samMinArea,
     selectedClass,
     mainLayer,
     imageCollections,
@@ -2066,8 +2072,87 @@ const ImageAnnotation = () => {
         
         console.log('Backend response:', response);
         
-        if (response.success && response.data.content) {
-          console.log('Loading segmentation annotations from backend, content length:', response.data.content.length);
+        if (!response.success || !response.data) {
+          console.error('Invalid response from backend:', response);
+          throw new Error('No content in response');
+        }
+
+        const payload = response.data;
+        if (payload.is_processing) {
+          throw new Error(payload.message || 'Annotation import is still processing. Try again shortly.');
+        }
+        if (payload.is_large) {
+          // Full COCO JSON is capped on the server — segmentation editor already loads each
+          // image via GET .../image-annotations when annotationId is set. Build a minimal COCO
+          // shell (categories + images only) so loadAnnotationsFromCOCO can init classes/session.
+          if (annotationFileLoadGenerationRef.current !== loadGeneration) return;
+          const [classesRes, imagesRes] = await Promise.all([
+            api.getAnnotationClasses(id, annotationFileId),
+            api.getImages(id),
+          ]);
+          if (annotationFileLoadGenerationRef.current !== loadGeneration) return;
+          if (!classesRes.success || !imagesRes.success) {
+            throw new Error(
+              classesRes.error ||
+                imagesRes.error ||
+                'Could not load classes or images for this annotation file.',
+            );
+          }
+          const apiClasses = classesRes.data?.classes ?? [];
+          if (apiClasses.length === 0) {
+            throw new Error(
+              'No classes found for this annotation file yet. If import just finished, wait a moment and retry.',
+            );
+          }
+          const categories = apiClasses.map(
+            (c: { className: string; categoryId?: number }, idx: number) => ({
+              id: c.categoryId ?? idx + 1,
+              name: c.className,
+              supercategory: '',
+            }),
+          );
+          const imgs = imagesRes.data ?? [];
+          if (!Array.isArray(imgs) || imgs.length === 0) {
+            throw new Error('This dataset has no images — cannot open the segmentation editor.');
+          }
+          const cocoImages = imgs.map(
+            (img: { fileName: string; width?: number; height?: number }, idx: number) => ({
+              id: idx + 1,
+              file_name: img.fileName,
+              width: img.width || 1,
+              height: img.height || 1,
+            }),
+          );
+          const cocoData = {
+            info: {},
+            categories,
+            images: cocoImages,
+            annotations: [],
+          };
+          if (annotationResponse.success && annotationResponse.data?.file_name) {
+            setAnnotationName(annotationResponse.data.file_name);
+          }
+          const n = payload.total_annotations;
+          toast({
+            title: 'Large annotation file',
+            description:
+              typeof n === 'number'
+                ? `About ${n.toLocaleString()} annotations — loading in database mode. Shapes load when you open each image.`
+                : 'Many annotations — loading in database mode. Shapes load when you open each image.',
+          });
+          return loadAnnotationsFromCOCO(cocoData, annotationFileId, loadGeneration);
+        }
+
+        const rawContent = payload.content;
+        const contentStr =
+          typeof rawContent === 'string'
+            ? rawContent
+            : rawContent != null
+              ? JSON.stringify(rawContent)
+              : null;
+
+        if (contentStr) {
+          console.log('Loading segmentation annotations from backend, content length:', contentStr.length);
           
           // Set annotation name if available
           if (annotationResponse.success && annotationResponse.data?.file_name) {
@@ -2075,7 +2160,7 @@ const ImageAnnotation = () => {
           }
           
           try {
-            const cocoData = JSON.parse(response.data.content);
+            const cocoData = JSON.parse(contentStr);
             console.log('Parsed COCO data:', {
               images: cocoData.images?.length,
               annotations: cocoData.annotations?.length,
@@ -2098,7 +2183,7 @@ const ImageAnnotation = () => {
             return loadAnnotationsFromCOCO(cocoData, annotationFileId, loadGeneration);
           } catch (parseError) {
             console.error('Failed to parse COCO JSON:', parseError);
-            console.error('Content preview:', response.data.content.substring(0, 500));
+            console.error('Content preview:', contentStr.substring(0, 500));
             throw new Error('Invalid JSON format in annotation content');
           }
         } else {
@@ -2109,7 +2194,7 @@ const ImageAnnotation = () => {
         console.error('Failed to load annotation from backend:', error);
         toast({
           title: "Failed to load annotations",
-          description: "Could not load the selected annotation file.",
+          description: error instanceof Error ? error.message : "Could not load the selected annotation file.",
           variant: "destructive",
         });
         return false;
@@ -5514,6 +5599,21 @@ const ImageAnnotation = () => {
                   <X className="h-4 w-4" />
                 </Button>
               )}
+            </div>
+            <div className="mt-2">
+              <Label className="text-xs text-muted-foreground">Min detection area (px²)</Label>
+              <Input
+                type="number"
+                min={0}
+                step={10}
+                className="h-8 text-xs bg-muted border-border mt-1"
+                value={samMinArea}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setSamMinArea(isNaN(v) || v < 0 ? 0 : v);
+                }}
+                title="Detections smaller than this area (in pixels²) will be discarded. Set to 0 to keep all."
+              />
             </div>
             <div className="mt-2">
               <Label className="text-xs text-muted-foreground">Segment with</Label>

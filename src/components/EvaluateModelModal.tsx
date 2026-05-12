@@ -15,6 +15,7 @@ import {
   type PickerDataset,
   type PickerGroup,
 } from "@/components/DatasetEvalPicker";
+import { getApiBaseUrl } from "@/config/api";
 
 interface AnnotationClass {
   className: string;
@@ -47,6 +48,7 @@ interface EvaluateModelModalProps {
     checkpoint: 'best' | 'last';
     confThreshold: number;
     iouThreshold: number;
+    nmsIouThreshold: number;
     evaluationName: string;
     useGrid: boolean;
     gridSize: number;
@@ -61,6 +63,7 @@ interface EvaluateModelModalProps {
     checkpoint: 'best' | 'last';
     confThreshold: number;
     iouThreshold: number;
+    nmsIouThreshold: number;
     evaluationName: string;
     useGrid: boolean;
     gridSize: number;
@@ -86,6 +89,7 @@ export function EvaluateModelModal({
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<'best' | 'last'>('best');
   const [confThreshold, setConfThreshold] = useState(0.25);
   const [iouThreshold, setIouThreshold] = useState(0.45);
+  const [nmsIouThreshold, setNmsIouThreshold] = useState(0.45);
   const [useGrid, setUseGrid] = useState(false);
   const [gridSize, setGridSize] = useState(640);
   const [gridOverlap, setGridOverlap] = useState(0.2);
@@ -146,7 +150,7 @@ export function EvaluateModelModal({
     let imageCollections: ImageCollection[] = [];
     try {
       if (annotationFiles.length === 0) {
-        const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/annotation-files/list`);
+        const response = await fetch(`${getApiBaseUrl()}/datasets/${dataset.id}/annotation-files/list`);
         if (response.ok) {
           const result = await response.json();
           if (result.success && result.data) annotationFiles = result.data;
@@ -194,7 +198,7 @@ export function EvaluateModelModal({
     const fetchClasses = async () => {
       setLoadingClasses(true);
       try {
-        const response = await fetch(`http://localhost:9999/datasets/${datasetWithGT.datasetId}/annotations/${datasetWithGT.annotationFileId}/classes`);
+        const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetWithGT.datasetId}/annotations/${datasetWithGT.annotationFileId}/classes`);
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.data?.classes) {
@@ -220,7 +224,7 @@ export function EvaluateModelModal({
   const loadFileClasses = useCallback(async (datasetId: number, fileId: string) => {
     if (fileClassesMap.has(fileId)) return;
     try {
-      const response = await fetch(`http://localhost:9999/datasets/${datasetId}/annotations/${fileId}/classes`);
+      const response = await fetch(`${getApiBaseUrl()}/datasets/${datasetId}/annotations/${fileId}/classes`);
       if (response.ok) {
         const data = await response.json();
         const classes = (data?.data?.classes || []).map((c: any) => c.className || c.name || c).filter(Boolean);
@@ -393,6 +397,7 @@ export function EvaluateModelModal({
           checkpoint: selectedCheckpoint,
           confThreshold,
           iouThreshold,
+          nmsIouThreshold,
           evaluationName: evaluationName.trim(),
           useGrid,
           gridSize,
@@ -409,6 +414,7 @@ export function EvaluateModelModal({
           checkpoint: selectedCheckpoint,
           confThreshold,
           iouThreshold,
+          nmsIouThreshold,
           evaluationName: evaluationName.trim(),
           useGrid,
           gridSize,
@@ -426,6 +432,7 @@ export function EvaluateModelModal({
       setCollectionAnnotationCounts(new Map());
       setConfThreshold(0.25);
       setIouThreshold(0.45);
+      setNmsIouThreshold(0.45);
       setUseGrid(false);
       setGridSize(640);
       setGridOverlap(0.2);
@@ -635,6 +642,25 @@ export function EvaluateModelModal({
                   value={iouThreshold}
                   onChange={(e) => setIouThreshold(parseFloat(e.target.value))}
                 />
+                <p className="text-xs text-muted-foreground">
+                  IoU threshold for matching predictions to ground truth
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="nms-iou-threshold">NMS IoU Threshold: {nmsIouThreshold.toFixed(2)}</Label>
+                <Input
+                  id="nms-iou-threshold"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={nmsIouThreshold}
+                  onChange={(e) => setNmsIouThreshold(parseFloat(e.target.value))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  IoU threshold for Non-Maximum Suppression (removes overlapping predictions)
+                </p>
               </div>
             </CardContent>
           </Card>

@@ -306,22 +306,22 @@ def _truncate_base64_url(url: str | None, include_base64: bool = False) -> str |
 def _set_random_image_as_logo(dataset: models.Dataset, db: Session, base_url: str = ""):
     """
     Set a random image from the dataset as the logo/thumbnail if no logo is set.
+    Uses ORDER BY RANDOM() LIMIT 1 to avoid loading all dataset images.
     """
     # Only set if logo is not already set
     if dataset.thumbnailUrl or dataset.logo_url or dataset.logo:
         return
     
-    # Check if there are images in the dataset
-    images = db.query(models.Image).filter(
-        models.Image.dataset_id == dataset.id
-    ).all()
+    # Pick one random image directly in SQL - no need to load all images
+    random_image = (
+        db.query(models.Image)
+        .filter(models.Image.dataset_id == dataset.id, models.Image.url.isnot(None))
+        .order_by(func.random())
+        .first()
+    )
     
-    if not images:
+    if not random_image:
         return
-    
-    # Select a random image
-    import random
-    random_image = random.choice(images)
     
     # Use the image URL as thumbnail (it will be served with ?thumb=300 for thumbnails)
     if random_image.url:
@@ -1285,12 +1285,17 @@ async def extract_frames_from_video(
             _sequential_subdir.mkdir(parents=True, exist_ok=True)
 
         _progress(stage="receiving", extracted=0, total=0, percent=0.0)
-        contents = await video.read()
+        # Stream the upload directly to disk — avoids holding the entire video in RAM.
+        # For large files (GBs) this is the single biggest latency fix.
         video_base = os.path.splitext(os.path.basename(video.filename or "video"))[0]
         temp_video = dataset_dir / f"_temp_{uuid.uuid4().hex[:12]}_{os.path.basename(video.filename or 'video')}"
         try:
             with open(temp_video, "wb") as f:
-                f.write(contents)
+                while True:
+                    chunk = await video.read(1 << 20)  # 1 MiB chunks
+                    if not chunk:
+                        break
+                    f.write(chunk)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to save video: {e}")
 
@@ -1375,12 +1380,12 @@ async def extract_frames_from_video(
                     final_filename = bare_filename  # stored in DB as-is for cross-collection matching
                     url_path = f"c{target_collection.id}/{bare_filename}"
                 else:
-                    final_filename = f"{video_base}_frame_{extracted:06d}.png"
+                    final_filename = f"{video_base}_frame_{extracted:06d}.jpg"
                     write_dir = dataset_dir
                     file_path = write_dir / final_filename
                     counter = 1
                     while file_path.exists():
-                        final_filename = f"{video_base}_frame_{extracted:06d}_{counter}.png"
+                        final_filename = f"{video_base}_frame_{extracted:06d}_{counter}.jpg"
                         file_path = write_dir / final_filename
                         counter += 1
                     url_path = final_filename
@@ -1396,16 +1401,18 @@ async def extract_frames_from_video(
                     scale = resize_height / height
                     frame = cv2.resize(frame, (int(width * scale), resize_height), interpolation=cv2.INTER_AREA)
                     height, width = frame.shape[:2]
-                success = cv2.imwrite(str(file_path), frame)
+                # JPEG (quality 90) is ~8x faster to encode and 5-10x smaller than PNG
+                success = cv2.imwrite(str(file_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 if not success:
                     continue
-                contents_png = file_path.read_bytes()
+                # Get file size from stat — avoids re-reading the whole file just for len()
+                file_size = file_path.stat().st_size
                 relative_url = f"/static/projects/{project_id}/{dataset_id}/images/{url_path}"
                 db_image = models.Image(
                     dataset_id=dataset_id,
                     collection_id=target_collection.id,
                     file_name=final_filename,
-                    file_size=len(contents_png),
+                    file_size=file_size,
                     width=int(width),
                     height=int(height),
                     url=relative_url,
@@ -1434,8 +1441,8 @@ async def extract_frames_from_video(
 
         _progress(stage="saving", extracted=extracted, total=projected_extractions or extracted, percent=99.0)
 
-        current_image_count = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).count()
-        dataset.image_count = current_image_count + len(uploaded_images)
+        # Avoid an extra COUNT(*) — image_count was already accurate before this upload.
+        dataset.image_count = (dataset.image_count or 0) + len(uploaded_images)
         db.commit()
         _set_random_image_as_logo(dataset, db, base_url)
 
@@ -2295,12 +2302,20 @@ async def get_dataset_annotations_list(
 async def get_dataset_annotation_content(
     dataset_id: int,
     annotation_id: str,
-    limit: int = 10000,  # Limit for large annotation files
     include_images: bool = True,
     include_annotations: bool = True,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Get the content of a specific annotation file with performance optimizations (database-only)"""
+    """Get the content of a specific annotation file with performance optimizations (database-only).
+
+    Uses a fixed max inline size (not a ``limit`` query param) so clients cannot accidentally
+    trigger the "large file" branch (e.g. ``?limit=100`` meant for another API).
+    Fetches annotations in pages so files with >10k rows still return full COCO JSON.
+    """
+    # Max annotations we will ever stringify into one JSON payload for this endpoint.
+    INLINE_CONTENT_MAX_ANNOTATIONS = 200_000
+    FETCH_PAGE_SIZE = 10_000
+
     try:
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
@@ -2314,9 +2329,35 @@ async def get_dataset_annotation_content(
         
         if not annotation_file:
             raise HTTPException(status_code=404, detail="Annotation file not found")
-        
-        # For large annotation files, return summary instead of full content
-        if annotation_file.annotation_count > limit:
+
+        live_annotation_count = (
+            db.query(func.count(models.Annotation.id))
+            .filter(models.Annotation.annotation_file_id == annotation_id)
+            .scalar()
+            or 0
+        )
+
+        # Import still running: avoid empty COCO + confusing client errors
+        if (
+            live_annotation_count == 0
+            and annotation_file.processing_status in ("pending", "processing")
+        ):
+            return {
+                "success": True,
+                "data": {
+                    "content": None,
+                    "filename": annotation_file.name,
+                    "format": "COCO",
+                    "size": 0,
+                    "source": "database",
+                    "is_processing": True,
+                    "processing_status": annotation_file.processing_status,
+                    "message": "Annotation import is still processing. Wait until it completes, then open again.",
+                },
+            }
+
+        # Too large to inline — use paginated /annotations/.../data from the client
+        if live_annotation_count > INLINE_CONTENT_MAX_ANNOTATIONS:
             return {
                 "success": True,
                 "data": {
@@ -2326,10 +2367,12 @@ async def get_dataset_annotation_content(
                     "size": 0,
                     "source": "database",
                     "is_large": True,
-                    "total_annotations": annotation_file.annotation_count,
-                    "limit": limit,
-                    "message": f"File too large ({annotation_file.annotation_count} annotations). Use paginated API instead."
-                }
+                    "total_annotations": live_annotation_count,
+                    "message": (
+                        f"This file has about {live_annotation_count:,} annotations — too many to download as one JSON file. "
+                        "Open it in the segmentation editor: it loads each image from the database automatically."
+                    ),
+                },
             }
         
         # Generate COCO format from database with limited queries
@@ -2338,12 +2381,25 @@ async def get_dataset_annotation_content(
         # Get classes first (usually small)
         classes_response = await get_annotation_classes(dataset_id, annotation_id, db)
         
-        # Get annotations with limit
-        annotations_response = await get_annotation_data(
-            dataset_id, annotation_id, None, 1, limit, None, db
-        )
+        # Paginate through all annotations (direct router calls — not HTTP; page size can exceed 1000)
+        all_annotation_rows: list = []
+        page = 1
+        annotations_response = None
+        while True:
+            annotations_response = await get_annotation_data(
+                dataset_id, annotation_id, None, page, FETCH_PAGE_SIZE, None, db
+            )
+            if not annotations_response["success"]:
+                raise HTTPException(status_code=500, detail="Failed to retrieve annotation data")
+            chunk = annotations_response["data"]["annotations"]
+            all_annotation_rows.extend(chunk)
+            pagination = annotations_response["data"].get("pagination") or {}
+            total_pages = int(pagination.get("pages") or 1)
+            if page >= total_pages or not chunk:
+                break
+            page += 1
         
-        if not annotations_response["success"] or not classes_response["success"]:
+        if not classes_response["success"]:
             raise HTTPException(status_code=500, detail="Failed to retrieve annotation data")
         
         project_name = None
@@ -2384,7 +2440,7 @@ async def get_dataset_annotation_content(
         if include_images or include_annotations:
             # Get unique image IDs from annotations to minimize image queries
             image_ids = set()
-            for ann in annotations_response["data"]["annotations"]:
+            for ann in all_annotation_rows:
                 image_ids.add(ann["imageId"])
             
             # Batch load images
@@ -2430,7 +2486,7 @@ async def get_dataset_annotation_content(
                     for img in images_for_dims:
                         image_dims[img.id] = (img.width or 1, img.height or 1)
                 
-                for ann in annotations_response["data"]["annotations"]:
+                for ann in all_annotation_rows:
                     image_id = ann["imageId"]
                     
                     # Get image dimensions for this annotation

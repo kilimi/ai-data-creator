@@ -234,9 +234,31 @@ export default function Classification() {
           // First get annotation metadata to get the name
           const annotationResponse = await api.getAnnotation(id!, annotationFileId);
           const response = await api.getAnnotationContent(id!, annotationFileId);
-          if (response.success && response.data.content) {
-            console.log('Loading annotation from backend');
-            console.log('Content length:', response.data.content.length, 'bytes');
+          if (!response.success || !response.data) {
+            throw new Error('No content in response');
+          }
+          const payload = response.data;
+          if (payload.is_processing) {
+            throw new Error(payload.message || 'Annotation import is still processing. Try again shortly.');
+          }
+          if (payload.is_large) {
+            throw new Error(
+              payload.message ||
+                'This annotation file is too large to open as a single download.',
+            );
+          }
+          const rawContent = payload.content;
+          const contentStr =
+            typeof rawContent === 'string'
+              ? rawContent
+              : rawContent != null
+                ? JSON.stringify(rawContent)
+                : null;
+          if (!contentStr) {
+            throw new Error('No content in response');
+          }
+          console.log('Loading annotation from backend');
+            console.log('Content length:', contentStr.length, 'bytes');
             
             // Set annotation name if available
             if (annotationResponse.success && annotationResponse.data?.file_name) {
@@ -245,14 +267,14 @@ export default function Classification() {
             
             let cocoData;
             try {
-              cocoData = JSON.parse(response.data.content);
+              cocoData = JSON.parse(contentStr);
               console.log('Parsed COCO data successfully');
               console.log('Has images:', !!cocoData.images, 'count:', cocoData.images?.length);
               console.log('Has annotations:', !!cocoData.annotations, 'count:', cocoData.annotations?.length);
               console.log('Has categories:', !!cocoData.categories, 'count:', cocoData.categories?.length);
             } catch (parseError) {
               console.error('Failed to parse annotation content:', parseError);
-              console.log('Content preview (first 500 chars):', response.data.content.substring(0, 500));
+              console.log('Content preview (first 500 chars):', contentStr.substring(0, 500));
               toast({
                 title: "Error",
                 description: "Failed to parse annotation file",
@@ -350,7 +372,6 @@ export default function Classification() {
             });
             
             return true;
-          }
         } catch (error) {
           console.error('Error loading annotation from backend:', error);
         }

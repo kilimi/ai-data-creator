@@ -1,4 +1,5 @@
 import { SharedTestInferenceModal, InferenceResult } from "./SharedTestInferenceModal";
+import { getApiBaseUrl } from "@/config/api";
 
 interface TestInferenceModalProps {
   open: boolean;
@@ -19,7 +20,7 @@ export function TestInferenceModal({
     formData.append('onnx_file_path', onnxFilePath);
     formData.append('task_id', taskId.toString());
 
-    const response = await fetch('http://localhost:9999/export/test-inference', {
+    const response = await fetch(`${getApiBaseUrl()}/export/test-inference`, {
       method: 'POST',
       body: formData,
     });

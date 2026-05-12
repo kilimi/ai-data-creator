@@ -9,6 +9,8 @@ import { AnnotationSample } from '@/utils/annotations';
 import { LayoutType } from './LayoutControls';
 import type { DatasetUiMode } from '@/hooks/useDatasetSettings';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
+import { Layers } from 'lucide-react';
 
 interface ResizableDatasetLayoutProps {
   layout: LayoutType;
@@ -27,6 +29,8 @@ interface ResizableDatasetLayoutProps {
   onPageChange: (page: number) => void;
   onTabPageChange?: (tabId: string, page: number) => void; // NEW: for tabbed pagination
   onOpenUploadDialog: () => void;
+  /** When tabbed mode has zero collections, opens the “create layer” flow */
+  onCreateImageCollection?: () => void;
   onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
   onDeleteImage: (imageId: string) => Promise<void>;
   onTabDeleteImage?: (tabId: string, imageId: string) => Promise<void>; // NEW: for tabbed image deletion
@@ -64,6 +68,7 @@ export function ResizableDatasetLayout({
   onPageChange,
   onTabPageChange,
   onOpenUploadDialog,
+  onCreateImageCollection,
   onOpenVideoUploadDialog,
   onDeleteImage,
   onTabDeleteImage,
@@ -106,7 +111,22 @@ export function ResizableDatasetLayout({
   const renderImagesSection = () => (
     <ScrollArea className="h-full w-full">
       <div className="p-6">
-        {useTabbedImages && imageCollections && imageCollections.length > 0 ? (
+        {useTabbedImages && imageCollections && imageCollections.length === 0 ? (
+          <div className="flex min-h-[280px] flex-col items-center justify-center gap-4 px-4 text-center">
+            <Layers className="h-12 w-12 text-muted-foreground" aria-hidden />
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">No image layers yet</h3>
+              <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                Create an image collection before you can upload images or extract frames from video.
+              </p>
+            </div>
+            {onCreateImageCollection ? (
+              <Button type="button" onClick={onCreateImageCollection}>
+                Create image layer
+              </Button>
+            ) : null}
+          </div>
+        ) : useTabbedImages && imageCollections && imageCollections.length > 0 ? (
           <TabbedImagesContent
             id={id}
             projectId={projectId}
@@ -173,6 +193,9 @@ export function ResizableDatasetLayout({
         }
       }
       return Array.from(ids);
+    }
+    if (useTabbedImages && (!imageCollections || imageCollections.length === 0)) {
+      return [];
     }
     return paginatedImages.map((img) => String(img.id));
   }, [useTabbedImages, imageCollections, paginatedImages]);

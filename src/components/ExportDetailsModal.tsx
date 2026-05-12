@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle, CheckCircle2, XCircle, Clock, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApi } from "@/hooks/use-api";
+import { getApiBaseUrl } from "@/config/api";
 
 interface ExportDetailsModalProps {
   open: boolean;
@@ -72,7 +73,7 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`http://localhost:9999/tasks/${taskId}`);
+      const response = await fetch(`${getApiBaseUrl()}/tasks/${taskId}`);
       
       if (!response.ok) {
         throw new Error(`Failed to fetch task details: ${response.status}`);

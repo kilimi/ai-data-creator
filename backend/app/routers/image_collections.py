@@ -24,6 +24,40 @@ from ..schemas import (
 
 router = APIRouter()
 
+
+def _delete_image_physical_files(project_id: int, dataset_id: int, file_name: str) -> None:
+    """
+    Remove the main image file, optional thumbnails/ copy, and generated .thumbs cache files.
+    Tolerates missing paths (partial cleanup).
+    """
+    image_dirs = [
+        Path("projects") / str(project_id) / str(dataset_id) / "images",
+        Path("data") / "images" / str(dataset_id),
+    ]
+    stem = Path(file_name).stem
+    for img_dir in image_dirs:
+        main_path = img_dir / file_name
+        if main_path.is_file():
+            try:
+                main_path.unlink()
+            except OSError:
+                pass
+        thumb_copy = img_dir / "thumbnails" / file_name
+        if thumb_copy.is_file():
+            try:
+                thumb_copy.unlink()
+            except OSError:
+                pass
+        dot_thumbs = img_dir / ".thumbs"
+        if dot_thumbs.is_dir():
+            for suffix in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+                try:
+                    for p in dot_thumbs.glob(f"{stem}_*{suffix}"):
+                        if p.is_file():
+                            p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
 class ReorderCollectionsRequest(BaseModel):
     ordered_collection_ids: List[int]
 
@@ -39,17 +73,24 @@ def get_or_create_group_id(db: Session, dataset_id: int, file_name: str) -> str:
     """
     Return the group_id shared by all images in this dataset with the same base filename.
     Creates a new UUID if no group exists yet.
+    Uses SQL filtering instead of loading all dataset images.
     """
     base = _base_name(file_name)
-    # Look for any existing image in this dataset with the same base filename
-    existing = (
-        db.query(Image)
-        .filter(Image.dataset_id == dataset_id, Image.group_id.isnot(None))
-        .all()
+    # Query only images that could match: file_name starts with base (with or without extension)
+    existing_group_id = (
+        db.query(Image.group_id)
+        .filter(
+            Image.dataset_id == dataset_id,
+            Image.group_id.isnot(None),
+            func.lower(
+                func.regexp_replace(Image.file_name, r'\.[^.]*$', '')
+            ) == base,
+        )
+        .limit(1)
+        .scalar()
     )
-    for img in existing:
-        if _base_name(img.file_name) == base and img.group_id:
-            return img.group_id
+    if existing_group_id:
+        return existing_group_id
     return str(uuid.uuid4())
 
 @router.get("/datasets/{dataset_id}/image-collections", response_model=List[ImageCollectionWithImages])
@@ -60,41 +101,27 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
         raise HTTPException(status_code=404, detail="Dataset not found")
     
     base_url = str(request.base_url).rstrip('/')
-    
-    # Ensure default collection exists
+
+    # Default collection (if any) — used to attach orphan images with collection_id NULL.
+    # We do NOT auto-create a collection here; the UI requires an explicit layer before upload.
     default_collection = db.query(ImageCollection).filter(
         ImageCollection.dataset_id == dataset_id,
         ImageCollection.is_default == True
     ).first()
-    
-    if not default_collection:
-        # Create default collection if it doesn't exist
-        default_collection = ImageCollection(
-            dataset_id=dataset_id,
-            name="RGB Images",
-            description="Default image collection",
-            is_default=True,
-            position=0,
+
+    if default_collection:
+        updated_count = (
+            db.query(Image)
+            .filter(Image.dataset_id == dataset_id, Image.collection_id.is_(None))
+            .update({"collection_id": default_collection.id}, synchronize_session=False)
         )
-        db.add(default_collection)
-        db.commit()
-        db.refresh(default_collection)
-    
-    # Always move any unassigned images to the default collection (e.g. after upload via flat API)
-    unassigned_images = db.query(Image).filter(
-        Image.dataset_id == dataset_id,
-        Image.collection_id.is_(None)
-    ).all()
-    for image in unassigned_images:
-        image.collection_id = default_collection.id
-    if unassigned_images:
-        db.commit()
-    
+        if updated_count:
+            db.commit()
+
     collections = db.query(ImageCollection).filter(
         ImageCollection.dataset_id == dataset_id
     ).order_by(ImageCollection.position.asc(), ImageCollection.created_at.asc()).all()
-    
-    # For default collection: include all dataset images (assigned to default OR unassigned) so nothing is missing when re-entering
+
     default_collection_id = default_collection.id if default_collection else None
 
     def image_to_dict(img):
@@ -205,8 +232,6 @@ def delete_image_collection(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     project_id = dataset.project_id or 0
-    dataset_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
-    old_dataset_dir = Path("data/images") / str(dataset_id)
 
     AnnotationFileImage = None
     try:
@@ -217,13 +242,7 @@ def delete_image_collection(
     images_in_collection = db.query(Image).filter(Image.collection_id == collection_id).all()
     for image in images_in_collection:
         try:
-            file_path = dataset_dir / image.file_name
-            if file_path.exists():
-                os.remove(file_path)
-            else:
-                old_file_path = old_dataset_dir / image.file_name
-                if old_file_path.exists():
-                    os.remove(old_file_path)
+            _delete_image_physical_files(project_id, dataset_id, image.file_name)
         except Exception:
             pass
         if AnnotationFileImage is not None:

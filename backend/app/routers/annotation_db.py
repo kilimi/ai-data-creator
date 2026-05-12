@@ -281,16 +281,18 @@ def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
         has_bbox = False
         
         for ann in annotations:
-            if ann.get('segmentation'):
+            if not has_segmentation and ann.get('segmentation'):
                 # Check if segmentation is not empty (sometimes it's [] or null)
                 seg = ann['segmentation']
                 if seg and (isinstance(seg, list) and len(seg) > 0):
                     has_segmentation = True
-            if ann.get('bbox') and len(ann['bbox']) >= 4:
+            if not has_bbox and ann.get('bbox') and len(ann['bbox']) >= 4:
                 # Check if bbox is not just zero values
                 bbox = ann['bbox']
                 if any(val > 0 for val in bbox):
                     has_bbox = True
+            if has_segmentation and has_bbox:
+                break  # early exit – no need to scan further
                 
         if has_segmentation and has_bbox:
             return 'Segmentation (mask+bbox)'
@@ -363,6 +365,8 @@ async def process_coco_annotation_file(
         
         # Process COCO images and create mapping
         coco_image_mapping = {}
+        afi_rows = []
+        now = datetime.utcnow()
         if 'images' in coco_data:
             for coco_img in coco_data['images']:
                 coco_image_id = coco_img['id']
@@ -372,8 +376,6 @@ async def process_coco_annotation_file(
                     image_exact, image_ci, file_name
                 )
                 
-                # Persist per-file image mapping for coverage queries
-                afi = None
                 if dataset_image_id:
                     coco_image_mapping[coco_image_id] = {
                         'dataset_image_id': dataset_image_id,
@@ -382,22 +384,26 @@ async def process_coco_annotation_file(
                         'file_name': file_name
                     }
 
-                # Create AnnotationFileImage entry regardless of dataset match (so we know which images were referenced)
-                try:
-                    afi = AnnotationFileImage(
-                        annotation_file_id=annotation_file_id,
-                        coco_image_id=coco_image_id,
-                        file_name=file_name,
-                        dataset_image_id=dataset_image_id,
-                        width=coco_img.get('width', None),
-                        height=coco_img.get('height', None)
-                    )
-                    db.add(afi)
-                    print(f"DEBUG: Added AnnotationFileImage for {file_name}, coco_id: {coco_image_id}")
-                except Exception as e:
-                    print(f"ERROR: Failed to create AnnotationFileImage for {file_name}: {e}")
-                    # If model not present or insert fails, continue without blocking processing
-                    pass
+                # Collect for bulk insert
+                afi_rows.append({
+                    'annotation_file_id': annotation_file_id,
+                    'coco_image_id': coco_image_id,
+                    'file_name': file_name,
+                    'dataset_image_id': dataset_image_id,
+                    'width': coco_img.get('width', None),
+                    'height': coco_img.get('height', None),
+                    'created_at': now,
+                    'updated_at': now,
+                })
+
+        # Bulk insert AnnotationFileImage records (single INSERT instead of N individual ones)
+        if afi_rows:
+            try:
+                db.bulk_insert_mappings(AnnotationFileImage, afi_rows)
+                db.flush()
+                print(f"DEBUG: Bulk-inserted {len(afi_rows)} AnnotationFileImage rows")
+            except Exception as e:
+                print(f"ERROR: Bulk insert of AnnotationFileImage failed: {e}")
         
         # Process categories
         category_mapping = {}
@@ -409,8 +415,8 @@ async def process_coco_annotation_file(
                 category_mapping[category_id] = class_name
                 class_counts[class_name] = 0
         
-        # Process annotations
-        annotation_count = 0
+        # Process annotations – collect into list for bulk insert
+        annotation_rows = []
         if 'annotations' in coco_data:
             for coco_ann in coco_data['annotations']:
                 coco_image_id = coco_ann['image_id']
@@ -445,20 +451,17 @@ async def process_coco_annotation_file(
                     img_width = image_info.get('width', 1) or 1
                     img_height = image_info.get('height', 1) or 1
                     
-                    # Validate segmentation but keep as pixel coordinates (integers)
                     segmentation_pixels = validate_and_normalize_segmentation(
                         seg,
                         image_width=img_width,
                         image_height=img_height,
-                        normalize=False  # Keep as pixel coordinates
+                        normalize=False
                     )
                     
-                    # Fallback to storing raw segmentation if validation fails
                     if segmentation_pixels is None:
                         segmentation_pixels = coco_ann.get('segmentation')
 
-                # Create annotation record (explicitly let database auto-generate ID)
-                annotation_data = {
+                annotation_rows.append({
                     'annotation_file_id': annotation_file_id,
                     'image_id': image_info['dataset_image_id'],
                     'dataset_id': annotation_file.dataset_id,
@@ -470,39 +473,46 @@ async def process_coco_annotation_file(
                     'bbox_y': bbox_y,
                     'bbox_width': bbox_width,
                     'bbox_height': bbox_height,
-                    'bbox': coco_ann.get('bbox'),  # Keep original for backward compatibility
+                    'bbox': coco_ann.get('bbox'),
                     'segmentation': segmentation_pixels,
                     'area': coco_ann.get('area'),
-                    'confidence': 1.0
-                }
-                
-                annotation = Annotation(**annotation_data)
-                db.add(annotation)
-                annotation_count += 1
+                    'confidence': 1.0,
+                    'uploaded_at': now,
+                })
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
+
+        # Bulk insert annotations (replaces N individual INSERT statements with one batch)
+        annotation_count = len(annotation_rows)
+        if annotation_rows:
+            db.bulk_insert_mappings(Annotation, annotation_rows)
+            db.flush()
 
         # Determine annotation file type based on annotations
         detected_type = detect_annotation_type(coco_data)
         if annotation_file and detected_type:
             annotation_file.type = detected_type
         
-        # Create annotation classes
+        # Bulk insert annotation classes
+        cls_rows = []
         for class_name, count in class_counts.items():
             category_id = None
             for cat_id, cat_name in category_mapping.items():
                 if cat_name == class_name:
                     category_id = cat_id
                     break
-                    
-            annotation_class = AnnotationClass(
-                annotation_file_id=annotation_file_id,
-                class_name=class_name,
-                category_id=category_id,
-                count=count,
-                color='#ea384c',  # Default color
-                opacity=0.25
-            )
-            db.add(annotation_class)
+            cls_rows.append({
+                'annotation_file_id': annotation_file_id,
+                'class_name': class_name,
+                'category_id': category_id,
+                'count': count,
+                'color': '#ea384c',
+                'opacity': 0.25,
+                'created_at': now,
+                'updated_at': now,
+            })
+        if cls_rows:
+            db.bulk_insert_mappings(AnnotationClass, cls_rows)
+            db.flush()
         
         # Update annotation file status
         print(f"DEBUG: Processing completed for {annotation_file_id}. Final annotation count: {annotation_count}")
@@ -510,10 +520,7 @@ async def process_coco_annotation_file(
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
         annotation_file.category_count = len(class_counts)
-        # image_count should reflect number of images referenced in the file
-        annotation_file.image_count = db.query(func.count(AnnotationFileImage.id)).filter(
-            AnnotationFileImage.annotation_file_id == annotation_file_id
-        ).scalar() or 0
+        annotation_file.image_count = len(afi_rows)
         
         # Update dataset annotation count
         update_dataset_annotation_count(db, annotation_file.dataset_id)
@@ -722,6 +729,8 @@ async def save_annotations_direct(
         
         # Process images and create mapping
         coco_image_mapping = {}
+        afi_rows_direct = []
+        now_direct = datetime.utcnow()
         for img_data in images:
             coco_image_id = img_data.get('id')
             file_name = img_data.get('file_name')
@@ -745,22 +754,25 @@ async def save_annotations_direct(
                     'file_name': file_name
                 }
                 
-                # Create AnnotationFileImage entry
-                try:
-                    afi = AnnotationFileImage(
-                        annotation_file_id=annotation_file_id,
-                        coco_image_id=coco_image_id,
-                        file_name=file_name,
-                        dataset_image_id=dataset_image.id,
-                        width=img_width,
-                        height=img_height
-                    )
-                    db.add(afi)
-                except Exception:
-                    pass
-        
-        # Process annotations
-        annotation_count = 0
+                # Collect for bulk insert
+                afi_rows_direct.append({
+                    'annotation_file_id': annotation_file_id,
+                    'coco_image_id': coco_image_id,
+                    'file_name': file_name,
+                    'dataset_image_id': dataset_image.id,
+                    'width': img_width,
+                    'height': img_height,
+                    'created_at': now_direct,
+                    'updated_at': now_direct,
+                })
+
+        # Bulk insert AnnotationFileImage records
+        if afi_rows_direct:
+            db.bulk_insert_mappings(AnnotationFileImage, afi_rows_direct)
+            db.flush()
+
+        # Process annotations – collect for bulk insert
+        annotation_rows_direct = []
         for ann_data in annotations:
             coco_image_id = ann_data.get('image_id')
             category_id = ann_data.get('category_id')
@@ -806,46 +818,53 @@ async def save_annotations_direct(
                 if segmentation_pixels is None:
                     segmentation_pixels = seg
             
-            # Create annotation
-            annotation = Annotation(
-                annotation_file_id=annotation_file_id,
-                image_id=image_info['dataset_image_id'],
-                dataset_id=dataset_id,
-                coco_image_id=coco_image_id,
-                coco_annotation_id=ann_data.get('id'),
-                category_id=category_id,
-                category=class_name,
-                bbox_x=bbox_x,
-                bbox_y=bbox_y,
-                bbox_width=bbox_width,
-                bbox_height=bbox_height,
-                bbox=bbox,
-                segmentation=segmentation_pixels,
-                area=ann_data.get('area'),
-                confidence=1.0
-            )
-            
-            db.add(annotation)
-            annotation_count += 1
+            annotation_rows_direct.append({
+                'annotation_file_id': annotation_file_id,
+                'image_id': image_info['dataset_image_id'],
+                'dataset_id': dataset_id,
+                'coco_image_id': coco_image_id,
+                'coco_annotation_id': ann_data.get('id'),
+                'category_id': category_id,
+                'category': class_name,
+                'bbox_x': bbox_x,
+                'bbox_y': bbox_y,
+                'bbox_width': bbox_width,
+                'bbox_height': bbox_height,
+                'bbox': bbox,
+                'segmentation': segmentation_pixels,
+                'area': ann_data.get('area'),
+                'confidence': 1.0,
+                'uploaded_at': now_direct,
+            })
             class_counts[class_name] = class_counts.get(class_name, 0) + 1
-        
-        # Create annotation classes
+
+        # Bulk insert annotations
+        annotation_count = len(annotation_rows_direct)
+        if annotation_rows_direct:
+            db.bulk_insert_mappings(Annotation, annotation_rows_direct)
+            db.flush()
+
+        # Bulk insert annotation classes
+        cls_rows_direct = []
         for class_name, count in class_counts.items():
             cat_id = None
             for c_id, c_name in category_mapping.items():
                 if c_name == class_name:
                     cat_id = c_id
                     break
-            
-            annotation_class = AnnotationClass(
-                annotation_file_id=annotation_file_id,
-                class_name=class_name,
-                category_id=cat_id,
-                count=count,
-                color='#ea384c',
-                opacity=0.25
-            )
-            db.add(annotation_class)
+            cls_rows_direct.append({
+                'annotation_file_id': annotation_file_id,
+                'class_name': class_name,
+                'category_id': cat_id,
+                'count': count,
+                'color': '#ea384c',
+                'opacity': 0.25,
+                'created_at': now_direct,
+                'updated_at': now_direct,
+            })
+        if cls_rows_direct:
+            db.bulk_insert_mappings(AnnotationClass, cls_rows_direct)
+            db.flush()
         
         # Update annotation file
         annotation_file.is_processed = True

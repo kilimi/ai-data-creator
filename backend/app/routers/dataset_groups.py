@@ -9,7 +9,7 @@ import shutil
 
 from .. import models, schemas
 from ..database import get_db
-from ..dataset_list_helpers import first_preview_url_by_dataset
+from ..dataset_list_helpers import first_preview_url_by_dataset, resolve_dataset_list_thumbnail
 from ..dataset_media_paths import iter_projects_roots
 
 logger = logging.getLogger(__name__)
@@ -34,18 +34,6 @@ def _remove_dataset_group_filesystem_tree(project_id: Optional[int], group_id: i
                 logger.info("Removed dataset group directory %s", path)
         except OSError as e:
             logger.warning("Could not remove dataset group dir %s: %s", path, e)
-
-
-def _list_thumbnail(url: str | None) -> str | None:
-    """
-    Prefer normal HTTP(S) image URLs. Allow small data:image/ URLs — dataset logos are
-    stored as ~200×200 JPEG data URLs from the upload path; omit only if unusually large.
-    """
-    if not url:
-        return None
-    if url.startswith("data:image/"):
-        return url if len(url) <= 500_000 else None
-    return url
 
 
 def get_dataset_annotation_counts(db: Session, dataset_ids: List[int]) -> Dict[int, int]:
@@ -267,7 +255,11 @@ async def get_dataset_groups(
                 {
                     "id": d.id,
                     "name": d.name,
-                    "thumbnailUrl": _list_thumbnail(d.thumbnailUrl) or preview_by_ds.get(d.id),
+                    "thumbnailUrl": resolve_dataset_list_thumbnail(
+                        d.thumbnailUrl,
+                        preview_by_ds.get(d.id),
+                        include_base64_thumbnails=True,
+                    ),
                     "image_count": d.image_count,
                     "annotation_count": annotation_counts.get(d.id, 0),
                     "annotation_file_count": annotation_file_counts.get(d.id, 0),

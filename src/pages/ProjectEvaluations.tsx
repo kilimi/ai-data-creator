@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, Link, useOutletContext } from 'react-router-dom';
+import { useParams, Link, useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -48,6 +48,8 @@ export default function ProjectEvaluations() {
   const { project } = useOutletContext<OutletContext>();
   const { isConnected } = useApi();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   
   const [trainingTasks, setTrainingTasks] = useState<any[]>([]);
   const [evaluationTasks, setEvaluationTasks] = useState<any[]>([]);
@@ -66,7 +68,7 @@ export default function ProjectEvaluations() {
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<Set<number>>(new Set());
-  const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("by-model");
+  const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("list");
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
@@ -153,6 +155,21 @@ export default function ProjectEvaluations() {
     if (!showEvaluationModal || !id) return;
     loadModalResources();
   }, [showEvaluationModal, id, loadModalResources]);
+
+  // Handle taskId from URL parameter - open evaluation details if present
+  useEffect(() => {
+    const taskIdParam = searchParams.get('taskId');
+    if (taskIdParam && !selectedTaskId) {
+      const taskId = parseInt(taskIdParam, 10);
+      if (!isNaN(taskId)) {
+        setSelectedTaskId(taskId);
+        // Remove taskId from URL after opening modal
+        const newParams = new URLSearchParams(searchParams);
+        newParams.delete('taskId');
+        setSearchParams(newParams, { replace: true });
+      }
+    }
+  }, [searchParams, selectedTaskId, setSearchParams]);
 
   // Filter to show only parent tasks and single dataset tasks (not child tasks)
   const parentEvaluations = evaluationTasks.filter(t => !t.task_metadata?.parent_task_id);
@@ -701,6 +718,7 @@ export default function ProjectEvaluations() {
                 checkpoint: params.checkpoint,
                 conf_threshold: params.confThreshold,
                 iou_threshold: params.iouThreshold,
+                nms_iou_threshold: params.nmsIouThreshold,
                 evaluation_name: params.evaluationName || null,
                 use_grid: params.useGrid,
                 grid_size: params.gridSize,
@@ -752,6 +770,7 @@ export default function ProjectEvaluations() {
               image_size: params.imageSize,
               conf_threshold: params.confThreshold,
               iou_threshold: params.iouThreshold,
+              nms_iou_threshold: params.nmsIouThreshold,
               evaluation_name: params.evaluationName || null,
               use_grid: params.useGrid,
               grid_size: params.gridSize,

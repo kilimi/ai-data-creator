@@ -3436,7 +3436,7 @@ export function AnnotationsContent({
       if (annotationsResponse && annotationsResponse.success && annotationsResponse.data) {
         const filesData = annotationsResponse.data;
         // Create lightweight annotation file objects from backend-provided list (no full content fetch - use backend type for fast load)
-        const lightweightFiles: AnnotationFile[] = await Promise.all(filesData.map(async (fileSummary: any) => {
+        const lightweightFiles: AnnotationFile[] = filesData.map((fileSummary: any) => {
           const backendType = fileSummary.type || fileSummary.format || null;
           const hasBackendType = typeof backendType === 'string' && backendType.length > 0;
           let detectedType: 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' = 'Other';
@@ -3461,33 +3461,14 @@ export function AnnotationsContent({
             }
           }
 
-          // Load class statistics (lightweight; coverage comes from list response)
-          let classStats: Array<{ className: string; count: number; color: string; opacity: number }> = [];
-          try {
-            const classesResponse = await api.getAnnotationClasses(id, fileSummary.id);
-            if (classesResponse?.success && classesResponse.data) {
-              const raw = (classesResponse.data as any).classes ?? (classesResponse.data as any).data?.classes ?? [];
-              const rawStats = (Array.isArray(raw) ? raw : []).map((c: Record<string, unknown>) => ({
-                className: String(c.className ?? c.class_name ?? ''),
-                count: Number(c.count ?? 0),
-                color: String(c.color ?? ''),
-                opacity: Number(c.opacity ?? 0.25),
-              })).filter((s) => s.className.length > 0);
-              // Assign random colors to classes that have no color or the default fallback
-              const classNames = rawStats.map(s => s.className);
-              const randomColors = generateClassColors(classNames);
-              classStats = rawStats.map(s => ({
-                ...s,
-                color: s.color && s.color !== '#ea384c' ? s.color : randomColors[s.className] ?? '#ea384c',
-              }));
-            }
-          } catch (error) {
-            console.warn(`Failed to load classes for ${fileSummary.name}:`, error);
-          }
+          // Class names/colors load when the user opens a file (see selectedAnnotation effect) — avoids N parallel
+          // GET .../classes requests on every dataset page load (was one request per annotation file).
 
           // Image coverage is intentionally removed from this view due to
           // ambiguous semantics across multiple collections.
-          
+
+          const classStats: Array<{ className: string; count: number; color: string; opacity: number }> = [];
+
           // First, generate unique colors for all classes
           const uniqueClassColors = classStats.reduce((acc, stat) => {
             const usedColors = new Set(Object.values(acc));
@@ -3508,7 +3489,7 @@ export function AnnotationsContent({
             date: fileSummary.created_at || new Date().toISOString().split('T')[0], // Use backend created_at for correct sort order
             format: 'COCO', // Default format
             type: detectedType,
-            classCount: classStats.length,
+            classCount: Number(fileSummary.category_count) || classStats.length || 0,
             imageCount: fileSummary.image_count || 0, // Use image_count from summary
             matchedImageCount: 0, // Will be calculated when needed
             totalSampleCount: fileSummary.annotation_count || fileSummary.actual_count || fileSummary.stored_count || 0,
@@ -3528,7 +3509,7 @@ export function AnnotationsContent({
           };
           
           return annotationFile;
-        }));
+        });
         
         // Load saved classifications from localStorage and merge
         const savedClassifications = loadSavedClassifications();

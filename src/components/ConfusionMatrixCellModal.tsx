@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Grid3X3, ZoomIn } from "lucide-react";
+import { getApiBaseUrl } from "@/config/api";
 
 export interface CmSample {
   image_id?: number;
@@ -26,40 +27,97 @@ interface ConfusionMatrixCellModalProps {
   imageIdToFilename?: Record<string, string>;
 }
 
-function encodeFilePath(name: string) {
-  return String(name || "")
-    .replace(/\\/g, "/")
+/**
+ * Encode file path for URLs while preserving directory structure.
+ * Validates input and handles edge cases.
+ */
+export function encodeFilePath(name: string | undefined | null): string {
+  // Validate input - return empty string for invalid inputs
+  if (name == null || typeof name !== 'string') {
+    console.warn('encodeFilePath: invalid input', name);
+    return '';
+  }
+  
+  const normalized = name.trim();
+  if (!normalized) {
+    return '';
+  }
+  
+  return normalized
+    .replace(/\\/g, "/") // Convert Windows paths to forward slashes
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
 }
 
-function buildImageUrls(taskId: number, imageId: number | undefined, projectId: number, datasetId: number, fileName: string) {
+/**
+ * Build multiple fallback URLs for image loading.
+ * Uses API config for base URL and handles both numeric and string image IDs.
+ */
+export function buildImageUrls(
+  taskId: number,
+  imageId: number | string | undefined,
+  projectId: number,
+  datasetId: number,
+  fileName: string
+): string[] {
   const encoded = encodeFilePath(fileName);
-  const urls: string[] = [];
-  if (Number.isFinite(imageId)) {
-    urls.push(`http://localhost:9999/predictions/evaluation-image/${taskId}/${imageId}`);
+  if (!encoded) {
+    console.warn('buildImageUrls: empty filename after encoding');
+    return [];
   }
+  
+  const baseUrl = getApiBaseUrl().replace(/\/+$/, '');
+  const urls: string[] = [];
+  
+  // Check if imageId is valid (can be number or string that represents a number)
+  const imageIdNum = typeof imageId === 'string' ? parseInt(imageId, 10) : imageId;
+  if (imageIdNum != null && Number.isFinite(imageIdNum) && imageIdNum > 0) {
+    urls.push(`${baseUrl}/predictions/evaluation-image/${taskId}/${imageIdNum}`);
+  }
+  
   urls.push(
-    `http://localhost:9999/static/projects/${projectId}/${datasetId}/images/${encoded}`,
-    `http://localhost:9999/static/data/images/${datasetId}/${encoded}`,
+    `${baseUrl}/static/projects/${projectId}/${datasetId}/images/${encoded}`,
+    `${baseUrl}/static/data/images/${datasetId}/${encoded}`,
   );
   return urls;
 }
+
+// Drawing constants
+const CANVAS_DRAW_CONSTANTS = {
+  LINE_WIDTH_DIVISOR: 300,
+  FONT_SIZE_DIVISOR: 45,
+  MIN_LINE_WIDTH: 1.5,
+  MIN_FONT_SIZE: 10,
+  LABEL_PADDING: 6,
+  LABEL_VERTICAL_PADDING: 4,
+} as const;
 
 /**
  * Draw annotation boxes on a canvas that is sized to exactly match the
  * *rendered* image dimensions. The canvas pixel size equals the displayed
  * size, and we scale coordinates from natural → displayed.
  */
-function drawAnnotations(
-  canvas: HTMLCanvasElement,
-  img: HTMLImageElement,
+export function drawAnnotations(
+  canvas: HTMLCanvasElement | null,
+  img: HTMLImageElement | null,
   sample: CmSample,
-) {
+): boolean {
+  // Validate inputs
+  if (!canvas || !img || !sample) {
+    return false;
+  }
+  
   const dw = img.clientWidth;
   const dh = img.clientHeight;
-  if (dw === 0 || dh === 0) return;
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  
+  // Validate dimensions - return false instead of leaving canvas in undefined state
+  if (dw === 0 || dh === 0 || nw === 0 || nh === 0) {
+    console.warn('drawAnnotations: zero dimensions', { dw, dh, nw, nh });
+    return false;
+  }
 
   const dpr = window.devicePixelRatio || 1;
   canvas.width = dw * dpr;
@@ -68,15 +126,25 @@ function drawAnnotations(
   canvas.style.height = `${dh}px`;
 
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) {
+    console.warn('drawAnnotations: failed to get 2d context');
+    return false;
+  }
+  
   ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, dw, dh);
 
-  const sx = dw / img.naturalWidth;
-  const sy = dh / img.naturalHeight;
+  const sx = dw / nw;
+  const sy = dh / nh;
 
-  const lineW = Math.max(1.5, Math.round(dw / 300));
-  const fontSize = Math.max(10, Math.round(dw / 45));
+  const lineW = Math.max(
+    CANVAS_DRAW_CONSTANTS.MIN_LINE_WIDTH,
+    Math.round(dw / CANVAS_DRAW_CONSTANTS.LINE_WIDTH_DIVISOR)
+  );
+  const fontSize = Math.max(
+    CANVAS_DRAW_CONSTANTS.MIN_FONT_SIZE,
+    Math.round(dw / CANVAS_DRAW_CONSTANTS.FONT_SIZE_DIVISOR)
+  );
 
   function drawBox(
     bbox: [number, number, number, number],
@@ -96,8 +164,8 @@ function drawAnnotations(
 
     if (label) {
       ctx.font = `bold ${fontSize}px sans-serif`;
-      const tw = ctx.measureText(label).width + 6;
-      const th = fontSize + 4;
+      const tw = ctx.measureText(label).width + CANVAS_DRAW_CONSTANTS.LABEL_PADDING;
+      const th = fontSize + CANVAS_DRAW_CONSTANTS.LABEL_VERTICAL_PADDING;
       const ly = labelAbove
         ? (y1 > th + 2 ? y1 - 2 : y1 + (y2 - y1) + th)
         : (y2 + th + 2 < dh ? y2 + th : y1 - 2);
@@ -114,6 +182,8 @@ function drawAnnotations(
     const conf = sample.conf != null ? ` ${(sample.conf * 100).toFixed(0)}%` : "";
     drawBox(sample.pred_bbox, "#ef4444", (sample.pred_class_name || "Pred") + conf, false);
   }
+  
+  return true;
 }
 
 // ── Thumbnail card for grid view ────────────────────────────────────────────
@@ -131,11 +201,13 @@ function ImageCard({
   const imgRef = useRef<HTMLImageElement>(null);
   const [srcIndex, setSrcIndex] = useState(0);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [allUrlsFailed, setAllUrlsFailed] = useState(false);
   const activeSrc = imageUrls[Math.min(srcIndex, Math.max(0, imageUrls.length - 1))] || "";
 
   useEffect(() => {
     setSrcIndex(0);
     setImageLoaded(false);
+    setAllUrlsFailed(false);
   }, [imageUrls, sample.file_name]);
 
   const redraw = useCallback(() => {
@@ -158,15 +230,19 @@ function ImageCard({
           src={activeSrc}
           alt={sample.file_name}
           className="w-full block"
+          style={{ opacity: allUrlsFailed ? 0.3 : 1 }}
           onLoad={() => {
             setImageLoaded(true);
             redraw();
           }}
-          onError={(e) => {
+          onError={() => {
             setImageLoaded(false);
-            setSrcIndex((prev) => (prev + 1 < imageUrls.length ? prev + 1 : prev));
-            if (srcIndex + 1 >= imageUrls.length) {
-              (e.target as HTMLImageElement).style.opacity = "0.3";
+            const nextIndex = srcIndex + 1;
+            if (nextIndex < imageUrls.length) {
+              setSrcIndex(nextIndex);
+            } else {
+              // All URLs have failed
+              setAllUrlsFailed(true);
             }
           }}
         />
@@ -227,15 +303,29 @@ function DetailView({
     if (img && img.complete && img.naturalWidth > 0) redraw();
   }, [index, redraw]);
 
-  // Keyboard navigation
+  // Keyboard navigation - check if we're actually focused on the modal
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onBack(); }
-      else if (e.key === "ArrowLeft") onPrev();
-      else if (e.key === "ArrowRight") onNext();
+      // Ignore if typing in an input field
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+      
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onBack();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        onPrev();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        onNext();
+      }
     }
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [onBack, onPrev, onNext]);
 
   return (
@@ -243,6 +333,8 @@ function DetailView({
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 flex-shrink-0">
         <button
+          type="button"
+          aria-label="Back to grid"
           onClick={onBack}
           className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white transition-colors"
         >
@@ -267,6 +359,8 @@ function DetailView({
       <div className="flex items-center gap-2 flex-1 min-h-0 px-2 py-3">
         {/* Prev */}
         <button
+          type="button"
+          aria-label="Previous image"
           onClick={onPrev}
           disabled={samples.length <= 1}
           className="flex-shrink-0 p-2 rounded-full bg-gray-800 hover:bg-gray-700
@@ -299,6 +393,8 @@ function DetailView({
 
         {/* Next */}
         <button
+          type="button"
+          aria-label="Next image"
           onClick={onNext}
           disabled={samples.length <= 1}
           className="flex-shrink-0 p-2 rounded-full bg-gray-800 hover:bg-gray-700
@@ -375,8 +471,7 @@ export function ConfusionMatrixCellModal({
     borderColor = "border-red-700";
   }
 
-  const filenameToImageId = useRef<Map<string, number>>(new Map());
-  useEffect(() => {
+  const filenameToImageId = useMemo(() => {
     const m = new Map<string, number>();
     for (const [idStr, name] of Object.entries(imageIdToFilename)) {
       const idNum = Number(idStr);
@@ -384,11 +479,11 @@ export function ConfusionMatrixCellModal({
         m.set(name, idNum);
       }
     }
-    filenameToImageId.current = m;
+    return m;
   }, [imageIdToFilename]);
 
   function imageUrlsForSample(s: CmSample) {
-    const imageId = ((s as any).image_id as number | undefined) ?? filenameToImageId.current.get(s.file_name);
+    const imageId = ((s as any).image_id as number | undefined) ?? filenameToImageId.get(s.file_name);
     return buildImageUrls(taskId, imageId, projectId, datasetId, s.file_name);
   }
 
@@ -421,7 +516,9 @@ export function ConfusionMatrixCellModal({
         <div className={`${headerBg} border-b ${borderColor} px-5 pt-5 pb-3 rounded-t-lg flex-shrink-0`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-white">{title}</h2>
+              <h2 className="text-base font-bold text-white" data-testid="cm-modal-visible-heading">
+                {title}
+              </h2>
               <p className="text-xs text-gray-400 mt-0.5">{description}</p>
             </div>
           </div>

@@ -109,6 +109,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [showClassDialog, setShowClassDialog] = useState(false);
   const [classStats, setClassStats] = useState<any | null>(null);
   const [customName, setCustomName] = useState('');
+  
+  // Track mount state and active fetch operations
+  const isMountedRef = useRef(true);
+  const activeFetchesRef = useRef<Map<string, AbortController>>(new Map());
+  
+  // Unique ID counter for generating collision-free IDs
+  const idCounterRef = useRef(0);
 
   // Training started dialog state
   const [showTrainingStarted, setShowTrainingStarted] = useState(false);
@@ -149,24 +156,44 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
   // Fetch image collections for a specific dataset selection
   const fetchDataForSelection = async (selectionId: string, datasetId: number) => {
-    if (!api) return;
+    if (!api || !isMountedRef.current) return;
+    
+    // Cancel any existing fetch for this selection
+    const existingController = activeFetchesRef.current.get(selectionId);
+    if (existingController) {
+      existingController.abort();
+    }
+    
+    // Create new abort controller for this fetch
+    const abortController = new AbortController();
+    activeFetchesRef.current.set(selectionId, abortController);
     
     // Update loading state for this selection
-    setSelectedDatasets(prev => prev.map(sel => 
-      sel.id === selectionId 
-        ? { ...sel, loadingCollections: true, loadingAnnotations: true }
-        : sel
-    ));
+    if (isMountedRef.current) {
+      setSelectedDatasets(prev => prev.map(sel => 
+        sel.id === selectionId 
+          ? { ...sel, loadingCollections: true, loadingAnnotations: true }
+          : sel
+      ));
+    }
     
     try {
       // Fetch image collections
       const collectionsResponse = await api.getImageCollections(datasetId);
+      
+      // Check if fetch was aborted or component unmounted
+      if (abortController.signal.aborted || !isMountedRef.current) return;
+      
       const collections = collectionsResponse.success && collectionsResponse.data 
         ? collectionsResponse.data.map((col: any) => col.name)
         : [];
       
       // Fetch annotations
       const annotationsResponse = await api.getAnnotations(datasetId);
+      
+      // Check again if fetch was aborted or component unmounted
+      if (abortController.signal.aborted || !isMountedRef.current) return;
+      
       const annotations = annotationsResponse.success && annotationsResponse.data
         ? annotationsResponse.data.map((ann: any) => ({
             id: ann.id || ann.name,
@@ -175,57 +202,68 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             type: ann.type || ann.annotation_type || ann.format || ann.file_type || ann.kind || null
           }))
         : [];
-  console.log(`TrainModelModal: raw annotations response for dataset ${datasetId}:`, annotationsResponse);
-  console.log(`TrainModelModal: mapped annotations for dataset ${datasetId}:`, annotations);
-  if (annotations.length > 0) console.log('TrainModelModal: first annotation item', JSON.stringify(annotations[0], null, 2));
       
       // Update the selection with fetched data and auto-select if only one option
-      setSelectedDatasets(prev => prev.map(sel => {
-        if (sel.id === selectionId) {
-          const updatedSel = { 
-            ...sel, 
-            imageCollections: collections,
-            annotations: annotations,
-            loadingCollections: false,
-            loadingAnnotations: false
-          };
-          
-          // Auto-select if only one option available and current selection is invalid or null
-          const isImageCollectionValid = updatedSel.imageCollection && collections.includes(updatedSel.imageCollection);
-          if (collections.length === 1 && !isImageCollectionValid) {
-            updatedSel.imageCollection = collections[0];
-          }
-          
-          const isAnnotationValid = updatedSel.annotation && annotations.find(a => a.id === updatedSel.annotation);
-          if (annotations.length === 1 && !isAnnotationValid) {
-            updatedSel.annotation = annotations[0].id;
-          }
-          
-          return updatedSel;
-        }
-        return sel;
-      }));
-    } catch (error) {
-      console.error('Error fetching data for selection:', error);
-      setSelectedDatasets(prev => prev.map(sel => 
-        sel.id === selectionId 
-          ? { 
+      if (isMountedRef.current) {
+        setSelectedDatasets(prev => prev.map(sel => {
+          if (sel.id === selectionId) {
+            const updatedSel = { 
               ...sel, 
-              imageCollections: [],
-              annotations: [],
+              imageCollections: collections,
+              annotations: annotations,
               loadingCollections: false,
               loadingAnnotations: false
+            };
+            
+            // Auto-select if only one option available and current selection is invalid or null
+            const isImageCollectionValid = updatedSel.imageCollection && collections.includes(updatedSel.imageCollection);
+            if (collections.length === 1 && !isImageCollectionValid) {
+              updatedSel.imageCollection = collections[0];
             }
-          : sel
-      ));
+            
+            const isAnnotationValid = updatedSel.annotation && annotations.find(a => a.id === updatedSel.annotation);
+            if (annotations.length === 1 && !isAnnotationValid) {
+              updatedSel.annotation = annotations[0].id;
+            }
+            
+            return updatedSel;
+          }
+          return sel;
+        }));
+      }
+    } catch (error) {
+      // Don't update state if aborted or unmounted
+      if (abortController.signal.aborted || !isMountedRef.current) return;
+      
+      console.error('Error fetching data for selection:', error);
+      if (isMountedRef.current) {
+        setSelectedDatasets(prev => prev.map(sel => 
+          sel.id === selectionId 
+            ? { 
+                ...sel, 
+                imageCollections: [],
+                annotations: [],
+                loadingCollections: false,
+                loadingAnnotations: false
+              }
+            : sel
+        ));
+      }
+    } finally {
+      // Clean up the abort controller
+      activeFetchesRef.current.delete(selectionId);
     }
   };
 
   const addDatasetSelection = () => {
     if (datasets.length === 0) return;
     
+    // Generate collision-free unique ID
+    idCounterRef.current += 1;
+    const uniqueId = `dataset-${Date.now()}-${idCounterRef.current}-${Math.random().toString(36).slice(2, 11)}`;
+    
     const newSelection: DatasetSelection = {
-      id: `${Date.now()}-${Math.random()}`,
+      id: uniqueId,
       dataset: datasets[0],
   imageCollection: '',
   annotation: '',
@@ -245,26 +283,34 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const addDatasetGroupSelection = (group: DatasetGroup) => {
     if (!group.datasets || group.datasets.length === 0) return;
     
-    // Create selections for all datasets in the group
-    const newSelections: DatasetSelection[] = group.datasets.map(dataset => ({
-      id: `${Date.now()}-${Math.random()}-${dataset.id}`,
-      dataset: dataset,
-  imageCollection: '',
-  annotation: '',
-      imageCollections: [],
-      annotations: [],
-      loadingCollections: false,
-      loadingAnnotations: false,
-      fromGroup: true,
-      groupName: group.name,
-  split: { train: 80, val: 20, test: 0 },
-    }));
+    // Create selections for all datasets in the group with unique IDs
+    const timestamp = Date.now();
+    const newSelections: DatasetSelection[] = group.datasets.map((dataset, index) => {
+      idCounterRef.current += 1;
+      return {
+        id: `group-${timestamp}-${idCounterRef.current}-${index}-${Math.random().toString(36).slice(2, 11)}`,
+        dataset: dataset,
+    imageCollection: '',
+    annotation: '',
+        imageCollections: [],
+        annotations: [],
+        loadingCollections: false,
+        loadingAnnotations: false,
+        fromGroup: true,
+        groupName: group.name,
+    split: { train: 80, val: 20, test: 0 },
+      };
+    });
     
     setSelectedDatasets([...selectedDatasets, ...newSelections]);
     
-    // Fetch data for all newly selected datasets
-    newSelections.forEach(selection => {
-      fetchDataForSelection(selection.id, selection.dataset.id);
+    // Fetch data for all newly selected datasets with rate limiting (250ms delay between fetches)
+    newSelections.forEach((selection, index) => {
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          fetchDataForSelection(selection.id, selection.dataset.id);
+        }
+      }, index * 250);
     });
   };
 
@@ -374,7 +420,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           task_name: customName.trim() || `YOLO Training - ${new Date().toLocaleString()}`
         };
 
-        console.log('Starting YOLO training with request:', trainingRequest);
         response = await api.startYoloTraining(trainingRequest);
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'rf-detr') {
@@ -399,19 +444,15 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           task_name: customName.trim() || `RT-DETR Training - ${new Date().toLocaleString()}`
         };
 
-        console.log('Starting RT-DETR training with request:', trainingRequest);
         response = await api.startRTDETRTraining(trainingRequest);
         modelName = trainingRequest.model_type;
       }
-      
-      console.log('Training API response:', response);
 
       // Handle both wrapped and unwrapped responses
       const responseData = response.data || response;
       
       if (response.success && (responseData.task_id || responseData.success)) {
         const taskId = responseData.task_id;
-        console.log('Training started successfully. Task ID:', taskId);
 
         const downloadNotice =
           responseData.weights_download_expected && responseData.weights_download_notice
@@ -443,7 +484,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         setModelSettings({});
       } else {
         const errorMsg = response.error || JSON.stringify(response) || 'Unknown error';
-        console.error('Failed to start training. Full response:', response);
         toast({
           title: "Training Failed",
           description: errorMsg,
@@ -482,10 +522,22 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const lastSuccessfulCloneKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    
     if (!open) {
       resetForm();
       lastSuccessfulCloneKeyRef.current = null;
+      // Cancel all active fetches
+      activeFetchesRef.current.forEach(controller => controller.abort());
+      activeFetchesRef.current.clear();
     }
+    
+    return () => {
+      isMountedRef.current = false;
+      // Cancel all active fetches on unmount
+      activeFetchesRef.current.forEach(controller => controller.abort());
+      activeFetchesRef.current.clear();
+    };
   }, [open]);
 
   useEffect(() => {
@@ -498,12 +550,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     let cancelled = false;
 
     const run = async () => {
+      if (!api) return;
       try {
-        const res = await fetch(`http://localhost:9999/tasks/${cloneFromTaskId}`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+        const res = await api.getTask(cloneFromTaskId);
+        if (!res.success || !res.data) {
+          throw new Error(res.error || 'Failed to load task');
         }
-        const task = await res.json();
+        const task = res.data;
         const md = task.task_metadata || {};
         const rawCfgs = md.dataset_configs;
         if (!Array.isArray(rawCfgs) || rawCfgs.length === 0) {
@@ -531,7 +584,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           const annRaw = row.annotation_file_id;
           if (!Number.isFinite(dsId) || annRaw === undefined || annRaw === null) continue;
 
-          const dataset = datasets.find((d) => d.id === dsId);
+          const dataset = datasets.find((d) => String(d.id) === String(dsId));
           if (!dataset) continue;
 
           newSelections.push({
@@ -707,7 +760,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-medium">Dataset Configuration</Label>
-                <DropdownMenu>
+                {/* modal={false}: nested menu inside Dialog avoids pointer/focus conflicts (Radix + jsdom). */}
+                <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
                     <Button 
                       size="sm"
@@ -724,7 +778,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem 
-                      onClick={addDatasetSelection}
+                      onSelect={() => addDatasetSelection()}
                       disabled={datasets.length === 0}
                       className="flex items-center cursor-pointer"
                     >
@@ -748,7 +802,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           datasetGroups.map(group => (
                             <DropdownMenuItem 
                               key={group.id}
-                              onClick={() => addDatasetGroupSelection(group)}
+                              data-testid={`train-modal-add-dataset-group-${group.id}`}
+                              onSelect={() => addDatasetGroupSelection(group)}
                               className="flex items-center cursor-pointer"
                             >
                               <Users className="w-4 h-4 mr-2" />
@@ -793,6 +848,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                             size="icon"
                             variant="ghost"
                             className="h-6 w-6"
+                            aria-label="Remove dataset selection"
                           >
                             <Trash2 className="h-3 w-3" />
                           </Button>
