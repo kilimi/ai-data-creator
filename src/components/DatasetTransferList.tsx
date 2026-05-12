@@ -105,8 +105,9 @@ export function DatasetTransferList({
     );
   };
 
+  const [otherSearch, setOtherSearch] = useState("");
   const leftAvailable = allDatasets.filter(d => !selectedSet.has(d.id) && !datasetToOtherGroupNames.has(d.id) && matches(d, leftSearch));
-  const leftInOtherGroups = allDatasets.filter(d => !selectedSet.has(d.id) && datasetToOtherGroupNames.has(d.id) && matches(d, leftSearch));
+  const leftInOtherGroups = allDatasets.filter(d => !selectedSet.has(d.id) && datasetToOtherGroupNames.has(d.id) && matches(d, otherSearch));
   const rightSelected = allDatasets.filter(d => selectedSet.has(d.id) && matches(d, rightSearch));
 
   const add = (id: number) => {
