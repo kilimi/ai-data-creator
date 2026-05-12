@@ -105,8 +105,9 @@ export function DatasetTransferList({
     );
   };
 
+  const [otherSearch, setOtherSearch] = useState("");
   const leftAvailable = allDatasets.filter(d => !selectedSet.has(d.id) && !datasetToOtherGroupNames.has(d.id) && matches(d, leftSearch));
-  const leftInOtherGroups = allDatasets.filter(d => !selectedSet.has(d.id) && datasetToOtherGroupNames.has(d.id) && matches(d, leftSearch));
+  const leftInOtherGroups = allDatasets.filter(d => !selectedSet.has(d.id) && datasetToOtherGroupNames.has(d.id) && matches(d, otherSearch));
   const rightSelected = allDatasets.filter(d => selectedSet.has(d.id) && matches(d, rightSearch));
 
   const add = (id: number) => {
@@ -122,24 +123,22 @@ export function DatasetTransferList({
   const removeAll = () => onChange([]);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      {/* LEFT — Available */}
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      {/* COL 1 — Available */}
       <div className="border rounded-lg flex flex-col min-h-0 overflow-hidden">
         <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Database className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-semibold">Available</span>
-            <Badge variant="secondary" className="text-[10px]">
-              {leftAvailable.length + leftInOtherGroups.length}
-            </Badge>
+            <Badge variant="secondary" className="text-[10px]">{leftAvailable.length}</Badge>
           </div>
           <Button
             type="button"
             variant="ghost"
             size="sm"
             className="h-7 text-xs"
-            disabled={leftAvailable.length + leftInOtherGroups.length === 0}
-            onClick={() => addAll([...leftAvailable, ...leftInOtherGroups].map(d => d.id))}
+            disabled={leftAvailable.length === 0}
+            onClick={() => addAll(leftAvailable.map(d => d.id))}
           >
             Add all
           </Button>
@@ -156,60 +155,89 @@ export function DatasetTransferList({
           </div>
         </div>
         <ScrollArea className="h-[340px]">
-          <div className="p-2 space-y-3">
-            {leftAvailable.length > 0 && (
-              <div className="space-y-1.5">
-                {leftAvailable.map(d => (
-                  <DatasetRow
-                    key={d.id}
-                    dataset={d}
-                    onClick={() => add(d.id)}
-                    rightSlot={
-                      <Plus className="h-4 w-4 text-muted-foreground group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
-                    }
-                  />
-                ))}
-              </div>
-            )}
-
-            {leftInOtherGroups.length > 0 && (
-              <div className="space-y-1.5">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground px-1 flex items-center gap-1">
-                  <Users className="h-3 w-3" />
-                  In other groups
-                </div>
-                {leftInOtherGroups.map(d => {
-                  const otherGroups = datasetToOtherGroupNames.get(d.id) || [];
-                  return (
-                    <DatasetRow
-                      key={d.id}
-                      dataset={d}
-                      onClick={() => add(d.id)}
-                      badge={
-                        <Badge variant="outline" className="text-[10px] shrink-0 flex items-center gap-1 font-normal">
-                          <Users className="h-2.5 w-2.5" />
-                          {otherGroups.join(", ")}
-                        </Badge>
-                      }
-                      rightSlot={
-                        <Plus className="h-4 w-4 text-muted-foreground group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
-                      }
-                    />
-                  );
-                })}
-              </div>
-            )}
-
-            {leftAvailable.length + leftInOtherGroups.length === 0 && (
+          <div className="p-2 space-y-1.5">
+            {leftAvailable.length > 0 ? (
+              leftAvailable.map(d => (
+                <DatasetRow
+                  key={d.id}
+                  dataset={d}
+                  onClick={() => add(d.id)}
+                  rightSlot={
+                    <Plus className="h-4 w-4 text-muted-foreground group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                  }
+                />
+              ))
+            ) : (
               <div className="text-center py-10 text-sm text-muted-foreground">
-                {leftSearch ? "No matches." : "All datasets are selected."}
+                {leftSearch ? "No matches." : "No available datasets."}
               </div>
             )}
           </div>
         </ScrollArea>
       </div>
 
-      {/* RIGHT — Selected */}
+      {/* COL 2 — In other groups */}
+      <div className="border border-dashed rounded-lg flex flex-col min-h-0 overflow-hidden">
+        <div className="px-3 py-2 border-b bg-muted/20 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-semibold">In other groups</span>
+            <Badge variant="secondary" className="text-[10px]">{leftInOtherGroups.length}</Badge>
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={leftInOtherGroups.length === 0}
+            onClick={() => addAll(leftInOtherGroups.map(d => d.id))}
+          >
+            Add all
+          </Button>
+        </div>
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground h-3.5 w-3.5" />
+            <Input
+              placeholder="Search…"
+              className="pl-8 h-8 text-sm"
+              value={otherSearch}
+              onChange={e => setOtherSearch(e.target.value)}
+            />
+          </div>
+        </div>
+        <ScrollArea className="h-[340px]">
+          <div className="p-2 space-y-1.5">
+            {leftInOtherGroups.length > 0 ? (
+              leftInOtherGroups.map(d => {
+                const otherGroups = datasetToOtherGroupNames.get(d.id) || [];
+                return (
+                  <DatasetRow
+                    key={d.id}
+                    dataset={d}
+                    onClick={() => add(d.id)}
+                    badge={
+                      <Badge variant="outline" className="text-[10px] shrink-0 flex items-center gap-1 font-normal">
+                        <Users className="h-2.5 w-2.5" />
+                        {otherGroups.join(", ")}
+                      </Badge>
+                    }
+                    rightSlot={
+                      <Plus className="h-4 w-4 text-muted-foreground group-hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity" />
+                    }
+                  />
+                );
+              })
+            ) : (
+              <div className="text-center py-10 text-sm text-muted-foreground">
+                {otherSearch ? "No matches." : "None in other groups."}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      {/* COL 3 — Selected */}
       <div className="border-2 border-primary/40 rounded-lg flex flex-col min-h-0 overflow-hidden">
         <div className="px-3 py-2 border-b bg-primary/5 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
