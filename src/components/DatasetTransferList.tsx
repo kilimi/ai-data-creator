@@ -50,6 +50,11 @@ function DatasetRow({ dataset, rightSlot, badge, onClick, selected }: RowProps) 
           <span className="text-sm font-medium truncate">{dataset.name}</span>
           {badge}
         </div>
+        {dataset.description && (
+          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+            {dataset.description}
+          </div>
+        )}
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
           <span className="flex items-center gap-1">
             <ImageIcon className="h-3 w-3" />

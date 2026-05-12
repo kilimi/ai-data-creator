@@ -171,20 +171,6 @@ export function EditGroupModal({
             />
           </div>
 
-          <details className="text-sm">
-            <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Advanced (URL)</summary>
-            <div className="mt-2">
-              <Label htmlFor="group-url">URL</Label>
-              <Input
-                id="group-url"
-                value={url}
-                onChange={e => setUrl(e.target.value)}
-                placeholder="Enter group URL..."
-                className="mt-1"
-                type="url"
-              />
-            </div>
-          </details>
         </div>
 
         <DialogFooter>
