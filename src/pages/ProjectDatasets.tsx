@@ -727,6 +727,7 @@ export default function ProjectDatasets() {
         onOpenChange={setShowAddGroupModal}
         projectId={id || ''}
         datasets={datasets}
+        datasetGroups={datasetGroups}
         onGroupCreated={handleGroupCreated}
       />
       
@@ -735,6 +736,7 @@ export default function ProjectDatasets() {
         onOpenChange={setShowEditGroupModal}
         group={editingGroup}
         availableDatasets={datasets}
+        datasetGroups={datasetGroups}
         onGroupUpdated={handleGroupUpdated}
       />
       
