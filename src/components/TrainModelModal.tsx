@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info } from "lucide-react";
 import { Dataset, DatasetGroup } from "@/types";
+import {
+  DatasetEvalPicker,
+  type DatasetSelection as PickerDatasetSelection,
+  type PickerDataset,
+  type PickerGroup,
+} from "@/components/DatasetEvalPicker";
 import { YoloSettingsDialog } from "./YoloSettingsDialog";
 import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
