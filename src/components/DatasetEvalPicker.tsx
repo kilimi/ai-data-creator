@@ -17,6 +17,9 @@ import {
   Folder,
   Database,
   ImageIcon,
+  X,
+  Rows3,
+  LayoutList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +73,18 @@ interface Props {
   onChange: (next: DatasetSelection[]) => void;
 }
 
+// ── Task type styling ──────────────────────────────────────────────────────
+const taskTypeStyles: Record<string, string> = {
+  detection: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30",
+  segmentation: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30",
+  classification: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+};
+const taskTypeShort: Record<string, string> = {
+  detection: "det",
+  segmentation: "seg",
+  classification: "cls",
+};
+
 // ── Component ──────────────────────────────────────────────────────────────
 export function DatasetEvalPicker({
   datasets,
@@ -78,7 +93,8 @@ export function DatasetEvalPicker({
   onChange,
 }: Props) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "with-gt">("all");
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const [density, setDensity] = useState<"comfortable" | "dense">("comfortable");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
@@ -96,12 +112,34 @@ export function DatasetEvalPicker({
     return m;
   }, [datasets]);
 
+  // collect all unique tags across datasets
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    datasets.forEach((d) => d.tags?.forEach((t) => set.add(t)));
+    return Array.from(set).sort();
+  }, [datasets]);
+
   function visible(d: PickerDataset) {
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
-    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
-    if (filter === "with-gt" && gtCount === 0) return false;
+    if (activeTags.size > 0) {
+      const tags = new Set(d.tags ?? []);
+      for (const t of activeTags) if (!tags.has(t)) return false;
+    }
     return true;
+  }
+
+  function isUsable(d: PickerDataset) {
+    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
+    return d.imageCount > 0 && gtCount > 0;
+  }
+
+  function toggleTag(t: string) {
+    setActiveTags((s) => {
+      const n = new Set(s);
+      n.has(t) ? n.delete(t) : n.add(t);
+      return n;
+    });
   }
 
   const groupedIds = new Set<number>(groups.flatMap((g) => g.datasetIds));
@@ -129,7 +167,7 @@ export function DatasetEvalPicker({
           collectionId: coll?.id ?? null,
         },
       ]);
-      setExpanded((s) => new Set(s).add(d.id));
+      if (density === "comfortable") setExpanded((s) => new Set(s).add(d.id));
     } else {
       onChange(value.filter((s) => s.datasetId !== d.id));
     }
@@ -145,32 +183,45 @@ export function DatasetEvalPicker({
     const sel = selectionMap.get(d.id);
     const isSelected = !!sel;
     const isExpanded = expanded.has(d.id);
+    const usable = isUsable(d);
+    const isDense = density === "dense";
 
     const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
+    // pick representative task type from first GT file
+    const taskType = d.annotationFiles[0]?.taskType;
 
     return (
       <div
         className={cn(
           "group rounded-lg border bg-card transition-all duration-150",
-          "hover:border-border hover:shadow-sm hover:-translate-y-[1px]",
+          "hover:border-border hover:shadow-sm",
+          !isDense && "hover:-translate-y-[1px]",
           isSelected
             ? "border-primary/60 bg-primary/[0.04] shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"
-            : "border-border/60"
+            : "border-border/60",
+          !usable && !isSelected && "opacity-55 hover:opacity-90"
         )}
       >
-        <div className="flex items-start gap-3 px-3 py-2.5">
+        <div
+          className={cn(
+            "flex items-center gap-3 px-3",
+            isDense ? "py-1.5" : "items-start py-2.5"
+          )}
+        >
           <Checkbox
             checked={isSelected}
             onCheckedChange={(c) => toggleSelected(d, !!c)}
-            className="mt-1.5"
+            className={cn(!isDense && "mt-1.5")}
           />
-          <div className="h-12 w-12 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center ring-1 ring-border/40">
-            {d.thumbnailUrl ? (
-              <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-            ) : (
-              <ImageIcon className="h-5 w-5 text-muted-foreground" />
-            )}
-          </div>
+          {!isDense && (
+            <div className="h-12 w-12 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center ring-1 ring-border/40">
+              {d.thumbnailUrl ? (
+                <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+              ) : (
+                <ImageIcon className="h-5 w-5 text-muted-foreground" />
+              )}
+            </div>
+          )}
 
           <button
             type="button"
@@ -187,10 +238,43 @@ export function DatasetEvalPicker({
               }
             }}
           >
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span className="font-semibold text-sm truncate">{d.name}</span>
+              {taskType && (
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-md border px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide",
+                    taskTypeStyles[taskType]
+                  )}
+                  title={taskType}
+                >
+                  {taskTypeShort[taskType]}
+                </span>
+              )}
+              {isDense && d.tags && d.tags.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {d.tags.slice(0, 4).map((t) => (
+                    <span
+                      key={t}
+                      className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary border border-primary/20 px-1.5 py-0 text-[10px] font-medium"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                  {d.tags.length > 4 && (
+                    <span className="text-[10px] text-muted-foreground font-medium">
+                      +{d.tags.length - 4}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-            <div className="text-xs text-muted-foreground flex items-center gap-3 mt-1">
+            <div
+              className={cn(
+                "text-xs text-muted-foreground flex items-center gap-3",
+                isDense ? "mt-0" : "mt-1"
+              )}
+            >
               <span className="inline-flex items-center gap-1">
                 <ImageIcon className="h-3 w-3" />
                 {d.imageCount.toLocaleString()}
@@ -199,22 +283,37 @@ export function DatasetEvalPicker({
                 <Database className="h-3 w-3" />
                 {gtCount} GT
               </span>
-              {d.lastUsedAt && (
+              {d.lastUsedAt && !isDense && (
                 <span className="text-muted-foreground/70">
                   · {timeAgo(d.lastUsedAt)}
                 </span>
               )}
             </div>
-            {d.tags && d.tags.length > 0 && (
+            {!isDense && d.tags && d.tags.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap mt-2">
                 {d.tags.slice(0, 5).map((t) => (
-                  <span
+                  <button
                     key={t}
-                    className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 text-[11px] font-medium"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleTag(t);
+                    }}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                      activeTags.has(t)
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-primary/10 text-primary border-primary/20 hover:bg-primary/20"
+                    )}
                   >
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        activeTags.has(t) ? "bg-primary-foreground" : "bg-primary/70"
+                      )}
+                    />
                     {t}
-                  </span>
+                  </button>
                 ))}
                 {d.tags.length > 5 && (
                   <span className="text-[11px] text-muted-foreground font-medium">
@@ -319,8 +418,13 @@ export function DatasetEvalPicker({
     return sum + (d?.imageCount ?? 0);
   }, 0);
 
+  const selectedDatasets = value
+    .map((s) => datasetMap.get(s.datasetId))
+    .filter(Boolean) as PickerDataset[];
+
   return (
     <div className="rounded-lg border border-border bg-card">
+      {/* Search + density toggle */}
       <div className="p-3 border-b border-border space-y-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
@@ -332,8 +436,104 @@ export function DatasetEvalPicker({
               className="pl-8 h-9"
             />
           </div>
+          <div className="flex items-center rounded-md border border-border overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setDensity("comfortable")}
+              className={cn(
+                "h-9 w-9 flex items-center justify-center transition-colors",
+                density === "comfortable"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Comfortable"
+              aria-label="Comfortable density"
+            >
+              <LayoutList className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDensity("dense")}
+              className={cn(
+                "h-9 w-9 flex items-center justify-center transition-colors border-l border-border",
+                density === "dense"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Dense"
+              aria-label="Dense density"
+            >
+              <Rows3 className="h-4 w-4" />
+            </button>
+          </div>
         </div>
+
+        {/* Tag filter chips */}
+        {allTags.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {allTags.map((t) => {
+              const active = activeTags.has(t);
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => toggleTag(t)}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                    active
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-muted/40 text-muted-foreground border-border hover:text-foreground hover:bg-muted"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full",
+                      active ? "bg-primary-foreground" : "bg-muted-foreground/50"
+                    )}
+                  />
+                  {t}
+                </button>
+              );
+            })}
+            {activeTags.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setActiveTags(new Set())}
+                className="text-[11px] text-muted-foreground hover:text-foreground underline ml-1"
+              >
+                clear
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Sticky selection summary */}
+      {selectedDatasets.length > 0 && (
+        <div className="border-b border-border bg-primary/[0.04] px-3 py-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wide text-primary font-semibold">
+              Selected
+            </span>
+            {selectedDatasets.map((d) => (
+              <span
+                key={d.id}
+                className="inline-flex items-center gap-1 rounded-full bg-primary text-primary-foreground pl-2 pr-1 py-0.5 text-[11px] font-medium"
+              >
+                {d.name}
+                <button
+                  type="button"
+                  onClick={() => toggleSelected(d, false)}
+                  className="ml-0.5 rounded-full hover:bg-primary-foreground/20 p-0.5"
+                  aria-label={`Remove ${d.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="max-h-[420px] overflow-y-auto p-3 space-y-4">
         {recent.length > 0 && (
