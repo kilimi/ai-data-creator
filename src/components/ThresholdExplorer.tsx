@@ -1,6 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { Slider } from "@/components/ui/slider";
-import { SlidersHorizontal, RotateCcw, X, Save, Check, Download } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
 import { useToast } from "@/hooks/use-toast";
