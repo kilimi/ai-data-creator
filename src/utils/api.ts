@@ -968,6 +968,11 @@ export class ApiClient {
     limit?: number;
     /** When set, include tasks that are active OR completed in the last N hours (for navbar "last hour" view) */
     recent_hours?: number;
+    /**
+     * list (default): omit huge evaluation blobs from task_metadata.results (navbar-safe).
+     * full: include full metadata — only use when you truly need inline predictions on a list response.
+     */
+    metadata_mode?: 'list' | 'full';
   }): Promise<ApiResponse<Array<{
     id: number;
     name: string;
@@ -989,7 +994,11 @@ export class ApiClient {
     if (params?.skip) searchParams.append('skip', params.skip.toString());
     if (params?.limit) searchParams.append('limit', params.limit.toString());
     if (params?.recent_hours != null) searchParams.append('recent_hours', params.recent_hours.toString());
-    
+    searchParams.append(
+      'metadata_mode',
+      params?.metadata_mode === 'full' ? 'full' : 'list',
+    );
+
     const queryString = searchParams.toString();
     const endpoint = queryString ? `/tasks/?${queryString}` : '/tasks/';
     
@@ -1016,7 +1025,8 @@ export class ApiClient {
   }>>> {
     const searchParams = new URLSearchParams();
     if (projectId) searchParams.append('project_id', projectId.toString());
-    return this.request(`/tasks/active?${searchParams.toString()}`);
+    const qs = searchParams.toString();
+    return this.request(qs ? `/tasks/active?${qs}` : '/tasks/active');
   }
 
   /**

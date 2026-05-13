@@ -45,6 +45,143 @@ def _content_disposition_attachment(filename_safe: str) -> str:
     return f'attachment; filename="{safe}"'
 
 
+def build_thresholded_evaluation_coco_bundle(
+    db: Session,
+    task: Task,
+    task_id: int,
+    conf_threshold: Optional[float],
+    iou_threshold: Optional[float],
+    per_class_conf_dict: Optional[Dict[str, Any]],
+) -> tuple[Dict[str, Any], str, int, Optional[int]]:
+    """
+    Build COCO dict from a completed model_evaluation task (confidence-filtered; same rules as export-coco).
+    Returns (coco_output, download_filename, dataset_id, collection_id).
+    """
+    if task.task_type != "model_evaluation":
+        raise HTTPException(status_code=400, detail="Task is not an evaluation task")
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="Evaluation not completed")
+
+    results = load_merged_evaluation_results((task.task_metadata or {}).get("results", {}))
+    if not results:
+        raise HTTPException(status_code=404, detail="No evaluation results found")
+
+    predictions = results.get("predictions", [])
+    dataset_id = results.get("dataset_id")
+    collection_id = results.get("collection_id")
+    class_names = results.get("class_names", [])
+    checkpoint = results.get("checkpoint", "best")
+
+    if dataset_id is None:
+        raise HTTPException(status_code=400, detail="Evaluation results are missing dataset_id")
+
+    conf_threshold_value = (
+        conf_threshold if conf_threshold is not None else results.get("conf_threshold", 0.25)
+    )
+    iou_threshold_value = (
+        iou_threshold if iou_threshold is not None else results.get("iou_threshold", 0.45)
+    )
+
+    effective_per_class = per_class_conf_dict if per_class_conf_dict else results.get("per_class_conf", None)
+
+    if not predictions:
+        raise HTTPException(status_code=404, detail="No predictions found in evaluation results")
+
+    logger.info(
+        "Filtering predictions for COCO bundle task_id=%s conf=%s iou=%s per_class=%s",
+        task_id,
+        conf_threshold_value,
+        iou_threshold_value,
+        effective_per_class,
+    )
+    filtered_predictions = []
+    for pred in predictions:
+        pred_conf = pred.get("conf", 0)
+        pred_class_id = pred.get("class_id", 0)
+        if effective_per_class and pred_class_id < len(class_names):
+            class_name = class_names[pred_class_id]
+            threshold = effective_per_class.get(class_name, conf_threshold_value)
+        else:
+            threshold = conf_threshold_value
+        if pred_conf >= threshold:
+            filtered_predictions.append(pred)
+
+    predictions = filtered_predictions
+    if not predictions:
+        raise HTTPException(status_code=404, detail="No predictions pass the confidence threshold")
+
+    has_masks = any(pred.get("segmentation") and len(pred.get("segmentation", [])) > 0 for pred in predictions)
+
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+    if collection_id is not None:
+        images_query = images_query.filter(Image.collection_id == collection_id)
+    images = images_query.all()
+    if not images:
+        raise HTTPException(status_code=400, detail="No images found in dataset")
+
+    task_type = "segmentation" if has_masks else "detection"
+    coco_output: Dict[str, Any] = {
+        "info": {
+            "description": f"Evaluation results for task {task_id} (thresholded export)",
+            "date_created": datetime.utcnow().isoformat(),
+            "task_name": task.name,
+            "model_checkpoint": checkpoint,
+            "task_type": task_type,
+            "conf_threshold": conf_threshold_value,
+            "iou_threshold": iou_threshold_value,
+            "per_class_conf": effective_per_class if effective_per_class else None,
+        },
+        "images": [],
+        "annotations": [],
+        "categories": [],
+    }
+
+    for idx, class_name in enumerate(class_names):
+        coco_output["categories"].append(
+            {"id": idx, "name": class_name, "supercategory": "object"}
+        )
+
+    for img in images:
+        coco_output["images"].append(
+            {
+                "id": img.id,
+                "file_name": img.file_name,
+                "width": img.width or 0,
+                "height": img.height or 0,
+                "date_captured": img.uploaded_at.isoformat() if img.uploaded_at else None,
+            }
+        )
+
+    for idx, pred in enumerate(predictions, start=1):
+        segmentation = pred.get("segmentation", [])
+        if segmentation and len(segmentation) > 0:
+            segmentation = [segmentation]
+        coco_output["annotations"].append(
+            {
+                "id": idx,
+                "image_id": pred["image_id"],
+                "category_id": pred["class_id"],
+                "bbox": pred["bbox"],
+                "score": pred["conf"],
+                "segmentation": segmentation,
+            }
+        )
+
+    meta = task.task_metadata or {}
+    ds_label = dataset.name or meta.get("dataset_name") or ""
+    eval_slug = _slug_for_attachment_filename(task.name, f"evaluation_{task_id}")
+    ds_slug = _slug_for_attachment_filename(
+        str(ds_label) if ds_label else None, f"dataset_{dataset_id}"
+    )
+    filename = f"{eval_slug}_{task_id}_{ds_slug}_coco.json"
+
+    return coco_output, filename, int(dataset_id), collection_id
+
+
 def _resolve_eval_image_path(
     img: Image, project_id: Optional[int], dataset_id: int
 ) -> Optional[Path]:
@@ -534,168 +671,98 @@ async def export_coco_results(
 ):
     """Export evaluation results in COCO format"""
     try:
-        # Get evaluation task
         task = db.query(Task).filter(Task.id == task_id).first()
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        
-        if task.task_type != 'model_evaluation':
-            raise HTTPException(status_code=400, detail="Task is not an evaluation task")
-        
-        if task.status != 'completed':
-            raise HTTPException(status_code=400, detail="Evaluation not completed")
-        
-        # Get results from metadata (merge on-disk blobs if used)
-        results = load_merged_evaluation_results(task.task_metadata.get('results', {}))
-        if not results:
-            raise HTTPException(status_code=404, detail="No evaluation results found")
-        
-        # DEBUG: Log first prediction to check segmentation data
-        predictions_raw = results.get('predictions', [])
-        if predictions_raw:
-            logger.info(f"DEBUG - First prediction from results: {predictions_raw[0]}")
-            logger.info(f"DEBUG - First prediction segmentation length: {len(predictions_raw[0].get('segmentation', []))}")
-        else:
-            logger.warning(f"DEBUG - No predictions found in results")
-        
-        # Get evaluation parameters
-        dataset_id = results.get('dataset_id')
-        collection_id = results.get('collection_id')
-        class_names = results.get('class_names', [])
-        predictions = results.get('predictions', [])
-        checkpoint = results.get('checkpoint', 'best')
-        
-        # Use provided thresholds or fall back to saved values
-        conf_threshold_value = conf_threshold if conf_threshold is not None else results.get('conf_threshold', 0.25)
-        iou_threshold_value = iou_threshold if iou_threshold is not None else results.get('iou_threshold', 0.45)
-        
-        # Parse per-class confidence from JSON string if provided
-        per_class_conf_dict = None
+
+        per_class_conf_dict: Optional[Dict[str, Any]] = None
         if per_class_conf:
             try:
                 per_class_conf_dict = json.loads(per_class_conf)
             except json.JSONDecodeError:
-                logger.warning(f"Failed to parse per_class_conf parameter: {per_class_conf}")
-        if not per_class_conf_dict:
-            per_class_conf_dict = results.get('per_class_conf', None)
-        
-        if not predictions:
-            raise HTTPException(status_code=404, detail="No predictions found in evaluation results")
-        
-        # Filter predictions based on confidence thresholds
-        logger.info(f"Filtering predictions with conf_threshold={conf_threshold_value}, iou_threshold={iou_threshold_value}, per_class_conf={per_class_conf_dict}")
-        filtered_predictions = []
-        for pred in predictions:
-            pred_conf = pred.get('conf', 0)
-            pred_class_id = pred.get('class_id', 0)
-            
-            # Check per-class threshold first, fall back to global threshold
-            if per_class_conf_dict and pred_class_id < len(class_names):
-                class_name = class_names[pred_class_id]
-                threshold = per_class_conf_dict.get(class_name, conf_threshold_value)
-            else:
-                threshold = conf_threshold_value
-            
-            # Include prediction if it meets the threshold
-            if pred_conf >= threshold:
-                filtered_predictions.append(pred)
-        
-        # Use filtered predictions for export
-        predictions = filtered_predictions
-        
-        if not predictions:
-            raise HTTPException(status_code=404, detail="No predictions pass the confidence threshold")
-        
-        # Check if model has segmentation masks
-        has_masks = any(pred.get('segmentation') and len(pred.get('segmentation', [])) > 0 for pred in predictions)
-        
-        # Get dataset
-        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-        
-        # Get images from dataset
-        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
-        if collection_id is not None:
-            images_query = images_query.filter(Image.collection_id == collection_id)
-        images = images_query.all()
-        if not images:
-            raise HTTPException(status_code=400, detail="No images found in dataset")
-        
-        # Create image lookup
-        image_dict = {img.id: img for img in images}
-        
-        # Initialize COCO structure
-        task_type = "segmentation" if has_masks else "detection"
-        coco_output = {
-            "info": {
-                "description": f"Evaluation results for task {task_id} (thresholded export)",
-                "date_created": datetime.utcnow().isoformat(),
-                "task_name": task.name,
-                "model_checkpoint": checkpoint,
-                "task_type": task_type,
-                "conf_threshold": conf_threshold_value,
-                "iou_threshold": iou_threshold_value,
-                "per_class_conf": per_class_conf_dict if per_class_conf_dict else None
-            },
-            "images": [],
-            "annotations": [],
-            "categories": []
-        }
-        
-        # Add categories
-        for idx, class_name in enumerate(class_names):
-            coco_output["categories"].append({
-                "id": idx,
-                "name": class_name,
-                "supercategory": "object"
-            })
-        
-        # Add images
-        for img in images:
-            coco_output["images"].append({
-                "id": img.id,
-                "file_name": img.file_name,
-                "width": img.width or 0,
-                "height": img.height or 0,
-                "date_captured": img.uploaded_at.isoformat() if img.uploaded_at else None
-            })
-        
-        # Add predictions from stored results
-        for idx, pred in enumerate(predictions, start=1):
-            # Wrap segmentation in array if it exists and is not empty
-            segmentation = pred.get('segmentation', [])
-            if segmentation and len(segmentation) > 0:
-                # COCO format expects array of polygons: [[x1,y1,x2,y2,...]]
-                segmentation = [segmentation]
-            
-            coco_output["annotations"].append({
-                "id": idx,
-                "image_id": pred['image_id'],
-                "category_id": pred['class_id'],
-                "bbox": pred['bbox'],  # Already in xywh format
-                "score": pred['conf'],
-                "segmentation": segmentation
-            })
-        
-        meta = task.task_metadata or {}
-        ds_label = dataset.name or meta.get("dataset_name") or ""
-        eval_slug = _slug_for_attachment_filename(task.name, f"evaluation_{task_id}")
-        ds_slug = _slug_for_attachment_filename(
-            str(ds_label) if ds_label else None, f"dataset_{dataset_id}"
+                logger.warning("Failed to parse per_class_conf parameter: %s", per_class_conf)
+
+        coco_output, filename, _, _ = build_thresholded_evaluation_coco_bundle(
+            db, task, task_id, conf_threshold, iou_threshold, per_class_conf_dict
         )
-        filename = f"{eval_slug}_{task_id}_{ds_slug}_coco.json"
 
         return JSONResponse(
             content=coco_output,
             headers={"Content-Disposition": _content_disposition_attachment(filename)},
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error exporting COCO results: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to export results: {str(e)}")
+
+
+class SaveEvalPredictionsToDatasetBody(BaseModel):
+    """Save thresholded evaluation predictions as a new COCO annotation file on the dataset."""
+
+    conf_threshold: Optional[float] = None
+    iou_threshold: Optional[float] = None
+    per_class_conf: Optional[Dict[str, float]] = None
+    annotation_name: Optional[str] = None
+    active_collection_id: Optional[int] = None
+
+
+@router.post("/predictions/evaluation/{task_id}/save-to-dataset")
+async def save_evaluation_predictions_to_dataset(
+    task_id: int,
+    body: SaveEvalPredictionsToDatasetBody,
+    db: Session = Depends(get_db),
+):
+    """
+    Create a new annotation file on the evaluation dataset from predictions that pass
+    the same confidence filters as Threshold Explorer / export-coco (IoU is for metrics only).
+    """
+    from ..routers.annotation_db import save_annotations_direct
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        coco_output, _, dataset_id, eval_collection_id = build_thresholded_evaluation_coco_bundle(
+            db,
+            task,
+            task_id,
+            body.conf_threshold,
+            body.iou_threshold,
+            body.per_class_conf,
+        )
+    except HTTPException as e:
+        if e.status_code == 404:
+            raise HTTPException(
+                status_code=400,
+                detail=e.detail or "Nothing to save — adjust confidence or check evaluation data.",
+            ) from e
+        raise
+
+    if not coco_output.get("annotations"):
+        raise HTTPException(status_code=400, detail="No annotations to save after filtering.")
+
+    raw_name = (body.annotation_name or "").strip()
+    if raw_name:
+        base = _slug_for_attachment_filename(raw_name, f"eval_predictions_{task_id}")
+        name = base if base.lower().endswith(".json") else f"{base}.json"
+    else:
+        slug = _slug_for_attachment_filename(task.name, f"eval_{task_id}")
+        name = f"{slug}_predictions.json"
+
+    coll = body.active_collection_id if body.active_collection_id is not None else eval_collection_id
+
+    payload: Dict[str, Any] = {
+        "name": name,
+        "categories": coco_output["categories"],
+        "images": coco_output["images"],
+        "annotations": coco_output["annotations"],
+        "active_collection_id": coll,
+    }
+
+    return await save_annotations_direct(dataset_id, payload, db)
 
 
 @router.get("/predictions/export-coco-all/{task_id}")

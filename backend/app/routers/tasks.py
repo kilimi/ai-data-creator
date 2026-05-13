@@ -89,7 +89,8 @@ async def get_tasks(
     When recent_hours is set (e.g. 1), returns tasks that are either active (pending/running)
     or completed within the last N hours, so long-running tasks (e.g. training) still appear
     after completion for the navbar 'last hour' view.
-    metadata_mode=list strips large evaluation payloads from task_metadata for faster list UIs.
+    metadata_mode=list (default) strips large evaluation payloads from task_metadata for faster list UIs.
+    Use metadata_mode=full only when you need full inline results on a list response.
     task_type may be comma-separated (e.g. yolo_training,training)."""
     try:
         query = db.query(models.Task)
@@ -124,10 +125,10 @@ async def get_tasks(
                 if status:
                     query_fallback = query_fallback.filter(models.Task.status == status)
                 result = query_fallback.order_by(models.Task.created_at.desc()).offset(skip).limit(min(limit, 50)).all()
-            return _tasks_to_schema_list(result, metadata_mode or 'full')
+            return _tasks_to_schema_list(result, metadata_mode or 'list')
 
         result = query.order_by(models.Task.created_at.desc()).offset(skip).limit(limit).all()
-        return _tasks_to_schema_list(result, metadata_mode or 'full')
+        return _tasks_to_schema_list(result, metadata_mode or 'list')
     except Exception as e:
         logger.error(f"Database error in get_tasks: {e}")
         db.rollback()
@@ -139,7 +140,11 @@ async def get_active_tasks(
     project_id: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
-    """Get currently active tasks (pending or running)"""
+    """Get currently active tasks (pending or running).
+
+    Always returns metadata_mode=list-style payloads (heavy evaluation keys stripped)
+    so the navbar can poll without downloading multi‑MB task_metadata blobs.
+    """
     try:
         query = db.query(models.Task).filter(
             models.Task.status.in_(['pending', 'running'])
@@ -150,8 +155,9 @@ async def get_active_tasks(
         
         # Use execution options for better connection management
         query = query.execution_options(autocommit=True)
-        
-        return query.order_by(models.Task.created_at.desc()).all()
+
+        result = query.order_by(models.Task.created_at.desc()).all()
+        return _tasks_to_schema_list(result, "list")
     except Exception as e:
         logger.error(f"Database error in get_active_tasks: {e}")
         db.rollback()
