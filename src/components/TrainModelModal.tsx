@@ -341,6 +341,107 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   };
 
   const handleModelSettingsUpdate = (settings: any) => {
+
+  // ── Picker integration ────────────────────────────────────────────────────
+  const pickerDatasets: PickerDataset[] = useMemo(() => {
+    return datasets.map(d => {
+      const sel = selectedDatasets.find(s => s.dataset.id === d.id);
+      const annotationFilesFromProps = (d.annotation_files || []).map(f => ({
+        id: String(f.id),
+        name: f.name || f.file_name,
+        classes: [] as string[],
+      }));
+      const annotationFiles = sel
+        ? sel.annotations.map(a => ({
+            id: a.id,
+            name: a.name,
+            classes: [] as string[],
+            taskType: (a.type as any) || undefined,
+          }))
+        : annotationFilesFromProps;
+      const collections = sel
+        ? sel.imageCollections.map(c => ({ id: c, name: c }))
+        : [];
+      return {
+        id: d.id,
+        name: d.name,
+        imageCount: d.image_count ?? 0,
+        annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
+        thumbnailUrl: d.thumbnailUrl,
+        annotationFiles,
+        collections,
+      };
+    });
+  }, [datasets, selectedDatasets]);
+
+  const pickerGroups: PickerGroup[] = useMemo(
+    () => datasetGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      datasetIds: (g.datasets || []).map(d => d.id),
+    })),
+    [datasetGroups]
+  );
+
+  const pickerValue: PickerDatasetSelection[] = useMemo(
+    () => selectedDatasets.map(s => ({
+      datasetId: s.dataset.id,
+      annotationFileId: s.annotation || null,
+      collectionId: s.imageCollection || null,
+    })),
+    [selectedDatasets]
+  );
+
+  const handlePickerChange = (next: PickerDatasetSelection[]) => {
+    const prevById = new Map(selectedDatasets.map(s => [s.dataset.id, s]));
+    const nextById = new Map(next.map(s => [s.datasetId, s]));
+
+    // Build new selectedDatasets list
+    const updated: DatasetSelection[] = [];
+    next.forEach(n => {
+      const existing = prevById.get(n.datasetId);
+      if (existing) {
+        updated.push({
+          ...existing,
+          annotation: n.annotationFileId ?? '',
+          imageCollection: n.collectionId ?? '',
+        });
+      } else {
+        const dataset = datasets.find(d => d.id === n.datasetId);
+        if (!dataset) return;
+        idCounterRef.current += 1;
+        const newSel: DatasetSelection = {
+          id: `dataset-${Date.now()}-${idCounterRef.current}-${Math.random().toString(36).slice(2, 9)}`,
+          dataset,
+          imageCollection: n.collectionId ?? '',
+          annotation: n.annotationFileId ?? '',
+          imageCollections: [],
+          annotations: [],
+          loadingCollections: false,
+          loadingAnnotations: false,
+          split: { train: 80, val: 20, test: 0 },
+        };
+        updated.push(newSel);
+        // Lazy-load collections + annotations
+        setTimeout(() => {
+          if (isMountedRef.current) fetchDataForSelection(newSel.id, dataset.id);
+        }, 0);
+      }
+    });
+
+    // Cleanup abort controllers for removed selections
+    selectedDatasets.forEach(s => {
+      if (!nextById.has(s.dataset.id)) {
+        const ctrl = activeFetchesRef.current.get(s.id);
+        if (ctrl) ctrl.abort();
+        activeFetchesRef.current.delete(s.id);
+      }
+    });
+
+    setSelectedDatasets(updated);
+  };
+
+  const _handleModelSettingsUpdate = (settings: any) => {
     setModelSettings(settings);
   };
 
