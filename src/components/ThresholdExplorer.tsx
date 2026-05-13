@@ -400,6 +400,50 @@ export function ThresholdExplorer({
     }
   }
 
+  async function confirmSaveToDataset() {
+    setSavingToDataset(true);
+    setSaveError(null);
+    try {
+      const per_class_conf: Record<string, number> = {};
+      perClassConf.forEach((v, i) => {
+        if (v >= 0 && i < classNames.length) {
+          per_class_conf[classNames[i]] = v;
+        }
+      });
+
+      const response = await fetch(`${getApiBaseUrl()}/predictions/save-to-dataset/${taskId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_id: datasetId,
+          conf_threshold: confThreshold,
+          iou_threshold: iouThreshold,
+          per_class_conf: Object.keys(per_class_conf).length > 0 ? per_class_conf : null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+
+      toast({
+        title: "Predictions saved",
+        description: "Filtered predictions have been saved as annotations in the dataset.",
+      });
+      setShowSaveConfirm(false);
+    } catch (error) {
+      console.error('Failed to save predictions to dataset:', error);
+      if (mountedRef.current) {
+        setSaveError(error instanceof Error ? error.message : 'Failed to save predictions to dataset');
+      }
+    } finally {
+      if (mountedRef.current) {
+        setSavingToDataset(false);
+      }
+    }
+  }
+
   function handleDownloadCoco() {
     // Use backend API for export to avoid memory issues with large datasets
     const url = new URL(`${getApiBaseUrl()}/predictions/export-coco/${taskId}`);
