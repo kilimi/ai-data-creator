@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,21 +9,23 @@ import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
 import { AnnotationFileCard, AnnotationFileSkeleton } from "@/components/AnnotationFileCard";
-import { SplitAnnotationDialog } from "@/components/SplitAnnotationDialog";
-import { CompareAnnotationsDialog } from "@/components/CompareAnnotationsDialog";
-import { MergeStrategyDialog } from "@/components/MergeStrategyDialog";
+import { lazy } from "react";
+const SplitAnnotationDialog = lazy(() => import("@/components/SplitAnnotationDialog").then(m => ({ default: m.SplitAnnotationDialog })));
+const CompareAnnotationsDialog = lazy(() => import("@/components/CompareAnnotationsDialog").then(m => ({ default: m.CompareAnnotationsDialog })));
+const MergeStrategyDialog = lazy(() => import("@/components/MergeStrategyDialog").then(m => ({ default: m.MergeStrategyDialog })));
+const MergeClassesDialog = lazy(() => import("./MergeClassesDialog").then(m => ({ default: m.MergeClassesDialog })));
+const AnnotationsUploadDialog = lazy(() => import("@/components/AnnotationsUploadDialog").then(m => ({ default: m.AnnotationsUploadDialog })));
+const ClassColorPicker = lazy(() => import("@/components/ClassColorPicker").then(m => ({ default: m.ClassColorPicker })));
+const ClassColorOpacityPicker = lazy(() => import("@/components/ClassColorOpacityPicker").then(m => ({ default: m.ClassColorOpacityPicker })));
+const RenameClassDialog = lazy(() => import("./RenameClassDialog").then(m => ({ default: m.RenameClassDialog })));
+const AnnotationTagsDialog = lazy(() => import("./AnnotationTagsDialog").then(m => ({ default: m.AnnotationTagsDialog })));
 import { applyMergeStrategy, collectTaggedSamples, type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
 import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
-import { AnnotationsUploadDialog } from "@/components/AnnotationsUploadDialog";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
-import { ClassColorPicker } from "@/components/ClassColorPicker";
-import { ClassColorOpacityPicker } from "@/components/ClassColorOpacityPicker";
-import { RenameClassDialog } from "./RenameClassDialog";
-import { AnnotationTagsDialog } from "./AnnotationTagsDialog";
 import { AnnotationFilters } from "./AnnotationFilters";
 import { useApi } from "@/hooks/use-api";
 import { useToast } from "@/hooks/use-toast";
@@ -33,7 +35,6 @@ import { Image, ImageCollection } from "@/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useRef } from "react";
-import { MergeClassesDialog } from "./MergeClassesDialog";
 
 interface AnnotationsContentProps {
   id: string;
@@ -4390,6 +4391,7 @@ export function AnnotationsContent({
   };
   
   return (
+    <Suspense fallback={null}>
     <div className={`h-full flex flex-col min-h-0 ${className}`}>
       <div className="flex-shrink-0 flex justify-between items-start mb-4 gap-4">
         <div className="space-y-2 min-w-0">
@@ -5223,5 +5225,6 @@ export function AnnotationsContent({
         projectId={projectId}
       />
     </div>
+    </Suspense>
   );
 }

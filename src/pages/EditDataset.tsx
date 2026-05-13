@@ -34,7 +34,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useImageLoad } from "@/utils/animations";
 import {
   Table,
   TableBody,
@@ -1190,6 +1189,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                                   src={image.thumbnailUrl} 
                                   alt={image.fileName} 
                                   className="w-full h-full object-cover"
+                                  loading="lazy"
                                 />
                                 {showAnnotationsOnImage.length > 0 && 
                                  showAnnotationsOnImage.some(anno => anno.imageId === image.id) && (
@@ -1490,6 +1490,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                   src={showFullSizeImage ? selectedImage.url : selectedImage.thumbnailUrl} 
                   alt={selectedImage.fileName} 
                   className="max-w-full max-h-full object-contain cursor-pointer"
+                  loading="lazy"
                   onLoad={handleImageLoad}
                   onClick={() => setShowFullSizeImage(!showFullSizeImage)}
                   title={showFullSizeImage ? "Click to view thumbnail" : "Click to view full size"}

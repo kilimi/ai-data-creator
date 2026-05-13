@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { Plus, Search, Settings, Activity, Tag, Filter, Sparkles, RefreshCw, FolderOpen, ChevronRight, FolderPlus, Image as ImageIcon, Brain, BookOpen, Rocket, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -209,7 +209,7 @@ export default function Index() {
     }
   }, [location.state]);
 
-  const filteredAndSortedProjects = () => {
+  const filteredAndSortedProjects = useMemo(() => {
     let result = [...projects];
     
     if (searchQuery) {
@@ -241,7 +241,7 @@ export default function Index() {
       default:
         return result;
     }
-  };
+  }, [projects, searchQuery, selectedTag, sortOrder]);
 
   const allTags = Array.from(
     new Set(
@@ -434,7 +434,7 @@ export default function Index() {
                   </Button>
                 </div>
               </Card>
-            ) : filteredAndSortedProjects().length === 0 ? (
+            ) : filteredAndSortedProjects.length === 0 ? (
               (searchQuery || selectedTag) ? (
                 <Card className="glass-card p-12 text-center">
                   <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted/40 flex items-center justify-center">
@@ -460,7 +460,7 @@ export default function Index() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">
-                      {filteredAndSortedProjects().length} {filteredAndSortedProjects().length === 1 ? 'project' : 'projects'}
+                      {filteredAndSortedProjects.length} {filteredAndSortedProjects.length === 1 ? 'project' : 'projects'}
                     </span>
                     {(searchQuery || selectedTag) && (
                       <Badge variant="secondary" className="text-xs">Filtered</Badge>
@@ -468,7 +468,7 @@ export default function Index() {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredAndSortedProjects().map((project, index) => (
+                  {filteredAndSortedProjects.map((project, index) => (
                     <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
                       <ProjectCard project={project} />
                     </div>

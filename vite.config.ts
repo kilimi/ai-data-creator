@@ -78,12 +78,20 @@ export default defineConfig(async ({ mode }) => {
         output: {
           manualChunks: (id: string) => {
             if (id.includes("node_modules/onnxruntime-web")) return "onnx";
+            // recharts + d3 are intentionally NOT assigned to a named chunk here.
+            // Forcing them into one chunk causes a Rollup TDZ (temporal dead zone)
+            // error ("Cannot access 'X' before initialization") because recharts/d3
+            // has circular imports that Rollup serialises in the wrong order when
+            // collected under a manual chunk name. Vite's automatic code-splitting
+            // handles them correctly; TrainingMetricsCharts is already lazy-loaded
+            // so recharts is still deferred from the initial bundle.
+            if (id.includes("node_modules/recharts") || id.includes("node_modules/d3-")) return undefined;
+            // One vendor chunk for all other node_modules (incl. react + @radix-ui).
+            // Splitting react vs radix caused production "Cannot read properties of undefined
+            // (reading 'forwardRef')" when chunk evaluation order left Radix without React.
             // jszip is only dynamically imported (await import('jszip')); do NOT assign it to
             // a named chunk here — doing so causes Vite to emit a <link rel="modulepreload">
             // for it in index.html, eagerly downloading it on every page load.
-            // One vendor chunk for all other node_modules so React is never undefined in
-            // auto-split shared chunks (e.g. ui-*.js) — fixes forwardRef / createContext
-            // runtime errors caused by parallel chunk loading order being non-deterministic.
             if (id.includes("node_modules/")) return "vendor";
           },
           // Ensure WASM files are treated as assets
@@ -94,6 +102,11 @@ export default defineConfig(async ({ mode }) => {
             return 'assets/[name]-[hash][extname]';
           },
         },
+      },
+      // Strip console.log / debugger calls from production bundles
+      minify: 'esbuild',
+      esbuildOptions: {
+        drop: mode === 'production' ? (['console', 'debugger'] as ('console' | 'debugger')[]) : [],
       },
     },
     test: {

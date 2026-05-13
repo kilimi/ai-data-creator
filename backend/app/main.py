@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 from datetime import datetime
+import asyncio
+import hashlib
 import json
 import os
 import base64
@@ -14,18 +16,74 @@ from pathlib import Path
 import logging
 import sys
 
-# Configure logging
+# Configure logging — stdout only; no FileHandler to avoid double I/O on every request
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('backend_debug.log')
     ]
 )
 
 # Create logger
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+_ALLOWED_ORIGINS = {
+    "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
+    "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
+    "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081",
+    "http://127.0.0.1:8082",
+}
+
+import re
+_ORIGIN_RE = re.compile(r"https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?$")
+
+def _add_cors(response: Response, origin: Optional[str]) -> None:
+    """Attach CORS headers to an existing response object in-place."""
+    if origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = "*"
+
+_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+_THUMB_SUFFIXES = frozenset([".jpg", ".jpeg", ".png", ".webp"])
+
+
+def _generate_thumbnail_sync(full_path: Path, thumb_path: Path, thumb_size: int) -> bool:
+    """Generate a thumbnail synchronously (runs in a thread pool executor).
+
+    Returns True if the thumbnail was created/already exists, False on error.
+    """
+    if thumb_path.exists():
+        return True
+    try:
+        from PIL import Image
+        thumb_path.parent.mkdir(exist_ok=True)
+        with Image.open(full_path) as img:
+            ratio = min(thumb_size / img.width, thumb_size / img.height)
+            new_size = (max(1, int(img.width * ratio)), max(1, int(img.height * ratio)))
+            thumb_img = img.resize(new_size, Image.Resampling.LANCZOS)
+            suffix = full_path.suffix.lower()
+            if suffix in (".jpg", ".jpeg") and thumb_img.mode == "RGBA":
+                thumb_img = thumb_img.convert("RGB")
+            thumb_img.save(thumb_path, quality=85, optimize=True)
+        return True
+    except Exception as exc:
+        logger.warning("Thumbnail generation failed for %s: %s", full_path, exc)
+        return False
 
 from . import models, schemas
 from .database import engine, get_db
@@ -75,25 +133,8 @@ app.add_middleware(
 async def test_cors(request: Request):
     """Simple endpoint to test CORS configuration"""
     origin = request.headers.get("origin")
-    print(f"[DEBUG] Test CORS endpoint called from origin: {origin}")
-    
     response = JSONResponse(content={"message": "CORS test successful", "origin": origin})
-    
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-        print(f"[DEBUG] Added CORS headers for origin: {origin}")
-    else:
-        print(f"[DEBUG] Origin {origin} not in allowed list")
-    
+    _add_cors(response, origin)
     return response
 
 # Mount static files directories - COMMENTED OUT TO USE CUSTOM HANDLERS
@@ -105,190 +146,106 @@ async def test_cors(request: Request):
 async def options_project_files(file_path: str, request: Request):
     """Handle CORS preflight requests for static files"""
     origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
     headers = {
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Allow-Headers": "*",
-        "Access-Control-Max-Age": "86400"
+        "Access-Control-Max-Age": "86400",
     }
-    
-    if origin in allowed_origins:
+    if origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
-    
+    else:
+        headers["Access-Control-Allow-Origin"] = "*"
     return JSONResponse(content={}, headers=headers)
 
 # Custom static file handlers with explicit CORS
 @app.get("/static/projects/{file_path:path}")
 async def serve_project_files(file_path: str, request: Request, thumb: Optional[int] = None):
-    """Custom handler for project static files with explicit CORS and optional thumbnail generation"""
-    print(f"[DEBUG] Static file request: /static/projects/{file_path}, thumb={thumb}")
-    print(f"[DEBUG] Request origin: {request.headers.get('origin', 'None')}")
-    
+    """Serve project images with optional thumbnail generation.
+
+    Thumbnails are generated in a thread-pool executor (non-blocking) and cached
+    indefinitely via Cache-Control + ETag so repeat visits skip the download.
+    """
     full_path = Path("projects") / file_path
-    
+
     if not full_path.exists() or not full_path.is_file():
-        print(f"[DEBUG] File not found: {full_path}")
         raise HTTPException(status_code=404, detail="File not found")
-    
-    print(f"[DEBUG] File exists, serving: {full_path}")
-    
-    # Determine media type
-    media_type = None
+
     suffix = full_path.suffix.lower()
-    if suffix in ['.jpg', '.jpeg']:
-        media_type = 'image/jpeg'
-    elif suffix == '.png':
-        media_type = 'image/png'
-    elif suffix == '.gif':
-        media_type = 'image/gif'
-    elif suffix == '.webp':
-        media_type = 'image/webp'
-    
-    # If thumbnail requested, generate/serve thumbnail
-    if thumb and suffix in ['.jpg', '.jpeg', '.png', '.webp']:
-        thumb_size = min(thumb, 800)  # Cap at 800px
-        thumb_dir = full_path.parent / ".thumbs"
-        thumb_path = thumb_dir / f"{full_path.stem}_{thumb_size}{suffix}"
-        
-        # Generate thumbnail if it doesn't exist
+    media_type = _MEDIA_TYPES.get(suffix)
+
+    # Resolve thumbnail path (generate in thread if missing)
+    serve_path = full_path
+    if thumb and suffix in _THUMB_SUFFIXES:
+        thumb_size = min(thumb, 800)
+        thumb_path = full_path.parent / ".thumbs" / f"{full_path.stem}_{thumb_size}{suffix}"
         if not thumb_path.exists():
-            try:
-                from PIL import Image
-                thumb_dir.mkdir(exist_ok=True)
-                
-                with Image.open(full_path) as img:
-                    # Calculate aspect ratio preserving dimensions
-                    ratio = min(thumb_size / img.width, thumb_size / img.height)
-                    new_size = (int(img.width * ratio), int(img.height * ratio))
-                    
-                    # Use LANCZOS for high quality downscaling
-                    thumb_img = img.resize(new_size, Image.Resampling.LANCZOS)
-                    
-                    # Convert RGBA to RGB for JPEG
-                    if suffix in ['.jpg', '.jpeg'] and thumb_img.mode == 'RGBA':
-                        thumb_img = thumb_img.convert('RGB')
-                    
-                    thumb_img.save(thumb_path, quality=85, optimize=True)
-                    print(f"[DEBUG] Generated thumbnail: {thumb_path}")
-            except Exception as e:
-                print(f"[DEBUG] Thumbnail generation failed: {e}, serving original")
-                # Fall through to serve original
-        
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, _generate_thumbnail_sync, full_path, thumb_path, thumb_size
+            )
         if thumb_path.exists():
-            full_path = thumb_path
-    
-    # Create FileResponse with explicit CORS headers
+            serve_path = thumb_path
+
+    # ETag based on file mtime — enables 304 Not Modified on repeat requests
+    try:
+        mtime = serve_path.stat().st_mtime
+        etag = f'"{hashlib.md5(f"{serve_path}{mtime}".encode()).hexdigest()}"'
+    except OSError:
+        etag = None
+
+    if etag and request.headers.get("if-none-match") == etag:
+        resp_304 = Response(status_code=304)
+        _add_cors(resp_304, request.headers.get("origin"))
+        return resp_304
+
     response = FileResponse(
-        path=str(full_path),
+        path=str(serve_path),
         media_type=media_type,
-        filename=full_path.name
+        filename=serve_path.name,
     )
-    
-    # Add cache headers for thumbnails
+
+    if etag:
+        response.headers["ETag"] = etag
     if thumb:
-        response.headers["Cache-Control"] = "public, max-age=31536000"  # 1 year cache
-    
-    # Explicitly add CORS headers
-    origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
-    # Add CORS headers - handle both specific origins and None origin
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-        print(f"[DEBUG] Added CORS headers for origin: {origin}")
-    elif origin is None:
-        # Allow requests without origin header (direct navigation, same-origin, etc.)
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-        print(f"[DEBUG] Added wildcard CORS headers for request without origin")
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     else:
-        print(f"[DEBUG] Origin {origin} not in allowed list")
-    
+        response.headers["Cache-Control"] = "public, max-age=3600"
+
+    _add_cors(response, request.headers.get("origin"))
     return response
 
 @app.options("/data/{file_path:path}")
 async def options_data_files(file_path: str, request: Request):
     """Handle CORS preflight requests for data files"""
     origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
     headers = {
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Allow-Headers": "*",
-        "Access-Control-Max-Age": "86400"
+        "Access-Control-Max-Age": "86400",
     }
-    
-    if origin in allowed_origins:
+    if origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
-    
+    else:
+        headers["Access-Control-Allow-Origin"] = "*"
     return JSONResponse(content={}, headers=headers)
 
 @app.get("/data/{file_path:path}")
 async def serve_data_files(file_path: str, request: Request):
     """Custom handler for data static files with explicit CORS"""
     full_path = Path("data") / file_path
-    
+
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    
-    # Determine media type
-    media_type = None
+
     suffix = full_path.suffix.lower()
-    if suffix in ['.jpg', '.jpeg']:
-        media_type = 'image/jpeg'
-    elif suffix == '.png':
-        media_type = 'image/png'
-    elif suffix == '.gif':
-        media_type = 'image/gif'
-    elif suffix == '.webp':
-        media_type = 'image/webp'
-    
-    # Create FileResponse with explicit CORS headers
     response = FileResponse(
         path=str(full_path),
-        media_type=media_type,
-        filename=full_path.name
+        media_type=_MEDIA_TYPES.get(suffix),
+        filename=full_path.name,
     )
-    
-    # Explicitly add CORS headers
-    origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
-    # Add CORS headers - handle both specific origins and None origin
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-    elif origin is None:
-        # Allow requests without origin header (direct navigation, same-origin, etc.)
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-    
+    _add_cors(response, request.headers.get("origin"))
     return response
 
 # Ensure exports directory exists
@@ -299,23 +256,16 @@ Path("static/exports").mkdir(parents=True, exist_ok=True)
 async def options_export_files(file_path: str, request: Request):
     """Handle CORS preflight requests for export files"""
     origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
     headers = {
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Allow-Headers": "*",
-        "Access-Control-Max-Age": "86400"
+        "Access-Control-Max-Age": "86400",
     }
-    
-    if origin in allowed_origins:
+    if origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
-    
+    else:
+        headers["Access-Control-Allow-Origin"] = "*"
     return JSONResponse(content={}, headers=headers)
 
 # Custom static file handler for exports
@@ -323,34 +273,14 @@ async def options_export_files(file_path: str, request: Request):
 async def serve_export_files(file_path: str, request: Request):
     """Custom handler for export files with explicit CORS"""
     full_path = Path("static/exports") / file_path
-    
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="Export file not found")
-    
-    # Create FileResponse with explicit CORS headers
     response = FileResponse(
         path=str(full_path),
-        media_type='application/octet-stream',
-        filename=full_path.name
+        media_type="application/octet-stream",
+        filename=full_path.name,
     )
-    
-    # Explicitly add CORS headers
-    origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-    elif origin is None:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-    
+    _add_cors(response, request.headers.get("origin"))
     return response
 
 # Ensure inference_results directory exists
@@ -360,24 +290,15 @@ Path("static/inference_results").mkdir(parents=True, exist_ok=True)
 async def options_inference_files(file_path: str, request: Request):
     """Handle CORS preflight requests for inference result files"""
     origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
     headers = {
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Allow-Headers": "*",
-        "Access-Control-Max-Age": "86400"
+        "Access-Control-Max-Age": "86400",
     }
-    
-    if origin in allowed_origins:
+    if origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)):
         headers["Access-Control-Allow-Origin"] = origin
-    elif origin is None:
+    else:
         headers["Access-Control-Allow-Origin"] = "*"
-    
     return JSONResponse(content={}, headers=headers)
 
 # Custom static file handler for inference results
@@ -385,46 +306,15 @@ async def options_inference_files(file_path: str, request: Request):
 async def serve_inference_files(file_path: str, request: Request):
     """Custom handler for inference result images with explicit CORS"""
     full_path = Path("static/inference_results") / file_path
-    
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail="Inference result file not found")
-    
-    # Determine media type
-    media_type = None
     suffix = full_path.suffix.lower()
-    if suffix in ['.jpg', '.jpeg']:
-        media_type = 'image/jpeg'
-    elif suffix == '.png':
-        media_type = 'image/png'
-    elif suffix == '.gif':
-        media_type = 'image/gif'
-    elif suffix == '.webp':
-        media_type = 'image/webp'
-    
-    # Create FileResponse with explicit CORS headers
     response = FileResponse(
         path=str(full_path),
-        media_type=media_type or 'image/jpeg',
-        filename=full_path.name
+        media_type=_MEDIA_TYPES.get(suffix, "image/jpeg"),
+        filename=full_path.name,
     )
-    
-    # Explicitly add CORS headers
-    origin = request.headers.get("origin")
-    allowed_origins = [
-        "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-        "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081", 
-        "http://127.0.0.1:8082"
-    ]
-    
-    if origin in allowed_origins:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-    elif origin is None:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Expose-Headers"] = "*"
-    
+    _add_cors(response, request.headers.get("origin"))
     return response
 
 # CORS middleware is handled by the custom middleware above
@@ -441,6 +331,35 @@ async def serve_inference_files(file_path: str, request: Request):
 # Mount static files directories - COMMENTED OUT TO USE CUSTOM HANDLERS
 # app.mount("/data", StaticFiles(directory="data"), name="data")
 # app.mount("/static/projects", StaticFiles(directory="projects"), name="projects")
+
+
+def _prewarm_thumbnails(projects_root: Path, size: int = 300) -> None:
+    """Walk projects/ and generate missing thumbnails for all images.
+
+    Runs in a background thread so it doesn't block app startup or any requests.
+    """
+    count = generated = 0
+    for img_path in projects_root.rglob("*"):
+        if img_path.suffix.lower() not in _THUMB_SUFFIXES:
+            continue
+        if ".thumbs" in img_path.parts:
+            continue  # Skip already-generated thumbnails
+        count += 1
+        thumb_path = img_path.parent / ".thumbs" / f"{img_path.stem}_{size}{img_path.suffix.lower()}"
+        if not thumb_path.exists():
+            ok = _generate_thumbnail_sync(img_path, thumb_path, size)
+            if ok:
+                generated += 1
+    if count:
+        logger.info("Thumbnail pre-warm complete: %d images scanned, %d new thumbnails generated", count, generated)
+
+
+@app.on_event("startup")
+async def startup_prewarm_thumbnails() -> None:
+    """Fire-and-forget thumbnail pre-generation so first page loads are fast."""
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _prewarm_thumbnails, Path("projects"))
+
 
 @app.get("/health-check")
 async def health_check(db: Session = Depends(get_db)):

@@ -723,7 +723,8 @@ async def save_annotations_direct(
         for cat in categories:
             cat_id = cat.get('id')
             cat_name = cat.get('name')
-            if cat_id and cat_name:
+            # COCO category id 0 is valid; `if cat_id` would wrongly skip it in Python.
+            if cat_id is not None and cat_name:
                 category_mapping[cat_id] = cat_name
                 class_counts[cat_name] = 0
         

@@ -4,7 +4,6 @@ import { Project, Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Folder, FolderOpen, Database, MoreHorizontal, Tag } from "lucide-react";
-import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -87,7 +86,9 @@ function DatasetMosaic({ datasets }: { datasets: Dataset[] }) {
 
 export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectCardProps) {
   const projectCover = resolveBackendMediaUrl(project.logo_url || project.thumbnailUrl);
-  const { isLoaded: imageLoaded } = useImageLoad(projectCover);
+  // CSS-only fade: track load state directly on the <img> element via onLoad
+  // instead of creating a hidden Image() object in a useEffect.
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -190,6 +191,7 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
                   decoding="async"
                   width="400"
                   height="176"
+                  onLoad={() => setImageLoaded(true)}
                   className={cn(
                     "h-full w-full object-cover transition-all duration-500",
                     !imageLoaded && "opacity-0",

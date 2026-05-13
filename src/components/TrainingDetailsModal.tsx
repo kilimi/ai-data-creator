@@ -2,9 +2,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Brain, TrendingUp, Activity, Zap, Target, Gauge, Settings, ChevronDown, ChevronUp } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useApi } from "@/hooks/use-api";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+// recharts is heavy (~90 KB gzip) — load it only when the dialog is opened.
+const TrainingMetricsCharts = lazy(
+  () => import("@/components/TrainingMetricsCharts")
+);
 import { formatDuration } from "@/utils/formatDuration";
 import { StatusBadge } from "@/components/StatusBadge";
 import { getApiBaseUrl } from "@/config/api";
@@ -647,145 +651,19 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                   )}
                 </div>
 
-                {/* Metrics History Charts */}
+                {/* Metrics History Charts — recharts is lazy-loaded on first open */}
                 {metricsHistory.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3">Training Progress</h3>
-                    <div className="space-y-6">
-                      {/* Training Losses Chart */}
-                      <div className="bg-card border border-border rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-muted-foreground mb-4">Training Losses</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <LineChart data={[...metricsHistory]}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                            <XAxis 
-                              dataKey="epoch" 
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              label={{ value: 'Epoch', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
-                              domain={[0, 'dataMax']}
-                            />
-                            <YAxis 
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              domain={[0, 'auto']}
-                            />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '6px' }}
-                              labelStyle={{ color: '#F3F4F6' }}
-                            />
-                            <Legend wrapperStyle={{ fontSize: '12px' }} />
-                            <Line type="monotone" dataKey="box_loss" stroke="#EF4444" name="Box Loss" strokeWidth={2} dot={{ r: 3 }} />
-                            <Line type="monotone" dataKey="cls_loss" stroke="#F59E0B" name="Class Loss" strokeWidth={2} dot={{ r: 3 }} />
-                            <Line type="monotone" dataKey="dfl_loss" stroke="#10B981" name="DFL Loss" strokeWidth={2} dot={{ r: 3 }} />
-                            {metricsHistory.some(m => m.seg_loss) && (
-                              <Line type="monotone" dataKey="seg_loss" stroke="#8B5CF6" name="Seg Loss" strokeWidth={2} dot={{ r: 3 }} />
-                            )}
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* mAP Metrics Chart */}
-                      <div className="bg-card border border-border rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-muted-foreground mb-4">mAP Metrics</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <LineChart data={[...metricsHistory]}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                            <XAxis 
-                              dataKey="epoch" 
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              label={{ value: 'Epoch', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
-                              domain={[0, 'dataMax']}
-                            />
-                            <YAxis 
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              domain={[0, 1]}
-                              tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
-                            />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '6px' }}
-                              labelStyle={{ color: '#F3F4F6' }}
-                              formatter={(value: any) => `${(value * 100).toFixed(2)}%`}
-                            />
-                            <Legend wrapperStyle={{ fontSize: '12px' }} />
-                            <Line type="monotone" dataKey="mAP50" stroke="#10B981" name="mAP@50" strokeWidth={2} dot={{ r: 3 }} />
-                            <Line type="monotone" dataKey="mAP50_95" stroke="#3B82F6" name="mAP@50-95" strokeWidth={2} dot={{ r: 3 }} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* Precision & Recall Chart */}
-                      <div className="bg-card border border-border rounded-lg p-4">
-                        <h4 className="text-sm font-medium text-muted-foreground mb-4">Precision & Recall</h4>
-                        <ResponsiveContainer width="100%" height={200}>
-                          <LineChart data={[...metricsHistory]}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                            <XAxis 
-                              dataKey="epoch" 
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              label={{ value: 'Epoch', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
-                              domain={[0, 'dataMax']}
-                            />
-                            <YAxis 
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              domain={[0, 1]}
-                              tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
-                            />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '6px' }}
-                              labelStyle={{ color: '#F3F4F6' }}
-                              formatter={(value: any) => `${(value * 100).toFixed(2)}%`}
-                            />
-                            <Legend wrapperStyle={{ fontSize: '12px' }} />
-                            <Line type="monotone" dataKey="precision" stroke="#8B5CF6" name="Precision" strokeWidth={2} dot={{ r: 3 }} />
-                            <Line type="monotone" dataKey="recall" stroke="#EC4899" name="Recall" strokeWidth={2} dot={{ r: 3 }} />
-                          </LineChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* Learning Rates Chart */}
-                      {metricsHistory.some(m => m.lr0 || m.lr1 || m.lr2) && (
-                        <div className="bg-card border border-border rounded-lg p-4">
-                          <h4 className="text-sm font-medium text-muted-foreground mb-4">Learning Rates</h4>
-                          <ResponsiveContainer width="100%" height={200}>
-                            <LineChart data={[...metricsHistory]}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                              <XAxis 
-                                dataKey="epoch" 
-                                stroke="#9CA3AF"
-                                tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                                label={{ value: 'Epoch', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
-                                domain={[0, 'dataMax']}
-                              />
-                              <YAxis 
-                                stroke="#9CA3AF"
-                                tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                                tickFormatter={(value) => value.toExponential(1)}
-                              />
-                              <Tooltip 
-                                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '6px' }}
-                                labelStyle={{ color: '#F3F4F6' }}
-                                formatter={(value: any) => value.toFixed(6)}
-                              />
-                              <Legend wrapperStyle={{ fontSize: '12px' }} />
-                              {metricsHistory.some(m => m.lr0) && (
-                                <Line type="monotone" dataKey="lr0" stroke="#3B82F6" name="LR (pg0)" strokeWidth={2} dot={{ r: 3 }} />
-                              )}
-                              {metricsHistory.some(m => m.lr1) && (
-                                <Line type="monotone" dataKey="lr1" stroke="#10B981" name="LR (pg1)" strokeWidth={2} dot={{ r: 3 }} />
-                              )}
-                              {metricsHistory.some(m => m.lr2) && (
-                                <Line type="monotone" dataKey="lr2" stroke="#F59E0B" name="LR (pg2)" strokeWidth={2} dot={{ r: 3 }} />
-                              )}
-                            </LineChart>
-                          </ResponsiveContainer>
+                    <Suspense
+                      fallback={
+                        <div className="flex items-center justify-center py-12">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
                         </div>
-                      )}
-                    </div>
+                      }
+                    >
+                      <TrainingMetricsCharts metricsHistory={metricsHistory} />
+                    </Suspense>
                   </div>
                 )}
               </>

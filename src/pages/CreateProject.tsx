@@ -268,6 +268,7 @@ const CreateProject = () => {
                         src={logoPreview} 
                         alt="Logo preview" 
                         className="max-w-full max-h-full object-contain"
+                        loading="lazy"
                       />
                       <Button 
                         variant="destructive" 

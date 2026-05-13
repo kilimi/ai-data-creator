@@ -765,6 +765,18 @@ async def save_evaluation_predictions_to_dataset(
     return await save_annotations_direct(dataset_id, payload, db)
 
 
+@router.post("/predictions/save-to-dataset/{task_id}")
+async def save_evaluation_predictions_to_dataset_legacy(
+    task_id: int,
+    body: SaveEvalPredictionsToDatasetBody,
+    db: Session = Depends(get_db),
+):
+    """
+    Backward-compatible alias for older frontend builds.
+    """
+    return await save_evaluation_predictions_to_dataset(task_id, body, db)
+
+
 @router.get("/predictions/export-coco-all/{task_id}")
 async def export_all_coco_results(
     task_id: int,

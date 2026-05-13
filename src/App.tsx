@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ExportProvider } from "@/contexts/ExportContext";
+import { ApiProvider } from "@/contexts/ApiContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 const Index = lazy(() => import("./pages/Index"));
@@ -40,13 +41,25 @@ function RouteFallback() {
   );
 }
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Keep data fresh for 30 s so navigating back to a page doesn't refetch
+      // immediately — reduces redundant network round-trips.
+      staleTime: 30_000,
+      // Hold unused cache entries for 5 minutes
+      gcTime: 5 * 60_000,
+      retry: 1,
+    },
+  },
+});
 
 const App = () => (
   <ThemeProvider>
-    <QueryClientProvider client={queryClient}>
-      <ExportProvider>
-        <TooltipProvider>
+    <ApiProvider>
+      <QueryClientProvider client={queryClient}>
+        <ExportProvider>
+          <TooltipProvider>
           <Toaster />
           <Sonner />
           <BrowserRouter
@@ -97,7 +110,8 @@ const App = () => (
         </TooltipProvider>
       </ExportProvider>
     </QueryClientProvider>
-  </ThemeProvider>
+  </ApiProvider>
+</ThemeProvider>
 );
 
 export default App;

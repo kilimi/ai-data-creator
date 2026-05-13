@@ -41,7 +41,6 @@ export class ApiClient {
             signal: controller.signal,
             // Omit credentials so any dev Origin (e.g. http://[::1]:8080) works with CORS
             credentials: 'omit',
-            cache: 'no-cache', // Prevent caching issues
           });
         } catch (fetchError) {
           // Catch network errors at fetch level (including CONTENT_LENGTH_MISMATCH)

@@ -5,7 +5,6 @@ import { Dataset } from "@/types";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Database, FileImage, Layers, MoreHorizontal, Tag, Edit, ExternalLink, Copy, Pencil, CheckCircle2, CircleDashed, Loader2, ChevronDown, Plus, FolderOpen, Sparkles } from "lucide-react";
-import { useImageLoad } from "@/utils/animations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
@@ -46,7 +45,9 @@ interface DatasetCardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, onDatasetMoved, ...props }: DatasetCardProps) {
   const thumbnailSrc = resolveBackendMediaUrl(dataset.thumbnailUrl);
-  const imageLoaded = useImageLoad(thumbnailSrc);
+  // CSS-only fade: track load state directly on the <img> element via onLoad
+  // instead of creating a hidden Image() object in a useEffect.
+  const [imageLoaded, setImageLoaded] = React.useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isMoveDialogOpen, setIsMoveDialogOpen] = React.useState(false);
   const [projects, setProjects] = React.useState<Array<{ id: number; name: string }>>([]);
@@ -306,6 +307,7 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
                 alt={dataset.name}
                 loading="lazy"
                 decoding="async"
+                onLoad={() => setImageLoaded(true)}
                 className={cn(
                   "h-full w-full object-cover transition-all duration-500",
                   !imageLoaded && "opacity-0",

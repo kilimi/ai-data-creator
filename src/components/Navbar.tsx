@@ -57,14 +57,14 @@ export function Navbar() {
     }
   }, [api]);
 
-  // Fetch GPU once on mount, then only poll when popover is open
+  // Fetch GPU only when popover opens (first open fetches once, then polls every 15s).
+  // Deliberately NOT fetching on mount — the API response arriving seconds later would
+  // update the button text, which becomes the LCP candidate on content-sparse pages.
   useEffect(() => {
-    if (!api) return;
+    if (!api || !gpuPopoverOpen) return;
     if (!gpuFetchedOnce.current) {
       gpuFetchedOnce.current = true;
-      fetchGpuStatus();
     }
-    if (!gpuPopoverOpen) return;
     fetchGpuStatus();
     const interval = setInterval(fetchGpuStatus, 15_000);
     return () => clearInterval(interval);
@@ -75,7 +75,7 @@ export function Navbar() {
       setScrolled(window.scrollY > 10);
     };
     
-    window.addEventListener("scroll", handleScroll);
+    window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 

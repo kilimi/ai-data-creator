@@ -16,6 +16,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Input } from "@/components/ui/input";
 import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
@@ -323,6 +324,10 @@ export function ThresholdExplorer({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [savingToDataset, setSavingToDataset] = useState(false);
+  const [annotationName, setAnnotationName] = useState(() => {
+    const base = (evaluationName || `evaluation_${taskId}`).trim();
+    return `${base}_predictions`;
+  });
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
@@ -417,11 +422,11 @@ export function ThresholdExplorer({
         }
       });
 
-      const response = await fetch(`${getApiBaseUrl()}/predictions/save-to-dataset/${taskId}`, {
+      const response = await fetch(`${getApiBaseUrl()}/predictions/evaluation/${taskId}/save-to-dataset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dataset_id: datasetId,
+          annotation_name: annotationName.trim() || undefined,
           conf_threshold: confThreshold,
           iou_threshold: iouThreshold,
           per_class_conf: Object.keys(per_class_conf).length > 0 ? per_class_conf : null,
@@ -838,6 +843,14 @@ export function ThresholdExplorer({
               This will save the filtered predictions as new annotations in the dataset "{datasetName ?? `Dataset ${datasetId}`}".
               Existing annotations will not be overwritten, but duplicate predictions may be added.
             </AlertDialogDescription>
+            <div className="mt-3">
+              <label className="text-sm text-foreground mb-1 block">Annotation name</label>
+              <Input
+                value={annotationName}
+                onChange={(e) => setAnnotationName(e.target.value)}
+                placeholder={`${(evaluationName || `evaluation_${taskId}`).trim()}_predictions`}
+              />
+            </div>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setShowSaveConfirm(false)}>Cancel</AlertDialogCancel>

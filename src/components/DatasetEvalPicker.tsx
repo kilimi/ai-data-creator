@@ -161,7 +161,7 @@ export function DatasetEvalPicker({
           />
           <div className="h-9 w-9 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center">
             {d.thumbnailUrl ? (
-              <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+              <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
             ) : (
               <ImageIcon className="h-4 w-4 text-muted-foreground" />
             )}

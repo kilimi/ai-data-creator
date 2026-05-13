@@ -39,7 +39,7 @@ function DatasetRow({ dataset, rightSlot, badge, onClick, selected }: RowProps) 
       )}
     >
       {thumb ? (
-        <img src={thumb} alt={dataset.name} className="w-7 h-7 rounded object-cover flex-shrink-0" />
+        <img src={thumb} alt={dataset.name} className="w-7 h-7 rounded object-cover flex-shrink-0" loading="lazy" />
       ) : (
         <div className="w-7 h-7 rounded bg-muted flex items-center justify-center flex-shrink-0">
           <Database className="h-3.5 w-3.5 text-muted-foreground" />
