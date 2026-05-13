@@ -333,28 +333,6 @@ export function DatasetEvalPicker({
             />
           </div>
         </div>
-        <div className="flex items-center gap-1 text-xs">
-          {(
-            [
-              ["all", "All"],
-              ["with-gt", "Has GT"],
-            ] as const
-          ).map(([k, label]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setFilter(k)}
-              className={cn(
-                "px-2 py-1 rounded-md border transition-colors",
-                filter === k
-                  ? "bg-primary/10 border-primary/40 text-primary"
-                  : "border-border text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="max-h-[420px] overflow-y-auto p-3 space-y-4">
