@@ -185,6 +185,18 @@ export function DatasetEvalPicker({
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className="font-medium text-sm truncate">{d.name}</span>
+              {d.tags && d.tags.length > 0 && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  {d.tags.slice(0, 4).map((t) => (
+                    <Badge key={t} variant="secondary" className="text-[10px] px-1.5 py-0 h-4 rounded">
+                      {t}
+                    </Badge>
+                  ))}
+                  {d.tags.length > 4 && (
+                    <span className="text-[10px] text-muted-foreground">+{d.tags.length - 4}</span>
+                  )}
+                </div>
+              )}
             </div>
             <div className="text-xs text-muted-foreground flex items-center gap-3 mt-0.5">
               <span>{d.imageCount.toLocaleString()} images</span>

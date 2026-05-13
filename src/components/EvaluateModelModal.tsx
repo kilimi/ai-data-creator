@@ -264,6 +264,7 @@ export function EvaluateModelModal({
         thumbnailUrl: d.thumbnailUrl || d.logo_url,
         annotationFiles: files,
         collections,
+        tags: d.tags,
       };
     });
   }, [datasets, enrichedDatasets, datasetCollections, fileClassesMap]);
