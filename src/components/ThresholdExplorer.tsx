@@ -10,6 +10,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
@@ -514,36 +520,59 @@ export function ThresholdExplorer({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownloadCoco}
-            title="Download the predictions that pass the current Confidence & per-class thresholds as a COCO JSON file"
-            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors bg-gray-800 text-gray-200 border border-gray-700 hover:bg-gray-700"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export filtered predictions
-          </button>
-          <button
-            onClick={() => setShowSaveConfirm(true)}
-            disabled={savingToDataset}
-            title="Save the filtered predictions as annotations in the dataset"
-            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors bg-amber-700/30 text-amber-300 border border-amber-700 hover:bg-amber-700/50 disabled:opacity-50"
-          >
-            <Database className="w-3.5 h-3.5" />
-            {savingToDataset ? "Saving…" : "Save predictions to dataset"}
-          </button>
-          <div className="w-px h-6 bg-gray-700 mx-1" />
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors ${
-              saved
-                ? "bg-green-700/40 text-green-300 border border-green-700"
-                : "bg-blue-700/40 text-blue-300 border border-blue-700 hover:bg-blue-700/60"
-            } disabled:opacity-50`}
-          >
-            {saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            {saved ? "Saved" : saving ? "Saving…" : "Save thresholds"}
-          </button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleDownloadCoco}
+                  className="flex items-center justify-center w-9 h-9 rounded-md transition-colors bg-gray-800 text-gray-200 border border-gray-700 hover:bg-gray-700"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Export filtered predictions (COCO JSON)</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowSaveConfirm(true)}
+                  disabled={savingToDataset}
+                  className="flex items-center justify-center w-9 h-9 rounded-md transition-colors bg-amber-700/30 text-amber-300 border border-amber-700 hover:bg-amber-700/50 disabled:opacity-50"
+                >
+                  <Database className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Save predictions to dataset</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <div className="w-px h-6 bg-gray-700" />
+
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className={`flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
+                    saved
+                      ? "bg-green-700/40 text-green-300 border border-green-700"
+                      : "bg-blue-700/40 text-blue-300 border border-blue-700 hover:bg-blue-700/60"
+                  } disabled:opacity-50`}
+                >
+                  {saved ? <Check className="w-4 h-4" /> : saving ? <Save className="w-4 h-4 animate-pulse" /> : <Save className="w-4 h-4" />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>{saved ? "Thresholds saved" : saving ? "Saving thresholds…" : "Save thresholds"}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
 
