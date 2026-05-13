@@ -46,6 +46,7 @@ export interface PickerDataset {
   annotationFiles: PickerAnnotationFile[];
   collections: PickerCollection[];
   lastUsedAt?: string;
+  tags?: string[];
 }
 
 export interface PickerGroup {
