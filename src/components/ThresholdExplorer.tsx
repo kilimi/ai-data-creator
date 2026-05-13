@@ -523,6 +523,16 @@ export function ThresholdExplorer({
             Export filtered predictions
           </button>
           <button
+            onClick={() => setShowSaveConfirm(true)}
+            disabled={savingToDataset}
+            title="Save the filtered predictions as annotations in the dataset"
+            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors bg-amber-700/30 text-amber-300 border border-amber-700 hover:bg-amber-700/50 disabled:opacity-50"
+          >
+            <Database className="w-3.5 h-3.5" />
+            {savingToDataset ? "Saving…" : "Save predictions to dataset"}
+          </button>
+          <div className="w-px h-6 bg-gray-700 mx-1" />
+          <button
             onClick={handleSave}
             disabled={saving}
             className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors ${
@@ -532,7 +542,7 @@ export function ThresholdExplorer({
             } disabled:opacity-50`}
           >
             {saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            {saved ? "Saved" : saving ? "Saving…" : "Save"}
+            {saved ? "Saved" : saving ? "Saving…" : "Save thresholds"}
           </button>
         </div>
       </div>
