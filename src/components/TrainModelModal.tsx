@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +32,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info } from "lucide-react";
 import { Dataset, DatasetGroup } from "@/types";
+import {
+  DatasetEvalPicker,
+  type DatasetSelection as PickerDatasetSelection,
+  type PickerDataset,
+  type PickerGroup,
+} from "@/components/DatasetEvalPicker";
 import { YoloSettingsDialog } from "./YoloSettingsDialog";
 import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
@@ -332,6 +338,105 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       }
       return sel;
     }));
+  };
+
+  // ── Picker integration ────────────────────────────────────────────────────
+  const pickerDatasets: PickerDataset[] = useMemo(() => {
+    return datasets.map(d => {
+      const sel = selectedDatasets.find(s => s.dataset.id === d.id);
+      const annotationFilesFromProps = (d.annotation_files || []).map(f => ({
+        id: String(f.id),
+        name: f.name || f.file_name,
+        classes: [] as string[],
+      }));
+      const annotationFiles = sel
+        ? sel.annotations.map(a => ({
+            id: a.id,
+            name: a.name,
+            classes: [] as string[],
+            taskType: (a.type as any) || undefined,
+          }))
+        : annotationFilesFromProps;
+      const collections = sel
+        ? sel.imageCollections.map(c => ({ id: c, name: c }))
+        : [];
+      return {
+        id: d.id,
+        name: d.name,
+        imageCount: d.image_count ?? 0,
+        annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
+        thumbnailUrl: d.thumbnailUrl,
+        annotationFiles,
+        collections,
+      };
+    });
+  }, [datasets, selectedDatasets]);
+
+  const pickerGroups: PickerGroup[] = useMemo(
+    () => datasetGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      datasetIds: (g.datasets || []).map(d => d.id),
+    })),
+    [datasetGroups]
+  );
+
+  const pickerValue: PickerDatasetSelection[] = useMemo(
+    () => selectedDatasets.map(s => ({
+      datasetId: s.dataset.id,
+      annotationFileId: s.annotation || null,
+      collectionId: s.imageCollection || null,
+    })),
+    [selectedDatasets]
+  );
+
+  const handlePickerChange = (next: PickerDatasetSelection[]) => {
+    const prevById = new Map(selectedDatasets.map(s => [s.dataset.id, s]));
+    const nextById = new Map(next.map(s => [s.datasetId, s]));
+
+    // Build new selectedDatasets list
+    const updated: DatasetSelection[] = [];
+    next.forEach(n => {
+      const existing = prevById.get(n.datasetId);
+      if (existing) {
+        updated.push({
+          ...existing,
+          annotation: n.annotationFileId ?? '',
+          imageCollection: n.collectionId ?? '',
+        });
+      } else {
+        const dataset = datasets.find(d => d.id === n.datasetId);
+        if (!dataset) return;
+        idCounterRef.current += 1;
+        const newSel: DatasetSelection = {
+          id: `dataset-${Date.now()}-${idCounterRef.current}-${Math.random().toString(36).slice(2, 9)}`,
+          dataset,
+          imageCollection: n.collectionId ?? '',
+          annotation: n.annotationFileId ?? '',
+          imageCollections: [],
+          annotations: [],
+          loadingCollections: false,
+          loadingAnnotations: false,
+          split: { train: 80, val: 20, test: 0 },
+        };
+        updated.push(newSel);
+        // Lazy-load collections + annotations
+        setTimeout(() => {
+          if (isMountedRef.current) fetchDataForSelection(newSel.id, dataset.id);
+        }, 0);
+      }
+    });
+
+    // Cleanup abort controllers for removed selections
+    selectedDatasets.forEach(s => {
+      if (!nextById.has(s.dataset.id)) {
+        const ctrl = activeFetchesRef.current.get(s.id);
+        if (ctrl) ctrl.abort();
+        activeFetchesRef.current.delete(s.id);
+      }
+    });
+
+    setSelectedDatasets(updated);
   };
 
   const handleModelSettingsUpdate = (settings: any) => {
@@ -760,287 +865,120 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-medium">Dataset Configuration</Label>
-                {/* modal={false}: nested menu inside Dialog avoids pointer/focus conflicts (Radix + jsdom). */}
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <Button 
-                      size="sm"
-                      variant="outline"
-                      disabled={
-                        resourcesLoading ||
-                        (datasets.length === 0 && datasetGroups.length === 0)
-                      }
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      {resourcesLoading ? 'Loading…' : 'Add'}
-                      <ChevronDown className="h-4 w-4 ml-2" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem 
-                      onSelect={() => addDatasetSelection()}
-                      disabled={datasets.length === 0}
-                      className="flex items-center cursor-pointer"
-                    >
-                      <Database className="w-4 h-4 mr-2" />
-                      Add Dataset
-                    </DropdownMenuItem>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger 
-                        disabled={datasetGroups.length === 0}
-                        className="flex items-center cursor-pointer"
-                      >
-                        <Users className="w-4 h-4 mr-2" />
-                        Add Dataset Group
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        {datasetGroups.length === 0 ? (
-                          <DropdownMenuItem disabled>
-                            No dataset groups available
-                          </DropdownMenuItem>
-                        ) : (
-                          datasetGroups.map(group => (
-                            <DropdownMenuItem 
-                              key={group.id}
-                              data-testid={`train-modal-add-dataset-group-${group.id}`}
-                              onSelect={() => addDatasetGroupSelection(group)}
-                              className="flex items-center cursor-pointer"
-                            >
-                              <Users className="w-4 h-4 mr-2" />
-                              {group.name} ({group.datasets?.length || 0} datasets)
-                            </DropdownMenuItem>
-                          ))
-                        )}
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                {selectedDatasets.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedDatasets.length} selected
+                  </Badge>
+                )}
               </div>
-              
-              {selectedDatasets.length === 0 ? (
+
+              {resourcesLoading ? (
+                <Card className="p-6 text-center border-dashed">
+                  <p className="text-muted-foreground text-sm">Loading datasets…</p>
+                </Card>
+              ) : datasets.length === 0 && datasetGroups.length === 0 ? (
                 <Card className="p-6 text-center border-dashed">
                   <Database className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                  <p className="text-muted-foreground">No datasets selected</p>
-                  <p className="text-sm text-muted-foreground">Add datasets to begin training</p>
+                  <p className="text-muted-foreground">No datasets available</p>
                 </Card>
               ) : (
+                <DatasetEvalPicker
+                  datasets={pickerDatasets}
+                  groups={pickerGroups}
+                  modelClasses={[]}
+                  value={pickerValue}
+                  onChange={handlePickerChange}
+                />
+              )}
+
+              {/* Per-dataset Train / Val / Test split */}
+              {selectedDatasets.length > 0 && (
                 <div className="space-y-3">
-                  {selectedDatasets.map((selection, index) => (
-                    <Card key={selection.id}>
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <CardTitle className="text-sm flex items-center gap-2">
-                            <Database className="h-4 w-4" />
-                            {selection.fromGroup ? (
-                              <div className="flex items-center gap-2">
-                                <span>{selection.dataset.name}</span>
-                                <Badge variant="secondary" className="text-xs">
-                                  <Users className="h-3 w-3 mr-1" />
-                                  {selection.groupName}
-                                </Badge>
-                              </div>
-                            ) : (
-                              <span>Dataset {index + 1}</span>
-                            )}
-                          </CardTitle>
-                          <Button
-                            onClick={() => removeDatasetSelection(selection.id)}
-                            size="icon"
-                            variant="ghost"
-                            className="h-6 w-6"
-                            aria-label="Remove dataset selection"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
+                  <Label className="text-sm font-medium">Train / Val / Test split</Label>
+                  {selectedDatasets.map((selection) => (
+                    <Card key={selection.id} className="p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Database className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium truncate">{selection.dataset.name}</span>
+                          {selection.fromGroup && (
+                            <Badge variant="outline" className="text-xs">
+                              <Users className="h-3 w-3 mr-1" />
+                              {selection.groupName}
+                            </Badge>
+                          )}
+                          {selection.annotation && (() => {
+                            const sel = selection.annotations.find(a => a.id === selection.annotation);
+                            const t = sel?.type || 'unknown';
+                            const variant = t === 'classification' ? 'default' : t === 'segmentation' ? 'secondary' : 'outline';
+                            return <Badge variant={variant} className="text-xs">{t}</Badge>;
+                          })()}
                         </div>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">{selection.dataset.name}</span>
-                            {selection.fromGroup && (
-                              <Badge variant="outline" className="text-xs">
-                                <Users className="h-3 w-3 mr-1" />
-                                {selection.groupName}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {selection.dataset.annotation_file_count || 0} annotation files
-                          </div>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-6 w-6"
+                          onClick={async () => {
+                            if (!selection.annotation) return;
+                            try {
+                              const res = await api?.getAnnotationClasses(selection.dataset.id, selection.annotation);
+                              if (res && res.success) {
+                                setClassStats(res.data);
+                                setShowClassDialog(true);
+                              }
+                            } catch (e) {
+                              console.error('Error fetching class stats', e);
+                            }
+                          }}
+                          aria-label="Show class stats"
+                        >
+                          <Info className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="text-xs flex justify-between mb-1">
+                        <span>Train: {selection.split?.train ?? 80}%</span>
+                        <span>Val: {selection.split?.val ?? 20}%</span>
+                        <span>Test: {selection.split?.test ?? 0}%</span>
+                      </div>
+                      <div className="w-full h-3 rounded overflow-hidden bg-muted flex">
+                        <div style={{ width: `${selection.split?.train ?? 80}%` }} className="h-3 bg-green-500" />
+                        <div style={{ width: `${selection.split?.val ?? 20}%` }} className="h-3 bg-yellow-400" />
+                        <div style={{ width: `${selection.split?.test ?? 0}%` }} className="h-3 bg-blue-500" />
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">Train %</Label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={selection.split?.train ?? 80}
+                            onChange={(e) => {
+                              const train = Number(e.target.value);
+                              const val = Math.min(selection.split?.val ?? 20, Math.max(0, 100 - train));
+                              const test = Math.max(0, 100 - train - val);
+                              updateDatasetSelection(selection.id, 'split', { train, val, test });
+                            }}
+                            className="w-full"
+                          />
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="space-y-2">
-                            <Label className="text-xs">Dataset</Label>
-                            <Select 
-                              value={selection.dataset.id.toString()} 
-                              onValueChange={(value) => {
-                                const dataset = datasets.find(d => d.id.toString() === value);
-                                if (dataset) {
-                                  updateDatasetSelection(selection.id, 'dataset', dataset);
-                                }
-                              }}
-                            >
-                              <SelectTrigger className="bg-background z-40">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent className="bg-background border shadow-md z-50">
-                                {datasets.map(dataset => (
-                                  <SelectItem key={dataset.id} value={dataset.id.toString()}>
-                                    {dataset.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          
-                          <div className="space-y-2">
-                            <Label className="text-xs flex items-center gap-1">
-                              <Image className="h-3 w-3" />
-                              Image Collection
-                            </Label>
-                            <Select 
-                              value={selection.imageCollection} 
-                              onValueChange={(value) => updateDatasetSelection(selection.id, 'imageCollection', value)}
-                              disabled={selection.loadingCollections}
-                            >
-                              <SelectTrigger className="bg-background z-40">
-                                <SelectValue placeholder={selection.loadingCollections ? "Loading..." : "Select collection"} />
-                              </SelectTrigger>
-                              <SelectContent className="bg-background border shadow-md z-50">
-                                {selection.imageCollections.length > 0 ? (
-                                  selection.imageCollections.map(collection => (
-                                    <SelectItem key={collection} value={collection}>
-                                      {collection}
-                                    </SelectItem>
-                                  ))
-                                ) : (
-                                  <div className="px-2 py-1 text-sm text-muted-foreground">
-                                    {selection.loadingCollections ? "Loading collections..." : "No collections available"}
-                                  </div>
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <Label className="text-xs flex items-center gap-1">
-                                <FileText className="h-3 w-3" />
-                                Annotation
-                                    {selection.annotation && (
-                                      (() => {
-                                        const sel = selection.annotations.find(a => a.id === selection.annotation);
-                                        const t = sel?.type || 'unknown';
-                                        const variant = t === 'classification' ? 'default' : t === 'segmentation' ? 'secondary' : 'outline';
-                                        return <Badge variant={variant} className="ml-2 text-xs">{t}</Badge>;
-                                      })()
-                                    )}
-                              </Label>
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={async () => {
-                                if (!selection.annotation) return;
-                                try {
-                  console.log('TrainModelModal: fetching class stats for', selection.dataset.id, selection.annotation);
-                                  const res = await api?.getAnnotationClasses(selection.dataset.id, selection.annotation);
-                  console.log('TrainModelModal: class stats response', res);
-                                  if (res && res.success) {
-                                    setClassStats(res.data);
-                                    setShowClassDialog(true);
-                                  } else {
-                                    console.warn('Failed to fetch class stats', res);
-                                  }
-                                } catch (e) {
-                                  console.error('Error fetching class stats', e);
-                                }
-                              }}>
-                                <Info className="h-3 w-3" />
-                              </Button>
-                            </div>
-                            <Select 
-                              value={selection.annotation} 
-                              onValueChange={(value) => updateDatasetSelection(selection.id, 'annotation', value)}
-                              disabled={selection.loadingAnnotations}
-                            >
-                              <SelectTrigger className="bg-background z-40">
-                                <SelectValue placeholder={selection.loadingAnnotations ? "Loading..." : "Select annotation"} />
-                              </SelectTrigger>
-                              <SelectContent className="bg-background border shadow-md z-50">
-                                {selection.annotations.length > 0 ? (
-                                  selection.annotations.map(annotation => (
-                                    <SelectItem key={annotation.id} value={annotation.id}>
-                                      <div className="flex items-center justify-between w-full">
-                                        <div>{annotation.name}</div>
-                                        <Badge variant={annotation.type === 'classification' ? 'default' : annotation.type === 'segmentation' ? 'secondary' : 'outline'} className="text-xs">
-                                          {annotation.type || 'unknown'}
-                                        </Badge>
-                                      </div>
-                                    </SelectItem>
-                                  ))
-                                ) : (
-                                  <div className="px-2 py-1 text-sm text-muted-foreground">
-                                    {selection.loadingAnnotations ? "Loading annotations..." : "No annotations available"}
-                                  </div>
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                        <div>
+                          <Label className="text-xs">Val %</Label>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={selection.split?.val ?? 20}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              const train = Math.min(selection.split?.train ?? 80, Math.max(0, 100 - val));
+                              const test = Math.max(0, 100 - train - val);
+                              updateDatasetSelection(selection.id, 'split', { train, val, test });
+                            }}
+                            className="w-full"
+                          />
                         </div>
-
-                        {selection.annotation && (
-                          <div className="mt-3">
-                            <Label className="text-xs">Train / Val / Test split</Label>
-                            <div className="flex items-center gap-3 mt-2">
-                              <div className="w-full">
-                                <div className="text-xs flex justify-between mb-1">
-                                  <span>Train: {selection.split?.train ?? 80}%</span>
-                                  <span>Val: {selection.split?.val ?? 20}%</span>
-                                  <span>Test: {selection.split?.test ?? 0}%</span>
-                                </div>
-                                <div className="w-full h-4 rounded overflow-hidden bg-muted">
-                                  <div style={{ width: `${selection.split?.train ?? 80}%` }} className="h-4 bg-green-500 inline-block" />
-                                  <div style={{ width: `${selection.split?.val ?? 20}%` }} className="h-4 bg-yellow-400 inline-block" />
-                                  <div style={{ width: `${selection.split?.test ?? 0}%` }} className="h-4 bg-blue-500 inline-block" />
-                                </div>
-
-                                <div className="mt-2 grid grid-cols-2 gap-2">
-                                  <div>
-                                    <Label className="text-xs">Train %</Label>
-                                    <input
-                                      type="range"
-                                      min={0}
-                                      max={100}
-                                      value={selection.split?.train ?? 80}
-                                      onChange={(e) => {
-                                        const train = Number(e.target.value);
-                                        // keep val the same if possible, adjust test
-                                        const val = Math.min(selection.split?.val ?? 20, Math.max(0, 100 - train));
-                                        const test = Math.max(0, 100 - train - val);
-                                        updateDatasetSelection(selection.id, 'split', { train, val, test });
-                                      }}
-                                    />
-                                  </div>
-
-                                  <div>
-                                    <Label className="text-xs">Val %</Label>
-                                    <input
-                                      type="range"
-                                      min={0}
-                                      max={100}
-                                      value={selection.split?.val ?? 20}
-                                      onChange={(e) => {
-                                        const val = Number(e.target.value);
-                                        const train = Math.min(selection.split?.train ?? 80, Math.max(0, 100 - val));
-                                        const test = Math.max(0, 100 - train - val);
-                                        updateDatasetSelection(selection.id, 'split', { train, val, test });
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
+                      </div>
                     </Card>
                   ))}
                 </div>
