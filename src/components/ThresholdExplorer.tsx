@@ -1,6 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { Slider } from "@/components/ui/slider";
-import { SlidersHorizontal, RotateCcw, X, Save, Check, Download } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
 import { useToast } from "@/hooks/use-toast";
@@ -305,6 +315,8 @@ export function ThresholdExplorer({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [savingToDataset, setSavingToDataset] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
@@ -388,6 +400,50 @@ export function ThresholdExplorer({
     }
   }
 
+  async function confirmSaveToDataset() {
+    setSavingToDataset(true);
+    setSaveError(null);
+    try {
+      const per_class_conf: Record<string, number> = {};
+      perClassConf.forEach((v, i) => {
+        if (v >= 0 && i < classNames.length) {
+          per_class_conf[classNames[i]] = v;
+        }
+      });
+
+      const response = await fetch(`${getApiBaseUrl()}/predictions/save-to-dataset/${taskId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dataset_id: datasetId,
+          conf_threshold: confThreshold,
+          iou_threshold: iouThreshold,
+          per_class_conf: Object.keys(per_class_conf).length > 0 ? per_class_conf : null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
+
+      toast({
+        title: "Predictions saved",
+        description: "Filtered predictions have been saved as annotations in the dataset.",
+      });
+      setShowSaveConfirm(false);
+    } catch (error) {
+      console.error('Failed to save predictions to dataset:', error);
+      if (mountedRef.current) {
+        setSaveError(error instanceof Error ? error.message : 'Failed to save predictions to dataset');
+      }
+    } finally {
+      if (mountedRef.current) {
+        setSavingToDataset(false);
+      }
+    }
+  }
+
   function handleDownloadCoco() {
     // Use backend API for export to avoid memory issues with large datasets
     const url = new URL(`${getApiBaseUrl()}/predictions/export-coco/${taskId}`);
@@ -467,6 +523,16 @@ export function ThresholdExplorer({
             Export filtered predictions
           </button>
           <button
+            onClick={() => setShowSaveConfirm(true)}
+            disabled={savingToDataset}
+            title="Save the filtered predictions as annotations in the dataset"
+            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors bg-amber-700/30 text-amber-300 border border-amber-700 hover:bg-amber-700/50 disabled:opacity-50"
+          >
+            <Database className="w-3.5 h-3.5" />
+            {savingToDataset ? "Saving…" : "Save predictions to dataset"}
+          </button>
+          <div className="w-px h-6 bg-gray-700 mx-1" />
+          <button
             onClick={handleSave}
             disabled={saving}
             className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md transition-colors ${
@@ -476,7 +542,7 @@ export function ThresholdExplorer({
             } disabled:opacity-50`}
           >
             {saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            {saved ? "Saved" : saving ? "Saving…" : "Save"}
+            {saved ? "Saved" : saving ? "Saving…" : "Save thresholds"}
           </button>
         </div>
       </div>
@@ -733,6 +799,29 @@ export function ThresholdExplorer({
           imageIdToFilename={imageIdToFilename}
         />
       )}
+
+      {/* Save predictions to dataset confirmation */}
+      <AlertDialog open={showSaveConfirm} onOpenChange={setShowSaveConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Save predictions to dataset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will save the filtered predictions as new annotations in the dataset "{datasetName ?? `Dataset ${datasetId}`}".
+              Existing annotations will not be overwritten, but duplicate predictions may be added.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowSaveConfirm(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmSaveToDataset}
+              disabled={savingToDataset}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {savingToDataset ? "Saving…" : "Save predictions"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
