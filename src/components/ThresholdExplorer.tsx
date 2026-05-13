@@ -10,6 +10,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
