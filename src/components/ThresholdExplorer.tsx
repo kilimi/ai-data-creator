@@ -799,6 +799,29 @@ export function ThresholdExplorer({
           imageIdToFilename={imageIdToFilename}
         />
       )}
+
+      {/* Save predictions to dataset confirmation */}
+      <AlertDialog open={showSaveConfirm} onOpenChange={setShowSaveConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Save predictions to dataset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will save the filtered predictions as new annotations in the dataset "{datasetName ?? `Dataset ${datasetId}`}".
+              Existing annotations will not be overwritten, but duplicate predictions may be added.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowSaveConfirm(false)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmSaveToDataset}
+              disabled={savingToDataset}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {savingToDataset ? "Saving…" : "Save predictions"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
