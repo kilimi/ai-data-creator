@@ -151,20 +151,24 @@ export function DatasetEvalPicker({
     return (
       <div
         className={cn(
-          "rounded-md border bg-card transition-colors",
-          isSelected ? "border-primary/50 bg-primary/[0.03]" : "border-border"
+          "group rounded-lg border bg-card transition-all duration-150",
+          "hover:border-border hover:shadow-sm hover:-translate-y-[1px]",
+          isSelected
+            ? "border-primary/60 bg-primary/[0.04] shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"
+            : "border-border/60"
         )}
       >
-        <div className="flex items-center gap-3 px-3 py-2">
+        <div className="flex items-start gap-3 px-3 py-2.5">
           <Checkbox
             checked={isSelected}
             onCheckedChange={(c) => toggleSelected(d, !!c)}
+            className="mt-1.5"
           />
-          <div className="h-9 w-9 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center">
+          <div className="h-12 w-12 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center ring-1 ring-border/40">
             {d.thumbnailUrl ? (
               <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
             ) : (
-              <ImageIcon className="h-4 w-4 text-muted-foreground" />
+              <ImageIcon className="h-5 w-5 text-muted-foreground" />
             )}
           </div>
 
@@ -184,32 +188,41 @@ export function DatasetEvalPicker({
             }}
           >
             <div className="flex items-center gap-2 min-w-0">
-              <span className="font-medium text-sm truncate">{d.name}</span>
-              {d.tags && d.tags.length > 0 && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  {d.tags.slice(0, 4).map((t) => (
-                    <Badge key={t} variant="secondary" className="text-[10px] px-1.5 py-0 h-4 rounded">
-                      {t}
-                    </Badge>
-                  ))}
-                  {d.tags.length > 4 && (
-                    <span className="text-[10px] text-muted-foreground">+{d.tags.length - 4}</span>
-                  )}
-                </div>
-              )}
+              <span className="font-semibold text-sm truncate">{d.name}</span>
             </div>
-            <div className="text-xs text-muted-foreground flex items-center gap-3 mt-0.5">
-              <span>{d.imageCount.toLocaleString()} images</span>
-              <span>
-                {gtCount} GT file
-                {gtCount === 1 ? "" : "s"}
+            <div className="text-xs text-muted-foreground flex items-center gap-3 mt-1">
+              <span className="inline-flex items-center gap-1">
+                <ImageIcon className="h-3 w-3" />
+                {d.imageCount.toLocaleString()}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Database className="h-3 w-3" />
+                {gtCount} GT
               </span>
               {d.lastUsedAt && (
                 <span className="text-muted-foreground/70">
-                  used {timeAgo(d.lastUsedAt)}
+                  · {timeAgo(d.lastUsedAt)}
                 </span>
               )}
             </div>
+            {d.tags && d.tags.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                {d.tags.slice(0, 5).map((t) => (
+                  <span
+                    key={t}
+                    className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 text-[11px] font-medium"
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+                    {t}
+                  </span>
+                ))}
+                {d.tags.length > 5 && (
+                  <span className="text-[11px] text-muted-foreground font-medium">
+                    +{d.tags.length - 5}
+                  </span>
+                )}
+              </div>
+            )}
           </button>
 
           {isSelected && (
