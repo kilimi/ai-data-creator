@@ -340,8 +340,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }));
   };
 
-  const handleModelSettingsUpdate = (settings: any) => {
-
   // ── Picker integration ────────────────────────────────────────────────────
   const pickerDatasets: PickerDataset[] = useMemo(() => {
     return datasets.map(d => {
@@ -441,7 +439,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     setSelectedDatasets(updated);
   };
 
-  const _handleModelSettingsUpdate = (settings: any) => {
+  const handleModelSettingsUpdate = (settings: any) => {
     setModelSettings(settings);
   };
 
