@@ -368,6 +368,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         thumbnailUrl: d.thumbnailUrl,
         annotationFiles,
         collections,
+        tags: d.tags,
       };
     });
   }, [datasets, selectedDatasets]);
