@@ -104,7 +104,7 @@ export default defineConfig(async ({ mode }) => {
         },
       },
       // Strip console.log / debugger calls from production bundles
-      minify: 'esbuild',
+      minify: 'esbuild' as const,
       esbuildOptions: {
         drop: mode === 'production' ? (['console', 'debugger'] as ('console' | 'debugger')[]) : [],
       },
