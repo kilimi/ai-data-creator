@@ -21,6 +21,13 @@ import {
 import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users } from 'lucide-react';
 import { Dataset, DatasetGroup, ImageCollection } from '@/types';
 import { getApiBaseUrl } from "@/config/api";
+import {
+  DatasetEvalPicker,
+  type DatasetSelection as PickerDatasetSelection,
+  type PickerDataset,
+  type PickerGroup,
+} from "@/components/DatasetEvalPicker";
+import { useMemo } from 'react';
 
 interface CreateAugmentedDatasetModalProps {
   open: boolean;
