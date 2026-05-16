@@ -246,6 +246,21 @@ export default function ProjectEvaluations() {
     }
   };
 
+  const handleStop = async (task: any) => {
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
+      if (response.ok) {
+        toast({ title: "Evaluation Stopped", description: `Task "${task.name}" has been stopped.` });
+        fetchEvaluationTasks();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to stop task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to stop evaluation task", variant: "destructive" });
+    }
+  };
+
   const handleRerun = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, { method: 'POST' });
@@ -565,6 +580,7 @@ export default function ProjectEvaluations() {
                       onRename={() => handleRename(task)}
                       onRerun={() => handleRerun(task)}
                       onDelete={() => handleDelete(task)}
+                      onStop={() => handleStop(task)}
                       onDownloadCoco={
                         isMultiDataset
                           ? () => handleDownloadCoco(task, true)

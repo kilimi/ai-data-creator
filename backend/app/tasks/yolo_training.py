@@ -154,7 +154,8 @@ class YOLOTrainingTask(TrainingTask):
         self.task.task_metadata = {
             **(self.task.task_metadata or {}),  # Preserve existing metadata
             "stage": "preparing_dataset",
-            "celery_task_id": self.request.id
+            "celery_task_id": self.request.id,
+            "training_config": self.training_config,
         }
         self.db.commit()
     
@@ -241,13 +242,19 @@ class YOLOTrainingTask(TrainingTask):
     def _load_model(self):
         """Load YOLO model"""
         from ultralytics import YOLO
-        
+
         model_type = self.training_config.get('model_type', 'yolo11n-seg.pt')
-        logger.info(f"Loading YOLO model: {model_type}")
-        
-        model_path = Path(model_type)
-        if not model_path.exists():
-            model_path = model_type
+        resume_from = self.training_config.get('resume_from')
+
+        if resume_from and Path(resume_from).exists():
+            logger.info(f"Resuming YOLO from checkpoint: {resume_from}")
+            load_path = resume_from
+        else:
+            if resume_from:
+                logger.warning(f"resume_from path not found ({resume_from}), loading base model instead")
+            logger.info(f"Loading YOLO model: {model_type}")
+            model_path = Path(model_type)
+            load_path = str(model_path) if model_path.exists() else model_type
         
         try:
             # Check CUDA availability before loading model
@@ -260,36 +267,33 @@ class YOLOTrainingTask(TrainingTask):
                 logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
             else:
                 logger.warning("CUDA is not available - training will use CPU (very slow)")
-            
-            logger.info(f"Instantiating YOLO with: {model_path}")
-            self.model = YOLO(str(model_path))
+
+            logger.info(f"Instantiating YOLO with: {load_path}")
+            self.model = YOLO(str(load_path))
             logger.info(f"Model loaded successfully: {type(self.model)}")
             logger.info(f"Model has train method: {hasattr(self.model, 'train')}")
-            
-            # Test that the model object is valid
+
             if self.model is None:
                 raise ValueError("Model object is None after loading")
-            
-            # Verify model.train is callable
             if not callable(getattr(self.model, 'train', None)):
                 raise ValueError("Model.train is not callable")
-                
+
             logger.info(f"Model validation passed - ready for training")
-                
+
         except Exception as e:
             logger.error(f"Failed to load YOLO model: {e}", exc_info=True)
             raise
-        
+
         # Add progress callback
         total_epochs = self.training_config.get('epochs', 100)
         progress_callback = self._create_progress_callback(total_epochs)
         self.model.add_callback("on_train_epoch_end", progress_callback.on_train_epoch_end)
-        
+
         self.task.progress = 40
         self.task.task_metadata = {
             **self.task.task_metadata,
             "stage": "training",
-            "model_loaded": str(model_path),
+            "model_loaded": str(load_path),
             "total_epochs": total_epochs
         }
         self.db.commit()
@@ -322,7 +326,12 @@ class YOLOTrainingTask(TrainingTask):
         logger.info(f"Built training args with keys: {list(train_args.keys())}")
         logger.info(f"Starting training with args: {train_args}")
         logger.info(f"IMAGE SIZE EXPLICITLY SET TO: {train_args.get('imgsz', 'NOT SET')}")
-        
+
+        # When resuming from a checkpoint, tell YOLO to continue from last.pt
+        if self.training_config.get('resume_from'):
+            train_args['resume'] = True
+            logger.info(f"Resume mode: added resume=True to train_args")
+
         # Verify critical paths exist
         data_path = Path(train_args.get('data', ''))
         if not data_path.exists():
@@ -570,6 +579,24 @@ class YOLOTrainingTask(TrainingTask):
     def _handle_error(self, error: Exception):
         """Handle training errors"""
         if self.task:
+            # Refresh from DB — status or metadata may indicate a user-requested stop.
+            self.db.refresh(self.task)
+            task_meta = self.task.task_metadata or {}
+            stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
+            if self.task.status in ('stopped', 'paused') or stop_requested:
+                if stop_requested and self.task.status not in ('stopped', 'paused'):
+                    self.task.status = 'stopped'
+                    self.task.completed_at = datetime.utcnow()
+                    self.task.error_message = 'Task stopped by user'
+                    self.task.task_metadata = {
+                        **task_meta,
+                        "stage": "stopped",
+                    }
+                    self.db.commit()
+                logger.info(f"Task {self.task_id} stop/pause detected, not overwriting to 'failed'")
+                # Still try to record checkpoint paths if the epoch callback didn't get a chance
+                self._save_checkpoint_paths_to_metadata()
+                return
             self.task.status = "failed"
             self.task.completed_at = datetime.utcnow()
             self.task.error_message = str(error)
@@ -578,7 +605,52 @@ class YOLOTrainingTask(TrainingTask):
                 "stage": "failed",
                 "error": str(error)
             }
+            # Even on failure, record any checkpoints that were saved
+            self._save_checkpoint_paths_to_metadata()
             self.db.commit()
+
+    def _save_checkpoint_paths_to_metadata(self):
+        """Record best.pt / last.pt paths into task_metadata if the files exist."""
+        if not self.task:
+            return
+        try:
+            checkpoint_meta = {}
+            # Check weights_dir (copied location) first, then YOLO runtime save_dir
+            for name, key, resume_key in [
+                ("best.pt", "best_model", None),
+                ("last.pt", "last_model", "resume_from"),
+            ]:
+                # Already set by epoch callback — don't overwrite
+                if self.task.task_metadata and self.task.task_metadata.get(key):
+                    continue
+                # Try weights_dir
+                if self.weights_dir:
+                    p = self.weights_dir / name
+                    if p.exists():
+                        checkpoint_meta[key] = str(p)
+                        if resume_key:
+                            checkpoint_meta[resume_key] = str(p)
+                        continue
+                # Try YOLO runtime save_dir via model.trainer
+                if self.model and hasattr(self.model, 'trainer') and self.model.trainer:
+                    trainer = self.model.trainer
+                    if hasattr(trainer, 'save_dir') and trainer.save_dir:
+                        p = Path(trainer.save_dir) / 'weights' / name
+                        if p.exists():
+                            checkpoint_meta[key] = str(p)
+                            if resume_key:
+                                checkpoint_meta[resume_key] = str(p)
+            if checkpoint_meta:
+                self.task.task_metadata = {
+                    **(self.task.task_metadata or {}),
+                    **checkpoint_meta,
+                }
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(self.task, "task_metadata")
+                self.db.commit()
+                logger.info(f"Task {self.task_id}: saved checkpoint paths to metadata: {list(checkpoint_meta.keys())}")
+        except Exception as e:
+            logger.warning(f"Could not save checkpoint paths: {e}")
 
 
 # Register as Celery task with the original name for backward compatibility

@@ -36,6 +36,22 @@ class TrainingTask(Task):
                 db_task_id = args[0]
                 task = db.query(TaskModel).filter(TaskModel.id == db_task_id).first()
                 if task:
+                    task_meta = task.task_metadata or {}
+                    stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
+                    # Don't overwrite 'stopped' or 'paused' — those were set intentionally
+                    # before the SIGTERM that triggered this failure callback.
+                    if task.status in ('stopped', 'paused') or stop_requested:
+                        if stop_requested and task.status not in ('stopped', 'paused'):
+                            task.status = 'stopped'
+                            task.completed_at = datetime.utcnow()
+                            task.error_message = 'Task stopped by user'
+                            task.task_metadata = {
+                                **task_meta,
+                                'stage': 'stopped',
+                            }
+                            db.commit()
+                        logger.info(f"DB task {db_task_id} already has status='{task.status}', skipping on_failure update")
+                        return
                     task.status = 'failed'
                     task.completed_at = datetime.utcnow()
                     task.error_message = str(exc)
@@ -83,42 +99,151 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
     RT-DETR is an end-to-end object detector using transformers.
     """
     from ultralytics import RTDETR
-    
+    from sqlalchemy.orm.attributes import flag_modified
+
     db = SessionLocal()
-    
+
+    # State shared with epoch callback closure
+    state = {
+        "current_epoch": 0,
+        "total_epochs": training_config.get('epochs', 100),
+        "metrics_history": [],
+    }
+
+    def _find_last_pt(trainer):
+        try:
+            if hasattr(trainer, 'last') and trainer.last and Path(trainer.last).exists():
+                return Path(trainer.last)
+            if hasattr(trainer, 'save_dir') and trainer.save_dir:
+                candidate = Path(trainer.save_dir) / 'weights' / 'last.pt'
+                if candidate.exists():
+                    return candidate
+        except Exception:
+            pass
+        return None
+
+    def on_epoch_end(trainer):
+        """Per-epoch callback: update DB progress and check for pause/stop."""
+        current_epoch = trainer.epoch + 1
+        state["current_epoch"] = current_epoch
+        total = state["total_epochs"]
+        progress = 40 + int((current_epoch / total) * 50)
+
+        # Extract basic metrics
+        metrics = {"epoch": current_epoch}
+        try:
+            if hasattr(trainer, 'metrics') and trainer.metrics:
+                for key, val in trainer.metrics.items():
+                    try:
+                        metrics[key] = float(val)
+                    except (TypeError, ValueError):
+                        pass
+            if hasattr(trainer, 'loss_items') and trainer.loss_items is not None:
+                for i, name in enumerate(['box_loss', 'cls_loss', 'dfl_loss']):
+                    if i < len(trainer.loss_items):
+                        metrics[name] = float(trainer.loss_items[i])
+        except Exception as e:
+            logger.warning(f"RT-DETR: could not extract metrics: {e}")
+
+        state["metrics_history"].append(metrics)
+
+        try:
+            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+            if not task:
+                return
+
+            task_meta = task.task_metadata or {}
+            stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
+
+            if task.status in ('stopped', 'paused') or stop_requested:
+                if task.status == 'paused':
+                    final_stage = 'paused'
+                else:
+                    final_stage = 'stopped'
+                    if task.status != 'stopped':
+                        task.status = 'stopped'
+                        task.completed_at = datetime.utcnow()
+                        task.error_message = 'Task stopped by user'
+
+                logger.info(f"RT-DETR task {task_id} entering stage='{final_stage}', stopping training loop")
+                last_pt = _find_last_pt(trainer)
+                updated_meta = {
+                    **task_meta,
+                    "current_epoch": current_epoch,
+                    "stage": final_stage,
+                    "latest_metrics": metrics,
+                    "metrics_history": state["metrics_history"],
+                }
+                if last_pt:
+                    updated_meta["resume_from"] = str(last_pt)
+                    updated_meta["paused_epoch"] = current_epoch
+                    logger.info(f"RT-DETR task {task_id}: saved resume_from={last_pt}")
+                task.task_metadata = updated_meta
+                flag_modified(task, "task_metadata")
+                db.commit()
+                trainer.stop = True
+                return
+
+            task.progress = min(progress, 90)
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "current_epoch": current_epoch,
+                "stage": "training",
+                "latest_metrics": metrics,
+                "metrics_history": state["metrics_history"],
+            }
+            flag_modified(task, "task_metadata")
+            db.commit()
+
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current': current_epoch,
+                    'total': total,
+                    'progress': progress,
+                    'status': f'Training epoch {current_epoch}/{total}',
+                    'metrics': metrics,
+                }
+            )
+            logger.info(f"RT-DETR task {task_id}: epoch {current_epoch}/{total}")
+        except Exception as e:
+            logger.error(f"RT-DETR epoch callback error: {e}")
+
     try:
         logger.info(f"Starting RT-DETR training for task {task_id}")
-        
+
         # Get task from database
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if not task:
             raise ValueError(f"Task {task_id} not found")
-        
+
         # Update task status
         task.status = "running"
         task.started_at = datetime.utcnow()
         task.progress = 0
         task.task_metadata = {
-            **task.task_metadata,
-            "stage": "initializing"
+            **(task.task_metadata or {}),
+            "stage": "initializing",
+            "celery_task_id": self.request.id,
+            "training_config": training_config,
         }
         db.commit()
-        
-        # Load model
+
+        # Load model — support resume from paused checkpoint
         model_type = training_config.get('model_type', 'rtdetr-l.pt')
-        logger.info(f"Loading RT-DETR model: {model_type}")
-        
-        # Ultralytics will automatically download the model if it doesn't exist
-        # Valid RT-DETR models: rtdetr-l.pt, rtdetr-x.pt
+        resume_from = training_config.get('resume_from')
+        logger.info(f"Loading RT-DETR model: {model_type}, resume_from={resume_from}")
+
         try:
-            model = RTDETR(model_type)
+            model = RTDETR(resume_from if resume_from else model_type)
         except Exception as e:
-            logger.error(f"Failed to load model {model_type}: {e}")
-            # Try with just the base name without .pt
+            logger.error(f"Failed to load model: {e}")
             base_name = model_type.replace('.pt', '')
-            logger.info(f"Retrying with model name: {base_name}")
             model = RTDETR(base_name)
-        
+
+        # Register epoch callback
+        model.add_callback("on_train_epoch_end", on_epoch_end)
+
         # Training arguments
         train_args = {
             'data': training_config['data_yaml'],
@@ -135,69 +260,77 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
             'exist_ok': True,
             'verbose': True,
             'save': True,
-            'save_period': 10,  # Save checkpoint every 10 epochs
-            'cache': False,  # Don't cache images in RAM
-            'workers': 8
+            'save_period': -1,  # -1 = disabled; last.pt and best.pt are always written each epoch
+            'cache': False,
+            'workers': 8,
         }
-        
-        # Note: RT-DETR doesn't support custom callbacks like YOLO does
-        # Progress updates will need to be handled differently
-        
-        # W&B integration
-        if training_config.get('use_wandb', False):
-            train_args['project'] = training_config.get('wandb_project', 'rtdetr-training')
-            if training_config.get('wandb_entity'):
-                train_args['entity'] = training_config['wandb_entity']
-        
+
+        if resume_from:
+            train_args['resume'] = True
+
         logger.info(f"Starting RT-DETR training with args: {train_args}")
-        
-        # Train the model
         results = model.train(**train_args)
-        
-        logger.info(f"RT-DETR training completed for task {task_id}")
-        
-        # Update task with completion
+
+        # Re-fetch task after blocking train() returns
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-        if task:
-            task.status = "completed"
-            task.completed_at = datetime.utcnow()
-            task.progress = 100
-            
-            output_base = Path(training_config['output_dir'])
-            best_model_path = output_base / "training" / "weights" / "best.pt"
-            last_model_path = output_base / "training" / "weights" / "last.pt"
-            
-            task.task_metadata = {
-                **task.task_metadata,
-                "stage": "completed",
-                "best_model": str(best_model_path) if best_model_path.exists() else None,
-                "last_model": str(last_model_path) if last_model_path.exists() else None,
-                "results_dir": str(output_base / "training")
-            }
-            db.commit()
-        
-        logger.info(f"RT-DETR training completed successfully for task {task_id}")
-        
+        if not task:
+            return {"status": "completed", "task_id": task_id}
+
+        # If paused/stopped, the callback already set status — don't overwrite
+        if task.status in ('paused', 'stopped'):
+            logger.info(f"RT-DETR task {task_id} finished training loop with status='{task.status}'")
+            return {"status": task.status, "task_id": task_id}
+
+        logger.info(f"RT-DETR training completed for task {task_id}")
+
+        output_base = Path(training_config['output_dir'])
+        best_model_path = output_base / "training" / "weights" / "best.pt"
+        last_model_path = output_base / "training" / "weights" / "last.pt"
+
+        task.status = "completed"
+        task.completed_at = datetime.utcnow()
+        task.progress = 100
+        task.task_metadata = {
+            **(task.task_metadata or {}),
+            "stage": "completed",
+            "best_model": str(best_model_path) if best_model_path.exists() else None,
+            "last_model": str(last_model_path) if last_model_path.exists() else None,
+            "results_dir": str(output_base / "training"),
+        }
+        db.commit()
+
         return {
             "status": "completed",
             "task_id": task_id,
-            "best_model": str(best_model_path) if best_model_path.exists() else None
+            "best_model": str(best_model_path) if best_model_path.exists() else None,
         }
-        
+
     except Exception as e:
         logger.error(f"Error in RT-DETR training task {task_id}: {str(e)}", exc_info=True)
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if task:
-            task.status = "failed"
-            task.completed_at = datetime.utcnow()
-            task.error_message = str(e)
-            task.task_metadata = {
-                **(task.task_metadata or {}),
-                "stage": "failed",
-                "error": str(e)
-            }
-            db.commit()
+            task_meta = task.task_metadata or {}
+            stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
+            if task.status in ('paused', 'stopped') or stop_requested:
+                if stop_requested and task.status not in ('paused', 'stopped'):
+                    task.status = 'stopped'
+                    task.completed_at = datetime.utcnow()
+                    task.error_message = 'Task stopped by user'
+                    task.task_metadata = {
+                        **task_meta,
+                        'stage': 'stopped',
+                    }
+                    db.commit()
+            else:
+                task.status = "failed"
+                task.completed_at = datetime.utcnow()
+                task.error_message = str(e)
+                task.task_metadata = {
+                    **task_meta,
+                    "stage": "failed",
+                    "error": str(e),
+                }
+                db.commit()
         raise
-        
     finally:
         db.close()

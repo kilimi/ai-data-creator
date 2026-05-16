@@ -12,7 +12,9 @@ import {
   CopyPlus,
   Download,
   MoreHorizontal,
+  Pause,
   Pencil,
+  Play,
   RotateCw,
   TestTube,
   Trash2,
@@ -26,6 +28,7 @@ const STATUS_BORDER: Record<string, string> = {
   failed: "border-l-red-500",
   stopped: "border-l-amber-500",
   cancelled: "border-l-amber-500",
+  paused: "border-l-yellow-500",
 };
 
 const STATUS_PILL: Record<string, string> = {
@@ -35,6 +38,7 @@ const STATUS_PILL: Record<string, string> = {
   failed: "bg-red-500/15 text-red-400 border border-red-500/30",
   stopped: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
   cancelled: "bg-amber-500/15 text-amber-400 border border-amber-500/30",
+  paused: "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -44,6 +48,7 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Failed",
   stopped: "Stopped",
   cancelled: "Cancelled",
+  paused: "Paused",
 };
 
 /** Merge metrics from Ultralytics/tensorboard-shaped dicts and epoch snapshots. */
@@ -209,6 +214,8 @@ export interface TrainingCardProps {
   onTestInference?: () => void;
   onDownload?: () => void;
   onStop?: () => void;
+  onPause?: () => void;
+  onResume?: () => void;
   onShowError?: () => void;
 }
 
@@ -224,6 +231,8 @@ export function TrainingCard({
   onTestInference,
   onDownload,
   onStop,
+  onPause,
+  onResume,
   onShowError,
 }: TrainingCardProps) {
   const metadata = task.task_metadata || {};
@@ -232,8 +241,9 @@ export function TrainingCard({
   const isCompleted = status === "completed";
   const isFailed = status === "failed";
   const isStopped = status === "stopped" || status === "cancelled";
+  const isPaused = status === "paused";
   const isPending = status === "pending";
-  const showProgress = isRunning || isPending;
+  const showProgress = isRunning || isPending || isPaused;
   const canRerun = isCompleted || isFailed || isStopped;
 
   const epochsDisplay = (() => {
@@ -369,6 +379,18 @@ export function TrainingCard({
                 Rerun
               </Button>
             )}
+            {isPaused && onResume && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onResume}
+                className="h-8 text-green-400 hover:text-green-300"
+                title="Resume training from last checkpoint"
+              >
+                <Play className="w-3.5 h-3.5 mr-1.5" />
+                Resume
+              </Button>
+            )}
             {isCompleted && onTestInference && (
               <Button
                 variant="outline"
@@ -379,6 +401,18 @@ export function TrainingCard({
               >
                 <TestTube className="w-3.5 h-3.5 mr-1.5" />
                 Test
+              </Button>
+            )}
+            {(isRunning || isPending) && onPause && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onPause}
+                className="h-8 text-yellow-400 hover:text-yellow-300"
+                title="Pause training (saves checkpoint)"
+              >
+                <Pause className="w-3.5 h-3.5 mr-1.5" />
+                Pause
               </Button>
             )}
             {(isRunning || isPending) && onStop && (

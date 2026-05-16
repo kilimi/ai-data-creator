@@ -16,6 +16,7 @@ import {
   Pencil,
   RotateCw,
   Trash2,
+  X,
 } from "lucide-react";
 import {
   formatEvaluationModelDisplay,
@@ -137,6 +138,7 @@ export interface EvaluationCardProps {
   onRerun?: () => void;
   onDelete?: () => void;
   onDownloadCoco?: () => void;
+  onStop?: () => void;
   // compare mode
   compareMode?: boolean;
   selected?: boolean;
@@ -155,6 +157,7 @@ export function EvaluationCard({
   onRerun,
   onDelete,
   onDownloadCoco,
+  onStop,
   compareMode,
   selected,
   onToggleSelect,
@@ -337,6 +340,18 @@ export function EvaluationCard({
                 <span className="ml-1 text-xs">
                   {isExpanded ? "Hide" : "Datasets"}
                 </span>
+              </Button>
+            )}
+            {(aggregateStatus === 'running' || aggregateStatus === 'pending') && !isChild && onStop && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onStop}
+                className="h-8 text-red-400 hover:text-red-300"
+                title="Stop evaluation"
+              >
+                <X className="w-3.5 h-3.5 mr-1.5" />
+                Stop
               </Button>
             )}
             {canRerun && onRerun && (

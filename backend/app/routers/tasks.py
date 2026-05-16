@@ -21,14 +21,19 @@ celery_app = Celery('tasks', broker='redis://redis:6379/0', backend='redis://red
 
 # Heavy keys omitted from list views (full detail via GET /tasks/{id} or evaluation-blobs).
 _LIST_METADATA_RESULT_KEYS_DROP = frozenset(
-    {'predictions', 'all_ground_truth', 'confusion_matrix_samples'}
+    {'predictions', 'all_ground_truth', 'confusion_matrix_samples', 'image_id_to_filename'}
+)
+
+# Top-level task_metadata keys that can be very large (e.g. full COCO JSON stored inline).
+_LIST_METADATA_TOP_KEYS_DROP = frozenset(
+    {'coco_data', 'annotations_data', 'images_data'}
 )
 
 
 def _strip_task_metadata_for_list(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not meta or not isinstance(meta, dict):
         return meta
-    out = dict(meta)
+    out = {k: v for k, v in meta.items() if k not in _LIST_METADATA_TOP_KEYS_DROP}
     res = out.get('results')
     if isinstance(res, dict):
         out['results'] = {
@@ -217,7 +222,7 @@ async def get_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/tasks/{task_id}/cancel")
 async def cancel_task(task_id: int, db: Session = Depends(get_db)):
-    """Cancel a task and terminate its Celery process"""
+    """Request task stop and terminate its Celery process."""
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -230,48 +235,137 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
     if task.task_metadata and isinstance(task.task_metadata, dict):
         celery_task_id = task.task_metadata.get('celery_task_id')
 
-    # Graceful stop for training-like tasks: let the training loop observe the
-    # DB status change ('stopped') and exit cleanly so checkpoints are flushed.
-    training_task_types = {"yolo_training", "training", "rtdetr_training"}
-    use_graceful_stop = (task.task_type in training_task_types)
-    
-    # Update task status in database FIRST so training loop can detect it
-    task.status = 'stopped'
-    task.completed_at = datetime.utcnow()
-    task.error_message = 'Task stopped by user'
+    # For running tasks, record stop-request metadata first and let the worker
+    # finalize status='stopped' when it actually exits.
+    # For pending tasks, stop immediately since they have not started.
     if task.task_metadata is None:
         task.task_metadata = {}
     if isinstance(task.task_metadata, dict):
         task.task_metadata["stop_requested_at"] = datetime.utcnow().isoformat()
-        task.task_metadata["stop_mode"] = "graceful" if use_graceful_stop else "force"
+        task.task_metadata["stop_mode"] = "graceful"
+        task.task_metadata["stage"] = "stop_requested"
         flag_modified(task, "task_metadata")
+
+    if task.status == 'pending':
+        task.status = 'stopped'
+        task.completed_at = datetime.utcnow()
+        task.error_message = 'Task stopped by user before start'
+
     db.commit()
-    
-    # For non-training tasks, force termination as before.
-    # For training tasks we avoid immediate hard-kill to preserve checkpoints.
+
+    # Always send SIGTERM to the Celery worker to interrupt model.train().
+    # The DB status is already 'stopped', so exception handlers in the worker
+    # will not overwrite it to 'failed'.
     celery_task_revoked = False
-    if celery_task_id and not use_graceful_stop:
+    if celery_task_id:
         try:
-            # Use SIGTERM first for graceful shutdown, then SIGKILL as fallback
             celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')
             logger.info(f"Sent SIGTERM to Celery task {celery_task_id} for task {task_id}")
-            
-            # Also try immediate revoke with SIGKILL as backup
-            import time
-            time.sleep(0.5)  # Give it a moment to respond to SIGTERM
-            celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
-            logger.info(f"Sent SIGKILL to Celery task {celery_task_id} for task {task_id}")
             celery_task_revoked = True
         except Exception as e:
             logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
-    
+
     return {
         "success": True,
         "message": "Task stop requested successfully",
         "task_id": task_id,
+        "status": task.status,
         "celery_task_revoked": celery_task_revoked,
-        "stop_mode": "graceful" if use_graceful_stop else "force"
     }
+
+
+@router.patch("/tasks/{task_id}/pause")
+async def pause_task(task_id: int, db: Session = Depends(get_db)):
+    """Pause a running training task. The training loop will detect this at the next epoch boundary,
+    save last.pt, store resume_from in metadata, and stop cleanly."""
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != 'running':
+        raise HTTPException(status_code=400, detail=f"Cannot pause task with status '{task.status}' (must be 'running')")
+
+    task.status = 'paused'
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    if isinstance(task.task_metadata, dict):
+        task.task_metadata["pause_requested_at"] = datetime.utcnow().isoformat()
+        flag_modified(task, "task_metadata")
+    db.commit()
+
+    return {"success": True, "message": "Pause requested — training will stop at next epoch boundary", "task_id": task_id}
+
+
+@router.patch("/tasks/{task_id}/resume")
+async def resume_task(task_id: int, db: Session = Depends(get_db)):
+    """Resume a paused training task by dispatching a new Celery task continuing from last.pt."""
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != 'paused':
+        raise HTTPException(status_code=400, detail=f"Cannot resume task with status '{task.status}' (must be 'paused')")
+
+    metadata = task.task_metadata or {}
+    resume_from = metadata.get("resume_from")
+    if not resume_from:
+        raise HTTPException(status_code=400, detail="No resume checkpoint found. The training may not have saved a checkpoint yet.")
+
+    # Build the original training config from metadata
+    training_config = metadata.get("training_config") or {}
+    # Inject resume path into config
+    training_config = {**training_config, "resume_from": resume_from}
+
+    task_type = task.task_type  # 'yolo_training' or 'rtdetr_training'
+
+    # Create a new task record for the resumed run
+    from app.models import Task as TaskModel
+    new_task = TaskModel(
+        name=f"{task.name} (resumed)",
+        task_type=task_type,
+        status="pending",
+        progress=0,
+        project_id=task.project_id,
+        task_metadata={
+            "training_config": training_config,
+            "stage": "pending",
+            "resumed_from_task_id": task_id,
+            "resume_from": resume_from,
+            "paused_epoch": metadata.get("paused_epoch"),
+        },
+    )
+    db.add(new_task)
+    db.commit()
+    db.refresh(new_task)
+
+    # Dispatch Celery task
+    from app.celery_app import celery_app as _celery
+    if task_type == 'rtdetr_training':
+        celery_result = _celery.send_task(
+            'app.tasks.training_tasks.train_rtdetr_model',
+            args=[new_task.id, training_config],
+        )
+    else:
+        celery_result = _celery.send_task(
+            'app.tasks.training_tasks.train_yolo_model',
+            args=[new_task.id, training_config],
+        )
+
+    new_task.task_metadata = {
+        **(new_task.task_metadata or {}),
+        "celery_task_id": celery_result.id,
+    }
+    flag_modified(new_task, "task_metadata")
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Training resumed as a new task",
+        "original_task_id": task_id,
+        "new_task_id": new_task.id,
+        "celery_task_id": celery_result.id,
+    }
+
 
 
 @router.patch("/tasks/{task_id}")

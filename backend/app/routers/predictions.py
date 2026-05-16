@@ -229,6 +229,7 @@ class EvaluationRequest(BaseModel):
     checkpoint: str = "best"  # "best" or "last"
     conf_threshold: float = 0.25
     iou_threshold: float = 0.45
+    nms_iou_threshold: float = 0.45  # IoU threshold for Non-Maximum Suppression
     evaluation_name: Optional[str] = None  # Custom name for evaluation
     # Grid inference settings
     use_grid: bool = False  # Enable grid-based inference

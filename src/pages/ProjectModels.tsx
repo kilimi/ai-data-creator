@@ -305,6 +305,37 @@ export default function ProjectModels() {
     }
   };
 
+  const handlePauseTask = async (task: any) => {
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}/pause`, { method: 'PATCH' });
+      if (response.ok) {
+        toast({ title: "Training Paused", description: `Task "${task.name}" will pause at the next epoch boundary and save a checkpoint.` });
+        fetchTrainingTasks();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to pause task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to pause training task", variant: "destructive" });
+    }
+  };
+
+  const handleResumeTask = async (task: any) => {
+    try {
+      const response = await fetch(`http://localhost:9999/tasks/${task.id}/resume`, { method: 'PATCH' });
+      if (response.ok) {
+        const data = await response.json();
+        toast({ title: "Training Resumed", description: `New training task #${data.new_task_id} started from saved checkpoint.` });
+        fetchTrainingTasks();
+      } else {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to resume task');
+      }
+    } catch (error) {
+      toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to resume training task", variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -450,6 +481,8 @@ export default function ProjectModels() {
                 onTestInference={() => setTestInference({ id: task.id, name: task.name })}
                 onDownload={() => setDownloadModel({ id: task.id, name: task.name })}
                 onStop={() => handleStopTask(task)}
+                onPause={() => handlePauseTask(task)}
+                onResume={() => handleResumeTask(task)}
                 onShowError={() => setSelectedTaskError({ name: task.name, error: task.error_message || 'Unknown error', id: task.id })}
               />
             );

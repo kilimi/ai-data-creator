@@ -7,7 +7,7 @@ export interface Task {
   name: string;
   description: string;
   task_type: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stopped' | 'paused';
   progress: number;
   created_at: string;
   started_at?: string;
@@ -110,7 +110,7 @@ export function useTasks(projectId?: number) {
   // Poll only when visible (popover open) OR there are active tasks
   useEffect(() => {
     if (!isConfigured || !api || isExporting) return;
-    const shouldPoll = polling || activeTasks.length > 0;
+    const shouldPoll = polling || activeTasks.some(t => t.status === 'pending' || t.status === 'running');
     if (!shouldPoll) return;
 
     const interval = setInterval(() => {
@@ -132,7 +132,7 @@ export function useTasks(projectId?: number) {
     fetchAllTasks,
     cancelTask,
     getTaskById,
-    activeTaskCount: activeTasks.length,
+    activeTaskCount: activeTasks.filter(t => t.status === 'pending' || t.status === 'running').length,
     /** Call setPolling(true) when the tasks UI is visible */
     setPolling,
   };

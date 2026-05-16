@@ -5,6 +5,7 @@ These functions break down the training logic into smaller, testable units.
 import os
 import shutil
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -118,9 +119,40 @@ class ProgressCallback:
         try:
             task = self.db.query(TaskModel).filter(TaskModel.id == self.task_id).first()
             if task:
-                # Check if task has been stopped
-                if task.status == 'stopped':
-                    logger.info(f"Task {self.task_id} has been stopped, stopping training")
+                task_meta = task.task_metadata or {}
+                stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
+
+                # Check if task has been stopped/paused or stop was requested.
+                if task.status in ('stopped', 'paused') or stop_requested:
+                    if task.status == 'paused':
+                        final_stage = 'paused'
+                    else:
+                        final_stage = 'stopped'
+                        if task.status != 'stopped':
+                            task.status = 'stopped'
+                            task.completed_at = datetime.utcnow()
+                            task.error_message = 'Task stopped by user'
+
+                    logger.info(f"Task {self.task_id} entering stage='{final_stage}', stopping training loop")
+                    last_pt_path = self._find_last_pt(trainer)
+                    best_pt_path = self._find_best_pt(trainer)
+                    updated_meta = {
+                        **task_meta,
+                        "current_epoch": self.current_epoch,
+                        "stage": final_stage,
+                        "latest_metrics": metrics,
+                        "metrics_history": self.metrics_history,
+                    }
+                    if last_pt_path:
+                        updated_meta["resume_from"] = str(last_pt_path)
+                        updated_meta["last_model"] = str(last_pt_path)
+                        updated_meta["paused_epoch"] = self.current_epoch
+                        logger.info(f"Task {self.task_id}: saved resume_from={last_pt_path}")
+                    if best_pt_path:
+                        updated_meta["best_model"] = str(best_pt_path)
+                        logger.info(f"Task {self.task_id}: saved best_model={best_pt_path}")
+                    task.task_metadata = updated_meta
+                    self.db.commit()
                     trainer.stop = True
                     return
                 
@@ -148,6 +180,32 @@ class ProgressCallback:
                 logger.info(f"Task {self.task_id}: Completed epoch {self.current_epoch}/{self.total_epochs}")
         except Exception as e:
             logger.error(f"Error updating progress: {e}")
+
+    def _find_last_pt(self, trainer) -> Optional[Path]:
+        """Locate last.pt for the current training run"""
+        try:
+            if hasattr(trainer, 'last') and trainer.last and Path(trainer.last).exists():
+                return Path(trainer.last)
+            if hasattr(trainer, 'save_dir') and trainer.save_dir:
+                candidate = Path(trainer.save_dir) / 'weights' / 'last.pt'
+                if candidate.exists():
+                    return candidate
+        except Exception as e:
+            logger.warning(f"Could not locate last.pt: {e}")
+        return None
+
+    def _find_best_pt(self, trainer) -> Optional[Path]:
+        """Locate best.pt for the current training run"""
+        try:
+            if hasattr(trainer, 'best') and trainer.best and Path(trainer.best).exists():
+                return Path(trainer.best)
+            if hasattr(trainer, 'save_dir') and trainer.save_dir:
+                candidate = Path(trainer.save_dir) / 'weights' / 'best.pt'
+                if candidate.exists():
+                    return candidate
+        except Exception as e:
+            logger.warning(f"Could not locate best.pt: {e}")
+        return None
 
 
 def setup_training_directories(project_id: int, task_id: int) -> Dict[str, Path]:
