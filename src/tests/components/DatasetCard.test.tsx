@@ -38,7 +38,7 @@ const mockApi = {
   moveDataset: vi.fn(),
 };
 
-const mockDataset: Dataset = {
+const mockDataset = {
   id: "123",
   name: "Test Dataset",
   description: "Test description",
