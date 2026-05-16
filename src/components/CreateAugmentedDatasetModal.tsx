@@ -430,7 +430,112 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     }));
   };
 
-  // Reset form when modal opens
+  // ── DatasetEvalPicker integration (shared with Train / Evaluate) ─────────
+  const pickerDatasets: PickerDataset[] = useMemo(() => {
+    return datasets.map(d => {
+      const sel = datasetSelections.find(s => s.dataset.id === d.id);
+      const annotationFilesFromProps = (d.annotation_files || []).map(f => ({
+        id: String(f.id),
+        name: f.name || f.file_name,
+        classes: [] as string[],
+      }));
+      const annotationFiles = sel && sel.annotationFiles.length > 0
+        ? sel.annotationFiles.map(a => ({
+            id: String(a.id),
+            name: a.name,
+            classes: [] as string[],
+            annotationCount: a.annotation_count,
+          }))
+        : annotationFilesFromProps;
+      const collections = sel
+        ? sel.imageCollections.map(c => ({
+            id: String(c.id),
+            name: c.name,
+            isDefault: (c as any).is_default,
+            imageCount: (c as any).totalImageCount ?? c.images?.length,
+          }))
+        : [];
+      return {
+        id: d.id,
+        name: d.name,
+        imageCount: d.image_count ?? 0,
+        annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
+        thumbnailUrl: d.thumbnailUrl,
+        annotationFiles,
+        collections,
+        tags: d.tags,
+      };
+    });
+  }, [datasets, datasetSelections]);
+
+  const pickerGroups: PickerGroup[] = useMemo(
+    () => datasetGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      datasetIds: (g.datasets || []).map(d => d.id),
+    })),
+    [datasetGroups]
+  );
+
+  const pickerValue: PickerDatasetSelection[] = useMemo(
+    () => datasetSelections.map(s => ({
+      datasetId: s.dataset.id,
+      annotationFileId: s.annotationFileId ?? null,
+      collectionId: s.collectionId ?? null,
+    })),
+    [datasetSelections]
+  );
+
+  const handlePickerChange = (next: PickerDatasetSelection[]) => {
+    setDatasetSelections(prev => {
+      const prevById = new Map(prev.map(s => [s.dataset.id, s]));
+      const updated: DatasetSelection[] = [];
+      const toFetch: { selectionId: string; datasetId: number; needAnnotations: boolean }[] = [];
+
+      next.forEach(n => {
+        const existing = prevById.get(n.datasetId);
+        if (existing) {
+          updated.push({
+            ...existing,
+            annotationFileId: n.annotationFileId ?? null,
+            collectionId: n.collectionId ?? null,
+          });
+        } else {
+          const dataset = datasets.find(d => d.id === n.datasetId)
+            || datasetGroups.flatMap(g => g.datasets || []).find(d => d.id === n.datasetId);
+          if (!dataset) return;
+          const id = `${Date.now()}-${Math.random()}-${n.datasetId}`;
+          updated.push({
+            id,
+            dataset,
+            collectionId: n.collectionId ?? null,
+            imageCollections: [],
+            loadingCollections: true,
+            annotationFileId: n.annotationFileId ?? null,
+            annotationFiles: [],
+            loadingAnnotations: (dataset.annotation_count || 0) > 0,
+          });
+          toFetch.push({
+            selectionId: id,
+            datasetId: dataset.id,
+            needAnnotations: (dataset.annotation_count || 0) > 0,
+          });
+        }
+      });
+
+      // Trigger lazy fetches for newly added selections
+      toFetch.forEach(({ selectionId, datasetId, needAnnotations }) => {
+        setTimeout(() => {
+          fetchImageCollectionsForSelection(selectionId, datasetId);
+          if (needAnnotations) fetchAnnotationFilesForSelection(selectionId, datasetId);
+        }, 0);
+      });
+
+      return updated;
+    });
+  };
+
+
   React.useEffect(() => {
     if (open) {
       setDatasetName('');
