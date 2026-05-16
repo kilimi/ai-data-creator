@@ -219,7 +219,7 @@ describe("DatasetCard", () => {
 
     render(
       <MemoryRouter>
-        <DatasetCard dataset={invalidDataset} onDatasetMoved={onDatasetMoved} />
+        <DatasetCard dataset={invalidDataset as unknown as Dataset} onDatasetMoved={onDatasetMoved} />
       </MemoryRouter>
     );
 
