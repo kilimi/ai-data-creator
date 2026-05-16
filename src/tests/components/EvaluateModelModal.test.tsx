@@ -296,7 +296,7 @@ describe('EvaluateModelModal - API Integration', () => {
           project_id: 1,
           annotation_files: [{ id: 'file1', name: 'annotations.json' }],
         },
-      ],
+      ] as any,
       datasetGroups: [],
       onEvaluate: mockOnEvaluate,
     };
