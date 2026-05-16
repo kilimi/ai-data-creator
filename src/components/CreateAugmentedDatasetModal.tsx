@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -21,6 +21,13 @@ import {
 import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users } from 'lucide-react';
 import { Dataset, DatasetGroup, ImageCollection } from '@/types';
 import { getApiBaseUrl } from "@/config/api";
+import {
+  DatasetEvalPicker,
+  type DatasetSelection as PickerDatasetSelection,
+  type PickerDataset,
+  type PickerGroup,
+} from "@/components/DatasetEvalPicker";
+
 
 interface CreateAugmentedDatasetModalProps {
   open: boolean;
@@ -423,7 +430,112 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     }));
   };
 
-  // Reset form when modal opens
+  // ── DatasetEvalPicker integration (shared with Train / Evaluate) ─────────
+  const pickerDatasets: PickerDataset[] = useMemo(() => {
+    return datasets.map(d => {
+      const sel = datasetSelections.find(s => s.dataset.id === d.id);
+      const annotationFilesFromProps = (d.annotation_files || []).map(f => ({
+        id: String(f.id),
+        name: f.name || f.file_name,
+        classes: [] as string[],
+      }));
+      const annotationFiles = sel && sel.annotationFiles.length > 0
+        ? sel.annotationFiles.map(a => ({
+            id: String(a.id),
+            name: a.name,
+            classes: [] as string[],
+            annotationCount: a.annotation_count,
+          }))
+        : annotationFilesFromProps;
+      const collections = sel
+        ? sel.imageCollections.map(c => ({
+            id: String(c.id),
+            name: c.name,
+            isDefault: (c as any).is_default,
+            imageCount: (c as any).totalImageCount ?? c.images?.length,
+          }))
+        : [];
+      return {
+        id: d.id,
+        name: d.name,
+        imageCount: d.image_count ?? 0,
+        annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
+        thumbnailUrl: d.thumbnailUrl,
+        annotationFiles,
+        collections,
+        tags: d.tags,
+      };
+    });
+  }, [datasets, datasetSelections]);
+
+  const pickerGroups: PickerGroup[] = useMemo(
+    () => datasetGroups.map(g => ({
+      id: g.id,
+      name: g.name,
+      datasetIds: (g.datasets || []).map(d => d.id),
+    })),
+    [datasetGroups]
+  );
+
+  const pickerValue: PickerDatasetSelection[] = useMemo(
+    () => datasetSelections.map(s => ({
+      datasetId: s.dataset.id,
+      annotationFileId: s.annotationFileId ?? null,
+      collectionId: s.collectionId ?? null,
+    })),
+    [datasetSelections]
+  );
+
+  const handlePickerChange = (next: PickerDatasetSelection[]) => {
+    setDatasetSelections(prev => {
+      const prevById = new Map(prev.map(s => [s.dataset.id, s]));
+      const updated: DatasetSelection[] = [];
+      const toFetch: { selectionId: string; datasetId: number; needAnnotations: boolean }[] = [];
+
+      next.forEach(n => {
+        const existing = prevById.get(n.datasetId);
+        if (existing) {
+          updated.push({
+            ...existing,
+            annotationFileId: n.annotationFileId ?? null,
+            collectionId: n.collectionId ?? null,
+          });
+        } else {
+          const dataset = datasets.find(d => d.id === n.datasetId)
+            || datasetGroups.flatMap(g => g.datasets || []).find(d => d.id === n.datasetId);
+          if (!dataset) return;
+          const id = `${Date.now()}-${Math.random()}-${n.datasetId}`;
+          updated.push({
+            id,
+            dataset,
+            collectionId: n.collectionId ?? null,
+            imageCollections: [],
+            loadingCollections: true,
+            annotationFileId: n.annotationFileId ?? null,
+            annotationFiles: [],
+            loadingAnnotations: (dataset.annotation_count || 0) > 0,
+          });
+          toFetch.push({
+            selectionId: id,
+            datasetId: dataset.id,
+            needAnnotations: (dataset.annotation_count || 0) > 0,
+          });
+        }
+      });
+
+      // Trigger lazy fetches for newly added selections
+      toFetch.forEach(({ selectionId, datasetId, needAnnotations }) => {
+        setTimeout(() => {
+          fetchImageCollectionsForSelection(selectionId, datasetId);
+          if (needAnnotations) fetchAnnotationFilesForSelection(selectionId, datasetId);
+        }, 0);
+      });
+
+      return updated;
+    });
+  };
+
+
   React.useEffect(() => {
     if (open) {
       setDatasetName('');
@@ -669,245 +781,26 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>Source Datasets</Label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="outline" size="sm" disabled={datasets.length === 0}>
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add Dataset
-                    <ChevronDown className="w-4 h-4 ml-2" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger className="flex items-center cursor-pointer">
-                      <Database className="w-4 h-4 mr-2" />
-                      Add Dataset
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
-                      {datasets.length === 0 ? (
-                        <DropdownMenuItem disabled>
-                          No datasets available
-                        </DropdownMenuItem>
-                      ) : (
-                        datasets.map(dataset => (
-                          <DropdownMenuItem 
-                            key={dataset.id}
-                            onClick={() => addDatasetSelection(dataset)}
-                            className="flex items-center cursor-pointer"
-                          >
-                            <Database className="w-4 h-4 mr-2" />
-                            <span className="flex-1">{dataset.name}</span>
-                            <Badge variant="outline" className="text-xs ml-2">
-                              {dataset.image_count || 0} imgs
-                            </Badge>
-                          </DropdownMenuItem>
-                        ))
-                      )}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger 
-                      disabled={datasetGroups.length === 0}
-                      className="flex items-center cursor-pointer"
-                    >
-                      <Users className="w-4 h-4 mr-2" />
-                      Add Dataset Group
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent>
-                      {datasetGroups.length === 0 ? (
-                        <DropdownMenuItem disabled>
-                          No dataset groups available
-                        </DropdownMenuItem>
-                      ) : (
-                        datasetGroups.map(group => (
-                          <DropdownMenuItem 
-                            key={group.id}
-                            onClick={() => addDatasetGroupSelection(group)}
-                            className="flex items-center cursor-pointer"
-                          >
-                            <Users className="w-4 h-4 mr-2" />
-                            {group.name} ({group.datasets?.length || 0} datasets)
-                          </DropdownMenuItem>
-                        ))
-                      )}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              {datasetSelections.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {datasetSelections.length} selected · {datasetSelections.filter(s => s.annotationFileId).length} with annotations
+                </span>
+              )}
             </div>
-            
-            {datasetSelections.length === 0 ? (
+
+            {datasets.length === 0 && datasetGroups.length === 0 ? (
               <Card className="p-6 text-center border-dashed">
                 <Database className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-muted-foreground">No datasets added</p>
-                <p className="text-sm text-muted-foreground">Add datasets to begin augmentation</p>
+                <p className="text-muted-foreground">No datasets available</p>
               </Card>
             ) : (
-              <div className="space-y-3 max-h-80 overflow-y-auto border rounded-md p-3">
-                {datasetSelections.map((selection, index) => (
-                  <Card key={selection.id}>
-                    <CardHeader className="py-2 px-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm flex items-center gap-2">
-                          <Database className="h-4 w-4" />
-                          {selection.fromGroup ? (
-                            <div className="flex items-center gap-2">
-                              <span>{selection.dataset.name}</span>
-                              <Badge variant="secondary" className="text-xs">
-                                <Users className="h-3 w-3 mr-1" />
-                                {selection.groupName}
-                              </Badge>
-                            </div>
-                          ) : (
-                            <span>Dataset {index + 1}</span>
-                          )}
-                        </CardTitle>
-                        <Button
-                          type="button"
-                          onClick={() => removeDatasetSelection(selection.id)}
-                          size="icon"
-                          variant="ghost"
-                          className="h-6 w-6"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="py-2 px-3 space-y-3">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {/* Dataset Selector */}
-                        <div className="space-y-1">
-                          <Label className="text-xs">Dataset</Label>
-                          <Select 
-                            value={selection.dataset.id.toString()} 
-                            onValueChange={(value) => {
-                              const dataset = datasets.find(d => d.id.toString() === value);
-                              if (dataset) {
-                                updateDatasetSelection(selection.id, 'dataset', dataset);
-                              }
-                            }}
-                          >
-                            <SelectTrigger className="h-8 text-sm">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {datasets.map(dataset => (
-                                <SelectItem key={dataset.id} value={dataset.id.toString()}>
-                                  <div className="flex items-center gap-2">
-                                    <span>{dataset.name}</span>
-                                    <Badge variant="outline" className="text-xs">
-                                      {dataset.image_count || 0} imgs
-                                    </Badge>
-                                  </div>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {/* Image Collection Selector */}
-                        <div className="space-y-1">
-                          <Label className="text-xs">Image Collection</Label>
-                          {selection.loadingCollections ? (
-                            <div className="flex items-center gap-2 h-8 text-xs text-muted-foreground">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              Loading...
-                            </div>
-                          ) : selection.imageCollections.length > 0 ? (
-                            <Select
-                              value={selection.collectionId || ""}
-                              onValueChange={(value) => updateDatasetSelection(selection.id, 'collectionId', value)}
-                            >
-                              <SelectTrigger className="h-8 text-sm">
-                                <SelectValue placeholder="Select collection" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {selection.imageCollections.map(collection => (
-                                  <SelectItem key={collection.id} value={String(collection.id)}>
-                                    <div className="flex items-center gap-2">
-                                      <span>{collection.name}</span>
-                                      <Badge variant="outline" className="text-xs">
-                                        {collection.images?.length || 0} imgs
-                                      </Badge>
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <div className="flex items-center h-8 text-xs text-muted-foreground italic">
-                              No image collections available
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Annotation File Selector */}
-                        <div className="space-y-1">
-                          <Label className="text-xs">Annotation File</Label>
-                          {selection.loadingAnnotations ? (
-                            <div className="flex items-center gap-2 h-8 text-xs text-muted-foreground">
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                              Loading...
-                            </div>
-                          ) : selection.annotationFiles.length > 0 ? (
-                            <Select 
-                              value={selection.annotationFileId || "none"} 
-                              onValueChange={(value) => {
-                                updateDatasetSelection(selection.id, 'annotationFileId', value === "none" ? null : value);
-                              }}
-                            >
-                              <SelectTrigger className="h-8 text-sm">
-                                <SelectValue placeholder="No annotations" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="none">
-                                  No annotations
-                                </SelectItem>
-                                {selection.annotationFiles.map(file => (
-                                  <SelectItem key={file.id} value={file.id.toString()}>
-                                    <div className="flex items-center gap-2">
-                                      <span>{file.name}</span>
-                                      {file.annotation_count !== undefined && (
-                                        <Badge variant="outline" className="text-xs">
-                                          {file.annotation_count} ann
-                                        </Badge>
-                                      )}
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <div className="flex items-center h-8 text-xs text-muted-foreground italic">
-                              No annotation files available
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Info row */}
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{selection.dataset.image_count || 0} images</span>
-                        {selection.annotationFileId && (
-                          <Badge variant="default" className="text-xs">
-                            <Box className="w-3 h-3 mr-1" />
-                            Annotations included
-                          </Badge>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-            
-            {datasetSelections.length > 0 && (
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>{datasetSelections.length} dataset selection(s)</span>
-                <span className="text-primary">
-                  {datasetSelections.filter(s => s.annotationFileId).length} with annotations
-                </span>
-              </div>
+              <DatasetEvalPicker
+                datasets={pickerDatasets}
+                groups={pickerGroups}
+                modelClasses={[]}
+                value={pickerValue}
+                onChange={handlePickerChange}
+              />
             )}
           </div>
 
