@@ -101,7 +101,7 @@ const mockApi = {
 const mockToast = vi.fn();
 
 // Test data
-const mockDataset1: Dataset = {
+const mockDataset1 = {
   id: "1",
   name: "Dataset 1",
   description: "Test dataset 1",
@@ -112,9 +112,9 @@ const mockDataset1: Dataset = {
   tags: [],
   created_at: "2024-01-01T00:00:00Z",
   updated_at: "2024-01-02T00:00:00Z",
-};
+} as unknown as Dataset;
 
-const mockDataset2: Dataset = {
+const mockDataset2 = {
   id: "2",
   name: "Dataset 2",
   description: "Test dataset 2",
@@ -125,9 +125,9 @@ const mockDataset2: Dataset = {
   tags: [],
   created_at: "2024-01-01T00:00:00Z",
   updated_at: "2024-01-02T00:00:00Z",
-};
+} as unknown as Dataset;
 
-const mockDatasetGroup: DatasetGroup = {
+const mockDatasetGroup = {
   id: "group1",
   name: "Test Group",
   description: "Test group",
@@ -135,7 +135,7 @@ const mockDatasetGroup: DatasetGroup = {
   datasets: [mockDataset1, mockDataset2],
   created_at: "2024-01-01T00:00:00Z",
   updated_at: "2024-01-02T00:00:00Z",
-};
+} as unknown as DatasetGroup;
 
 describe("TrainModelModal", () => {
   beforeEach(() => {
