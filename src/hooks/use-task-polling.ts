@@ -68,7 +68,7 @@ export function useTaskPolling({
     if (!api || !isMountedRef.current) return;
 
     try {
-      const response = await api.getTask(taskId);
+      const response = await api.getTask(Number(taskId));
       
       if (!response.success || !response.data) {
         return;

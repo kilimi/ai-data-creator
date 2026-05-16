@@ -82,7 +82,7 @@ export function useTask(taskId: number | string | null | undefined, options: Use
     if (!taskId || !api || !isMountedRef.current) return;
     
     try {
-      const response = await api.getTask(taskId);
+      const response = await api.getTask(Number(taskId));
       
       if (!isMountedRef.current) return;
       

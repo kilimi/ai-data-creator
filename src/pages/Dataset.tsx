@@ -1377,12 +1377,14 @@ export default function Dataset() {
           }}
         >
           <AlertDialogContent
-            onPointerDownOutside={(e) => {
-              if (isDeletingCollection) e.preventDefault();
-            }}
-            onEscapeKeyDown={(e) => {
-              if (isDeletingCollection) e.preventDefault();
-            }}
+            {...({
+              onPointerDownOutside: (e: any) => {
+                if (isDeletingCollection) e.preventDefault();
+              },
+              onEscapeKeyDown: (e: KeyboardEvent) => {
+                if (isDeletingCollection) e.preventDefault();
+              },
+            } as any)}
           >
             <AlertDialogHeader>
               <AlertDialogTitle>Delete this image layer?</AlertDialogTitle>

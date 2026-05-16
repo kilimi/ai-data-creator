@@ -38,7 +38,7 @@ const mockApi = {
   moveDataset: vi.fn(),
 };
 
-const mockDataset: Dataset = {
+const mockDataset = {
   id: "123",
   name: "Test Dataset",
   description: "Test description",
@@ -63,7 +63,7 @@ const mockDataset: Dataset = {
   thumbnailUrl: "/thumb.jpg",
   created_at: "2024-01-01T00:00:00Z",
   updated_at: "2024-01-02T00:00:00Z",
-};
+} as unknown as Dataset;
 
 describe("DatasetCard", () => {
   beforeEach(() => {
@@ -219,7 +219,7 @@ describe("DatasetCard", () => {
 
     render(
       <MemoryRouter>
-        <DatasetCard dataset={invalidDataset} onDatasetMoved={onDatasetMoved} />
+        <DatasetCard dataset={invalidDataset as unknown as Dataset} onDatasetMoved={onDatasetMoved} />
       </MemoryRouter>
     );
 
