@@ -1,74 +1,55 @@
-# NVIDIA CUDA-enabled Dockerfile for YOLO Training
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+# Multi-stage build for the Celery training worker.
+# Runtime is the official PyTorch+CUDA image so torch/torchvision are pre-installed
+# with matching CUDA ABI. Weights live on a mounted volume.
 
-# Prevent interactive prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+# ---------- Stage 1: builder ----------
+FROM python:3.11-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc g++ cmake git wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY requirements.txt .
+
+# torch/torchvision come from the PyTorch base — strip them to avoid CPU-wheel overrides.
+RUN pip install --upgrade pip setuptools wheel \
+ && grep -viE '^(torch|torchvision)([<>=!~ ].*)?$' requirements.txt > /tmp/req.txt \
+ && pip install --default-timeout=1000 --retries 5 \
+        --prefix=/install -r /tmp/req.txt \
+ && pip install --default-timeout=1000 --retries 5 \
+        --prefix=/install 'ultralytics>=8.0.0' 'opencv-python-headless>=4.7.0' \
+        'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0'
+
+# ---------- Stage 2: runtime ----------
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/opt/lai/lib/python3.11/site-packages \
+    PATH=/opt/lai/bin:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1 \
+        libfontconfig1 libice6 git curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python 3.11 and system dependencies
-RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-dev \
-    python3-pip \
-    gcc \
-    g++ \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    libfontconfig1 \
-    libice6 \
-    git \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set Python 3.11 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-
-# Upgrade pip
-RUN python -m pip install --upgrade pip setuptools wheel
-
-# Install PyTorch built for CUDA 12.1 to match base image (nvidia/cuda:12.1.0).
-# Using the official cu121 index ensures matching CUDA ABI and GPU kernel support.
-# (Plain "pip install torch" can pull a CPU or wrong-CUDA wheel and cause
-#  "no kernel image is available for execution on the device".)
-RUN pip install --no-cache-dir \
-    torch==2.5.1 \
-    torchvision==0.20.1 \
-    --index-url https://download.pytorch.org/whl/cu121 
-
-# Install essential scientific packages
-RUN pip install --no-cache-dir \
-    opencv-python-headless>=4.7.0 \
-    pillow>=9.0.0 \
-    scipy>=1.10.0
-
-# Copy requirements and install dependencies (use cu121 index so torch/torchvision
-# are not replaced by CPU builds from PyPI)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    --extra-index-url https://download.pytorch.org/whl/cu121
-
-# Install ultralytics with all dependencies
-RUN pip install --no-cache-dir ultralytics>=8.0.0
-
-# Copy the application
+COPY --from=builder /install /opt/lai
 COPY . .
 
-# Create directories for training outputs
-RUN mkdir -p /app/projects /app/data
+RUN mkdir -p /app/projects /app/data /app/models /app/ai_models/depth_estimation /app/runs
 
-# Expose the port
 EXPOSE 8000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health-check')" || exit 1
 
-# Command to run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
