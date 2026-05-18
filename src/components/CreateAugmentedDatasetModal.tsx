@@ -722,38 +722,22 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     }
 
     if (datasetSelections.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please add at least one dataset to augment",
-        variant: "destructive",
-      });
+      toast.error("Please add at least one dataset to augment");
       return;
     }
 
     if (selectedAugmentations.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please select at least one augmentation method",
-        variant: "destructive",
-      });
+      toast.error("Please select at least one augmentation method");
       return;
     }
     const missingCollection = datasetSelections.find(sel => !sel.collectionId);
     if (missingCollection) {
-      toast({
-        title: "Error",
-        description: `Please select an image collection for dataset "${missingCollection.dataset.name}"`,
-        variant: "destructive",
-      });
+      toast.error(`Please select an image collection for dataset "${missingCollection.dataset.name}"`);
       return;
     }
 
     if (!api || !isConfigured) {
-      toast({
-        title: "Error",
-        description: "API client is not configured",
-        variant: "destructive",
-      });
+      toast.error("API client is not configured");
       return;
     }
 
@@ -783,11 +767,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
         throw new Error(response.error || 'Failed to create augmented dataset');
       }
 
-      toast({
-        title: "Augmentation Started",
-        description: `Creating "${datasetName}" with ${selectedAugmentations.length} augmentation(s). Monitor progress in the tasks panel (Activity icon in navbar).`,
-        duration: 8000,
-      });
+      toast.success(`Augmentation Started: "${datasetName}"`, { description: `Creating with ${selectedAugmentations.length} augmentation(s). Monitor progress in the tasks panel.`, duration: 8000 });
 
       // Reset form and close modal
       setDatasetName('');
@@ -808,11 +788,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       // The dataset will appear after the task completes
     } catch (err) {
       console.error('Error creating augmented dataset:', err);
-      toast({
-        title: "Error",
-        description: err instanceof Error ? err.message : "Failed to create augmented dataset. Please try again.",
-        variant: "destructive",
-      });
+      toast.error(err instanceof Error ? err.message : "Failed to create augmented dataset. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -1389,7 +1365,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                       }
                       const missing = datasetSelections.find(s => !s.collectionId);
                       if (missing) {
-                        toast({ title: 'Missing collection', description: `Select an image collection for "${missing.dataset.name}".`, variant: 'destructive' });
+                        toast.error(`Select an image collection for "${missing.dataset.name}".`);
                         return;
                       }
                     }
