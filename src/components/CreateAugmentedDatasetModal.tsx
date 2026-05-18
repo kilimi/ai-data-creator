@@ -653,16 +653,6 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     }));
   };
 
-  const updateMethodParameter = (methodId: string, paramName: string, value: any) => {
-    setMethodParameters(prev => ({
-      ...prev,
-      [methodId]: {
-        ...prev[methodId],
-        [paramName]: value
-      }
-    }));
-  };
-
   // Apply a preset: select exactly the methods in the preset and seed their default parameters.
   const applyPreset = useCallback((presetId: string) => {
     const preset = augmentationPresets.find(p => p.id === presetId);
