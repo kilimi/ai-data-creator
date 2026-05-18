@@ -96,7 +96,9 @@ export function ConfirmDeleteDialog({
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {extraContent}
         <AlertDialogFooter>
+
           <AlertDialogCancel disabled={isLoading}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction
             disabled={isLoading}
