@@ -104,6 +104,9 @@ export default function ProjectModels() {
   const [downloadModel, setDownloadModel] = useState<{ id: number; name: string } | null>(null);
   const [testInference, setTestInference] = useState<{ id: number; name: string } | null>(null);
   const [trainModalCloneTaskId, setTrainModalCloneTaskId] = useState<number | null>(null);
+  const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+  const [pendingStopTask, setPendingStopTask] = useState<any | null>(null);
+  const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
 
   const trainingTasksRef = useRef<any[]>([]);
   trainingTasksRef.current = trainingTasks;
