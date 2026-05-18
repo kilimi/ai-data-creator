@@ -769,22 +769,45 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
             Create Augmented Dataset
           </DialogTitle>
           <DialogDescription>
-            Create a new dataset by applying data augmentation techniques to existing datasets. Augmentation runs only on the selected image collection for each source dataset.
+            Step {step} of 3 — {step === 1 ? 'pick source datasets' : step === 2 ? 'choose augmentations' : 'name & confirm'}
           </DialogDescription>
         </DialogHeader>
 
+        {/* Stepper */}
+        <div className="flex items-center justify-center gap-1 pb-1">
+          {([
+            { n: 1, label: 'Sources', icon: <Database className="w-3.5 h-3.5" /> },
+            { n: 2, label: 'Augmentations', icon: <Sparkles className="w-3.5 h-3.5" /> },
+            { n: 3, label: 'Output', icon: <Settings2 className="w-3.5 h-3.5" /> },
+          ] as const).map((s, i) => {
+            const canJump =
+              s.n < step ||
+              (s.n === 2 && datasetSelections.length > 0 && !datasetSelections.find(x => !x.collectionId)) ||
+              (s.n === 3 && datasetSelections.length > 0 && selectedAugmentations.length > 0 && !datasetSelections.find(x => !x.collectionId));
+            return (
+              <React.Fragment key={s.n}>
+                <button
+                  type="button"
+                  disabled={!canJump && s.n !== step}
+                  onClick={() => canJump && setStep(s.n)}
+                  className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                    step === s.n
+                      ? 'bg-primary text-primary-foreground'
+                      : step > s.n
+                      ? 'bg-muted text-foreground hover:bg-muted/80'
+                      : 'bg-muted/40 text-muted-foreground'
+                  } ${!canJump && s.n !== step ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  {step > s.n ? <Check className="w-3.5 h-3.5" /> : s.icon}
+                  {s.label}
+                </button>
+                {i < 2 && <div className={`h-px w-8 ${step > s.n ? 'bg-primary' : 'bg-border'}`} />}
+              </React.Fragment>
+            );
+          })}
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-6" onReset={(e) => e.preventDefault()}>
-          {/* Dataset Name */}
-          <div className="space-y-2">
-            <Label htmlFor="datasetName">Dataset Name</Label>
-            <Input
-              id="datasetName"
-              value={datasetName}
-              onChange={(e) => setDatasetName(e.target.value)}
-              placeholder="Enter augmented dataset name"
-              required
-            />
-          </div>
 
           {/* Source Datasets Selection */}
           <div className="space-y-3">
