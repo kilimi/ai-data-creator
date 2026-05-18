@@ -925,7 +925,62 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
 
           {/* Step 2: Augmentation Methods */}
           {step === 2 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
+            {/* Presets + Live Preview */}
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Quick Presets</Label>
+                <div className="flex flex-wrap gap-2">
+                  {augmentationPresets.map(p => {
+                    const isActive =
+                      selectedAugmentations.length === p.ids.length &&
+                      p.ids.every(id => selectedAugmentations.includes(id));
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p.id)}
+                        title={p.description}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                          isActive
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background hover:bg-muted border-border'
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                  {selectedAugmentations.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedAugmentations([]); setMethodParameters({}); }}
+                      className="px-3 py-1.5 rounded-full text-xs font-medium border border-dashed text-muted-foreground hover:bg-muted"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <Card className="w-full md:w-48">
+                <CardContent className="p-2 space-y-1">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground text-center">Live Preview</div>
+                  <div className="relative w-full aspect-square overflow-hidden rounded bg-muted">
+                    <img
+                      src={previewThumbnail}
+                      alt="Augmentation preview"
+                      className="w-full h-full object-cover"
+                      style={previewStyle}
+                      onError={(e) => { (e.target as HTMLImageElement).src = '/placeholder.svg'; }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground text-center">
+                    Approximation of one sample
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
             <Label>Select Augmentation Methods</Label>
             <div className="space-y-3">
               {Object.entries(groupedAugmentations).map(([category, methods]) => (
