@@ -199,11 +199,7 @@ export default function ProjectModels() {
   const handleDeleteFailedTasks = async () => {
     const failedTasks = trainingTasks.filter(t => t.status === 'failed');
     if (failedTasks.length === 0) return;
-    
-    if (!confirm(`Are you sure you want to delete ${failedTasks.length} failed training task(s)?`)) {
-      return;
-    }
-    
+
     setDeletingFailedTasks(true);
     try {
       for (const task of failedTasks) {
@@ -222,6 +218,7 @@ export default function ProjectModels() {
       });
     } finally {
       setDeletingFailedTasks(false);
+      setShowDeleteFailedConfirm(false);
     }
   };
 
@@ -278,8 +275,7 @@ export default function ProjectModels() {
     }
   };
 
-  const handleDeleteTask = async (task: any) => {
-    if (!confirm(`Are you sure you want to delete training task "${task.name}"? This will also delete all model files.`)) return;
+  const performDeleteTask = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
       if (response.ok) {
@@ -291,11 +287,16 @@ export default function ProjectModels() {
       }
     } catch (error) {
       toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete training task", variant: "destructive" });
+    } finally {
+      setPendingDeleteTask(null);
     }
   };
 
-  const handleStopTask = async (task: any) => {
-    if (!confirm(`Are you sure you want to stop training task "${task.name}"?`)) return;
+  const handleDeleteTask = (task: any) => {
+    setPendingDeleteTask(task);
+  };
+
+  const performStopTask = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
       if (response.ok) {
@@ -306,7 +307,13 @@ export default function ProjectModels() {
       }
     } catch {
       toast({ title: "Error", description: "Failed to stop training task", variant: "destructive" });
+    } finally {
+      setPendingStopTask(null);
     }
+  };
+
+  const handleStopTask = (task: any) => {
+    setPendingStopTask(task);
   };
 
   const handlePauseTask = async (task: any) => {
