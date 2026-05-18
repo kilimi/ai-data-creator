@@ -748,9 +748,9 @@ export default function ProjectEvaluations() {
 
             const data = await response.json();
             
-            toast({
-              title: "Evaluation Started",
-              description: `Task "${data.task_name}" has been created.`
+            sonnerToast.success("Evaluation Started", {
+              description: `Task "${data.task_name}" has been created.`,
+              duration: 6000,
             });
             
             await fetchEvaluationTasks();
