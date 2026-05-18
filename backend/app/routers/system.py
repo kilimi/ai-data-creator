@@ -254,10 +254,10 @@ async def list_foundation_models() -> dict[str, Any]:
             "depth_dir": str(DEPTH_MODELS_DIR),
         },
         "commands": {
-            "all": "make download-models LAI_PRETRAINED_MODELS=all LAI_DEPTH_MODELS=all",
-            "minimal": "make download-models LAI_PRETRAINED_MODELS=minimal LAI_DEPTH_MODELS=minimal",
-            "single_yolo": "make download-models LAI_PRETRAINED_MODELS=yolo11n-seg.pt",
-            "single_depth": "make download-models LAI_DEPTH_MODELS=depth_anything_v2_vitb_outdoor_dynamic.onnx",
+            "all": "lai download-models --yolo all --depth all",
+            "minimal": "lai download-models",
+            "single_yolo": "lai download-models --yolo yolo11n-seg.pt",
+            "single_depth": "lai download-models --depth depth_anything_v2_vitb_outdoor_dynamic.onnx",
             "direct": "docker compose exec backend python scripts/download_ultralytics_models.py",
         },
         "notice": (

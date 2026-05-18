@@ -176,6 +176,25 @@ def cmd_compose(ns: argparse.Namespace) -> int:
     return _run(["docker", "compose", *args], root)
 
 
+def cmd_download_models(ns: argparse.Namespace) -> int:
+    """Pre-download foundation weights into the host volume via the running backend."""
+    root = get_bundle_root(force_download=ns.refresh)
+    _hint_guided_install(root)
+    env_yolo = ns.yolo or "minimal"
+    env_depth = ns.depth or "minimal"
+    base = [
+        "docker", "compose", "exec",
+        "-e", f"LAI_PRETRAINED_MODELS={env_yolo}",
+        "-e", f"LAI_DEPTH_MODELS={env_depth}",
+        "backend",
+    ]
+    print(f"Downloading models  yolo={env_yolo!r}  depth={env_depth!r}", file=sys.stderr)
+    rc = _run([*base, "python", "scripts/download_ultralytics_models.py"], root)
+    if rc != 0:
+        return rc
+    return _run([*base, "python", "scripts/download_depth_anything_models.py"], root)
+
+
 def cmd_sync(ns: argparse.Namespace) -> int:
     """Re-download bundle (PyPI / cache layout only)."""
     if _candidate_repo_root() is not None:
@@ -328,6 +347,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-download application files (only for pip installs without a local repo)",
     )
     sp.set_defaults(func=cmd_sync)
+
+    sp = sub.add_parser(
+        "download-models",
+        help="Pre-download YOLO + Depth-Anything weights into the host models volume",
+    )
+    sp.add_argument(
+        "--yolo",
+        default=None,
+        help="LAI_PRETRAINED_MODELS spec: all | minimal | none | comma list (default: minimal)",
+    )
+    sp.add_argument(
+        "--depth",
+        default=None,
+        help="LAI_DEPTH_MODELS spec: all | minimal | none | comma list (default: minimal)",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_download_models)
 
     sp = sub.add_parser(
         "uninstall",
