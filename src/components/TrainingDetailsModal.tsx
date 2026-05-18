@@ -1,8 +1,23 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Activity, Zap, Target, Gauge, Settings, ChevronDown, ChevronUp, Images } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Brain,
+  TrendingUp,
+  Activity,
+  Settings,
+  ChevronDown,
+  ChevronUp,
+  Images,
+  Database,
+  FileBox,
+  LineChart as LineChartIcon,
+  LayoutGrid,
+} from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useApi } from "@/hooks/use-api";
 
 // recharts is heavy (~90 KB gzip) — load it only when the dialog is opened.
@@ -57,7 +72,7 @@ interface TaskDetails {
     dataset_count?: number;
     dataset_ids?: number[];
     examples_path?: string;
-    example_images?: Record<string, string>;  // URLs for train/val/test batch images
+    example_images?: Record<string, string>;
     dataset_stats?: {
       total_images?: { train: number; val: number; test: number };
       total_annotations?: { train: number; val: number; test: number };
@@ -76,6 +91,74 @@ interface TaskDetails {
   };
 }
 
+const STATUS_ACCENT: Record<string, string> = {
+  completed: "border-l-emerald-500",
+  running: "border-l-primary",
+  pending: "border-l-muted-foreground",
+  failed: "border-l-destructive",
+  stopped: "border-l-amber-500",
+  cancelled: "border-l-amber-500",
+  paused: "border-l-yellow-500",
+};
+
+function metricColor(v: number | undefined | null): string {
+  if (v === null || v === undefined) return "text-muted-foreground";
+  if (v >= 0.85) return "text-emerald-500";
+  if (v >= 0.6) return "text-amber-500";
+  return "text-destructive";
+}
+
+function MetricTile({
+  label,
+  value,
+  format = "percent",
+  hint,
+}: {
+  label: string;
+  value: number | undefined | null;
+  format?: "percent" | "decimal" | "raw";
+  hint?: string;
+}) {
+  const display =
+    value === null || value === undefined
+      ? "—"
+      : format === "percent"
+      ? `${(value * 100).toFixed(1)}%`
+      : format === "decimal"
+      ? value.toFixed(4)
+      : String(value);
+  const colored = format === "percent" ? metricColor(value) : "text-foreground";
+  return (
+    <Card className="p-4">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+        {label}
+      </div>
+      <div className={`mt-1 text-2xl font-semibold tabular-nums leading-tight ${value == null ? "text-muted-foreground" : colored}`}>
+        {display}
+      </div>
+      {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
+    </Card>
+  );
+}
+
+function KV({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="text-sm">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-foreground font-medium tabular-nums truncate">{value ?? "—"}</div>
+    </div>
+  );
+}
+
+function SectionHeading({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <div className="text-primary">{icon}</div>
+      <h3 className="text-base font-semibold text-foreground">{children}</h3>
+    </div>
+  );
+}
+
 export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDetailsModalProps) {
   const { api } = useApi();
   const [task, setTask] = useState<TaskDetails | null>(null);
@@ -84,6 +167,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   const [showAllSettings, setShowAllSettings] = useState(false);
   const [showStatusReason, setShowStatusReason] = useState(false);
   const [expandedExamples, setExpandedExamples] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState("overview");
 
   const fetchTaskDetails = useCallback(async (signal?: AbortSignal) => {
     if (!api) {
@@ -91,83 +175,46 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
       setError('API not available');
       return;
     }
-    
     try {
-      setLoading(true);
       setError(null);
       const base = getApiBaseUrl();
       const response = await fetch(`${base}/tasks/${taskId}`, { signal });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch task details: ${response.status}`);
-      }
-      
+      if (!response.ok) throw new Error(`Failed to fetch task details: ${response.status}`);
       if (signal?.aborted) return;
-      
       const data = await response.json();
       if (signal?.aborted) return;
-      
       setTask(data);
     } catch (err) {
       if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       console.error('Error fetching task details:', err);
       setError(err instanceof Error ? err.message : 'Failed to load training details');
     } finally {
-      if (!signal?.aborted) {
-        setLoading(false);
-      }
+      if (!signal?.aborted) setLoading(false);
     }
   }, [api, taskId]);
 
   useEffect(() => {
     if (!open || !taskId) return;
-    
+    setLoading(true);
     const ac = new AbortController();
     void fetchTaskDetails(ac.signal);
-    
-    return () => {
-      ac.abort();
-    };
+    return () => ac.abort();
   }, [open, taskId, fetchTaskDetails]);
 
   useEffect(() => {
     if (!open) {
       setShowStatusReason(false);
+      setTab("overview");
+      setShowAllSettings(false);
     }
-  }, [open, taskId]);
+  }, [open]);
 
   useEffect(() => {
     if (!open || !taskId) return;
-    
-    // Only poll if task is running
     if (task?.status !== 'running') return;
-    
-    const interval = setInterval(() => {
-      void fetchTaskDetails();
-    }, 3000);
-    
+    const interval = setInterval(() => { void fetchTaskDetails(); }, 3000);
     return () => clearInterval(interval);
   }, [open, taskId, task?.status, fetchTaskDetails]);
-
-  const renderMetricCard = (title: string, value: number | string | undefined, icon: React.ReactNode, format?: 'percent' | 'decimal') => {
-    if (value === undefined) return null;
-    
-    const formattedValue = format === 'percent' 
-      ? `${(typeof value === 'number' ? value * 100 : 0).toFixed(2)}%`
-      : format === 'decimal'
-      ? typeof value === 'number' ? value.toFixed(4) : value
-      : value;
-
-    return (
-      <div className="bg-muted/30 border border-border rounded-lg p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="text-primary">{icon}</div>
-          <span className="text-sm text-muted-foreground">{title}</span>
-        </div>
-        <div className="text-2xl font-semibold text-foreground">{formattedValue}</div>
-      </div>
-    );
-  };
 
   const metadata = task?.task_metadata;
   const latestMetrics = metadata?.latest_metrics;
@@ -179,707 +226,452 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
     || (metadata as any)?.failureReason
     || null;
 
+  // Best epoch (highest mAP50) for the hero tile
+  const bestEpoch = useMemo(() => {
+    if (!metricsHistory.length) return null;
+    let best: TrainingMetrics | null = null;
+    for (const m of metricsHistory) {
+      const v = m.mAP50 ?? 0;
+      if (!best || (best.mAP50 ?? 0) < v) best = m;
+    }
+    return best;
+  }, [metricsHistory]);
+
+  const modelName = metadata?.model_config?.model || metadata?.training_params?.model || (metadata as any)?.model_type || '—';
+  const epochsTotal = metadata?.epochs || metadata?.training_params?.epochs;
+  const currentEpoch = metadata?.current_epoch || 0;
+  const isFinal = task?.status === 'failed' || task?.status === 'stopped' || task?.status === 'cancelled';
+  const accent = STATUS_ACCENT[task?.status ?? ''] ?? "border-l-border";
+
+  const augs = metadata?.model_config?.augmentations;
+  const enabledAugChips = useMemo(() => {
+    if (!augs) return [];
+    const out: string[] = [];
+    if (augs.enable_color) out.push("Color");
+    if (augs.enable_geometric) out.push("Geometric");
+    if (augs.enable_advanced) out.push("Advanced");
+    if (augs.mosaic) out.push("Mosaic");
+    if (augs.mixup) out.push("MixUp");
+    if (augs.fliplr) out.push("Flip LR");
+    if (augs.flipud) out.push("Flip UD");
+    return out;
+  }, [augs]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-center justify-between">
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Brain className="w-6 h-6 text-primary" />
-              Training Details - Task #{taskId}
-            </DialogTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAllSettings(!showAllSettings)}
-              className="flex items-center gap-2"
-            >
-              <Settings className="w-4 h-4" />
-              {showAllSettings ? 'Hide' : 'Show'} All Settings
-              {showAllSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </Button>
+      <DialogContent className="max-w-6xl max-h-[92vh] overflow-hidden p-0 flex flex-col">
+        {/* Sticky header with status accent */}
+        <DialogHeader className={`px-6 pt-5 pb-4 border-b border-border border-l-4 ${accent} shrink-0`}>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="min-w-0">
+              <DialogTitle className="flex items-center gap-2 text-xl">
+                <Brain className="w-5 h-5 text-primary" />
+                <span className="truncate">{task?.name || `Task #${taskId}`}</span>
+              </DialogTitle>
+              <div className="mt-2 flex items-center gap-2 flex-wrap text-sm text-muted-foreground">
+                {task && <StatusBadge status={task.status} />}
+                <Badge variant="outline" className="text-xs">{modelName}</Badge>
+                <span>·</span>
+                <span>#{taskId}</span>
+                <span>·</span>
+                <span>{task ? formatDuration(task.created_at, task.completed_at) : "—"}</span>
+                {epochsTotal && (
+                  <>
+                    <span>·</span>
+                    <span className="tabular-nums">{currentEpoch}/{epochsTotal} epochs</span>
+                  </>
+                )}
+                {isFinal && statusReason && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => setShowStatusReason(p => !p)}
+                  >
+                    {showStatusReason ? 'Hide reason' : 'Why?'}
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* Running progress bar */}
+          {task && (task.status === 'running' || task.status === 'pending') && (
+            <div className="mt-3 flex items-center gap-3">
+              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${task.progress || 0}%` }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
+                {task.progress || 0}%
+              </span>
+            </div>
+          )}
+
+          {isFinal && showStatusReason && statusReason && (
+            <div className="mt-3 rounded-md border border-destructive/40 bg-destructive/10 p-3">
+              <div className="mb-1 text-xs uppercase tracking-wide text-destructive">Failure reason</div>
+              <div className="whitespace-pre-wrap text-sm text-destructive-foreground">{statusReason}</div>
+            </div>
+          )}
         </DialogHeader>
 
-        {loading && !task ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-          </div>
-        ) : error ? (
-          <div className="text-center py-12 text-destructive">{error}</div>
-        ) : task ? (
-          <div className="space-y-6">
-            {/* Status Overview */}
-            <div className="bg-card border border-border rounded-lg p-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <div className="text-sm text-muted-foreground mb-1">Status</div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={task.status} />
-                    {(task.status === 'failed' || task.status === 'stopped') && statusReason && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => setShowStatusReason(prev => !prev)}
-                      >
-                        {showStatusReason ? 'Hide why' : 'Why?'}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground mb-1">Progress</div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-muted rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full transition-all ${
-                          task.status === 'failed' ? 'bg-destructive' : task.status === 'completed' ? 'bg-emerald-500' : 'bg-primary'
-                        }`}
-                        style={{ width: `${task.progress}%` }}
-                      />
-                    </div>
-                    <span className="text-sm font-medium text-foreground">{task.progress}%</span>
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground mb-1">Epoch</div>
-                  <div className="text-lg font-medium text-foreground">
-                    {metadata?.current_epoch || 0} / {metadata?.epochs || metadata?.training_params?.epochs || '-'}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground mb-1">Duration</div>
-                  <div className="text-lg font-medium text-foreground">
-                    {formatDuration(task.created_at, task.completed_at)}
-                  </div>
-                </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {loading && !task ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
               </div>
-              {(task.status === 'failed' || task.status === 'stopped') && showStatusReason && (
-                <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3">
-                  <div className="mb-1 text-xs uppercase tracking-wide text-destructive">Failure reason</div>
-                  <div className="whitespace-pre-wrap text-sm text-destructive-foreground">
-                    {statusReason || 'No detailed error message was provided by the backend.'}
-                  </div>
-                </div>
-              )}
+              <Skeleton className="h-48" />
+              <Skeleton className="h-64" />
             </div>
+          ) : error ? (
+            <div className="text-center py-12 text-destructive">{error}</div>
+          ) : task ? (
+            <Tabs value={tab} onValueChange={setTab} className="w-full">
+              <TabsList className="grid grid-cols-5 w-full max-w-2xl mb-4">
+                <TabsTrigger value="overview"><LayoutGrid className="w-3.5 h-3.5 mr-1.5" />Overview</TabsTrigger>
+                <TabsTrigger value="metrics"><LineChartIcon className="w-3.5 h-3.5 mr-1.5" />Metrics</TabsTrigger>
+                <TabsTrigger value="config"><Settings className="w-3.5 h-3.5 mr-1.5" />Config</TabsTrigger>
+                <TabsTrigger value="dataset"><Database className="w-3.5 h-3.5 mr-1.5" />Dataset</TabsTrigger>
+                <TabsTrigger value="artifacts"><FileBox className="w-3.5 h-3.5 mr-1.5" />Artifacts</TabsTrigger>
+              </TabsList>
 
-            {/* Training Configuration */}
-            <div className="bg-card border border-border rounded-lg p-4">
-              <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-primary" />
-                Training Configuration
-              </h3>
-              
-              {!showAllSettings ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Model:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.model_config?.model || metadata?.training_params?.model || (metadata as any)?.model_type || '-'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Epochs:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.epochs || metadata?.epochs || '-'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Batch Size:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.batch_size || (metadata as any)?.batch_size || metadata?.training_params?.batch || '-'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Image Size:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || (metadata as any)?.image_size || '-'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Optimizer:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.optimizer || 'auto'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Learning Rate:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.lr0 || 0.01}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Patience:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.patience || 50}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Device:</span>
-                      <span className="ml-2 text-foreground font-medium">
-                        {metadata?.training_params?.device || '0'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {/* Augmentations Summary */}
-                  {metadata?.model_config?.augmentations && Object.keys(metadata.model_config.augmentations).length > 0 && (
-                    <div className="border-t border-border pt-3">
-                      <div className="text-sm">
-                        <span className="text-muted-foreground">Augmentations:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {(() => {
-                            const augs = metadata.model_config.augmentations;
-                            const enabledAugs: string[] = [];
-                            if (augs.enable_color) enabledAugs.push('Color');
-                            if (augs.enable_geometric) enabledAugs.push('Geometric');
-                            if (augs.enable_advanced) enabledAugs.push('Advanced');
-                            if (augs.mosaic) enabledAugs.push('Mosaic');
-                            if (augs.mixup) enabledAugs.push('MixUp');
-                            if (augs.fliplr) enabledAugs.push('Flip LR');
-                            if (augs.flipud) enabledAugs.push('Flip UD');
-                            return enabledAugs.length > 0 ? enabledAugs.join(', ') : 'Default';
-                          })()}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {metadata?.class_names && (
-                    <div className="border-t border-border pt-3">
-                      <div className="text-sm">
-                        <span className="text-muted-foreground">Classes ({metadata.class_names.length}):</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata.class_names.join(', ')}
-                        </span>
-                      </div>
-                    </div>
-                  )}
+              {/* OVERVIEW */}
+              <TabsContent value="overview" className="space-y-6 mt-0">
+                {/* Hero metric tiles */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricTile label="mAP@50" value={latestMetrics?.mAP50} />
+                  <MetricTile label="mAP@50–95" value={latestMetrics?.mAP50_95} />
+                  <MetricTile
+                    label="Best epoch"
+                    value={bestEpoch?.epoch}
+                    format="raw"
+                    hint={bestEpoch?.mAP50 != null ? `mAP@50 ${(bestEpoch.mAP50 * 100).toFixed(1)}%` : undefined}
+                  />
+                  <MetricTile
+                    label={task.status === 'running' ? 'Progress' : 'Duration'}
+                    value={task.status === 'running' ? task.progress / 100 : null}
+                    format="percent"
+                    hint={formatDuration(task.created_at, task.completed_at)}
+                  />
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  {/* Basic Training Parameters */}
+
+                {/* Latest metrics breakdown */}
+                {latestMetrics && (
                   <div>
-                    <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Basic Parameters</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Model:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.model_config?.model || metadata?.training_params?.model || '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Epochs:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.epochs || metadata?.epochs || '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Batch Size:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.batch_size || (metadata as any)?.batch_size || metadata?.training_params?.batch || '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Image Size:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.image_size || metadata?.training_params?.imgsz || (metadata as any)?.image_size || '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Device:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.device || '0'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Workers:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.workers || 8}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Save Period:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.save_period ?? metadata?.model_config?.save_period ?? '-'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Patience:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.patience || 100}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Cache:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {String(metadata?.training_params?.cache || false)}
-                        </span>
-                      </div>
+                    <SectionHeading icon={<TrendingUp className="w-4 h-4" />}>
+                      Latest metrics — epoch {latestMetrics.epoch}
+                    </SectionHeading>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <MetricTile label="Precision" value={latestMetrics.precision} />
+                      <MetricTile label="Recall" value={latestMetrics.recall} />
+                      <MetricTile label="Box loss" value={latestMetrics.box_loss} format="decimal" />
+                      <MetricTile label="Class loss" value={latestMetrics.cls_loss} format="decimal" />
+                      {latestMetrics.dfl_loss != null && <MetricTile label="DFL loss" value={latestMetrics.dfl_loss} format="decimal" />}
+                      {latestMetrics.seg_loss != null && <MetricTile label="Seg loss" value={latestMetrics.seg_loss} format="decimal" />}
+                      {latestMetrics.lr0 != null && <MetricTile label="LR (pg0)" value={latestMetrics.lr0} format="decimal" />}
                     </div>
                   </div>
+                )}
 
-                  {/* Optimizer Settings */}
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Optimizer Settings</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Optimizer:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.optimizer || 'auto'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Learning Rate (lr0):</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.lr0 || 0.01}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Final LR (lrf):</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.lrf || 0.01}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Momentum:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.momentum || 0.937}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Weight Decay:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.weight_decay || 0.0005}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Warmup Epochs:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.warmup_epochs || 3}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Warmup Momentum:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.warmup_momentum || 0.8}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Warmup Bias LR:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.warmup_bias_lr || 0.1}
-                        </span>
-                      </div>
-                    </div>
+                {/* Compact summary */}
+                <Card className="p-4">
+                  <SectionHeading icon={<Activity className="w-4 h-4" />}>Summary</SectionHeading>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <KV label="Model" value={modelName} />
+                    <KV label="Epochs" value={epochsTotal ?? "—"} />
+                    <KV label="Batch size" value={metadata?.training_params?.batch_size ?? metadata?.training_params?.batch ?? "—"} />
+                    <KV label="Image size" value={metadata?.training_params?.image_size ?? metadata?.training_params?.imgsz ?? "—"} />
+                    <KV label="Optimizer" value={metadata?.training_params?.optimizer ?? "auto"} />
+                    <KV label="Learning rate" value={metadata?.training_params?.lr0 ?? 0.01} />
+                    <KV label="Patience" value={metadata?.training_params?.patience ?? 50} />
+                    <KV label="Device" value={metadata?.training_params?.device ?? "0"} />
                   </div>
-
-                  {/* Augmentation Settings */}
-                  {metadata?.model_config?.augmentations && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Data Augmentation</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                        {Object.entries(metadata.model_config.augmentations).map(([key, value]) => (
-                          <div key={key}>
-                            <span className="text-muted-foreground capitalize">{key.replace(/_/g, ' ')}:</span>
-                            <span className="ml-2 text-foreground font-medium">
-                              {typeof value === 'boolean' ? String(value) : String(value)}
-                            </span>
-                          </div>
+                  {enabledAugChips.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-border">
+                      <div className="text-xs text-muted-foreground mb-2">Augmentations</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {enabledAugChips.map(a => (
+                          <Badge key={a} variant="secondary" className="text-xs">{a}</Badge>
                         ))}
                       </div>
                     </div>
                   )}
-
-                  {/* Loss & Advanced Settings */}
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Loss & Advanced</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Box Loss Gain:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.box || 7.5}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Cls Loss Gain:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.cls || 0.5}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">DFL Loss Gain:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.dfl || 1.5}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Label Smoothing:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.label_smoothing || 0.0}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Dropout:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {metadata?.training_params?.dropout || 0.0}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Val:</span>
-                        <span className="ml-2 text-foreground font-medium">
-                          {String(metadata?.training_params?.val ?? true)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Classes */}
-                  {metadata?.class_names && (
-                    <div>
-                      <h4 className="text-sm font-semibold text-foreground/80 mb-3 uppercase tracking-wide">Classes</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {metadata.class_names.map((className, idx) => (
-                          <Badge key={idx} variant="secondary" className="text-xs">
-                            {className}
-                          </Badge>
+                  {metadata?.class_names && metadata.class_names.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-border">
+                      <div className="text-xs text-muted-foreground mb-2">Classes ({metadata.class_names.length})</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {metadata.class_names.slice(0, 16).map((c, i) => (
+                          <Badge key={i} variant="outline" className="text-xs">{c}</Badge>
                         ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Datasets & Annotations */}
-            {metadata?.dataset_configs && metadata.dataset_configs.length > 0 && (
-              <div className="bg-card border border-border rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-3">Training Datasets</h3>
-                <div className="space-y-3">
-                  {metadata.dataset_configs.map((config, idx) => (
-                    <div key={idx} className="bg-muted/30 border border-border rounded-lg p-3">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Dataset ID:</span>
-                          <span className="ml-2 text-foreground font-medium">#{config.dataset_id}</span>
-                          {config.dataset_name && (
-                            <span className="ml-1 text-foreground/80">({config.dataset_name})</span>
-                          )}
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Annotation File:</span>
-                          <span className="ml-2 text-primary font-mono text-xs">
-                            {config.annotation_file_name || config.annotation_file_id}
-                          </span>
-                        </div>
-                        {config.image_collection && (
-                          <div>
-                            <span className="text-muted-foreground">Image Collection:</span>
-                            <span className="ml-2 text-foreground font-medium">{config.image_collection}</span>
-                          </div>
-                        )}
-                        {config.split && (
-                          <div>
-                            <span className="text-muted-foreground">Split:</span>
-                            <span className="ml-2 text-foreground font-medium">
-                              Train: {config.split.train}% / Val: {config.split.val}% / Test: {config.split.test}%
-                            </span>
-                          </div>
+                        {metadata.class_names.length > 16 && (
+                          <Badge variant="outline" className="text-xs">+{metadata.class_names.length - 16} more</Badge>
                         )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Dataset Info */}
-            {metadata?.image_counts && (
-              <div className="bg-card border border-border rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-3">Dataset Split</h3>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.train}</div>
-                    <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Train</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.val}</div>
-                    <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Validation</div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.test || 0}</div>
-                    <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Test</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Dataset Statistics - Images and Annotations */}
-            {metadata?.dataset_stats && (
-              <div className="bg-card border border-border rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-4">Dataset Statistics</h3>
-                
-                {/* Image & Annotation Counts */}
-                <div className="space-y-4">
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-3">Images per Split</h4>
-                    <div className="grid grid-cols-3 gap-3">
-                      {metadata.dataset_stats.total_images && (
-                        <>
-                          <div className="bg-muted/30 rounded p-3 text-center">
-                            <div className="text-xl font-semibold text-foreground">
-                              {metadata.dataset_stats.total_images.train}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">Train Images</div>
-                          </div>
-                          <div className="bg-muted/30 rounded p-3 text-center">
-                            <div className="text-xl font-semibold text-foreground">
-                              {metadata.dataset_stats.total_images.val}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">Val Images</div>
-                          </div>
-                          <div className="bg-muted/30 rounded p-3 text-center">
-                            <div className="text-xl font-semibold text-foreground">
-                              {metadata.dataset_stats.total_images.test}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">Test Images</div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-3">Annotations per Split</h4>
-                    <div className="grid grid-cols-3 gap-3">
-                      {metadata.dataset_stats.total_annotations && (
-                        <>
-                          <div className="bg-muted/30 rounded p-3 text-center">
-                            <div className="text-xl font-semibold text-foreground">
-                              {metadata.dataset_stats.total_annotations.train}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">Train Annotations</div>
-                          </div>
-                          <div className="bg-muted/30 rounded p-3 text-center">
-                            <div className="text-xl font-semibold text-foreground">
-                              {metadata.dataset_stats.total_annotations.val}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">Val Annotations</div>
-                          </div>
-                          <div className="bg-muted/30 rounded p-3 text-center">
-                            <div className="text-xl font-semibold text-foreground">
-                              {metadata.dataset_stats.total_annotations.test}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">Test Annotations</div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Data Summary */}
-                  <div className="grid grid-cols-3 gap-3 text-sm pt-2 border-t border-border">
-                    {metadata.dataset_stats.images_processed !== undefined && (
-                      <div>
-                        <span className="text-muted-foreground">Images Processed:</span>
-                        <div className="text-foreground font-semibold">{metadata.dataset_stats.images_processed}</div>
-                      </div>
-                    )}
-                    {metadata.dataset_stats.images_filtered !== undefined && (
-                      <div>
-                        <span className="text-muted-foreground">Images Filtered:</span>
-                        <div className="text-foreground font-semibold">{metadata.dataset_stats.images_filtered}</div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Annotations per Class */}
-                  {metadata.dataset_stats.annotations_per_class && Object.keys(metadata.dataset_stats.annotations_per_class).length > 0 && (
-                    <div>
-                      <h4 className="text-sm font-medium text-muted-foreground mb-2">Annotations per Class</h4>
-                      <div className="bg-muted/20 rounded p-3 max-h-40 overflow-y-auto">
-                        <div className="space-y-1 text-sm">
-                          {Object.entries(metadata.dataset_stats.annotations_per_class).map(([className, counts]) => (
-                            <div key={className} className="flex justify-between items-center">
-                              <span className="text-foreground">{className}:</span>
-                              <span className="text-muted-foreground">
-                                Train: {(counts as any).train}, Val: {(counts as any).val}, Test: {(counts as any).test || 0}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
                   )}
-                </div>
-              </div>
-            )}
+                </Card>
+              </TabsContent>
 
-            {/* Training Examples - Preview Annotations */}
-            {metadata?.example_images && Object.keys(metadata.example_images).length > 0 && (
-              <div className="bg-card border border-border rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <Images className="w-5 h-5 text-primary" />
-                  Training Examples
-                  <span className="text-sm text-muted-foreground ml-auto">
-                    Verify annotations before training
-                  </span>
-                </h3>
-                
-                <div className="space-y-3">
-                  {['train', 'val', 'test'].map((split) => {
-                    const imageUrl = metadata.example_images?.[split];
-                    if (!imageUrl) return null;
-                    
-                    const isExpanded = expandedExamples.has(split);
-                    
-                    return (
-                      <div key={split} className="border border-border rounded-lg overflow-hidden">
-                        <button
-                          onClick={() => {
-                            const newExpanded = new Set(expandedExamples);
-                            if (newExpanded.has(split)) {
-                              newExpanded.delete(split);
-                            } else {
-                              newExpanded.add(split);
-                            }
-                            setExpandedExamples(newExpanded);
-                          }}
-                          className="w-full flex items-center justify-between bg-muted/30 hover:bg-muted/50 p-3 transition-colors"
-                        >
-                          <div className="flex items-center gap-2 capitalize font-medium">
-                            {split} Dataset
-                            {metadata.image_counts && (
-                              <span className="text-sm text-muted-foreground">
-                                ({metadata.image_counts[split as keyof typeof metadata.image_counts]} images)
-                              </span>
-                            )}
-                          </div>
-                          {isExpanded ? (
-                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                          )}
-                        </button>
-                        
-                        {isExpanded && (
-                          <div className="p-4 bg-muted/10">
-                            <div className="text-sm text-muted-foreground mb-3">
-                              Grid of {metadata.image_counts?.[split as keyof typeof metadata.image_counts] || '?'} sample images with annotations overlay
-                            </div>
-                            <div className="bg-background rounded border border-border overflow-auto max-h-96 flex items-center justify-center">
-                              <img
-                                src={imageUrl}
-                                alt={`${split} batch example`}
-                                className="max-w-full h-auto"
-                                style={{ maxHeight: '400px' }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                
-                <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/30 rounded border border-blue-200 dark:border-blue-900 text-sm text-blue-900 dark:text-blue-100">
-                  <p className="font-medium mb-1">💡 Tip:</p>
-                  <p>Expand each split to view a grid of training samples with annotations overlay. Check that bounding boxes and segmentation masks are correctly positioned before training.</p>
-                </div>
-              </div>
-            )}
-
-            {/* Latest Metrics */}
-            {latestMetrics && (
-              <>
-                <div>
-                  <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-green-500" />
-                    Latest Metrics (Epoch {latestMetrics.epoch})
-                  </h3>
-                  
-                  {/* Losses */}
-                  <div className="mb-4">
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Training Losses</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {renderMetricCard('Box Loss', latestMetrics.box_loss, <Target className="w-4 h-4" />, 'decimal')}
-                      {renderMetricCard('Class Loss', latestMetrics.cls_loss, <Activity className="w-4 h-4" />, 'decimal')}
-                      {renderMetricCard('DFL Loss', latestMetrics.dfl_loss, <Zap className="w-4 h-4" />, 'decimal')}
-                      {latestMetrics.seg_loss && renderMetricCard('Seg Loss', latestMetrics.seg_loss, <Brain className="w-4 h-4" />, 'decimal')}
-                    </div>
-                  </div>
-
-                  {/* Performance Metrics */}
-                  <div className="mb-4">
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Performance Metrics</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {renderMetricCard('Precision', latestMetrics.precision, <Target className="w-4 h-4" />, 'percent')}
-                      {renderMetricCard('Recall', latestMetrics.recall, <Activity className="w-4 h-4" />, 'percent')}
-                      {renderMetricCard('mAP@50', latestMetrics.mAP50, <TrendingUp className="w-4 h-4" />, 'percent')}
-                      {renderMetricCard('mAP@50-95', latestMetrics.mAP50_95, <TrendingUp className="w-4 h-4" />, 'percent')}
-                    </div>
-                  </div>
-
-                  {/* Learning Rates */}
-                  {(latestMetrics.lr0 || latestMetrics.lr1 || latestMetrics.lr2) && (
-                    <div>
-                      <h4 className="text-sm font-medium text-muted-foreground mb-2">Learning Rates</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {latestMetrics.lr0 && renderMetricCard('LR (pg0)', latestMetrics.lr0, <Gauge className="w-4 h-4" />, 'decimal')}
-                        {latestMetrics.lr1 && renderMetricCard('LR (pg1)', latestMetrics.lr1, <Gauge className="w-4 h-4" />, 'decimal')}
-                        {latestMetrics.lr2 && renderMetricCard('LR (pg2)', latestMetrics.lr2, <Gauge className="w-4 h-4" />, 'decimal')}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Metrics History Charts — recharts is lazy-loaded on first open */}
-                {metricsHistory.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold mb-3">Training Progress</h3>
+              {/* METRICS */}
+              <TabsContent value="metrics" className="mt-0">
+                {metricsHistory.length > 0 ? (
+                  <Card className="p-4">
+                    <SectionHeading icon={<LineChartIcon className="w-4 h-4" />}>Training progress</SectionHeading>
                     <Suspense
                       fallback={
                         <div className="flex items-center justify-center py-12">
-                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+                          <Skeleton className="h-64 w-full" />
                         </div>
                       }
                     >
                       <TrainingMetricsCharts metricsHistory={metricsHistory} />
                     </Suspense>
-                  </div>
+                  </Card>
+                ) : (
+                  <Card className="p-8 text-center text-sm text-muted-foreground">
+                    No metrics history available yet.
+                  </Card>
                 )}
-              </>
-            )}
+              </TabsContent>
 
-            {/* Output Paths */}
-            {(metadata?.best_model || metadata?.results_dir) && (
-              <div className="bg-card border border-border rounded-lg p-4">
-                <h3 className="text-lg font-semibold mb-3">Output Files</h3>
-                <div className="space-y-2 text-sm">
-                  {metadata.best_model && (
-                    <div>
-                      <span className="text-muted-foreground">Best Model:</span>
-                      <code className="ml-2 text-primary bg-muted/30 px-2 py-1 rounded text-xs">
-                        {metadata.best_model}
-                      </code>
-                    </div>
-                  )}
-                  {metadata.results_dir && (
-                    <div>
-                      <span className="text-muted-foreground">Results Directory:</span>
-                      <code className="ml-2 text-primary bg-muted/30 px-2 py-1 rounded text-xs">
-                        {metadata.results_dir}
-                      </code>
-                    </div>
-                  )}
+              {/* CONFIG */}
+              <TabsContent value="config" className="space-y-4 mt-0">
+                <div className="flex items-center justify-between">
+                  <SectionHeading icon={<Settings className="w-4 h-4" />}>Training configuration</SectionHeading>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowAllSettings(s => !s)}
+                    className="h-8"
+                  >
+                    {showAllSettings ? <ChevronUp className="w-4 h-4 mr-1.5" /> : <ChevronDown className="w-4 h-4 mr-1.5" />}
+                    {showAllSettings ? 'Hide advanced' : 'Show all settings'}
+                  </Button>
                 </div>
-              </div>
-            )}
-          </div>
-        ) : null}
+
+                <Card className="p-4">
+                  <h4 className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">Basic parameters</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <KV label="Model" value={modelName} />
+                    <KV label="Epochs" value={epochsTotal ?? "—"} />
+                    <KV label="Batch size" value={metadata?.training_params?.batch_size ?? metadata?.training_params?.batch ?? "—"} />
+                    <KV label="Image size" value={metadata?.training_params?.image_size ?? metadata?.training_params?.imgsz ?? "—"} />
+                    <KV label="Device" value={metadata?.training_params?.device ?? "0"} />
+                    <KV label="Workers" value={metadata?.training_params?.workers ?? 8} />
+                    <KV label="Save period" value={metadata?.training_params?.save_period ?? metadata?.model_config?.save_period ?? "—"} />
+                    <KV label="Patience" value={metadata?.training_params?.patience ?? 100} />
+                    <KV label="Cache" value={String(metadata?.training_params?.cache ?? false)} />
+                  </div>
+                </Card>
+
+                {showAllSettings && (
+                  <>
+                    <Card className="p-4">
+                      <h4 className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">Optimizer</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <KV label="Optimizer" value={metadata?.training_params?.optimizer ?? "auto"} />
+                        <KV label="LR (lr0)" value={metadata?.training_params?.lr0 ?? 0.01} />
+                        <KV label="Final LR (lrf)" value={metadata?.training_params?.lrf ?? 0.01} />
+                        <KV label="Momentum" value={metadata?.training_params?.momentum ?? 0.937} />
+                        <KV label="Weight decay" value={metadata?.training_params?.weight_decay ?? 0.0005} />
+                        <KV label="Warmup epochs" value={metadata?.training_params?.warmup_epochs ?? 3} />
+                        <KV label="Warmup momentum" value={metadata?.training_params?.warmup_momentum ?? 0.8} />
+                        <KV label="Warmup bias LR" value={metadata?.training_params?.warmup_bias_lr ?? 0.1} />
+                      </div>
+                    </Card>
+
+                    <Card className="p-4">
+                      <h4 className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">Loss & advanced</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <KV label="Box loss gain" value={metadata?.training_params?.box ?? 7.5} />
+                        <KV label="Cls loss gain" value={metadata?.training_params?.cls ?? 0.5} />
+                        <KV label="DFL loss gain" value={metadata?.training_params?.dfl ?? 1.5} />
+                        <KV label="Label smoothing" value={metadata?.training_params?.label_smoothing ?? 0.0} />
+                        <KV label="Dropout" value={metadata?.training_params?.dropout ?? 0.0} />
+                        <KV label="Val" value={String(metadata?.training_params?.val ?? true)} />
+                      </div>
+                    </Card>
+
+                    {augs && (
+                      <Card className="p-4">
+                        <h4 className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">Augmentations</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                          {Object.entries(augs).map(([k, v]) => (
+                            <KV key={k} label={k.replace(/_/g, ' ')} value={String(v)} />
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+                  </>
+                )}
+              </TabsContent>
+
+              {/* DATASET */}
+              <TabsContent value="dataset" className="space-y-4 mt-0">
+                {metadata?.dataset_configs && metadata.dataset_configs.length > 0 && (
+                  <Card className="p-4">
+                    <SectionHeading icon={<Database className="w-4 h-4" />}>Training datasets</SectionHeading>
+                    <div className="space-y-2">
+                      {metadata.dataset_configs.map((c, i) => (
+                        <div key={i} className="rounded-md border border-border bg-muted/30 p-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <KV label="Dataset" value={`#${c.dataset_id}${c.dataset_name ? ` · ${c.dataset_name}` : ''}`} />
+                            <KV label="Annotation file" value={<span className="font-mono text-xs text-primary">{c.annotation_file_name || c.annotation_file_id}</span>} />
+                            {c.image_collection && <KV label="Image collection" value={c.image_collection} />}
+                            {c.split && <KV label="Split" value={`Train ${c.split.train}% · Val ${c.split.val}% · Test ${c.split.test}%`} />}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                {metadata?.image_counts && (
+                  <Card className="p-4">
+                    <SectionHeading icon={<LayoutGrid className="w-4 h-4" />}>Dataset split</SectionHeading>
+                    <div className="grid grid-cols-3 gap-3">
+                      {(['train', 'val', 'test'] as const).map(k => (
+                        <div key={k} className="rounded-md bg-muted/30 p-3 text-center">
+                          <div className="text-2xl font-semibold text-foreground tabular-nums">
+                            {metadata.image_counts?.[k] ?? 0}
+                          </div>
+                          <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">{k}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                {metadata?.dataset_stats && (
+                  <Card className="p-4">
+                    <SectionHeading icon={<Activity className="w-4 h-4" />}>Dataset statistics</SectionHeading>
+                    {metadata.dataset_stats.total_images && (
+                      <div className="mb-4">
+                        <div className="text-xs text-muted-foreground mb-2">Images per split</div>
+                        <div className="grid grid-cols-3 gap-3">
+                          {(['train', 'val', 'test'] as const).map(k => (
+                            <div key={k} className="rounded-md bg-muted/30 p-3 text-center">
+                              <div className="text-xl font-semibold tabular-nums text-foreground">
+                                {metadata.dataset_stats?.total_images?.[k] ?? 0}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1 capitalize">{k}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {metadata.dataset_stats.total_annotations && (
+                      <div className="mb-4">
+                        <div className="text-xs text-muted-foreground mb-2">Annotations per split</div>
+                        <div className="grid grid-cols-3 gap-3">
+                          {(['train', 'val', 'test'] as const).map(k => (
+                            <div key={k} className="rounded-md bg-muted/30 p-3 text-center">
+                              <div className="text-xl font-semibold tabular-nums text-foreground">
+                                {metadata.dataset_stats?.total_annotations?.[k] ?? 0}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1 capitalize">{k}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {(metadata.dataset_stats.images_processed !== undefined || metadata.dataset_stats.images_filtered !== undefined) && (
+                      <div className="grid grid-cols-2 gap-4 pt-3 border-t border-border">
+                        {metadata.dataset_stats.images_processed !== undefined && <KV label="Images processed" value={metadata.dataset_stats.images_processed} />}
+                        {metadata.dataset_stats.images_filtered !== undefined && <KV label="Images filtered" value={metadata.dataset_stats.images_filtered} />}
+                      </div>
+                    )}
+                    {metadata.dataset_stats.annotations_per_class && Object.keys(metadata.dataset_stats.annotations_per_class).length > 0 && (
+                      <div className="mt-4">
+                        <div className="text-xs text-muted-foreground mb-2">Annotations per class</div>
+                        <div className="rounded-md bg-muted/20 p-3 max-h-48 overflow-y-auto space-y-1 text-sm">
+                          {Object.entries(metadata.dataset_stats.annotations_per_class).map(([cls, counts]) => (
+                            <div key={cls} className="flex justify-between items-center">
+                              <span className="text-foreground">{cls}</span>
+                              <span className="text-muted-foreground tabular-nums text-xs">
+                                T {(counts as any).train} · V {(counts as any).val} · Te {(counts as any).test || 0}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                )}
+
+                {metadata?.example_images && Object.keys(metadata.example_images).length > 0 && (
+                  <Card className="p-4">
+                    <SectionHeading icon={<Images className="w-4 h-4" />}>Training examples</SectionHeading>
+                    <div className="space-y-2">
+                      {(['train', 'val', 'test'] as const).map(split => {
+                        const imageUrl = metadata.example_images?.[split];
+                        if (!imageUrl) return null;
+                        const isExpanded = expandedExamples.has(split);
+                        return (
+                          <div key={split} className="border border-border rounded-md overflow-hidden">
+                            <button
+                              onClick={() => {
+                                const n = new Set(expandedExamples);
+                                if (n.has(split)) n.delete(split); else n.add(split);
+                                setExpandedExamples(n);
+                              }}
+                              className="w-full flex items-center justify-between bg-muted/30 hover:bg-muted/50 px-3 py-2 transition-colors"
+                            >
+                              <div className="flex items-center gap-2 capitalize text-sm font-medium">
+                                {split}
+                                {metadata.image_counts && (
+                                  <span className="text-xs text-muted-foreground">
+                                    ({metadata.image_counts[split]} images)
+                                  </span>
+                                )}
+                              </div>
+                              {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                            </button>
+                            {isExpanded && (
+                              <div className="p-3 bg-background flex items-center justify-center">
+                                <img src={imageUrl} alt={`${split} batch`} className="max-w-full h-auto" style={{ maxHeight: 400 }} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                )}
+              </TabsContent>
+
+              {/* ARTIFACTS */}
+              <TabsContent value="artifacts" className="space-y-4 mt-0">
+                <Card className="p-4">
+                  <SectionHeading icon={<FileBox className="w-4 h-4" />}>Output files</SectionHeading>
+                  {metadata?.best_model || metadata?.results_dir ? (
+                    <div className="space-y-3">
+                      {metadata?.best_model && (
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Best model</div>
+                          <code className="block text-xs text-primary bg-muted/40 px-2 py-1.5 rounded break-all">{metadata.best_model}</code>
+                        </div>
+                      )}
+                      {metadata?.results_dir && (
+                        <div>
+                          <div className="text-xs text-muted-foreground mb-1">Results directory</div>
+                          <code className="block text-xs text-primary bg-muted/40 px-2 py-1.5 rounded break-all">{metadata.results_dir}</code>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">No output files available yet.</div>
+                  )}
+                </Card>
+              </TabsContent>
+            </Tabs>
+          ) : null}
+        </div>
       </DialogContent>
     </Dialog>
   );
