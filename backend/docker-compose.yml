@@ -73,6 +73,9 @@ services:
       - ${LAI_DATA_DIR:-../.lai-data}/data:/app/data
       - ${LAI_DATA_DIR:-../.lai-data}/backups:/app/backups
       - ${LAI_DATA_DIR:-../.lai-data}/runs:/app/runs
+      # Shared model weights with the backend service.
+      - ${LAI_DATA_DIR:-../.lai-data}/models:/app/models
+      - ${LAI_DATA_DIR:-../.lai-data}/ai_models:/app/ai_models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - REDIS_URL=redis://redis:6379/0
