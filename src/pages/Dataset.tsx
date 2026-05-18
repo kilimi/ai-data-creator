@@ -20,16 +20,7 @@ import {
   convertToFrontendImageCollection, 
   ImageCollectionData 
 } from "@/utils/imageCollections";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 // Session cache: once we've loaded a dataset id, don't show full-page loading again for it (avoids "Loading dataset" when component remounts during auto-annotate, etc.)
 const loadedDatasetIds = new Set<string>();
