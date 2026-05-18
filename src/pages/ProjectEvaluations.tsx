@@ -276,9 +276,9 @@ export default function ProjectEvaluations() {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
-        toast({
-          title: "Evaluation Rerun Started",
+        sonnerToast.success("Evaluation Rerun Started", {
           description: `New evaluation task "${data.task?.name || task.name}" has been created and started.`,
+          duration: 6000,
         });
         fetchEvaluationTasks();
       } else {
