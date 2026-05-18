@@ -29,6 +29,8 @@ export interface ConfirmDeleteDialogProps {
   description?: ReactNode;
   /** Optional consequences list shown as bullets under the main description. */
   consequences?: ReactNode[];
+  /** Optional arbitrary content rendered between the description and footer (e.g. extra checkboxes). */
+  extraContent?: ReactNode;
   /** Label for the confirm button. Defaults to "Delete". */
   confirmLabel?: string;
   cancelLabel?: string;
@@ -51,6 +53,7 @@ export function ConfirmDeleteDialog({
   itemName,
   description,
   consequences,
+  extraContent,
   confirmLabel = "Delete",
   cancelLabel = "Cancel",
   isLoading = false,
