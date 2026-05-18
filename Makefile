@@ -25,6 +25,7 @@ help:
 	@echo "  logs            follow logs"
 	@echo "  ps              service status"
 	@echo "  download-models fetch foundation YOLO + Depth-Anything weights into the host volume"
+	@echo "                  (preferred CLI: 'lai download-models [--yolo SPEC] [--depth SPEC]')"
 	@echo "                  override which weights with LAI_PRETRAINED_MODELS / LAI_DEPTH_MODELS"
 
 install:

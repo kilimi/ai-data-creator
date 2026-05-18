@@ -45,17 +45,17 @@ export function FoundationModelsArticle() {
 
       <ArticleSection id="download" title="Pre-download weights" icon={Download}>
         <ArticleStep n={1} title="Start the stack">
-          Run <code className="font-mono text-xs">make up</code> once so the backend container is alive.
+          Run <code className="font-mono text-xs">lai up</code> once so the backend container is alive.
         </ArticleStep>
         <ArticleStep n={2} title="Fetch the minimal set">
-          <code className="font-mono text-xs">make download-models</code> pulls the
-          nano + small heads (≈1 GB). Override with{" "}
-          <code className="font-mono text-xs">LAI_PRETRAINED_MODELS=all</code> to grab everything.
+          <code className="font-mono text-xs">lai download-models</code> pulls
+          the nano + small heads (≈1 GB). Override with{" "}
+          <code className="font-mono text-xs">--yolo all --depth all</code> to grab everything.
         </ArticleStep>
         <ArticleStep n={3} title="Fetch a single weight">
           Pass the exact filename:{" "}
           <code className="font-mono text-xs">
-            make download-models LAI_PRETRAINED_MODELS=yolo11n-seg.pt
+            lai download-models --yolo yolo11n-seg.pt
           </code>
         </ArticleStep>
 
