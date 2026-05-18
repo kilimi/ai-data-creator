@@ -1,7 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Brain, TrendingUp, Activity, Zap, Target, Gauge, Settings, ChevronDown, ChevronUp } from "lucide-react";
+import { Brain, TrendingUp, Activity, Zap, Target, Gauge, Settings, ChevronDown, ChevronUp, Images } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useApi } from "@/hooks/use-api";
 
@@ -56,6 +56,15 @@ interface TaskDetails {
     image_counts?: { train: number; val: number; test: number };
     dataset_count?: number;
     dataset_ids?: number[];
+    examples_path?: string;
+    example_images?: Record<string, string>;  // URLs for train/val/test batch images
+    dataset_stats?: {
+      total_images?: { train: number; val: number; test: number };
+      total_annotations?: { train: number; val: number; test: number };
+      annotations_per_class?: Record<string, { train: number; val: number; test: number }>;
+      images_filtered?: number;
+      images_processed?: number;
+    };
     dataset_configs?: Array<{
       dataset_id: number;
       dataset_name?: string;
@@ -74,6 +83,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   const [error, setError] = useState<string | null>(null);
   const [showAllSettings, setShowAllSettings] = useState(false);
   const [showStatusReason, setShowStatusReason] = useState(false);
+  const [expandedExamples, setExpandedExamples] = useState<Set<string>>(new Set());
 
   const fetchTaskDetails = useCallback(async (signal?: AbortSignal) => {
     if (!api) {
@@ -603,6 +613,181 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <div className="text-2xl font-semibold text-foreground tabular-nums">{metadata.image_counts.test || 0}</div>
                     <div className="text-xs uppercase tracking-wider text-muted-foreground mt-1">Test</div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Dataset Statistics - Images and Annotations */}
+            {metadata?.dataset_stats && (
+              <div className="bg-card border border-border rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-4">Dataset Statistics</h3>
+                
+                {/* Image & Annotation Counts */}
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-3">Images per Split</h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      {metadata.dataset_stats.total_images && (
+                        <>
+                          <div className="bg-muted/30 rounded p-3 text-center">
+                            <div className="text-xl font-semibold text-foreground">
+                              {metadata.dataset_stats.total_images.train}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">Train Images</div>
+                          </div>
+                          <div className="bg-muted/30 rounded p-3 text-center">
+                            <div className="text-xl font-semibold text-foreground">
+                              {metadata.dataset_stats.total_images.val}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">Val Images</div>
+                          </div>
+                          <div className="bg-muted/30 rounded p-3 text-center">
+                            <div className="text-xl font-semibold text-foreground">
+                              {metadata.dataset_stats.total_images.test}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">Test Images</div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-3">Annotations per Split</h4>
+                    <div className="grid grid-cols-3 gap-3">
+                      {metadata.dataset_stats.total_annotations && (
+                        <>
+                          <div className="bg-muted/30 rounded p-3 text-center">
+                            <div className="text-xl font-semibold text-foreground">
+                              {metadata.dataset_stats.total_annotations.train}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">Train Annotations</div>
+                          </div>
+                          <div className="bg-muted/30 rounded p-3 text-center">
+                            <div className="text-xl font-semibold text-foreground">
+                              {metadata.dataset_stats.total_annotations.val}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">Val Annotations</div>
+                          </div>
+                          <div className="bg-muted/30 rounded p-3 text-center">
+                            <div className="text-xl font-semibold text-foreground">
+                              {metadata.dataset_stats.total_annotations.test}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">Test Annotations</div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Data Summary */}
+                  <div className="grid grid-cols-3 gap-3 text-sm pt-2 border-t border-border">
+                    {metadata.dataset_stats.images_processed !== undefined && (
+                      <div>
+                        <span className="text-muted-foreground">Images Processed:</span>
+                        <div className="text-foreground font-semibold">{metadata.dataset_stats.images_processed}</div>
+                      </div>
+                    )}
+                    {metadata.dataset_stats.images_filtered !== undefined && (
+                      <div>
+                        <span className="text-muted-foreground">Images Filtered:</span>
+                        <div className="text-foreground font-semibold">{metadata.dataset_stats.images_filtered}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Annotations per Class */}
+                  {metadata.dataset_stats.annotations_per_class && Object.keys(metadata.dataset_stats.annotations_per_class).length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium text-muted-foreground mb-2">Annotations per Class</h4>
+                      <div className="bg-muted/20 rounded p-3 max-h-40 overflow-y-auto">
+                        <div className="space-y-1 text-sm">
+                          {Object.entries(metadata.dataset_stats.annotations_per_class).map(([className, counts]) => (
+                            <div key={className} className="flex justify-between items-center">
+                              <span className="text-foreground">{className}:</span>
+                              <span className="text-muted-foreground">
+                                Train: {(counts as any).train}, Val: {(counts as any).val}, Test: {(counts as any).test || 0}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Training Examples - Preview Annotations */}
+            {metadata?.example_images && Object.keys(metadata.example_images).length > 0 && (
+              <div className="bg-card border border-border rounded-lg p-4">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Images className="w-5 h-5 text-primary" />
+                  Training Examples
+                  <span className="text-sm text-muted-foreground ml-auto">
+                    Verify annotations before training
+                  </span>
+                </h3>
+                
+                <div className="space-y-3">
+                  {['train', 'val', 'test'].map((split) => {
+                    const imageUrl = metadata.example_images?.[split];
+                    if (!imageUrl) return null;
+                    
+                    const isExpanded = expandedExamples.has(split);
+                    
+                    return (
+                      <div key={split} className="border border-border rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => {
+                            const newExpanded = new Set(expandedExamples);
+                            if (newExpanded.has(split)) {
+                              newExpanded.delete(split);
+                            } else {
+                              newExpanded.add(split);
+                            }
+                            setExpandedExamples(newExpanded);
+                          }}
+                          className="w-full flex items-center justify-between bg-muted/30 hover:bg-muted/50 p-3 transition-colors"
+                        >
+                          <div className="flex items-center gap-2 capitalize font-medium">
+                            {split} Dataset
+                            {metadata.image_counts && (
+                              <span className="text-sm text-muted-foreground">
+                                ({metadata.image_counts[split as keyof typeof metadata.image_counts]} images)
+                              </span>
+                            )}
+                          </div>
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                          )}
+                        </button>
+                        
+                        {isExpanded && (
+                          <div className="p-4 bg-muted/10">
+                            <div className="text-sm text-muted-foreground mb-3">
+                              Grid of {metadata.image_counts?.[split as keyof typeof metadata.image_counts] || '?'} sample images with annotations overlay
+                            </div>
+                            <div className="bg-background rounded border border-border overflow-auto max-h-96 flex items-center justify-center">
+                              <img
+                                src={imageUrl}
+                                alt={`${split} batch example`}
+                                className="max-w-full h-auto"
+                                style={{ maxHeight: '400px' }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/30 rounded border border-blue-200 dark:border-blue-900 text-sm text-blue-900 dark:text-blue-100">
+                  <p className="font-medium mb-1">💡 Tip:</p>
+                  <p>Expand each split to view a grid of training samples with annotations overlay. Check that bounding boxes and segmentation masks are correctly positioned before training.</p>
                 </div>
               </div>
             )}

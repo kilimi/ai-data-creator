@@ -530,6 +530,7 @@ export function ThresholdExplorer({
               <TooltipTrigger asChild>
                 <button
                   onClick={handleDownloadCoco}
+                  aria-label="Download COCO"
                   className="flex items-center justify-center w-9 h-9 rounded-md transition-colors bg-gray-800 text-gray-200 border border-gray-700 hover:bg-gray-700"
                 >
                   <Download className="w-4 h-4" />
@@ -544,6 +545,7 @@ export function ThresholdExplorer({
               <TooltipTrigger asChild>
                 <button
                   onClick={() => setShowSaveConfirm(true)}
+                  aria-label="Save predictions to dataset"
                   disabled={savingToDataset}
                   className="flex items-center justify-center w-9 h-9 rounded-md transition-colors bg-amber-700/30 text-amber-300 border border-amber-700 hover:bg-amber-700/50 disabled:opacity-50"
                 >
@@ -563,6 +565,7 @@ export function ThresholdExplorer({
               <TooltipTrigger asChild>
                 <button
                   onClick={handleSave}
+                  aria-label={saved ? "Thresholds saved" : saving ? "Saving thresholds" : "Save thresholds"}
                   disabled={saving}
                   className={`flex items-center justify-center w-9 h-9 rounded-md transition-colors ${
                     saved

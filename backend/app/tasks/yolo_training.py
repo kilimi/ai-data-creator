@@ -190,11 +190,23 @@ class YOLOTrainingTask(TrainingTask):
         )
         
         logger.info(f"Dataset prepared: {dataset_info}")
+        
+        # Extract stats for cleaner display
+        dataset_stats = dataset_info.get('dataset_stats', {})
+        logger.info(f"Dataset stats: {dataset_stats}")
+        
         self.task.progress = 30
         self.task.task_metadata = {
             **(self.task.task_metadata or {}),  # Preserve existing metadata (including dataset_configs)
             "stage": "dataset_prepared",
             "dataset_info": dataset_info,
+            "dataset_stats": {  # Include human-readable stats
+                "total_images": dataset_stats.get('total_images', {}),
+                "total_annotations": dataset_stats.get('total_annotations', {}),
+                "annotations_per_class": dataset_stats.get('annotations_per_class', {}),
+                "images_filtered": dataset_stats.get('images_filtered', 0),
+                "images_processed": dataset_stats.get('images_processed', 0),
+            },
             "celery_task_id": self.request.id
         }
         self.db.commit()
@@ -228,10 +240,19 @@ class YOLOTrainingTask(TrainingTask):
             
             logger.info(f"Training examples created successfully in {examples_dir}")
             
+            # Build list of example images created
+            example_images = {}
+            for split in ['train', 'val', 'test']:
+                example_path = examples_dir / f"{split}_batch.jpg"
+                if example_path.exists():
+                    # Store as relative path that frontend can fetch via /tasks/{id}/examples/{split}
+                    example_images[split] = f"/tasks/{self.task_id}/examples/{split}"
+            
             # Update task metadata with examples path
             self.task.task_metadata = {
                 **self.task.task_metadata,
-                "examples_path": str(examples_dir)
+                "examples_path": str(examples_dir),
+                "example_images": example_images  # URLs for frontend to fetch
             }
             self.db.commit()
             

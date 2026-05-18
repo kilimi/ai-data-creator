@@ -651,3 +651,30 @@ def _log_all_pt_files(directory: Path):
     logger.info(f"Found {len(all_pt_files)} .pt files:")
     for pt_file in all_pt_files:
         logger.info(f"  - {pt_file} ({pt_file.stat().st_size / 1024 / 1024:.2f} MB)")
+
+
+def generate_safe_output_filename(source_filename: str, dataset_id: int, augmentation_index: int = None, method_suffix: str = None) -> str:
+    """
+    Generate a safe output filename that includes dataset_id to prevent collisions
+    when multiple datasets have files with the same name.
+    
+    Args:
+        source_filename: Original filename (e.g., '0001.jpg')
+        dataset_id: ID of the source dataset
+        augmentation_index: Optional augmentation iteration index (used for augmented images)
+        method_suffix: Optional method suffix for augmented images (e.g., 'crop_flip')
+    
+    Returns:
+        Safe filename with dataset_id embedded (e.g., 'aug_0_crop_flip_ds1_0001.jpg')
+    """
+    from pathlib import Path
+    
+    base_name = Path(source_filename).stem
+    extension = Path(source_filename).suffix or '.jpg'
+    
+    if augmentation_index is not None and method_suffix is not None:
+        # Augmented image format: aug_{index}_{methods}_ds{dataset_id}_{basename}{ext}
+        return f"aug_{augmentation_index}_{method_suffix}_ds{dataset_id}_{base_name}{extension}"
+    else:
+        # Training image format: ds{dataset_id}_{basename}{ext}
+        return f"ds{dataset_id}_{base_name}{extension}"

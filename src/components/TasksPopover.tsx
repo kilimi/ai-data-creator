@@ -35,6 +35,36 @@ interface TasksPopoverProps {
   projectId?: number;
 }
 
+export const getTaskNavigationUrl = (task: Task, projectId?: number): string | null => {
+  const metadata = task.task_metadata || task.metadata || {};
+  const taskProjectId = metadata.project_id ?? task.project_id ?? projectId;
+
+  if (!taskProjectId) return null;
+
+  switch (task.task_type) {
+    case 'training':
+    case 'yolo_training':
+      return `/projects/${taskProjectId}/models?taskId=${task.id}`;
+    case 'evaluation':
+    case 'model_evaluation':
+      return `/projects/${taskProjectId}/evaluations?taskId=${task.id}`;
+    case 'augmentation': {
+      const targetDatasetId = metadata.target_dataset_id ?? metadata.output_dataset_id;
+      return targetDatasetId
+        ? `/projects/${taskProjectId}/datasets/${targetDatasetId}`
+        : `/projects/${taskProjectId}/datasets`;
+    }
+    case 'duplication':
+      return `/projects/${taskProjectId}/datasets`;
+    case 'preannotate':
+      return metadata.dataset_id
+        ? `/projects/${taskProjectId}/datasets/${metadata.dataset_id}`
+        : `/projects/${taskProjectId}/datasets`;
+    default:
+      return `/projects/${taskProjectId}`;
+  }
+};
+
 export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   const navigate = useNavigate();
   const { tasks, activeTasks, loading, cancelTask, activeTaskCount, fetchAllTasks, fetchActiveTasks, setPolling } = useTasks(projectId);
@@ -203,35 +233,9 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
     task.status === 'pending' || task.status === 'running'
   ).length;
 
-  // Get navigation URL based on task type and metadata
-  const getTaskNavigationUrl = (task: Task): string | null => {
-    const metadata = task.task_metadata || task.metadata || {};
-    const taskProjectId = metadata.project_id ?? task.project_id ?? projectId;
-    
-    if (!taskProjectId) return null;
-    
-    switch (task.task_type) {
-      case 'training':
-      case 'yolo_training':
-        return `/projects/${taskProjectId}/models?taskId=${task.id}`;
-      case 'evaluation':
-      case 'model_evaluation':
-        return `/projects/${taskProjectId}/evaluations?taskId=${task.id}`;
-      case 'augmentation':
-      case 'duplication':
-        return `/projects/${taskProjectId}/datasets`;
-      case 'preannotate':
-        return metadata.dataset_id
-          ? `/projects/${taskProjectId}/datasets/${metadata.dataset_id}`
-          : `/projects/${taskProjectId}/datasets`;
-      default:
-        return `/projects/${taskProjectId}`;
-    }
-  };
-
   const handleGoToTask = (task: Task, e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = getTaskNavigationUrl(task);
+    const url = getTaskNavigationUrl(task, projectId);
     if (url) {
       navigate(url);
     }
@@ -410,7 +414,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                           )}
                         </td>
                         <td className="px-3 py-4">
-                          {getTaskNavigationUrl(task) && (
+                          {getTaskNavigationUrl(task, projectId) && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -672,12 +676,12 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                     )}
                   </Button>
                 )}
-                {getTaskNavigationUrl(selectedTask) && (
+                {getTaskNavigationUrl(selectedTask, projectId) && (
                   <Button
                     variant="default"
                     size="sm"
                     onClick={() => {
-                      const url = getTaskNavigationUrl(selectedTask);
+                      const url = getTaskNavigationUrl(selectedTask, projectId);
                       if (url) {
                         navigate(url);
                         setIsDetailOpen(false);

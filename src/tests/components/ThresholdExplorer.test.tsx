@@ -169,7 +169,7 @@ describe('ThresholdExplorer Component', () => {
     it('should call API when save button is clicked', async () => {
       render(<ThresholdExplorer {...defaultProps} />);
 
-      const saveButton = screen.getByText('Save');
+      const saveButton = screen.getByRole('button', { name: /save thresholds/i });
       
       await act(async () => {
         fireEvent.click(saveButton);
@@ -189,14 +189,14 @@ describe('ThresholdExplorer Component', () => {
     it('should show success state after successful save', async () => {
       render(<ThresholdExplorer {...defaultProps} />);
 
-      const saveButton = screen.getByText('Save');
+      const saveButton = screen.getByRole('button', { name: /save thresholds/i });
       
       await act(async () => {
         fireEvent.click(saveButton);
       });
 
       await waitFor(() => {
-        expect(screen.getByText('Saved')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /thresholds saved/i })).toBeInTheDocument();
       });
     });
 
@@ -209,7 +209,7 @@ describe('ThresholdExplorer Component', () => {
 
       render(<ThresholdExplorer {...defaultProps} />);
 
-      const saveButton = screen.getByText('Save');
+      const saveButton = screen.getByRole('button', { name: /save thresholds/i });
       
       await act(async () => {
         fireEvent.click(saveButton);
@@ -226,7 +226,7 @@ describe('ThresholdExplorer Component', () => {
 
       render(<ThresholdExplorer {...defaultProps} />);
 
-      const saveButton = screen.getByText('Save');
+      const saveButton = screen.getByRole('button', { name: /save thresholds/i });
       
       await act(async () => {
         fireEvent.click(saveButton);
@@ -241,7 +241,7 @@ describe('ThresholdExplorer Component', () => {
       const onSaved = vi.fn();
       render(<ThresholdExplorer {...defaultProps} onSaved={onSaved} />);
 
-      const saveButton = screen.getByText('Save');
+      const saveButton = screen.getByRole('button', { name: /save thresholds/i });
       
       await act(async () => {
         fireEvent.click(saveButton);
@@ -262,7 +262,7 @@ describe('ThresholdExplorer Component', () => {
       const onSaved = vi.fn();
       render(<ThresholdExplorer {...defaultProps} onSaved={onSaved} />);
 
-      const saveButton = screen.getByText('Save');
+      const saveButton = screen.getByRole('button', { name: /save thresholds/i });
       
       await act(async () => {
         fireEvent.click(saveButton);

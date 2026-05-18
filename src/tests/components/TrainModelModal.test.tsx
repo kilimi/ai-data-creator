@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TrainModelModal } from "@/components/TrainModelModal";
 import { Dataset, DatasetGroup } from "@/types";
@@ -75,6 +75,7 @@ vi.mock("lucide-react", () => ({
   Trash2: () => <div>Trash Icon</div>,
   Plus: () => <div>Plus Icon</div>,
   Image: () => <div>Image Icon</div>,
+  ImageIcon: () => <div>ImageIcon Icon</div>,
   FileText: () => <div>FileText Icon</div>,
   Wand2: () => <div>Wand Icon</div>,
   Check: () => <div>Check Icon</div>,
@@ -87,6 +88,9 @@ vi.mock("lucide-react", () => ({
   AlertCircle: () => <div>AlertCircle Icon</div>,
   ChevronUp: () => <div>ChevronUp Icon</div>,
   Search: () => <div>Search Icon</div>,
+  LayoutList: () => <div>LayoutList Icon</div>,
+  Folder: () => <div>Folder Icon</div>,
+  Rows3: () => <div>Rows3 Icon</div>,
 }));
 
 // Mock API
@@ -200,12 +204,22 @@ describe("TrainModelModal", () => {
     );
   };
 
+  const getDatasetRowButton = (datasetName: string) => {
+    const candidates = screen.getAllByRole("button", { name: new RegExp(datasetName, "i") });
+    const rowButton = candidates.find((el) => {
+      const cls = (el.getAttribute("class") || "").toLowerCase();
+      return cls.includes("flex-1") && cls.includes("text-left");
+    });
+    if (!rowButton) throw new Error(`${datasetName} row button not found`);
+    return rowButton;
+  };
+
   const addSingleDataset = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByRole("button", { name: /add/i }));
-    const items = await screen.findAllByRole("menuitem", { name: /add dataset/i });
-    const target = items.find((el) => /add dataset$/i.test((el.textContent || "").trim()) || !/group/i.test((el.textContent || "").toLowerCase()));
-    if (!target) throw new Error("Add Dataset menu item not found");
-    await user.click(target);
+    await screen.findByText("Dataset 1");
+    const dsButton = getDatasetRowButton("Dataset 1");
+    // First click selects dataset; second click expands row controls.
+    await user.click(dsButton);
+    await user.click(getDatasetRowButton("Dataset 1"));
   };
 
   const flushMicrotasks = async () => {
@@ -226,9 +240,11 @@ describe("TrainModelModal", () => {
     const user = userEvent.setup({ delay: null });
     renderModal();
 
-    // Click add dataset button multiple times rapidly
+    // Toggle selection on/off repeatedly; each new selection should trigger a fresh fetch.
     await addSingleDataset(user);
+    await user.click(screen.getByRole("button", { name: /remove dataset 1/i }));
     await addSingleDataset(user);
+    await user.click(screen.getByRole("button", { name: /remove dataset 1/i }));
     await addSingleDataset(user);
 
     await flushMicrotasks();
@@ -257,7 +273,7 @@ describe("TrainModelModal", () => {
   });
 
   it("cancels previous fetch when new fetch starts for same selection", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     
     // Mock slow API calls
     let resolveFirst: any;
@@ -296,13 +312,13 @@ describe("TrainModelModal", () => {
 
     await flushMicrotasks();
 
-    // Change dataset selection (triggers new fetch for same selection)
-    const datasetSelect = screen.getAllByRole("combobox")[0];
-    await user.click(datasetSelect);
-    
-    // Select second dataset
-    const dataset2Option = screen.getByText("Dataset 2");
-    await user.click(dataset2Option);
+    // Switch selected dataset to trigger a new fetch cycle and make the first stale.
+    const removeDataset1 = await screen.findByRole("button", { name: /remove dataset 1/i });
+    await user.click(removeDataset1);
+    const ds2Label = await screen.findByText("Dataset 2");
+    const ds2Button = ds2Label.closest("button") as HTMLButtonElement | null;
+    if (!ds2Button) throw new Error("Dataset 2 row button not found");
+    await user.click(ds2Button);
 
     // Resolve second fetch first
     resolveSecond();
@@ -319,20 +335,13 @@ describe("TrainModelModal", () => {
   });
 
   it("rate limits parallel fetches when adding dataset group", async () => {
-    // Dialog + nested menus set `pointer-events: none` on `body`; allow synthetic clicks.
+    // Dialog + interactive controls set `pointer-events: none` on `body`; allow synthetic clicks.
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     renderModal();
 
-    // Open dropdown to add dataset group
-    await user.click(screen.getByRole("button", { name: /add/i }));
-
-    // Hover submenu trigger so Radix mounts sub-content (pointer-open)
-    const addGroupTrigger = await screen.findByRole("menuitem", { name: /add dataset group/i });
-    await user.hover(addGroupTrigger);
-
-    const groupOption = await screen.findByTestId("train-modal-add-dataset-group-group1");
-    // Submenu item: userEvent often does not activate Radix MenuItem select inside Dialog (jsdom).
-    fireEvent.click(groupOption);
+    // In the new picker UI, group rows expose an "Add all" action.
+    const addAll = await screen.findByRole("button", { name: /add all/i });
+    await user.click(addAll);
 
     // Both datasets in the selected group should eventually trigger fetches
     await waitFor(() => {
@@ -439,7 +448,15 @@ describe("TrainModelModal", () => {
   });
 
   it("enables train button when form is complete", async () => {
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+    mockApi.getImageCollections.mockResolvedValue({
+      success: true,
+      data: [{ name: "collection1" }],
+    });
+    mockApi.getAnnotations.mockResolvedValue({
+      success: true,
+      data: [{ id: "ann1", name: "annotations1.json", type: "coco" }],
+    });
     renderModal();
 
     // Add dataset
@@ -456,17 +473,7 @@ describe("TrainModelModal", () => {
     // Select model type via model card
     await user.click(screen.getByText("YOLO"));
 
-    // Select image collection (dataset, collection, annotation comboboxes)
-    const collectionSelect = screen.getAllByRole("combobox")[1];
-    await user.click(collectionSelect);
-    const collection1 = screen.getByText("collection1");
-    await user.click(collection1);
-
-    // Select annotation
-    const annotationSelect = screen.getAllByRole("combobox")[2];
-    await user.click(annotationSelect);
-    const annotation1 = screen.getByText("annotations1.json");
-    await user.click(annotation1);
+    // With single options, picker auto-selects collection and annotation.
 
     // Train button should now be enabled
     const trainButton = screen.getByRole("button", { name: /train model/i });
@@ -537,15 +544,15 @@ describe("TrainModelModal", () => {
 
     // Wait for selected dataset card to appear
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /remove dataset selection/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /remove dataset 1/i })).toBeInTheDocument();
     });
 
     // Click remove button
-    const removeButton = screen.getByRole("button", { name: /remove dataset selection/i });
+    const removeButton = screen.getByRole("button", { name: /remove dataset 1/i });
     await user.click(removeButton);
 
-    // Selected dataset card should be removed
-    expect(screen.getByText("No datasets selected")).toBeInTheDocument();
+    // Selected dataset chip should be removed
+    expect(screen.queryByRole("button", { name: /remove dataset 1/i })).not.toBeInTheDocument();
   });
 
   it("auto-selects when only one option available", async () => {
@@ -560,7 +567,7 @@ describe("TrainModelModal", () => {
       data: [{ id: "only-ann", name: "only-annotation.json" }],
     });
 
-    const user = userEvent.setup({ delay: null });
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     renderModal();
 
     // Add dataset
@@ -568,10 +575,10 @@ describe("TrainModelModal", () => {
 
     await flushMicrotasks();
 
-    // Wait for auto-selection (Radix Select renders text in trigger, not input value)
+    // Auto-selected options should make form valid once a model is selected.
+    await user.click(screen.getByText("YOLO"));
     await waitFor(() => {
-      expect(screen.getAllByText("only-collection").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("only-annotation.json").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /train model/i })).not.toBeDisabled();
     });
   });
 
@@ -608,7 +615,7 @@ describe("TrainModelModal", () => {
       />
     );
 
-    // Form should be reset (no datasets selected)
-    expect(screen.queryByText("Dataset 1")).not.toBeInTheDocument();
+    // Form should be reset (dataset is not selected anymore)
+    expect(screen.queryByRole("button", { name: /remove dataset 1/i })).not.toBeInTheDocument();
   });
 });

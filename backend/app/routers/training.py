@@ -19,6 +19,7 @@ import zipfile
 from ..database import get_db, SessionLocal
 from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection
 from ..model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
+from app.tasks.yolo_training_helpers import generate_safe_output_filename
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -110,6 +111,15 @@ def prepare_yolo_dataset(
     
     # Track skipped annotations
     skipped_annotations = {'missing_seg': 0, 'missing_bbox': 0, 'missing_both': 0}
+    
+    # Statistics tracking
+    stats = {
+        'total_images': {"train": 0, "val": 0, "test": 0},
+        'total_annotations': {"train": 0, "val": 0, "test": 0},
+        'annotations_per_class': {},  # Will be filled during processing
+        'images_filtered': 0,  # Images removed due to no valid annotations
+        'images_processed': 0,
+    }
     
     # Create directory structure
     train_images_dir = output_dir / "images" / "train"
@@ -234,8 +244,10 @@ def prepare_yolo_dataset(
             images = images_with_annotations
             images_after = len(images)
             
+            filtered_count = images_before - images_after
+            stats['images_filtered'] += filtered_count
             if images_before != images_after:
-                logger.info(f"Filtered dataset {dataset_id}: {images_before} → {images_after} images (removed {images_before - images_after} without valid annotations)")
+                logger.info(f"Filtered dataset {dataset_id}: {images_before} → {images_after} images (removed {filtered_count} without valid annotations)")
             
             if not images:
                 logger.warning(f"No images with annotations found for dataset {dataset_id} after filtering, skipping")
@@ -280,7 +292,9 @@ def prepare_yolo_dataset(
                     logger.warning(f"Image file not found: {src_image_path}")
                     continue
                 
-                dst_image_path = img_dir / src_image_path.name
+                # Generate safe filename with dataset_id to prevent collisions
+                safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
+                dst_image_path = img_dir / safe_filename
                 
                 # Create hard link or copy
                 try:
@@ -378,6 +392,12 @@ def prepare_yolo_dataset(
                                 if normalized_coords and len(normalized_coords) >= 6:
                                     coords_str = ' '.join(f"{c:.6f}" for c in normalized_coords)
                                     label_lines.append(f"{class_id} {coords_str}")
+                                    # Track annotation stats
+                                    class_name = ann_class.class_name
+                                    if class_name not in stats['annotations_per_class']:
+                                        stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
+                                    stats['annotations_per_class'][class_name][split_name] += 1
+                                    stats['total_annotations'][split_name] += 1
                                     has_segmentation = True
                                     continue  # Skip bbox processing for this annotation
                     
@@ -407,6 +427,12 @@ def prepare_yolo_dataset(
                         
                         # YOLO detection format
                         label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
+                        # Track annotation stats
+                        class_name = ann_class.class_name
+                        if class_name not in stats['annotations_per_class']:
+                            stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
+                        stats['annotations_per_class'][class_name][split_name] += 1
+                        stats['total_annotations'][split_name] += 1
                     
                     # Try individual bbox fields if bbox JSON is not present
                     elif annotation.bbox_x is not None and annotation.bbox_width is not None:
@@ -423,16 +449,28 @@ def prepare_yolo_dataset(
                         
                         # YOLO detection format
                         label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
+                        # Track annotation stats
+                        class_name = ann_class.class_name
+                        if class_name not in stats['annotations_per_class']:
+                            stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
+                        stats['annotations_per_class'][class_name][split_name] += 1
+                        stats['total_annotations'][split_name] += 1
                 
                 # Write label file (create empty file if no annotations but image is kept)
                 if label_lines:
                     label_path = lbl_dir / (src_image_path.stem + '.txt')
                     with open(label_path, 'w') as f:
                         f.write('\n'.join(label_lines))
+                    # Track image was processed
+                    stats['total_images'][split_name] += 1
+                    stats['images_processed'] += 1
                 elif not remove_images_without_annotations:
                     # Create empty label file if we're keeping images without annotations
                     label_path = lbl_dir / (src_image_path.stem + '.txt')
                     label_path.touch()
+                    # Track this image too
+                    stats['total_images'][split_name] += 1
+                    stats['images_processed'] += 1
                 
                 total_images[split_name] += 1
     
@@ -523,7 +561,8 @@ def prepare_yolo_dataset(
         'yaml_path': str(yaml_path),
         'class_names': sorted_classes,
         'class_count': len(sorted_classes),
-        'image_counts': total_images
+        'image_counts': total_images,
+        'dataset_stats': stats  # Include comprehensive statistics
     }
 
 

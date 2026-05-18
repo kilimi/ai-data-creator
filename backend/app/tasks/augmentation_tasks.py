@@ -18,13 +18,15 @@ except ImportError:
     A = None
 
 from celery import Task
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 import uuid
 
 from app.celery_app import celery_app
-from app.models import Task as TaskModel, Dataset, Image, Annotation, Augmentation, AnnotationFile, AnnotationClass, AnnotationFileImage
+from app.models import Task as TaskModel, Dataset, Image, ImageCollection, Annotation, Augmentation, AnnotationFile, AnnotationClass, AnnotationFileImage
+from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.routers.annotation_db import validate_and_normalize_segmentation
+from app.tasks.yolo_training_helpers import generate_safe_output_filename
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +116,14 @@ class AugmentationTask(Task):
                 db_task_id = args[0]
                 task = db.query(TaskModel).filter(TaskModel.id == db_task_id).first()
                 if task:
-                    task.status = 'failed'
-                    task.completed_at = datetime.utcnow()
-                    task.error_message = str(exc)
+                    # Don't overwrite cancelled/stopped status
+                    if task.status in ('cancelled', 'stopped', 'paused'):
+                        logger.info(f"Task {db_task_id} already has status '{task.status}', not overwriting with failed")
+                    else:
+                        task.status = 'failed'
+                        task.completed_at = datetime.utcnow()
+                        task.error_message = str(exc)
+                        logger.error(f"Task {db_task_id} marked as failed: {exc}")
                     db.commit()
         finally:
             db.close()
@@ -446,6 +453,9 @@ def create_augmented_dataset_task(self, task_id: int):
         # Check if task was cancelled before starting
         if task.status == 'cancelled' or task.status == 'stopped':
             logger.info(f"Task {task_id} was cancelled/stopped before starting")
+            task.completed_at = datetime.utcnow()
+            task.progress = 0.0
+            db.commit()
             return {"status": "cancelled"}
         
         # Update task status to running
@@ -496,6 +506,26 @@ def create_augmented_dataset_task(self, task_id: int):
             raise Exception("Target dataset not found")
         
         logger.info(f"Task {task_id}: Target dataset: {target_dataset.name}")
+
+        # Ensure target dataset has a default image collection so tabbed UI can display
+        # images while augmentation is still running.
+        target_default_collection = db.query(ImageCollection).filter(
+            ImageCollection.dataset_id == target_dataset.id,
+            ImageCollection.is_default == True
+        ).first()
+        if not target_default_collection:
+            target_default_collection = ImageCollection(
+                dataset_id=target_dataset.id,
+                name="RGB Images",
+                description="Default image collection",
+                is_default=True,
+                position=0,
+            )
+            db.add(target_default_collection)
+            db.flush()
+            logger.info(
+                f"Task {task_id}: Created default collection {target_default_collection.id} for dataset {target_dataset.id}"
+            )
         
         # Update progress
         task.progress = 10.0
@@ -615,23 +645,28 @@ def create_augmented_dataset_task(self, task_id: int):
             db.refresh(task)
             if task.status in ['cancelled', 'stopped']:
                 logger.info(f"Task {task_id}: Cancelled during processing")
+                task.status = 'cancelled'
+                task.completed_at = datetime.utcnow()
+                task.progress = min(processed_images / len(all_source_images) * 100, 100) if all_source_images else 0
+                task.task_metadata = {
+                    **(task.task_metadata or {}),
+                    "stage": "cancelled",
+                    "processed_images": processed_images,
+                }
+                db.commit()
+                logger.info(f"Task {task_id}: Cancelled during processing, committed status to DB")
                 return {"status": "cancelled", "processed": processed_images}
             
             try:
-                # Find source image file
-                source_path = None
-                
-                # Try new projects structure first
-                new_source_path = Path("projects") / str(source_project_id) / str(source_image.dataset_id) / "images" / source_image.file_name
-                if new_source_path.exists():
-                    source_path = new_source_path
-                
-                # Fall back to old data structure
-                if source_path is None:
-                    old_source_path = Path("data") / "images" / str(source_image.dataset_id) / source_image.file_name
-                    if old_source_path.exists():
-                        source_path = old_source_path
-                
+                # Resolve source image via shared helper (handles collection-aware
+                # and nested image locations, URL-derived paths, and legacy layouts).
+                source_path = resolve_dataset_image_path_from_models(
+                    source_image,
+                    dataset_id=source_image.dataset_id,
+                    project_id=source_project_id,
+                    collection_id=getattr(source_image, "collection_id", None),
+                )
+
                 if source_path is None:
                     logger.warning(f"Task {task_id}: Source image not found: {source_image.file_name}")
                     errors.append(f"Image not found: {source_image.file_name}")
@@ -682,23 +717,10 @@ def create_augmented_dataset_task(self, task_id: int):
                             bboxes.append([x, y, w, h])
                             class_labels.append(ann.category or 'unknown')
                             
-                            # Get category_id - use from annotation, or look up from source classes mapping
+                            # Get category_id from source annotation/map without extra DB queries
                             category_id = ann.category_id
                             if category_id is None and ann.category:
-                                # First try source class mapping
                                 category_id = source_class_to_category_id.get(ann.category)
-                                # If still None, try looking up from source annotation file's AnnotationClass
-                                if category_id is None:
-                                    source_ann_file_id = ann.annotation_file_id
-                                    if source_ann_file_id:
-                                        ann_class = db.query(AnnotationClass).filter(
-                                            AnnotationClass.annotation_file_id == source_ann_file_id,
-                                            AnnotationClass.class_name == ann.category
-                                        ).first()
-                                        if ann_class and ann_class.category_id is not None:
-                                            category_id = ann_class.category_id
-                                            # Cache it for future use
-                                            source_class_to_category_id[ann.category] = category_id
                             
                             # Convert segmentation to keypoint format for Albumentations (use same normalization as COCO import)
                             norm_seg, has_polygon_masks, has_rle_mask = _segmentation_mask_flags(
@@ -737,6 +759,13 @@ def create_augmented_dataset_task(self, task_id: int):
                         classification_annotations.append(ann)
                 
                 # Create augmented versions
+                # Compose is randomized per call, so it can be reused safely and avoids
+                # rebuilding the full transform graph for every augmentation iteration.
+                transform = create_albumentations_transform(
+                    augmentation.augmentation_methods,
+                    augmentation.method_parameters or {},
+                    include_keypoint_params=bool(keypoints),
+                )
                 for i in range(augmentation_factor):
                     # Check for cancellation
                     db.refresh(task)
@@ -748,13 +777,6 @@ def create_augmented_dataset_task(self, task_id: int):
                         flat_keypoints: List[Tuple[float, float]] = []
                         for kp_list in keypoints:
                             flat_keypoints.extend(kp_list)
-
-                        # Create the augmentation pipeline (keypoint_params only when we actually pass keypoints)
-                        transform = create_albumentations_transform(
-                            augmentation.augmentation_methods,
-                            augmentation.method_parameters or {},
-                            include_keypoint_params=bool(flat_keypoints),
-                        )
 
                         # Apply augmentation with bboxes and keypoints (for segmentation)
                         if bboxes and augmentation.transform_annotations:
@@ -802,11 +824,15 @@ def create_augmented_dataset_task(self, task_id: int):
                         augmented_image = augmented['image']
                         aug_height, aug_width = augmented_image.shape[:2]
                         
-                        # Generate output filename
+                        # Generate output filename (include source dataset_id to prevent collisions
+                        # when multiple source datasets have files with the same name)
                         method_suffix = "_".join(augmentation.augmentation_methods[:2])
-                        base_name = Path(source_image.file_name).stem
-                        extension = Path(source_image.file_name).suffix or '.jpg'
-                        file_name = f"aug_{i}_{method_suffix}_{base_name}{extension}"
+                        file_name = generate_safe_output_filename(
+                            source_image.file_name,
+                            source_image.dataset_id,
+                            augmentation_index=i,
+                            method_suffix=method_suffix
+                        )
                         
                         # Save augmented image
                         output_path = target_dir / file_name
@@ -825,6 +851,7 @@ def create_augmented_dataset_task(self, task_id: int):
                         
                         augmented_image_record = Image(
                             dataset_id=target_dataset.id,
+                            collection_id=target_default_collection.id,
                             file_name=file_name,
                             file_size=file_size,
                             width=aug_width,
@@ -1318,15 +1345,24 @@ def create_augmented_dataset_task(self, task_id: int):
         task.task_metadata = {**(task.task_metadata or {}), "stage": "finalizing"}
         db.commit()
         
+        # Refresh dataset to ensure it's in a clean state for count query
+        db.refresh(target_dataset)
+        
+        # Query and update image count - now that all images have been committed
         target_dataset.image_count = db.query(Image).filter(
             Image.dataset_id == target_dataset.id
         ).count()
+        logger.info(f"Task {task_id}: Updated dataset {target_dataset.id} image_count to {target_dataset.image_count}")
         
-        # Update image annotation counts
+        # Update image annotation counts in bulk (avoid per-image count queries)
+        annotation_counts = dict(
+            db.query(Annotation.image_id, func.count(Annotation.id))
+            .filter(Annotation.dataset_id == target_dataset.id)
+            .group_by(Annotation.image_id)
+            .all()
+        )
         for img in db.query(Image).filter(Image.dataset_id == target_dataset.id).all():
-            img.annotations_count = db.query(Annotation).filter(
-                Annotation.image_id == img.id
-            ).count()
+            img.annotations_count = int(annotation_counts.get(img.id, 0))
         
         # Update annotation file statistics
         annotation_file.annotation_count = processed_annotations
@@ -1430,7 +1466,9 @@ def create_augmented_dataset_task(self, task_id: int):
         }
         db.commit()
         
-        logger.info(f"Task {task_id}: Completed successfully. Processed {processed_images} images, {processed_annotations} annotations, {len(errors)} errors")
+        # Final verification that dataset has images
+        final_image_count = db.query(Image).filter(Image.dataset_id == target_dataset.id).count()
+        logger.info(f"Task {task_id}: Completed successfully. Processed {processed_images} images, {processed_annotations} annotations, {len(errors)} errors. Final DB image count: {final_image_count}")
         
         return {
             "status": "completed",

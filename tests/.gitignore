@@ -3,6 +3,9 @@ test-results/
 playwright-report/
 playwright/.cache/
 
+# Performance profiles
+../performances/
+
 # Screenshots
 screenshots/
 *.png
