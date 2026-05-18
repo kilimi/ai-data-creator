@@ -575,6 +575,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           weightsDownloadNotice: downloadNotice
         });
 
+        sonnerToast.success("Training Started", {
+          description: `Task "${modelName}" is now running on the GPU service.`,
+          duration: 6000,
+        });
+
         if (downloadNotice) {
           sonnerToast.info("Model weights will be downloaded", {
             description: downloadNotice,
