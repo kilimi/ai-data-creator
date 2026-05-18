@@ -255,6 +255,29 @@ const getParameterDescription = (methodId: string, paramName: string): string =>
   return descriptions[methodId]?.[paramName] || 'Adjust this parameter as needed';
 };
 
+// Slider config: [min, max, step] per (methodId, paramName). Falls back to number input.
+const sliderConfig: Record<string, Record<string, [number, number, number]>> = {
+  rotation: { min_angle: [-180, 0, 1], max_angle: [0, 180, 1] },
+  scale: { min_scale: [0.1, 1, 0.05], max_scale: [1, 3, 0.05] },
+  brightness: { factor: [0, 1, 0.05] },
+  contrast: { factor: [0, 1, 0.05] },
+  saturation: { factor: [0, 1, 0.05] },
+  hue_shift: { max_shift: [0, 0.5, 0.01] },
+  gaussian_noise: { std: [0, 0.1, 0.005] },
+  gaussian_blur: { kernel_size: [3, 15, 2] },
+  cutout: { num_holes: [1, 10, 1], max_size: [4, 128, 4] },
+  mixup: { alpha: [0, 1, 0.05] },
+};
+
+// Augmentation presets — one-click bundles for common scenarios.
+const augmentationPresets: { id: string; name: string; description: string; ids: string[] }[] = [
+  { id: 'light', name: 'Light', description: 'Subtle, safe for any dataset', ids: ['flip_horizontal', 'brightness', 'contrast'] },
+  { id: 'standard', name: 'Standard', description: 'Recommended general purpose', ids: ['rotation', 'flip_horizontal', 'brightness', 'contrast', 'saturation'] },
+  { id: 'heavy', name: 'Heavy', description: 'Maximize variation', ids: ['rotation', 'flip_horizontal', 'flip_vertical', 'scale', 'brightness', 'contrast', 'saturation', 'hue_shift', 'gaussian_noise'] },
+  { id: 'geometric', name: 'Geometric only', description: 'Shape & orientation', ids: ['rotation', 'flip_horizontal', 'flip_vertical', 'scale'] },
+  { id: 'color', name: 'Color only', description: 'Lighting & color', ids: ['brightness', 'contrast', 'saturation', 'hue_shift'] },
+];
+
 export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, datasets, datasetGroups = [] }: CreateAugmentedDatasetModalProps) => {
   const { toast } = useToast();
   const { api, isConfigured } = useApi();
