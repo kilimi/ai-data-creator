@@ -1340,84 +1340,47 @@ export default function Dataset() {
           />
         )}
 
-        <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will permanently delete the dataset "{dataset?.name}" and all its associated images and annotations.
-                This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction 
-                onClick={handleConfirmDeleteDataset}
-                className="bg-destructive hover:bg-destructive/90"
-              >
-                Delete Dataset
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <ConfirmDeleteDialog
+          open={showDeleteDialog}
+          onOpenChange={setShowDeleteDialog}
+          entity="dataset"
+          itemName={dataset?.name ?? null}
+          consequences={["All images and annotations in this dataset will be permanently removed."]}
+          confirmLabel="Delete dataset"
+          onConfirm={handleConfirmDeleteDataset}
+        />
 
-        <AlertDialog
+        <ConfirmDeleteDialog
           open={!!collectionToDelete}
           onOpenChange={(open) => {
-            if (!open && !isDeletingCollection) setCollectionToDelete(null);
+            if (!open) setCollectionToDelete(null);
           }}
-        >
-          <AlertDialogContent
-            {...({
-              onPointerDownOutside: (e: any) => {
-                if (isDeletingCollection) e.preventDefault();
-              },
-              onEscapeKeyDown: (e: KeyboardEvent) => {
-                if (isDeletingCollection) e.preventDefault();
-              },
-            } as any)}
-          >
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this image layer?</AlertDialogTitle>
-              <AlertDialogDescription asChild>
-                <div className="space-y-2 text-sm text-muted-foreground">
-                  <p>
-                    You are about to permanently delete the layer{' '}
-                    <span className="font-medium text-foreground">
-                      {(collectionToDelete?.name || '').trim() || 'Untitled'}
-                    </span>
-                    {typeof collectionToDelete?.imageCount === 'number' && collectionToDelete.imageCount > 0
-                      ? ` and all ${collectionToDelete.imageCount.toLocaleString()} image${collectionToDelete.imageCount === 1 ? '' : 's'} stored in it.`
-                      : ' and every image stored in it.'}
-                  </p>
-                  <p>
-                    This removes image files from disk (including thumbnails and cached previews where present),
-                    deletes the corresponding database rows, and removes segmentation annotations tied to those images.
-                    This action cannot be undone.
-                  </p>
-                  {collectionToDelete?.isDefault ? (
-                    <p className="text-amber-600 dark:text-amber-500">
-                      This is the default layer. If another layer exists, it will become the new default after deletion.
-                    </p>
-                  ) : null}
-                </div>
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isDeletingCollection}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                disabled={isDeletingCollection}
-                onClick={(e) => {
-                  e.preventDefault();
-                  void handleConfirmDeleteCollection();
-                }}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                {isDeletingCollection ? 'Deleting…' : 'Yes, delete layer and images'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          title="Delete this image layer?"
+          entity="image layer"
+          itemName={(collectionToDelete?.name || '').trim() || 'Untitled'}
+          description={
+            <>
+              You are about to permanently delete the layer{' '}
+              <span className="font-semibold text-foreground">
+                {(collectionToDelete?.name || '').trim() || 'Untitled'}
+              </span>
+              {typeof collectionToDelete?.imageCount === 'number' && collectionToDelete.imageCount > 0
+                ? ` and all ${collectionToDelete.imageCount.toLocaleString()} image${collectionToDelete.imageCount === 1 ? '' : 's'} stored in it.`
+                : ' and every image stored in it.'}
+            </>
+          }
+          consequences={[
+            "Image files are removed from disk (including thumbnails and cached previews).",
+            "Database rows and segmentation annotations tied to those images are removed.",
+            ...(collectionToDelete?.isDefault
+              ? ["This is the default layer — if another layer exists, it will become the new default."]
+              : []),
+          ]}
+          confirmLabel={isDeletingCollection ? 'Deleting…' : 'Delete layer and images'}
+          isLoading={isDeletingCollection}
+          onConfirm={handleConfirmDeleteCollection}
+        />
+
         {isUploading && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
             <div className="bg-background p-6 rounded-lg shadow-lg max-w-md w-full mx-4 border">
