@@ -1176,6 +1176,37 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                                           );
                                         }
                                         
+                                        // Slider input for known numeric parameters
+                                        const sCfg = sliderConfig[method.id]?.[paramName];
+                                        if (sCfg) {
+                                          const [sMin, sMax, sStep] = sCfg;
+                                          const sVal = typeof currentParams[paramName] === 'number'
+                                            ? currentParams[paramName]
+                                            : Number(defaultValue);
+                                          const display = sStep < 1 ? sVal.toFixed(2) : String(sVal);
+                                          return (
+                                            <div key={paramName} className="space-y-2">
+                                              <div className="flex items-center justify-between">
+                                                <Label htmlFor={`${method.id}-${paramName}`} className="text-sm capitalize">
+                                                  {paramName.replace(/_/g, ' ')}
+                                                </Label>
+                                                <span className="text-xs font-mono tabular-nums text-muted-foreground">{display}</span>
+                                              </div>
+                                              <Slider
+                                                id={`${method.id}-${paramName}`}
+                                                min={sMin}
+                                                max={sMax}
+                                                step={sStep}
+                                                value={[sVal]}
+                                                onValueChange={(v) => updateMethodParameter(method.id, paramName, v[0])}
+                                              />
+                                              <p className="text-xs text-muted-foreground">
+                                                {getParameterDescription(method.id, paramName)}
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+
                                         // Default number input for other parameters
                                         return (
                                         <div key={paramName} className="space-y-2">
