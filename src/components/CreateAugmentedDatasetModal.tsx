@@ -279,7 +279,6 @@ const augmentationPresets: { id: string; name: string; description: string; ids:
 ];
 
 export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, datasets, datasetGroups = [] }: CreateAugmentedDatasetModalProps) => {
-  const { toast } = useToast();
   const { api, isConfigured } = useApi();
   
   const [loading, setLoading] = useState(false);
