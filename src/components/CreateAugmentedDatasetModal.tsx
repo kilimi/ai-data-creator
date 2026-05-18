@@ -717,11 +717,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     e.preventDefault();
     
     if (!datasetName.trim()) {
-      toast({
-        title: "Error",
-        description: "Please enter a dataset name",
-        variant: "destructive",
-      });
+      toast.error("Please enter a dataset name");
       return;
     }
 
