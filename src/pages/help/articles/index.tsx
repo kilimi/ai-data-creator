@@ -7,10 +7,11 @@
  *   3. It will automatically appear in the sidebar and be routable at
  *      `/help/<slug>`.
  */
-import { LucideIcon, Target, BookOpen, Images, Files } from "lucide-react";
+import { LucideIcon, Target, BookOpen, Images, Files, HardDrive } from "lucide-react";
 import { CollectionCalibrationArticle } from "./CollectionCalibrationArticle";
 import { DatasetViewArticle } from "./DatasetViewArticle";
 import { AnnotationFilesArticle } from "./AnnotationFilesArticle";
+import { FoundationModelsArticle } from "./FoundationModelsArticle";
 
 export interface HelpArticle {
   slug: string;
@@ -45,6 +46,14 @@ export const helpArticles: HelpArticle[] = [
     category: "Datasets",
     icon: Target,
     Component: CollectionCalibrationArticle,
+  },
+  {
+    slug: "foundation-models",
+    title: "Foundation Models",
+    description: "Where YOLO and Depth-Anything weights live, how to pre-download them, and how to add custom .pt files.",
+    category: "System",
+    icon: HardDrive,
+    Component: FoundationModelsArticle,
   },
   // Add more articles here — they will show up in the sidebar automatically.
 ];
