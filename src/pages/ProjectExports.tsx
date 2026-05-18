@@ -464,6 +464,36 @@ export default function ProjectExports() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete export task confirm */}
+      <ConfirmDeleteDialog
+        open={!!pendingDeleteTask}
+        onOpenChange={(o) => !o && setPendingDeleteTask(null)}
+        entity="conversion"
+        itemName={pendingDeleteTask?.name || (pendingDeleteTask ? `Conversion #${pendingDeleteTask.id}` : null)}
+        consequences={
+          pendingDeleteTask && (pendingDeleteTask.status === 'running' || pendingDeleteTask.status === 'pending')
+            ? ["The task is still running — it will be cancelled.", "The converted model file will be removed."]
+            : ["The converted model file will be removed."]
+        }
+        confirmLabel="Delete conversion"
+        onConfirm={async () => {
+          const t = pendingDeleteTask;
+          setPendingDeleteTask(null);
+          if (t) await handleDeleteTask(t.id);
+        }}
+      />
+
+      {/* Delete all failed conversions confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteFailedConfirm}
+        onOpenChange={setShowDeleteFailedConfirm}
+        title="Delete all failed conversions?"
+        description={<>This will permanently delete <span className="font-semibold text-foreground">{statusCounts.failed}</span> failed conversion task{statusCounts.failed !== 1 ? 's' : ''}.</>}
+        confirmLabel={`Delete ${statusCounts.failed} task${statusCounts.failed !== 1 ? 's' : ''}`}
+        isLoading={deletingFailedTasks}
+        onConfirm={handleDeleteFailedTasks}
+      />
     </div>
   );
 }
