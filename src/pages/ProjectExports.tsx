@@ -283,7 +283,7 @@ export default function ProjectExports() {
               size="sm"
               className="whitespace-nowrap ml-2"
               disabled={deletingFailedTasks}
-              onClick={handleDeleteFailedTasks}
+              onClick={() => setShowDeleteFailedConfirm(true)}
             >
               <Trash2 className="w-4 h-4 mr-2" />
               {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${statusCounts.failed})`}
@@ -348,11 +348,7 @@ export default function ProjectExports() {
                   setRenamingTask({ id: task.id, name: task.name });
                   setNewTaskName(task.name);
                 }}
-                onDelete={() => {
-                  if (window.confirm(`Are you sure you want to delete "${task.name || `Conversion #${task.id}`}"? ${task.status === 'running' || task.status === 'pending' ? 'This will cancel the task if it is running.' : ''}`)) {
-                    handleDeleteTask(task.id);
-                  }
-                }}
+                onDelete={() => setPendingDeleteTask(task)}
                 onDownload={
                   exportedFile
                     ? () => window.open(`${getApiBaseUrl()}/export/download/${task.id}`, '_blank')
