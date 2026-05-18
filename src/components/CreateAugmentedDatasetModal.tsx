@@ -1388,7 +1388,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                   onClick={() => {
                     if (step === 1) {
                       if (datasetSelections.length === 0) {
-                        toast({ title: 'Pick a dataset', description: 'Select at least one source dataset.', variant: 'destructive' });
+                        toast.error('Select at least one source dataset.');
                         return;
                       }
                       const missing = datasetSelections.find(s => !s.collectionId);
@@ -1398,7 +1398,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                       }
                     }
                     if (step === 2 && selectedAugmentations.length === 0) {
-                      toast({ title: 'Pick an augmentation', description: 'Select at least one augmentation method.', variant: 'destructive' });
+                      toast.error('Select at least one augmentation method.');
                       return;
                     }
                     setStep((step + 1) as 1 | 2 | 3);
