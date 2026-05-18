@@ -653,6 +653,77 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     }));
   };
 
+  const updateMethodParameter = (methodId: string, paramName: string, value: any) => {
+    setMethodParameters(prev => ({
+      ...prev,
+      [methodId]: {
+        ...prev[methodId],
+        [paramName]: value
+      }
+    }));
+  };
+
+  // Apply a preset: select exactly the methods in the preset and seed their default parameters.
+  const applyPreset = useCallback((presetId: string) => {
+    const preset = augmentationPresets.find(p => p.id === presetId);
+    if (!preset) return;
+    setSelectedAugmentations(preset.ids);
+    const params: Record<string, any> = {};
+    preset.ids.forEach(id => {
+      const method = augmentationMethods.find(m => m.id === id);
+      if (method?.parameters) params[id] = { ...method.parameters };
+    });
+    setMethodParameters(params);
+    // Auto-expand categories that have any selected methods
+    const cats = new Set(preset.ids.map(id => augmentationMethods.find(m => m.id === id)?.category).filter(Boolean) as string[]);
+    setExpandedCategories(prev => {
+      const next = { ...prev };
+      cats.forEach(c => { next[c] = true; });
+      return next;
+    });
+    toast({ title: `Preset applied: ${preset.name}`, description: `${preset.ids.length} augmentations selected.` });
+  }, [toast]);
+
+  // Compute the CSS filter/transform string approximating the combined selected augmentations.
+  const previewStyle = useMemo<React.CSSProperties>(() => {
+    const filters: string[] = [];
+    const transforms: string[] = [];
+    const param = (m: string, p: string) => methodParameters[m]?.[p] ?? augmentationMethods.find(am => am.id === m)?.parameters?.[p];
+    selectedAugmentations.forEach(id => {
+      switch (id) {
+        case 'brightness': filters.push(`brightness(${1 + (param('brightness', 'factor') ?? 0.2)})`); break;
+        case 'contrast': filters.push(`contrast(${1 + (param('contrast', 'factor') ?? 0.2)})`); break;
+        case 'saturation': filters.push(`saturate(${1 + (param('saturation', 'factor') ?? 0.2)})`); break;
+        case 'hue_shift': filters.push(`hue-rotate(${(param('hue_shift', 'max_shift') ?? 0.1) * 360}deg)`); break;
+        case 'to_gray': filters.push('grayscale(1)'); break;
+        case 'gaussian_blur': filters.push(`blur(${Math.max(0, ((param('gaussian_blur', 'kernel_size') ?? 3) - 1) / 4)}px)`); break;
+        case 'gaussian_noise': filters.push(`contrast(${1 + (param('gaussian_noise', 'std') ?? 0.01) * 5})`); break;
+        case 'rotation': {
+          const max = param('rotation', 'max_angle') ?? 30;
+          transforms.push(`rotate(${Math.round(max / 2)}deg)`);
+          break;
+        }
+        case 'flip_horizontal': transforms.push('scaleX(-1)'); break;
+        case 'flip_vertical': transforms.push('scaleY(-1)'); break;
+        case 'scale': {
+          const max = param('scale', 'max_scale') ?? 1.2;
+          transforms.push(`scale(${max})`);
+          break;
+        }
+      }
+    });
+    return {
+      filter: filters.join(' ') || undefined,
+      transform: transforms.join(' ') || undefined,
+      transition: 'filter 200ms ease, transform 200ms ease',
+    };
+  }, [selectedAugmentations, methodParameters]);
+
+  const previewThumbnail = useMemo(() => {
+    const sel = datasetSelections[0];
+    return sel?.dataset?.thumbnailUrl || '/placeholder.svg';
+  }, [datasetSelections]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
