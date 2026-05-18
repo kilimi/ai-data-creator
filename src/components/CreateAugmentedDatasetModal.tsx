@@ -18,7 +18,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users } from 'lucide-react';
+import { Loader2, FolderPlus, Image as ImageIcon, Layers, RotateCw, FlipHorizontal, Contrast, Sun, Palette, ChevronDown, ChevronRight, Box, Plus, Trash2, Database, Users, ArrowLeft, ArrowRight, Check, Sparkles, Settings2 } from 'lucide-react';
 import { Dataset, DatasetGroup, ImageCollection } from '@/types';
 import { getApiBaseUrl } from "@/config/api";
 import {
@@ -259,6 +259,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
   const { api, isConfigured } = useApi();
   
   const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [datasetName, setDatasetName] = useState('');
   const [datasetSelections, setDatasetSelections] = useState<DatasetSelection[]>([]);
   const [selectedAugmentations, setSelectedAugmentations] = useState<string[]>([]);
@@ -266,7 +267,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
   const [methodParameters, setMethodParameters] = useState<Record<string, any>>({});
   const [expandedParameters, setExpandedParameters] = useState<Record<string, boolean>>({});
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
-    geometric: true, // Start with geometric expanded by default
+    geometric: true,
     color: false,
     noise: false,
     advanced: false
@@ -538,6 +539,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
 
   React.useEffect(() => {
     if (open) {
+      setStep(1);
       setDatasetName('');
       setDatasetSelections([]);
       setSelectedAugmentations([]);
@@ -552,6 +554,13 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       });
     }
   }, [open]);
+
+  // Auto-suggest dataset name when sources selected and name is empty
+  const suggestedName = useMemo(() => {
+    if (datasetSelections.length === 0) return '';
+    const base = datasetSelections[0].dataset.name.replace(/\s+/g, '_').toLowerCase();
+    return `${base}_aug_${augmentationFactor}x`;
+  }, [datasetSelections, augmentationFactor]);
 
   const handleParameterToggle = (augmentationId: string) => {
     setExpandedParameters(prev => ({
@@ -760,24 +769,48 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
             Create Augmented Dataset
           </DialogTitle>
           <DialogDescription>
-            Create a new dataset by applying data augmentation techniques to existing datasets. Augmentation runs only on the selected image collection for each source dataset.
+            Step {step} of 3 — {step === 1 ? 'pick source datasets' : step === 2 ? 'choose augmentations' : 'name & confirm'}
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6" onReset={(e) => e.preventDefault()}>
-          {/* Dataset Name */}
-          <div className="space-y-2">
-            <Label htmlFor="datasetName">Dataset Name</Label>
-            <Input
-              id="datasetName"
-              value={datasetName}
-              onChange={(e) => setDatasetName(e.target.value)}
-              placeholder="Enter augmented dataset name"
-              required
-            />
-          </div>
+        {/* Stepper */}
+        <div className="flex items-center justify-center gap-1 pb-1">
+          {([
+            { n: 1, label: 'Sources', icon: <Database className="w-3.5 h-3.5" /> },
+            { n: 2, label: 'Augmentations', icon: <Sparkles className="w-3.5 h-3.5" /> },
+            { n: 3, label: 'Output', icon: <Settings2 className="w-3.5 h-3.5" /> },
+          ] as const).map((s, i) => {
+            const canJump =
+              s.n < step ||
+              (s.n === 2 && datasetSelections.length > 0 && !datasetSelections.find(x => !x.collectionId)) ||
+              (s.n === 3 && datasetSelections.length > 0 && selectedAugmentations.length > 0 && !datasetSelections.find(x => !x.collectionId));
+            return (
+              <React.Fragment key={s.n}>
+                <button
+                  type="button"
+                  disabled={!canJump && s.n !== step}
+                  onClick={() => canJump && setStep(s.n)}
+                  className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                    step === s.n
+                      ? 'bg-primary text-primary-foreground'
+                      : step > s.n
+                      ? 'bg-muted text-foreground hover:bg-muted/80'
+                      : 'bg-muted/40 text-muted-foreground'
+                  } ${!canJump && s.n !== step ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  {step > s.n ? <Check className="w-3.5 h-3.5" /> : s.icon}
+                  {s.label}
+                </button>
+                {i < 2 && <div className={`h-px w-8 ${step > s.n ? 'bg-primary' : 'bg-border'}`} />}
+              </React.Fragment>
+            );
+          })}
+        </div>
 
-          {/* Source Datasets Selection */}
+        <form onSubmit={handleSubmit} className="space-y-6" onReset={(e) => e.preventDefault()}>
+
+          {/* Step 1: Source Datasets */}
+          {step === 1 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>Source Datasets</Label>
@@ -803,8 +836,10 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
               />
             )}
           </div>
+          )}
 
-          {/* Augmentation Methods */}
+          {/* Step 2: Augmentation Methods */}
+          {step === 2 && (
           <div className="space-y-3">
             <Label>Select Augmentation Methods</Label>
             <div className="space-y-3">
@@ -1093,53 +1128,136 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
             )}
           </div>
 
-          {/* Augmentation Factor */}
-          <div className="space-y-2">
-            <Label htmlFor="augmentationFactor">Augmentation Factor</Label>
-            <Select value={augmentationFactor} onValueChange={setAugmentationFactor}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select augmentation factor" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="2">2x (Double the dataset)</SelectItem>
-                <SelectItem value="3">3x (Triple the dataset)</SelectItem>
-                <SelectItem value="4">4x (Quadruple the dataset)</SelectItem>
-                <SelectItem value="5">5x (5 times the dataset)</SelectItem>
-                <SelectItem value="10">10x (10 times the dataset)</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              How many times to multiply the original dataset size through augmentation
-            </p>
-          </div>
+          )}
 
-          {/* Action Buttons */}
-          <div className="flex justify-end gap-3 pt-4 border-t">
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
-            >
-              Cancel
-            </Button>
-            <Button 
-              type="submit" 
-              disabled={loading}
-              className="bg-yellow-600 hover:bg-yellow-700"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <FolderPlus className="w-4 h-4 mr-2" />
-                  Create Augmented Dataset
-                </>
+          {/* Step 3: Output */}
+          {step === 3 && (
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="datasetName">Dataset Name</Label>
+              <Input
+                id="datasetName"
+                value={datasetName}
+                onChange={(e) => setDatasetName(e.target.value)}
+                placeholder={suggestedName || "Enter augmented dataset name"}
+                required
+              />
+              {suggestedName && datasetName !== suggestedName && (
+                <button
+                  type="button"
+                  onClick={() => setDatasetName(suggestedName)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Use suggestion: {suggestedName}
+                </button>
               )}
-            </Button>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="augmentationFactor">Augmentation Factor</Label>
+              <Select value={augmentationFactor} onValueChange={setAugmentationFactor}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select augmentation factor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="2">2x (Double the dataset)</SelectItem>
+                  <SelectItem value="3">3x (Triple the dataset)</SelectItem>
+                  <SelectItem value="4">4x (Quadruple the dataset)</SelectItem>
+                  <SelectItem value="5">5x (5 times the dataset)</SelectItem>
+                  <SelectItem value="10">10x (10 times the dataset)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                How many times to multiply the original dataset size through augmentation
+              </p>
+            </div>
+
+            <Card className="bg-muted/40">
+              <CardContent className="p-4 space-y-2 text-sm">
+                <div className="font-medium">Summary</div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Source datasets</span>
+                  <span className="text-foreground tabular-nums">{datasetSelections.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Augmentations</span>
+                  <span className="text-foreground tabular-nums">{selectedAugmentations.length}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span>Output multiplier</span>
+                  <span className="text-foreground tabular-nums">{augmentationFactor}×</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+          )}
+
+          {/* Wizard Footer */}
+          <div className="flex items-center justify-between gap-3 pt-4 border-t">
+            <div className="text-xs text-muted-foreground">
+              {step === 1 && (datasetSelections.length === 0
+                ? 'Pick at least one source dataset to continue.'
+                : `${datasetSelections.length} dataset(s) selected.`)}
+              {step === 2 && (selectedAugmentations.length === 0
+                ? 'Select at least one augmentation method.'
+                : `${selectedAugmentations.length} augmentation(s) selected.`)}
+              {step === 3 && `${datasetSelections.length} source(s) · ${selectedAugmentations.length} augmentation(s) · ${augmentationFactor}×`}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => (step === 1 ? onOpenChange(false) : setStep((step - 1) as 1 | 2 | 3))}
+                disabled={loading}
+              >
+                {step === 1 ? 'Cancel' : (<><ArrowLeft className="w-4 h-4 mr-1" />Back</>)}
+              </Button>
+              {step < 3 ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (step === 1) {
+                      if (datasetSelections.length === 0) {
+                        toast({ title: 'Pick a dataset', description: 'Select at least one source dataset.', variant: 'destructive' });
+                        return;
+                      }
+                      const missing = datasetSelections.find(s => !s.collectionId);
+                      if (missing) {
+                        toast({ title: 'Missing collection', description: `Select an image collection for "${missing.dataset.name}".`, variant: 'destructive' });
+                        return;
+                      }
+                    }
+                    if (step === 2 && selectedAugmentations.length === 0) {
+                      toast({ title: 'Pick an augmentation', description: 'Select at least one augmentation method.', variant: 'destructive' });
+                      return;
+                    }
+                    setStep((step + 1) as 1 | 2 | 3);
+                  }}
+                  disabled={loading}
+                  className="bg-yellow-600 hover:bg-yellow-700"
+                >
+                  Next<ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-yellow-600 hover:bg-yellow-700"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <FolderPlus className="w-4 h-4 mr-2" />
+                      Create Augmented Dataset
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </form>
       </DialogContent>
