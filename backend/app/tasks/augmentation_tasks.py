@@ -682,9 +682,10 @@ def create_augmented_dataset_task(self, task_id: int):
                     Annotation.image_id == source_image.id
                 ).all()
                 
-                # Build a mapping from class name to category_id from source annotation file's AnnotationClass
-                # This helps us preserve category_id even if source annotations have null category_id
-                source_class_to_category_id = {}
+                # Build per-image mappings from source annotation file's classes.
+                # Keep these local so we don't overwrite the global map used in final class creation.
+                image_class_to_category_id = {}
+                image_category_id_to_class = {}
                 if source_annotations:
                     # Get the annotation_file_id from the first annotation
                     source_ann_file_id = source_annotations[0].annotation_file_id
@@ -694,7 +695,22 @@ def create_augmented_dataset_task(self, task_id: int):
                         ).all()
                         for ann_class in source_classes:
                             if ann_class.category_id is not None:
-                                source_class_to_category_id[ann_class.class_name] = ann_class.category_id
+                                if ann_class.class_name:
+                                    image_class_to_category_id[ann_class.class_name] = ann_class.category_id
+                                    image_category_id_to_class[ann_class.category_id] = ann_class.class_name
+
+                def normalize_class_name(category_name, category_id):
+                    """Resolve synthetic names like category_0/unknown back to real class names by category_id."""
+                    if category_id is not None:
+                        mapped = image_category_id_to_class.get(category_id)
+                        if mapped:
+                            if (
+                                not category_name
+                                or category_name == 'unknown'
+                                or (isinstance(category_name, str) and category_name.startswith('category_'))
+                            ):
+                                return mapped
+                    return category_name or 'unknown'
                 
                 # Prepare bboxes, labels, and keypoints (for segmentation) for Albumentations
                 bboxes = []
@@ -715,12 +731,13 @@ def create_augmented_dataset_task(self, task_id: int):
                         
                         if w > 0 and h > 0:
                             bboxes.append([x, y, w, h])
-                            class_labels.append(ann.category or 'unknown')
+                            resolved_category = normalize_class_name(ann.category, ann.category_id)
+                            class_labels.append(resolved_category)
                             
                             # Get category_id from source annotation/map without extra DB queries
                             category_id = ann.category_id
-                            if category_id is None and ann.category:
-                                category_id = source_class_to_category_id.get(ann.category)
+                            if category_id is None and resolved_category:
+                                category_id = image_class_to_category_id.get(resolved_category)
                             
                             # Convert segmentation to keypoint format for Albumentations (use same normalization as COCO import)
                             norm_seg, has_polygon_masks, has_rle_mask = _segmentation_mask_flags(
@@ -744,7 +761,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                             ann_keypoints.extend(polygon_keypoints)
                             
                             annotation_data_list.append({
-                                'category': ann.category,
+                                'category': resolved_category,
                                 'segmentation': norm_seg if has_polygon_masks else _parse_annotation_segmentation(ann.segmentation),
                                 'area': ann.area,
                                 'category_id': category_id,
@@ -1206,11 +1223,12 @@ def create_augmented_dataset_task(self, task_id: int):
                             for ann in classification_annotations:
                                 # Get category_id - use from annotation, or look up from target annotation file's AnnotationClass
                                 category_id = ann.category_id
-                                if category_id is None and ann.category:
+                                resolved_category = normalize_class_name(ann.category, ann.category_id)
+                                if category_id is None and resolved_category:
                                     # Look up category_id from target annotation file's AnnotationClass
                                     ann_class = db.query(AnnotationClass).filter(
                                         AnnotationClass.annotation_file_id == annotation_file.id,
-                                        AnnotationClass.class_name == ann.category
+                                        AnnotationClass.class_name == resolved_category
                                     ).first()
                                     if ann_class and ann_class.category_id is not None:
                                         category_id = ann_class.category_id
@@ -1220,8 +1238,8 @@ def create_augmented_dataset_task(self, task_id: int):
                                             AnnotationClass.annotation_file_id == annotation_file.id
                                         ).order_by(AnnotationClass.id).all()
                                         class_names = [c.class_name for c in all_classes]
-                                        if ann.category in class_names:
-                                            category_id = class_names.index(ann.category) + 1
+                                        if resolved_category in class_names:
+                                            category_id = class_names.index(resolved_category) + 1
                                         else:
                                             # New class, assign next available ID
                                             max_category_id = max([c.category_id for c in all_classes if c.category_id is not None], default=0)
@@ -1231,7 +1249,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                     annotation_file_id=annotation_file.id,
                                     image_id=augmented_image_record.id,
                                     dataset_id=target_dataset.id,
-                                    category=ann.category,
+                                    category=resolved_category,
                                     category_id=category_id,  # Use resolved category_id
                                     bbox=None,
                                     bbox_x=None,
@@ -1246,18 +1264,19 @@ def create_augmented_dataset_task(self, task_id: int):
                                 processed_annotations += 1
                                 
                                 # Track category counts
-                                category_counts[ann.category] = category_counts.get(ann.category, 0) + 1
+                                category_counts[resolved_category] = category_counts.get(resolved_category, 0) + 1
                         
                         # Copy annotations without transformation if disabled
                         if not augmentation.transform_annotations and source_annotations:
                             for ann in source_annotations:
                                 # Get category_id - use from annotation, or look up from target annotation file's AnnotationClass
                                 category_id = ann.category_id
-                                if category_id is None and ann.category:
+                                resolved_category = normalize_class_name(ann.category, ann.category_id)
+                                if category_id is None and resolved_category:
                                     # Look up category_id from target annotation file's AnnotationClass
                                     ann_class = db.query(AnnotationClass).filter(
                                         AnnotationClass.annotation_file_id == annotation_file.id,
-                                        AnnotationClass.class_name == ann.category
+                                        AnnotationClass.class_name == resolved_category
                                     ).first()
                                     if ann_class and ann_class.category_id is not None:
                                         category_id = ann_class.category_id
@@ -1267,8 +1286,8 @@ def create_augmented_dataset_task(self, task_id: int):
                                             AnnotationClass.annotation_file_id == annotation_file.id
                                         ).order_by(AnnotationClass.id).all()
                                         class_names = [c.class_name for c in all_classes]
-                                        if ann.category in class_names:
-                                            category_id = class_names.index(ann.category) + 1
+                                        if resolved_category in class_names:
+                                            category_id = class_names.index(resolved_category) + 1
                                         else:
                                             # New class, assign next available ID
                                             max_category_id = max([c.category_id for c in all_classes if c.category_id is not None], default=0)
@@ -1278,7 +1297,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                     annotation_file_id=annotation_file.id,
                                     image_id=augmented_image_record.id,
                                     dataset_id=target_dataset.id,
-                                    category=ann.category,
+                                    category=resolved_category,
                                     category_id=category_id,  # Use resolved category_id
                                     bbox=ann.bbox,
                                     bbox_x=ann.bbox_x,
@@ -1295,7 +1314,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                 # Track category counts and detect annotation type
                                 if ann.bbox:
                                     annotation_type = 'segmentation' if ann.segmentation else 'Segmentation (bbox)'
-                                category_counts[ann.category] = category_counts.get(ann.category, 0) + 1
+                                category_counts[resolved_category] = category_counts.get(resolved_category, 0) + 1
                         
                         processed_images += 1
                         current_operation += 1
