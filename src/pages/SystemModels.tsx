@@ -161,7 +161,7 @@ export default function SystemModels() {
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  YOLO foundation weights
+                  YOLO &amp; RT-DETR weights
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -234,7 +234,7 @@ export default function SystemModels() {
 
           <Card>
             <CardHeader>
-              <CardTitle>YOLO foundation matrix</CardTitle>
+              <CardTitle>YOLO &amp; RT-DETR foundation matrix</CardTitle>
             </CardHeader>
             <CardContent>
               <Table>
