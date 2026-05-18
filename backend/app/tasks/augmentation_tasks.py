@@ -165,12 +165,26 @@ def create_albumentations_transform(
         elif method == 'brightness':
             params = method_parameters.get('brightness', {})
             factor = params.get('factor', 0.2)
-            transforms.append(A.RandomBrightness(limit=factor, p=1.0))
+            # Albumentations v2 removed RandomBrightness/RandomContrast.
+            # Use RandomBrightnessContrast with one side disabled.
+            transforms.append(
+                A.RandomBrightnessContrast(
+                    brightness_limit=factor,
+                    contrast_limit=0,
+                    p=1.0,
+                )
+            )
             
         elif method == 'contrast':
             params = method_parameters.get('contrast', {})
             factor = params.get('factor', 0.2)
-            transforms.append(A.RandomContrast(limit=factor, p=1.0))
+            transforms.append(
+                A.RandomBrightnessContrast(
+                    brightness_limit=0,
+                    contrast_limit=factor,
+                    p=1.0,
+                )
+            )
             
         elif method == 'saturation':
             params = method_parameters.get('saturation', {})
@@ -1471,6 +1485,32 @@ def create_augmented_dataset_task(self, task_id: int):
             logger.error(f"Task {task_id}: Failed to set dataset logo: {e}", exc_info=True)
             # Don't fail the task if logo setting fails
         
+        # If nothing was created, mark as failed instead of incorrectly reporting success.
+        if processed_images == 0 and len(errors) > 0:
+            task.status = 'failed'
+            task.progress = 100.0
+            task.completed_at = datetime.utcnow()
+            first_error = errors[0] if errors else 'Augmentation produced no images'
+            task.error_message = f"Augmentation produced no images. First error: {first_error}"
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "stage": "failed",
+                "processed_images": processed_images,
+                "processed_annotations": processed_annotations,
+                "errors": errors[:10],
+                "errors_count": len(errors),
+            }
+            db.commit()
+            logger.error(
+                f"Task {task_id}: Failed - produced 0 images with {len(errors)} errors. First error: {first_error}"
+            )
+            return {
+                "status": "failed",
+                "processed_images": processed_images,
+                "processed_annotations": processed_annotations,
+                "errors_count": len(errors),
+            }
+
         # Complete the task
         task.status = 'completed'
         task.progress = 100.0

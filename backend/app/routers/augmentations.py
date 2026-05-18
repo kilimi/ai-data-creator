@@ -348,12 +348,24 @@ def create_albumentations_transform(augmentation_methods: List[str], method_para
         elif method == 'brightness':
             params = method_parameters.get('brightness', {})
             factor = params.get('factor', 0.2)
-            transforms.append(A.RandomBrightness(limit=factor, p=1.0))
+            transforms.append(
+                A.RandomBrightnessContrast(
+                    brightness_limit=factor,
+                    contrast_limit=0,
+                    p=1.0,
+                )
+            )
             
         elif method == 'contrast':
             params = method_parameters.get('contrast', {})
             factor = params.get('factor', 0.2)
-            transforms.append(A.RandomContrast(limit=factor, p=1.0))
+            transforms.append(
+                A.RandomBrightnessContrast(
+                    brightness_limit=0,
+                    contrast_limit=factor,
+                    p=1.0,
+                )
+            )
             
         elif method == 'saturation':
             params = method_parameters.get('saturation', {})
@@ -939,8 +951,8 @@ async def get_available_augmentation_methods():
             {
                 "id": "brightness",
                 "name": "Random Brightness",
-                "description": "Adjust image brightness randomly (Albumentations RandomBrightness)",
-                "albumentations_class": "A.RandomBrightness",
+                "description": "Adjust image brightness randomly (Albumentations RandomBrightnessContrast)",
+                "albumentations_class": "A.RandomBrightnessContrast",
                 "parameters": {
                     "factor": {
                         "type": "float", 
@@ -954,8 +966,8 @@ async def get_available_augmentation_methods():
             {
                 "id": "contrast",
                 "name": "Random Contrast",
-                "description": "Adjust image contrast randomly (Albumentations RandomContrast)",
-                "albumentations_class": "A.RandomContrast",
+                "description": "Adjust image contrast randomly (Albumentations RandomBrightnessContrast)",
+                "albumentations_class": "A.RandomBrightnessContrast",
                 "parameters": {
                     "factor": {
                         "type": "float", 
@@ -1115,7 +1127,7 @@ async def test_albumentations_setup():
         # Test basic transform creation
         transform = A.Compose([
             A.Rotate(limit=30, p=1.0),
-            A.RandomBrightness(limit=0.2, p=1.0)
+            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0, p=1.0)
         ])
         
         # Test with a dummy image
@@ -1130,7 +1142,7 @@ async def test_albumentations_setup():
             "test_passed": True,
             "available_transforms": [
                 "Rotate", "HorizontalFlip", "VerticalFlip", "RandomScale",
-                "RandomBrightness", "RandomContrast", "ColorJitter", 
+                "RandomBrightnessContrast", "ColorJitter", 
                 "HueSaturationValue", "GaussNoise", "GaussianBlur",
                 "CoarseDropout", "ElasticTransform", "GridDistortion"
             ]
