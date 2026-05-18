@@ -576,9 +576,9 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         });
 
         if (downloadNotice) {
-          toast({
-            title: "Model weights will be downloaded",
+          sonnerToast.info("Model weights will be downloaded", {
             description: downloadNotice,
+            duration: 6000,
           });
         }
         
