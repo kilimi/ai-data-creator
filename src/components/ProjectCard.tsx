@@ -12,16 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { useState } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { createApiClient } from "@/utils/api";
@@ -293,28 +284,19 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
         </CardFooter>
       </Card>
 
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {project.datasets.length > 0 
-                ? `This will delete the project "${project.name}" and all ${project.datasets.length} datasets inside it. This action cannot be undone.`
-                : `This will delete the project "${project.name}". This action cannot be undone.`
-              }
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleDelete}
-              className="bg-destructive hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDeleteDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        entity="project"
+        itemName={project.name}
+        consequences={
+          project.datasets.length > 0
+            ? [`All ${project.datasets.length} dataset${project.datasets.length === 1 ? '' : 's'} inside this project will also be deleted.`]
+            : undefined
+        }
+        confirmLabel="Delete project"
+        onConfirm={handleDelete}
+      />
 
       <EditProjectDialog
         project={project}

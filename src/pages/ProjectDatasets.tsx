@@ -7,16 +7,7 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { useTasks } from '@/hooks/use-tasks';
 import { getApiBaseUrl } from '@/config/api';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatasetCard, DatasetCardSkeleton } from '@/components/DatasetCard';
 import { DatasetGroupCard } from '@/components/DatasetGroupCard';
@@ -740,53 +731,38 @@ export default function ProjectDatasets() {
         onGroupUpdated={handleGroupUpdated}
       />
       
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog
+      {/* Delete dataset group confirm */}
+      <ConfirmDeleteDialog
         open={showDeleteGroupConfirm}
         onOpenChange={(open) => {
           setShowDeleteGroupConfirm(open);
           if (!open) setGroupToDelete(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete dataset group?</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <span>
-                Are you sure you want to delete the group{' '}
-                <span className="font-semibold text-foreground">{groupToDelete?.name}</span>? This removes the
-                group record (and optional group folders on disk). Datasets listed in this group remain in
-                the project.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeletingGroup}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void confirmDeleteDatasetGroup();
-              }}
-              disabled={isDeletingGroup}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeletingGroup ? 'Deleting…' : 'Delete group'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title="Delete dataset group?"
+        entity="dataset group"
+        itemName={groupToDelete?.name ?? null}
+        consequences={[
+          "The group record (and optional group folders on disk) is removed.",
+          "Datasets listed in this group remain in the project.",
+        ]}
+        confirmLabel={isDeletingGroup ? 'Deleting…' : 'Delete group'}
+        isLoading={isDeletingGroup}
+        onConfirm={confirmDeleteDatasetGroup}
+      />
 
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Dataset</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{datasetToDelete?.name}"? This will permanently remove the dataset and all its images and annotations.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          
-          {augmentedDatasets.length > 0 && (
-            <div className="my-4 p-4 bg-muted rounded-lg">
+      {/* Delete dataset confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteConfirm}
+        onOpenChange={setShowDeleteConfirm}
+        entity="dataset"
+        itemName={datasetToDelete?.name ?? null}
+        consequences={["All images and annotations in this dataset will be permanently removed."]}
+        confirmLabel={isDeleting ? 'Deleting...' : 'Delete dataset'}
+        isLoading={isDeleting}
+        onConfirm={confirmDeleteDataset}
+        extraContent={
+          augmentedDatasets.length > 0 ? (
+            <div className="my-2 p-4 bg-muted rounded-lg">
               <p className="text-sm font-medium mb-2">
                 This dataset has {augmentedDatasets.length} augmented dataset{augmentedDatasets.length > 1 ? 's' : ''}:
               </p>
@@ -812,20 +788,10 @@ export default function ProjectDatasets() {
                 </label>
               </div>
             </div>
-          )}
-          
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDeleteDataset}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? 'Deleting...' : 'Delete'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          ) : null
+        }
+      />
+
     </div>
   );
 }

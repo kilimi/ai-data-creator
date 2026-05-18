@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 interface OutletContext {
   project: Project | null;
@@ -103,6 +104,9 @@ export default function ProjectModels() {
   const [downloadModel, setDownloadModel] = useState<{ id: number; name: string } | null>(null);
   const [testInference, setTestInference] = useState<{ id: number; name: string } | null>(null);
   const [trainModalCloneTaskId, setTrainModalCloneTaskId] = useState<number | null>(null);
+  const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+  const [pendingStopTask, setPendingStopTask] = useState<any | null>(null);
+  const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
 
   const trainingTasksRef = useRef<any[]>([]);
   trainingTasksRef.current = trainingTasks;
@@ -195,11 +199,7 @@ export default function ProjectModels() {
   const handleDeleteFailedTasks = async () => {
     const failedTasks = trainingTasks.filter(t => t.status === 'failed');
     if (failedTasks.length === 0) return;
-    
-    if (!confirm(`Are you sure you want to delete ${failedTasks.length} failed training task(s)?`)) {
-      return;
-    }
-    
+
     setDeletingFailedTasks(true);
     try {
       for (const task of failedTasks) {
@@ -218,6 +218,7 @@ export default function ProjectModels() {
       });
     } finally {
       setDeletingFailedTasks(false);
+      setShowDeleteFailedConfirm(false);
     }
   };
 
@@ -274,8 +275,7 @@ export default function ProjectModels() {
     }
   };
 
-  const handleDeleteTask = async (task: any) => {
-    if (!confirm(`Are you sure you want to delete training task "${task.name}"? This will also delete all model files.`)) return;
+  const performDeleteTask = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
       if (response.ok) {
@@ -287,11 +287,16 @@ export default function ProjectModels() {
       }
     } catch (error) {
       toast({ title: "Error", description: error instanceof Error ? error.message : "Failed to delete training task", variant: "destructive" });
+    } finally {
+      setPendingDeleteTask(null);
     }
   };
 
-  const handleStopTask = async (task: any) => {
-    if (!confirm(`Are you sure you want to stop training task "${task.name}"?`)) return;
+  const handleDeleteTask = (task: any) => {
+    setPendingDeleteTask(task);
+  };
+
+  const performStopTask = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
       if (response.ok) {
@@ -302,7 +307,13 @@ export default function ProjectModels() {
       }
     } catch {
       toast({ title: "Error", description: "Failed to stop training task", variant: "destructive" });
+    } finally {
+      setPendingStopTask(null);
     }
+  };
+
+  const handleStopTask = (task: any) => {
+    setPendingStopTask(task);
   };
 
   const handlePauseTask = async (task: any) => {
@@ -392,7 +403,7 @@ export default function ProjectModels() {
               variant="destructive" 
               size="sm" 
               className="whitespace-nowrap ml-2"
-              onClick={handleDeleteFailedTasks}
+              onClick={() => setShowDeleteFailedConfirm(true)}
               disabled={deletingFailedTasks}
             >
               <Trash2 className="w-4 h-4 mr-2" />
@@ -655,6 +666,39 @@ export default function ProjectModels() {
           taskName={testInference.name}
         />
       )}
+
+      {/* Delete training task confirm */}
+      <ConfirmDeleteDialog
+        open={!!pendingDeleteTask}
+        onOpenChange={(o) => !o && setPendingDeleteTask(null)}
+        entity="trained model"
+        itemName={pendingDeleteTask?.name}
+        consequences={["All model files and checkpoints for this task will be removed."]}
+        confirmLabel="Delete model"
+        onConfirm={() => pendingDeleteTask && performDeleteTask(pendingDeleteTask)}
+      />
+
+      {/* Stop training confirm (reuses the same dialog) */}
+      <ConfirmDeleteDialog
+        open={!!pendingStopTask}
+        onOpenChange={(o) => !o && setPendingStopTask(null)}
+        title="Stop training?"
+        description={<>Stop training task <span className="font-semibold text-foreground">"{pendingStopTask?.name}"</span>? Progress made so far will be preserved as a checkpoint.</>}
+        confirmLabel="Stop training"
+        cancelLabel="Keep running"
+        onConfirm={() => pendingStopTask && performStopTask(pendingStopTask)}
+      />
+
+      {/* Delete all failed training tasks confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteFailedConfirm}
+        onOpenChange={setShowDeleteFailedConfirm}
+        title="Delete all failed training tasks?"
+        description={<>This will permanently delete <span className="font-semibold text-foreground">{failedTasksCount}</span> failed training task{failedTasksCount !== 1 ? 's' : ''} and their files.</>}
+        confirmLabel={`Delete ${failedTasksCount} task${failedTasksCount !== 1 ? 's' : ''}`}
+        isLoading={deletingFailedTasks}
+        onConfirm={handleDeleteFailedTasks}
+      />
     </div>
   );
 }

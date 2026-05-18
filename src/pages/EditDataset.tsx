@@ -51,6 +51,7 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import {
   Badge,
   Popover,
@@ -1729,22 +1730,22 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
         }}
       />
 
-      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="bg-gray-900 text-white border-gray-700">
-          <DialogHeader>
-            <DialogTitle>Delete Dataset</DialogTitle>
-            <DialogDescription className="text-gray-400">
-              This will permanently delete this dataset and all its associated images and annotations.
-              This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          
-          {augmentedDatasets.length > 0 && (
-            <div className="my-4 p-4 bg-gray-800 rounded-lg">
-              <p className="text-sm font-medium mb-2 text-gray-200">
+      <ConfirmDeleteDialog
+        open={showDeleteConfirm}
+        onOpenChange={setShowDeleteConfirm}
+        entity="dataset"
+        itemName={dataset?.name ?? null}
+        consequences={["All images and annotations in this dataset will be permanently removed."]}
+        confirmLabel={isDeleting ? 'Deleting...' : 'Delete dataset'}
+        isLoading={isDeleting}
+        onConfirm={handleDeleteDataset}
+        extraContent={
+          augmentedDatasets.length > 0 ? (
+            <div className="my-2 p-4 bg-muted rounded-lg">
+              <p className="text-sm font-medium mb-2">
                 This dataset has {augmentedDatasets.length} augmented dataset{augmentedDatasets.length > 1 ? 's' : ''}:
               </p>
-              <ul className="text-sm text-gray-400 mb-3 list-disc list-inside">
+              <ul className="text-sm text-muted-foreground mb-3 list-disc list-inside">
                 {augmentedDatasets.slice(0, 5).map(ds => (
                   <li key={ds.id}>{ds.name}</li>
                 ))}
@@ -1757,37 +1758,18 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
                   id="deleteAugmentedEdit"
                   checked={deleteAugmented}
                   onCheckedChange={(checked) => setDeleteAugmented(checked === true)}
-                  className="border-gray-500"
                 />
                 <label
                   htmlFor="deleteAugmentedEdit"
-                  className="text-sm font-medium leading-none text-gray-200 peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                 >
                   Also delete augmented datasets
                 </label>
               </div>
             </div>
-          )}
-          
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setShowDeleteConfirm(false)}
-              className="bg-gray-800 hover:bg-gray-700"
-              disabled={isDeleting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteDataset}
-              disabled={isDeleting}
-            >
-              {isDeleting ? 'Deleting...' : 'Delete Dataset'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          ) : null
+        }
+      />
     </div>
   );
 };

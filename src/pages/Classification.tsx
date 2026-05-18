@@ -16,6 +16,7 @@ import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { PaginationControls } from "@/components/PaginationControls";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 import { OptimizedClassificationStorage, LocalStorageCleanup } from "@/utils/optimizedStorage";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 interface ClassificationData {
   [imageId: string]: string[];
@@ -1915,40 +1916,22 @@ export default function Classification() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteConfirmDialog.isOpen} onOpenChange={(open) => 
-        !open && setDeleteConfirmDialog({ isOpen: false, className: '', annotationCount: 0 })
-      }>
-        <DialogContent className="bg-gray-900 text-white border-gray-700">
-          <DialogHeader>
-            <DialogTitle>Delete Class</DialogTitle>
-            <DialogDescription className="text-gray-400">
-              Are you sure you want to delete the class "{deleteConfirmDialog.className}"?
-              {deleteConfirmDialog.annotationCount > 0 && (
-                <span className="block mt-2 font-medium text-red-400">
-                  This will also delete {deleteConfirmDialog.annotationCount} annotation{deleteConfirmDialog.annotationCount !== 1 ? 's' : ''}.
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirmDialog({ isOpen: false, className: '', annotationCount: 0 })}
-              className="border-gray-600 text-gray-300 hover:bg-gray-800"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleConfirmDeleteClass}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Delete Class Confirmation */}
+      <ConfirmDeleteDialog
+        open={deleteConfirmDialog.isOpen}
+        onOpenChange={(open) =>
+          !open && setDeleteConfirmDialog({ isOpen: false, className: '', annotationCount: 0 })
+        }
+        entity="class"
+        itemName={deleteConfirmDialog.className}
+        consequences={
+          deleteConfirmDialog.annotationCount > 0
+            ? [`${deleteConfirmDialog.annotationCount} annotation${deleteConfirmDialog.annotationCount !== 1 ? 's' : ''} using this class will also be deleted.`]
+            : undefined
+        }
+        confirmLabel="Delete class"
+        onConfirm={handleConfirmDeleteClass}
+      />
     </div>
   );
 }

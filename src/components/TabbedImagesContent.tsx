@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Image, ImageCollection } from "@/types";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -96,6 +97,7 @@ export function TabbedImagesContent({
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [uploadedCount, setUploadedCount] = useState(0);
+  const [calibrationToDelete, setCalibrationToDelete] = useState<{ id: number; label: string } | null>(null);
   const [imageSearchQuery, setImageSearchQuery] = useState("");
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -432,9 +434,11 @@ export function TabbedImagesContent({
                                   size="icon"
                                   className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
                                   title="Delete this calibration"
-                                  onClick={async () => {
-                                    if (!window.confirm(`Delete calibration between "${nameOf(cal.source_collection_id)}" and "${nameOf(cal.target_collection_id)}"?`)) return;
-                                    await onDeleteCalibration(cal.id!);
+                                  onClick={() => {
+                                    setCalibrationToDelete({
+                                      id: cal.id!,
+                                      label: `${nameOf(cal.source_collection_id)} ↔ ${nameOf(cal.target_collection_id)}`,
+                                    });
                                   }}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -679,6 +683,20 @@ export function TabbedImagesContent({
           </div>
         </div>
       )}
+
+      <ConfirmDeleteDialog
+        open={!!calibrationToDelete}
+        onOpenChange={(o) => !o && setCalibrationToDelete(null)}
+        entity="calibration"
+        itemName={calibrationToDelete?.label ?? null}
+        confirmLabel="Delete calibration"
+        onConfirm={async () => {
+          const c = calibrationToDelete;
+          setCalibrationToDelete(null);
+          if (c && onDeleteCalibration) await onDeleteCalibration(c.id);
+        }}
+      />
     </div>
   );
 }
+

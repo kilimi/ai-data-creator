@@ -27,6 +27,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 interface OutletContext {
   project: Project | null;
@@ -48,6 +49,8 @@ export default function ProjectExports() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
+  const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+  const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
   const [testInference, setTestInference] = useState<{ id: number; onnxFilePath: string } | null>(null);
@@ -192,7 +195,6 @@ export default function ProjectExports() {
   const handleDeleteFailedTasks = async () => {
     const failed = exportTasks.filter(t => t.status === 'failed');
     if (failed.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${failed.length} failed conversion task(s)?`)) return;
     setDeletingFailedTasks(true);
     try {
       for (const t of failed) {
@@ -204,6 +206,7 @@ export default function ProjectExports() {
       toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
     } finally {
       setDeletingFailedTasks(false);
+      setShowDeleteFailedConfirm(false);
     }
   };
 
@@ -280,7 +283,7 @@ export default function ProjectExports() {
               size="sm"
               className="whitespace-nowrap ml-2"
               disabled={deletingFailedTasks}
-              onClick={handleDeleteFailedTasks}
+              onClick={() => setShowDeleteFailedConfirm(true)}
             >
               <Trash2 className="w-4 h-4 mr-2" />
               {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${statusCounts.failed})`}
@@ -345,11 +348,7 @@ export default function ProjectExports() {
                   setRenamingTask({ id: task.id, name: task.name });
                   setNewTaskName(task.name);
                 }}
-                onDelete={() => {
-                  if (window.confirm(`Are you sure you want to delete "${task.name || `Conversion #${task.id}`}"? ${task.status === 'running' || task.status === 'pending' ? 'This will cancel the task if it is running.' : ''}`)) {
-                    handleDeleteTask(task.id);
-                  }
-                }}
+                onDelete={() => setPendingDeleteTask(task)}
                 onDownload={
                   exportedFile
                     ? () => window.open(`${getApiBaseUrl()}/export/download/${task.id}`, '_blank')
@@ -465,6 +464,36 @@ export default function ProjectExports() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete export task confirm */}
+      <ConfirmDeleteDialog
+        open={!!pendingDeleteTask}
+        onOpenChange={(o) => !o && setPendingDeleteTask(null)}
+        entity="conversion"
+        itemName={pendingDeleteTask?.name || (pendingDeleteTask ? `Conversion #${pendingDeleteTask.id}` : null)}
+        consequences={
+          pendingDeleteTask && (pendingDeleteTask.status === 'running' || pendingDeleteTask.status === 'pending')
+            ? ["The task is still running — it will be cancelled.", "The converted model file will be removed."]
+            : ["The converted model file will be removed."]
+        }
+        confirmLabel="Delete conversion"
+        onConfirm={async () => {
+          const t = pendingDeleteTask;
+          setPendingDeleteTask(null);
+          if (t) await handleDeleteTask(t.id);
+        }}
+      />
+
+      {/* Delete all failed conversions confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteFailedConfirm}
+        onOpenChange={setShowDeleteFailedConfirm}
+        title="Delete all failed conversions?"
+        description={<>This will permanently delete <span className="font-semibold text-foreground">{statusCounts.failed}</span> failed conversion task{statusCounts.failed !== 1 ? 's' : ''}.</>}
+        confirmLabel={`Delete ${statusCounts.failed} task${statusCounts.failed !== 1 ? 's' : ''}`}
+        isLoading={deletingFailedTasks}
+        onConfirm={handleDeleteFailedTasks}
+      />
     </div>
   );
 }

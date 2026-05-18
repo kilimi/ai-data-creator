@@ -28,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import {
   formatEvaluationModelDisplay,
   formatMetricPct,
@@ -69,6 +70,8 @@ export default function ProjectEvaluations() {
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<Set<number>>(new Set());
   const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("list");
+  const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+  const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
@@ -235,7 +238,7 @@ export default function ProjectEvaluations() {
     setNewTaskName(task.name);
   };
 
-  const handleDelete = async (task: any) => {
+  const performDelete = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete task');
@@ -243,7 +246,13 @@ export default function ProjectEvaluations() {
       fetchEvaluationTasks();
     } catch {
       toast({ title: "Error", description: "Failed to delete evaluation task", variant: "destructive" });
+    } finally {
+      setPendingDeleteTask(null);
     }
+  };
+
+  const handleDelete = (task: any) => {
+    setPendingDeleteTask(task);
   };
 
   const handleStop = async (task: any) => {
@@ -392,26 +401,7 @@ export default function ProjectEvaluations() {
                 size="sm"
                 className="whitespace-nowrap ml-2"
                 disabled={deletingFailedTasks}
-                onClick={async () => {
-                  const failed = evaluationTasks.filter(t => t.status === 'failed');
-                  if (failed.length === 0) return;
-                  if (!confirm(`Are you sure you want to delete ${failed.length} failed evaluation task(s)?`)) return;
-                  setDeletingFailedTasks(true);
-                  try {
-                    for (const t of failed) {
-                      await fetch(`http://localhost:9999/tasks/${t.id}`, { method: 'DELETE' });
-                    }
-                    toast({
-                      title: "Tasks Deleted",
-                      description: `${failed.length} failed evaluation task(s) have been deleted.`,
-                    });
-                    fetchEvaluationTasks();
-                  } catch {
-                    toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
-                  } finally {
-                    setDeletingFailedTasks(false);
-                  }
-                }}
+                onClick={() => setShowDeleteFailedConfirm(true)}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${failedCount})`}
@@ -829,6 +819,47 @@ export default function ProjectEvaluations() {
               variant: "destructive"
             });
             throw error;
+          }
+        }}
+      />
+
+      {/* Delete evaluation task confirm */}
+      <ConfirmDeleteDialog
+        open={!!pendingDeleteTask}
+        onOpenChange={(o) => !o && setPendingDeleteTask(null)}
+        entity="evaluation"
+        itemName={pendingDeleteTask?.name}
+        consequences={["All evaluation results and metrics for this task will be removed."]}
+        confirmLabel="Delete evaluation"
+        onConfirm={() => pendingDeleteTask && performDelete(pendingDeleteTask)}
+      />
+
+      {/* Delete all failed evaluations confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteFailedConfirm}
+        onOpenChange={setShowDeleteFailedConfirm}
+        title="Delete all failed evaluations?"
+        description={(() => {
+          const c = evaluationTasks.filter(t => t.status === 'failed').length;
+          return <>This will permanently delete <span className="font-semibold text-foreground">{c}</span> failed evaluation task{c !== 1 ? 's' : ''}.</>;
+        })()}
+        confirmLabel="Delete failed"
+        isLoading={deletingFailedTasks}
+        onConfirm={async () => {
+          const failed = evaluationTasks.filter(t => t.status === 'failed');
+          if (failed.length === 0) return;
+          setDeletingFailedTasks(true);
+          try {
+            for (const t of failed) {
+              await fetch(`http://localhost:9999/tasks/${t.id}`, { method: 'DELETE' });
+            }
+            toast({ title: "Tasks Deleted", description: `${failed.length} failed evaluation task(s) have been deleted.` });
+            fetchEvaluationTasks();
+          } catch {
+            toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
+          } finally {
+            setDeletingFailedTasks(false);
+            setShowDeleteFailedConfirm(false);
           }
         }}
       />
