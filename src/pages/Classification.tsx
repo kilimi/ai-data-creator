@@ -16,6 +16,7 @@ import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { PaginationControls } from "@/components/PaginationControls";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
 import { OptimizedClassificationStorage, LocalStorageCleanup } from "@/utils/optimizedStorage";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 interface ClassificationData {
   [imageId: string]: string[];
