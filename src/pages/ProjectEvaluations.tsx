@@ -805,9 +805,9 @@ export default function ProjectEvaluations() {
 
             const data = await response.json();
             
-            toast({
-              title: "Multi-Dataset Evaluation Started",
-              description: `Task "${data.task_name}" has been created with ${data.child_task_ids?.length || 0} dataset evaluations.`
+            sonnerToast.success("Multi-Dataset Evaluation Started", {
+              description: `Task "${data.task_name}" has been created with ${data.child_task_ids?.length || 0} dataset evaluations.`,
+              duration: 6000,
             });
             
             await fetchEvaluationTasks();
