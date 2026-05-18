@@ -670,8 +670,8 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       cats.forEach(c => { next[c] = true; });
       return next;
     });
-    toast({ title: `Preset applied: ${preset.name}`, description: `${preset.ids.length} augmentations selected.` });
-  }, [toast]);
+    toast.success(`Preset applied: ${preset.name}`, { description: `${preset.ids.length} augmentations selected.` });
+  }, []);
 
   // Compute the CSS filter/transform string approximating the combined selected augmentations.
   const previewStyle = useMemo<React.CSSProperties>(() => {
