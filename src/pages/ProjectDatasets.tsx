@@ -7,16 +7,7 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { useTasks } from '@/hooks/use-tasks';
 import { getApiBaseUrl } from '@/config/api';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatasetCard, DatasetCardSkeleton } from '@/components/DatasetCard';
 import { DatasetGroupCard } from '@/components/DatasetGroupCard';
