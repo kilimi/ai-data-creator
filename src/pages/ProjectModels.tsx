@@ -403,7 +403,7 @@ export default function ProjectModels() {
               variant="destructive" 
               size="sm" 
               className="whitespace-nowrap ml-2"
-              onClick={handleDeleteFailedTasks}
+              onClick={() => setShowDeleteFailedConfirm(true)}
               disabled={deletingFailedTasks}
             >
               <Trash2 className="w-4 h-4 mr-2" />
@@ -666,6 +666,39 @@ export default function ProjectModels() {
           taskName={testInference.name}
         />
       )}
+
+      {/* Delete training task confirm */}
+      <ConfirmDeleteDialog
+        open={!!pendingDeleteTask}
+        onOpenChange={(o) => !o && setPendingDeleteTask(null)}
+        entity="trained model"
+        itemName={pendingDeleteTask?.name}
+        consequences={["All model files and checkpoints for this task will be removed."]}
+        confirmLabel="Delete model"
+        onConfirm={() => pendingDeleteTask && performDeleteTask(pendingDeleteTask)}
+      />
+
+      {/* Stop training confirm (reuses the same dialog) */}
+      <ConfirmDeleteDialog
+        open={!!pendingStopTask}
+        onOpenChange={(o) => !o && setPendingStopTask(null)}
+        title="Stop training?"
+        description={<>Stop training task <span className="font-semibold text-foreground">"{pendingStopTask?.name}"</span>? Progress made so far will be preserved as a checkpoint.</>}
+        confirmLabel="Stop training"
+        cancelLabel="Keep running"
+        onConfirm={() => pendingStopTask && performStopTask(pendingStopTask)}
+      />
+
+      {/* Delete all failed training tasks confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteFailedConfirm}
+        onOpenChange={setShowDeleteFailedConfirm}
+        title="Delete all failed training tasks?"
+        description={<>This will permanently delete <span className="font-semibold text-foreground">{failedTasksCount}</span> failed training task{failedTasksCount !== 1 ? 's' : ''} and their files.</>}
+        confirmLabel={`Delete ${failedTasksCount} task${failedTasksCount !== 1 ? 's' : ''}`}
+        isLoading={deletingFailedTasks}
+        onConfirm={handleDeleteFailedTasks}
+      />
     </div>
   );
 }
