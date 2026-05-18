@@ -1,14 +1,5 @@
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { AnnotationSample } from "@/utils/annotations";
-import { Trash2 } from "lucide-react";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 interface DeleteClassDialogProps {
   isOpen: boolean;
@@ -18,6 +9,10 @@ interface DeleteClassDialogProps {
   onDelete: (className: string) => void;
 }
 
+/**
+ * Backwards-compatible wrapper around the shared ConfirmDeleteDialog so every
+ * "delete X?" prompt across the app uses the same UI.
+ */
 export function DeleteClassDialog({
   isOpen,
   onClose,
@@ -25,37 +20,24 @@ export function DeleteClassDialog({
   annotations,
   onDelete,
 }: DeleteClassDialogProps) {
-  const classCount = annotations.filter(ann => ann.className === className).length;
-
-  const handleDelete = () => {
-    onDelete(className);
-    onClose();
-  };
+  const classCount = annotations.filter((ann) => ann.className === className).length;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="bg-gray-900 text-white border-gray-700">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Trash2 className="h-5 w-5 text-red-500" />
-            Delete Class
-          </DialogTitle>
-          <DialogDescription className="text-gray-400">
-            Are you sure you want to delete the "{className}" class? This will remove {classCount} annotation{classCount !== 1 ? 's' : ''} permanently.
-            This action cannot be undone.
-          </DialogDescription>
-        </DialogHeader>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="destructive" onClick={handleDelete}>
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Class
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDeleteDialog
+      open={isOpen}
+      onOpenChange={(open) => !open && onClose()}
+      entity="class"
+      itemName={className}
+      consequences={
+        classCount > 0
+          ? [`${classCount} annotation${classCount !== 1 ? "s" : ""} using this class will also be removed.`]
+          : undefined
+      }
+      confirmLabel="Delete class"
+      onConfirm={() => {
+        onDelete(className);
+        onClose();
+      }}
+    />
   );
 }
