@@ -822,6 +822,47 @@ export default function ProjectEvaluations() {
           }
         }}
       />
+
+      {/* Delete evaluation task confirm */}
+      <ConfirmDeleteDialog
+        open={!!pendingDeleteTask}
+        onOpenChange={(o) => !o && setPendingDeleteTask(null)}
+        entity="evaluation"
+        itemName={pendingDeleteTask?.name}
+        consequences={["All evaluation results and metrics for this task will be removed."]}
+        confirmLabel="Delete evaluation"
+        onConfirm={() => pendingDeleteTask && performDelete(pendingDeleteTask)}
+      />
+
+      {/* Delete all failed evaluations confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteFailedConfirm}
+        onOpenChange={setShowDeleteFailedConfirm}
+        title="Delete all failed evaluations?"
+        description={(() => {
+          const c = evaluationTasks.filter(t => t.status === 'failed').length;
+          return <>This will permanently delete <span className="font-semibold text-foreground">{c}</span> failed evaluation task{c !== 1 ? 's' : ''}.</>;
+        })()}
+        confirmLabel="Delete failed"
+        isLoading={deletingFailedTasks}
+        onConfirm={async () => {
+          const failed = evaluationTasks.filter(t => t.status === 'failed');
+          if (failed.length === 0) return;
+          setDeletingFailedTasks(true);
+          try {
+            for (const t of failed) {
+              await fetch(`http://localhost:9999/tasks/${t.id}`, { method: 'DELETE' });
+            }
+            toast({ title: "Tasks Deleted", description: `${failed.length} failed evaluation task(s) have been deleted.` });
+            fetchEvaluationTasks();
+          } catch {
+            toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
+          } finally {
+            setDeletingFailedTasks(false);
+            setShowDeleteFailedConfirm(false);
+          }
+        }}
+      />
     </div>
   );
 }
