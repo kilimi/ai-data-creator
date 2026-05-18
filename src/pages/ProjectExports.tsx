@@ -27,6 +27,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 
 interface OutletContext {
   project: Project | null;
@@ -48,6 +49,8 @@ export default function ProjectExports() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
   const [statusFilter, setStatusFilter] = useState<"all" | "running" | "completed" | "failed">("all");
   const [deletingFailedTasks, setDeletingFailedTasks] = useState(false);
+  const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+  const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
   const [renamingTask, setRenamingTask] = useState<{ id: number; name: string } | null>(null);
   const [newTaskName, setNewTaskName] = useState('');
   const [testInference, setTestInference] = useState<{ id: number; onnxFilePath: string } | null>(null);
@@ -192,7 +195,6 @@ export default function ProjectExports() {
   const handleDeleteFailedTasks = async () => {
     const failed = exportTasks.filter(t => t.status === 'failed');
     if (failed.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${failed.length} failed conversion task(s)?`)) return;
     setDeletingFailedTasks(true);
     try {
       for (const t of failed) {
@@ -204,6 +206,7 @@ export default function ProjectExports() {
       toast({ title: "Error", description: "Failed to delete some tasks", variant: "destructive" });
     } finally {
       setDeletingFailedTasks(false);
+      setShowDeleteFailedConfirm(false);
     }
   };
 
