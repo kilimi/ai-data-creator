@@ -45,7 +45,7 @@ interface DatasetSelection {
   imageCollections: ImageCollection[];
   loadingCollections: boolean;
   annotationFileId: string | null; // selected annotation file ID (or null for no annotations)
-  annotationFiles: Array<{ id: number; name: string; annotation_count?: number }>;
+  annotationFiles: Array<{ id: string; name: string; annotation_count?: number }>;
   loadingAnnotations: boolean;
   fromGroup?: boolean;
   groupName?: string;
@@ -66,7 +66,7 @@ interface DatasetSelection {
   imageCollections: ImageCollection[];
   loadingCollections: boolean;
   annotationFileId: string | null; // selected annotation file ID (or null for no annotations)
-  annotationFiles: Array<{ id: number; name: string; annotation_count?: number }>;
+  annotationFiles: Array<{ id: string; name: string; annotation_count?: number }>;
   loadingAnnotations: boolean;
   fromGroup?: boolean;
   groupName?: string;
@@ -748,7 +748,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       const datasetConfigs = datasetSelections.map(sel => ({
         dataset_id: sel.dataset.id,
         collection_id: sel.collectionId ? parseInt(sel.collectionId, 10) : null,
-        annotation_file_id: sel.annotationFileId ? parseInt(sel.annotationFileId) : null,
+        annotation_file_id: sel.annotationFileId || null,  // UUID string — must NOT be parseInt'd
       }));
 
       // Create the augmented dataset

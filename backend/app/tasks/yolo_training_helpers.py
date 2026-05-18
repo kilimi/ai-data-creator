@@ -7,6 +7,7 @@ import shutil
 import logging
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from typing import Dict, Any, Optional
 
 from app.models import Task as TaskModel
@@ -22,8 +23,65 @@ class ProgressCallback:
         self.task_id = task_id
         self.total_epochs = total_epochs
         self.current_epoch = 0
+        self.current_batch = 0
+        self.total_batches = 0
         self.db = db_session
         self.metrics_history = []
+        self._epoch_started_at: Optional[float] = None
+        self._last_batch_update_at: float = 0.0
+        self._last_published_batch: int = -1
+
+    def on_train_batch_end(self, trainer):
+        """Publish coarse in-epoch batch progress so the UI does not look stalled."""
+        try:
+            epoch = int(getattr(trainer, 'epoch', 0)) + 1
+            current_batch = int(getattr(trainer, 'batch_i', -1)) + 1
+            total_batches = self._resolve_total_batches(trainer)
+            if current_batch <= 0 or total_batches is None or total_batches <= 0:
+                return
+
+            if epoch != self.current_epoch:
+                self.current_epoch = epoch
+                self._epoch_started_at = monotonic()
+                self._last_published_batch = -1
+
+            self.current_batch = current_batch
+            self.total_batches = total_batches
+
+            now = monotonic()
+            should_publish = (
+                current_batch == 1
+                or current_batch == total_batches
+                or current_batch - self._last_published_batch >= 2
+                or now - self._last_batch_update_at >= 30
+            )
+            if not should_publish:
+                return
+
+            self._last_published_batch = current_batch
+            self._last_batch_update_at = now
+
+            epoch_fraction = current_batch / max(total_batches, 1)
+            overall_fraction = ((epoch - 1) + epoch_fraction) / max(self.total_epochs, 1)
+            progress = 40 + int(overall_fraction * 50)
+            epoch_progress_pct = int(epoch_fraction * 100)
+
+            epoch_eta_seconds = None
+            if self._epoch_started_at is not None and current_batch > 0:
+                elapsed = max(now - self._epoch_started_at, 0.0)
+                avg_batch_seconds = elapsed / current_batch
+                epoch_eta_seconds = int(max(total_batches - current_batch, 0) * avg_batch_seconds)
+
+            self._publish_batch_progress(
+                progress=progress,
+                epoch=epoch,
+                current_batch=current_batch,
+                total_batches=total_batches,
+                epoch_progress_pct=epoch_progress_pct,
+                epoch_eta_seconds=epoch_eta_seconds,
+            )
+        except Exception as e:
+            logger.debug(f"Ignoring YOLO batch progress callback error for task {self.task_id}: {e}")
     
     def on_train_epoch_end(self, trainer):
         """Called at the end of each training epoch"""
@@ -36,6 +94,70 @@ class ProgressCallback:
         
         # Update task in database
         self._update_task_progress(progress, metrics, trainer)
+
+    def _resolve_total_batches(self, trainer) -> Optional[int]:
+        train_loader = getattr(trainer, 'train_loader', None)
+        if train_loader is not None:
+            try:
+                total = len(train_loader)
+                if total > 0:
+                    return int(total)
+            except TypeError:
+                pass
+        total = getattr(trainer, 'nb', None)
+        if isinstance(total, int) and total > 0:
+            return total
+        return None
+
+    def _publish_batch_progress(
+        self,
+        progress: int,
+        epoch: int,
+        current_batch: int,
+        total_batches: int,
+        epoch_progress_pct: int,
+        epoch_eta_seconds: Optional[int],
+    ):
+        task = self.db.query(TaskModel).filter(TaskModel.id == self.task_id).first()
+        if not task:
+            return
+
+        task_meta = task.task_metadata or {}
+        stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
+        if task.status in ('stopped', 'paused') or stop_requested:
+            return
+
+        stage = task_meta.get("stage") if isinstance(task_meta, dict) else None
+        if stage != "pause_requested":
+            stage = "training"
+
+        task.progress = min(progress, 90)
+        task.task_metadata = {
+            **task_meta,
+            "stage": stage,
+            "current_epoch": epoch,
+            "total_epochs": self.total_epochs,
+            "current_batch": current_batch,
+            "total_batches": total_batches,
+            "epoch_progress_pct": epoch_progress_pct,
+            "epoch_eta_seconds": epoch_eta_seconds,
+            "last_batch_update_at": datetime.utcnow().isoformat(),
+        }
+        self.db.commit()
+
+        self.celery_task.update_state(
+            state='PROGRESS',
+            meta={
+                'current': epoch,
+                'total': self.total_epochs,
+                'progress': task.progress,
+                'status': f'Training epoch {epoch}/{self.total_epochs} batch {current_batch}/{total_batches}',
+                'batch': current_batch,
+                'batches': total_batches,
+                'epoch_progress_pct': epoch_progress_pct,
+                'epoch_eta_seconds': epoch_eta_seconds,
+            }
+        )
     
     def _extract_metrics(self, trainer) -> Dict[str, Any]:
         """Extract metrics from trainer"""
@@ -120,12 +242,15 @@ class ProgressCallback:
             task = self.db.query(TaskModel).filter(TaskModel.id == self.task_id).first()
             if task:
                 task_meta = task.task_metadata or {}
+                pause_requested = isinstance(task_meta, dict) and bool(task_meta.get("pause_requested_at"))
                 stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
 
                 # Check if task has been stopped/paused or stop was requested.
-                if task.status in ('stopped', 'paused') or stop_requested:
-                    if task.status == 'paused':
+                if task.status in ('stopped', 'paused') or pause_requested or stop_requested:
+                    if task.status == 'paused' or pause_requested:
                         final_stage = 'paused'
+                        if task.status != 'paused':
+                            task.status = 'paused'
                     else:
                         final_stage = 'stopped'
                         if task.status != 'stopped':
@@ -142,6 +267,7 @@ class ProgressCallback:
                         "stage": final_stage,
                         "latest_metrics": metrics,
                         "metrics_history": self.metrics_history,
+                        "pause_requested_at": None,
                     }
                     if last_pt_path:
                         updated_meta["resume_from"] = str(last_pt_path)
@@ -160,6 +286,7 @@ class ProgressCallback:
                 task.task_metadata = {
                     **(task.task_metadata or {}),
                     "current_epoch": self.current_epoch,
+                    "total_epochs": self.total_epochs,
                     "stage": "training",
                     "latest_metrics": metrics,
                     "metrics_history": self.metrics_history

@@ -628,7 +628,7 @@ def read_project(
     }
 
 
-@router.put("/projects/{project_id}", response_model=schemas.Project)
+@router.put("/projects/{project_id}")
 async def update_project(
     project_id: int,
     name: str = Form(...),
@@ -654,7 +654,21 @@ async def update_project(
             project.logo_url = thumbnail_url
         db.commit()
         db.refresh(project)
-        return project
+        # Return a lightweight response — omitting nested datasets avoids serialising
+        # potentially large base64 thumbnails which caused "Failed to fetch" in the browser.
+        # The caller (EditProjectDialog → ProjectCard) does navigate(0) on success anyway.
+        return {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "tags": project.tags,
+            "created_at": project.created_at,
+            "updated_at": project.updated_at,
+            "is_project": project.is_project,
+            "logo_url": project.logo_url,
+            "thumbnailUrl": project.logo_url,
+            "datasets": [],
+        }
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

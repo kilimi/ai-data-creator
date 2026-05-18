@@ -170,6 +170,16 @@ function timeAgo(iso?: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+function formatEpochEta(seconds?: number | null): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${totalSeconds}s`;
+}
+
 function MetricTile({
   label,
   value,
@@ -245,10 +255,16 @@ export function TrainingCard({
   const isPending = status === "pending";
   const showProgress = isRunning || isPending || isPaused;
   const canRerun = isCompleted || isFailed || isStopped;
+  const totalEpochs = metadata.total_epochs || metadata.epochs || metadata.training_params?.epochs;
+  const currentBatch = metadata.current_batch;
+  const totalBatches = metadata.total_batches;
+  const epochProgressPct = metadata.epoch_progress_pct;
+  const epochEta = formatEpochEta(metadata.epoch_eta_seconds);
+  const isPauseRequested = isRunning && metadata.stage === "pause_requested";
 
   const epochsDisplay = (() => {
-    if (isRunning && metadata.current_epoch && metadata.epochs) {
-      return `${metadata.current_epoch} / ${metadata.epochs}`;
+    if (isRunning && metadata.current_epoch && totalEpochs) {
+      return `${metadata.current_epoch} / ${totalEpochs}`;
     }
     if ((isCompleted || isFailed || isStopped) && metadata.current_epoch) {
       return String(metadata.current_epoch);
@@ -328,22 +344,41 @@ export function TrainingCard({
             </div>
 
             {showProgress && (
-              <div className="mt-3 flex items-center gap-3">
-                <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className={`h-full transition-all ${
-                      isFailed
-                        ? "bg-red-500"
-                        : isCompleted
-                        ? "bg-green-500"
-                        : "bg-blue-500"
-                    }`}
-                    style={{ width: `${task.progress || 0}%` }}
-                  />
+              <div className="mt-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all ${
+                        isFailed
+                          ? "bg-red-500"
+                          : isCompleted
+                          ? "bg-green-500"
+                          : "bg-blue-500"
+                      }`}
+                      style={{ width: `${task.progress || 0}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
+                    {task.progress || 0}%
+                  </span>
                 </div>
-                <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
-                  {task.progress || 0}%
-                </span>
+                {(metadata.current_epoch || currentBatch || isPauseRequested) && (
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    {metadata.current_epoch && totalEpochs && (
+                      <span>Epoch {metadata.current_epoch}/{totalEpochs}</span>
+                    )}
+                    {currentBatch && totalBatches && (
+                      <span>Batch {currentBatch}/{totalBatches}</span>
+                    )}
+                    {typeof epochProgressPct === "number" && (
+                      <span>{epochProgressPct}% of current epoch</span>
+                    )}
+                    {epochEta && <span>~{epochEta} left in epoch</span>}
+                    {isPauseRequested && (
+                      <span className="text-yellow-400">Pause requested</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

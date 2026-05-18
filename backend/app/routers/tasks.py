@@ -333,15 +333,20 @@ async def pause_task(task_id: int, db: Session = Depends(get_db)):
     if task.status != 'running':
         raise HTTPException(status_code=400, detail=f"Cannot pause task with status '{task.status}' (must be 'running')")
 
-    task.status = 'paused'
     if task.task_metadata is None:
         task.task_metadata = {}
     if isinstance(task.task_metadata, dict):
         task.task_metadata["pause_requested_at"] = datetime.utcnow().isoformat()
+        task.task_metadata["stage"] = "pause_requested"
         flag_modified(task, "task_metadata")
     db.commit()
 
-    return {"success": True, "message": "Pause requested — training will stop at next epoch boundary", "task_id": task_id}
+    return {
+        "success": True,
+        "message": "Pause requested — training will stop at next epoch boundary",
+        "task_id": task_id,
+        "status": task.status,
+    }
 
 
 @router.patch("/tasks/{task_id}/resume")

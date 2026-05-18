@@ -60,11 +60,17 @@ interface TaskDetails {
   task_metadata?: {
     current_epoch?: number;
     epochs?: number;
+    total_epochs?: number;
+    current_batch?: number;
+    total_batches?: number;
+    epoch_progress_pct?: number;
+    epoch_eta_seconds?: number;
     latest_metrics?: TrainingMetrics;
     metrics_history?: TrainingMetrics[];
     training_params?: any;
     model_config?: any;
     stage?: string;
+    pause_requested_at?: string | null;
     best_model?: string;
     results_dir?: string;
     class_names?: string[];
@@ -148,6 +154,16 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="text-foreground font-medium tabular-nums truncate">{value ?? "—"}</div>
     </div>
   );
+}
+
+function formatEpochEta(seconds?: number | null): string | null {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return null;
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${totalSeconds}s`;
 }
 
 function SectionHeading({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
@@ -238,8 +254,13 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   }, [metricsHistory]);
 
   const modelName = metadata?.model_config?.model || metadata?.training_params?.model || (metadata as any)?.model_type || '—';
-  const epochsTotal = metadata?.epochs || metadata?.training_params?.epochs;
+  const epochsTotal = metadata?.total_epochs || metadata?.epochs || metadata?.training_params?.epochs;
   const currentEpoch = metadata?.current_epoch || 0;
+  const currentBatch = metadata?.current_batch;
+  const totalBatches = metadata?.total_batches;
+  const epochProgressPct = metadata?.epoch_progress_pct;
+  const epochEta = formatEpochEta(metadata?.epoch_eta_seconds);
+  const pauseRequested = task?.status === 'running' && metadata?.stage === 'pause_requested';
   const isFinal = task?.status === 'failed' || task?.status === 'stopped' || task?.status === 'cancelled';
   const accent = STATUS_ACCENT[task?.status ?? ''] ?? "border-l-border";
 
@@ -307,16 +328,27 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
           {/* Running progress bar */}
           {task && (task.status === 'running' || task.status === 'pending') && (
-            <div className="mt-3 flex items-center gap-3">
-              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all"
-                  style={{ width: `${task.progress || 0}%` }}
-                />
+            <div className="mt-3">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${task.progress || 0}%` }}
+                  />
+                </div>
+                <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
+                  {task.progress || 0}%
+                </span>
               </div>
-              <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">
-                {task.progress || 0}%
-              </span>
+              {(currentBatch || pauseRequested) && (
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {currentEpoch > 0 && epochsTotal && <span>Epoch {currentEpoch}/{epochsTotal}</span>}
+                  {currentBatch && totalBatches && <span>Batch {currentBatch}/{totalBatches}</span>}
+                  {typeof epochProgressPct === 'number' && <span>{epochProgressPct}% of current epoch</span>}
+                  {epochEta && <span>~{epochEta} left in epoch</span>}
+                  {pauseRequested && <span className="text-yellow-500">Pause requested — current epoch will finish first</span>}
+                </div>
+              )}
             </div>
           )}
 
@@ -400,6 +432,9 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <KV label="Learning rate" value={metadata?.training_params?.lr0 ?? 0.01} />
                     <KV label="Patience" value={metadata?.training_params?.patience ?? 50} />
                     <KV label="Device" value={metadata?.training_params?.device ?? "0"} />
+                    {currentBatch && totalBatches && <KV label="Current batch" value={`${currentBatch}/${totalBatches}`} />}
+                    {typeof epochProgressPct === 'number' && <KV label="Epoch progress" value={`${epochProgressPct}%`} />}
+                    {epochEta && <KV label="Epoch ETA" value={epochEta} />}
                   </div>
                   {enabledAugChips.length > 0 && (
                     <div className="mt-4 pt-3 border-t border-border">

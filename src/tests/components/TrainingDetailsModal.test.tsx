@@ -182,4 +182,37 @@ describe("TrainingDetailsModal", () => {
     const img = await screen.findByAltText("train batch");
     expect(img.getAttribute("src")).toBe("http://localhost:9999/tasks/42/examples/train");
   });
+
+  it("shows live in-epoch batch progress for running training", async () => {
+    const runningTask = {
+      ...mockTask,
+      status: "running",
+      progress: 41,
+      task_metadata: {
+        ...mockTask.task_metadata,
+        current_epoch: 1,
+        epochs: 100,
+        total_epochs: 100,
+        current_batch: 39,
+        total_batches: 281,
+        epoch_progress_pct: 14,
+        epoch_eta_seconds: 6326,
+        stage: "training",
+      },
+    };
+
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => runningTask,
+    });
+
+    render(<TrainingDetailsModal open={true} onOpenChange={() => {}} taskId={42} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Batch 39/281")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("14% of current epoch")).toBeInTheDocument();
+    expect(screen.getAllByText(/1h 45m/).length).toBeGreaterThan(0);
+  });
 });

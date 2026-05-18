@@ -73,6 +73,8 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
+import { applyClassColorsToAnnotations } from '@/utils/annotationColorConsistency';
+import { shouldScheduleAnnotationRedraw } from '@/utils/annotationRenderVisibility';
 
 // Annotation types
 export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'pencil' | 'auto-segment';
@@ -349,6 +351,7 @@ const ImageAnnotation = () => {
   const [imageContrast, setImageContrast] = useState(100);     // %
   const [imageSaturation, setImageSaturation] = useState(100); // %
   const [annotations, setAnnotations] = useState<AnnotationShape[]>([]);
+  const [annotationsLoadingForImage, setAnnotationsLoadingForImage] = useState<string | null>(null);
   /** Always matches latest `annotations` so async loaders don't read a stale closure for the early-return / skip-clear logic. */
   const annotationsRef = useRef<AnnotationShape[]>([]);
   annotationsRef.current = annotations;
@@ -1366,6 +1369,7 @@ const ImageAnnotation = () => {
     console.log('[loadAnnotations] image:', imageName, 'last:', lastLoadedImageRef.current);
 
     if (imageName === lastLoadedImageRef.current && annotationsRef.current.length > 0) {
+      setAnnotationsLoadingForImage(null);
       logAnnotDebug('loadAnnotationsForImage SKIP (already have polygons for this image)', {
         imageName,
         activeCollId,
@@ -1385,145 +1389,149 @@ const ImageAnnotation = () => {
 
     const myToken = ++pendingAnnotationLoadTokenRef.current;
     const stillFresh = () => myToken === pendingAnnotationLoadTokenRef.current;
+    setAnnotationsLoadingForImage(imageName);
 
-    lastLoadedImageRef.current = imageName;
+    try {
+      lastLoadedImageRef.current = imageName;
 
-    // --- PATH A: Editing an existing annotation file → load from DB API ---
-    if (annotationId && api && id) {
-      try {
-        const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
-        const cached = localStorage.getItem(storageKey);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached) as AnnotationShape[];
-            if (parsed.length > 0) {
-              if (!stillFresh()) return;
-              const classColorMap: { [name: string]: string } = {};
-              classes.forEach(c => { classColorMap[c.name] = c.color; });
-              const mappedCache = parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a);
-              annotationsRef.current = mappedCache;
-              setAnnotations(mappedCache);
-              logAnnotDebug('loadAnnotationsForImage CACHE hit', { imageName, activeCollId, count: mappedCache.length });
-              const dimsKeyCache = `annotations_${id}_${activeCollId}_${imageName}_dims`;
-              const savedDimsCache = localStorage.getItem(dimsKeyCache);
-              if (savedDimsCache) {
-                try {
-                  const dims = JSON.parse(savedDimsCache) as { width: number; height: number };
-                  if (dims.width > 0 && dims.height > 0) {
-                    cocoImageDimensionsRef.current[imageName] = { width: dims.width, height: dims.height };
-                  }
-                } catch { /* ignore */ }
+      // --- PATH A: Editing an existing annotation file → load from DB API ---
+      if (annotationId && api && id) {
+        try {
+          const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
+          const cached = localStorage.getItem(storageKey);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached) as AnnotationShape[];
+              if (parsed.length > 0) {
+                if (!stillFresh()) return;
+                const mappedCache = applyClassColorsToAnnotations(parsed, classes);
+                annotationsRef.current = mappedCache;
+                setAnnotations(mappedCache);
+                logAnnotDebug('loadAnnotationsForImage CACHE hit', { imageName, activeCollId, count: mappedCache.length });
+                const dimsKeyCache = `annotations_${id}_${activeCollId}_${imageName}_dims`;
+                const savedDimsCache = localStorage.getItem(dimsKeyCache);
+                if (savedDimsCache) {
+                  try {
+                    const dims = JSON.parse(savedDimsCache) as { width: number; height: number };
+                    if (dims.width > 0 && dims.height > 0) {
+                      cocoImageDimensionsRef.current[imageName] = { width: dims.width, height: dims.height };
+                    }
+                  } catch { /* ignore */ }
+                }
+                console.log(`[loadAnnotations] ${parsed.length} from localStorage cache`);
+                return;
               }
-              console.log(`[loadAnnotations] ${parsed.length} from localStorage cache`);
-              return;
-            }
-          } catch { /* fall through */ }
-        }
-
-        // Prevent prior image polygons from lingering while the API round-trip completes
-        if (!stillFresh()) return;
-        logAnnotDebug('loadAnnotationsForImage CLEAR (await API)', {
-          imageName,
-          activeCollId,
-          token: myToken,
-        });
-        annotationsRef.current = [];
-        setAnnotations([]);
-
-        const resp = await api.getImageAnnotations(
-          id,
-          annotationId,
-          imageName,
-          activeCollId,
-        );
-        if (!stillFresh()) return;
-        if (resp.success && resp.data) {
-          const { annotations: apiAnns, imageWidth, imageHeight } = resp.data;
-          cocoImageDimensionsRef.current[imageName] = { width: imageWidth, height: imageHeight };
-
-          const imageAnnotations: AnnotationShape[] = [];
-          for (const ann of apiAnns) {
-            const seg = ann.segmentation;
-            if (!seg || seg.length < 6) continue;
-            const points: Point[] = [];
-            for (let i = 0; i < seg.length; i += 2) {
-              const x = seg[i], y = seg[i + 1];
-              if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) continue;
-              points.push({ x: Math.max(0, Math.min(x, imageWidth - 1)), y: Math.max(0, Math.min(y, imageHeight - 1)) });
-            }
-            if (points.length >= 3) {
-              imageAnnotations.push({
-                id: `annotation_${ann.id}`,
-                type: 'polygon',
-                points,
-                label: ann.className,
-                color: ann.color || DEFAULT_COLORS[0],
-                visible: true,
-              });
-            }
+            } catch { /* fall through */ }
           }
 
-          annotationsRef.current = imageAnnotations;
-          setAnnotations(imageAnnotations);
-          logAnnotDebug('loadAnnotationsForImage API done', {
+          // Prevent prior image polygons from lingering while the API round-trip completes
+          if (!stillFresh()) return;
+          logAnnotDebug('loadAnnotationsForImage CLEAR (await API)', {
             imageName,
             activeCollId,
-            count: imageAnnotations.length,
             token: myToken,
           });
-          console.log(`[loadAnnotations] ${imageAnnotations.length} from API for ${imageName}`);
+          annotationsRef.current = [];
+          setAnnotations([]);
 
-          if (imageAnnotations.length > 0) {
-            safeLocalStorageSet(storageKey, JSON.stringify(imageAnnotations));
-            safeLocalStorageSet(
-              `annotations_${id}_${activeCollId}_${imageName}_dims`,
-              JSON.stringify({ width: imageWidth, height: imageHeight }),
-            );
-          }
-          return;
-        }
-      } catch (err) {
-        console.warn('[loadAnnotations] API load failed, falling back:', err);
-      }
-    }
-
-    // --- PATH B: New annotation session (no annotationId) → localStorage only ---
-    try {
-      const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
-      const saved = localStorage.getItem(storageKey);
-      if (saved) {
-        const parsed = JSON.parse(saved) as AnnotationShape[];
-        if (parsed.length > 0) {
+          const resp = await api.getImageAnnotations(
+            id,
+            annotationId,
+            imageName,
+            activeCollId,
+          );
           if (!stillFresh()) return;
-          const classColorMap: { [name: string]: string } = {};
-          classes.forEach(c => { classColorMap[c.name] = c.color; });
-          const mappedLs = parsed.map(a => classColorMap[a.label] ? { ...a, color: classColorMap[a.label] } : a);
-          annotationsRef.current = mappedLs;
-          setAnnotations(mappedLs);
-          logAnnotDebug('loadAnnotationsForImage PATH B localStorage', { imageName, count: mappedLs.length });
-          const dimsKey = `annotations_${id}_${activeCollId}_${imageName}_dims`;
-          const savedDims = localStorage.getItem(dimsKey);
-          if (savedDims) {
-            try {
-              const dims = JSON.parse(savedDims);
-              if (dims.width > 0 && dims.height > 0) cocoImageDimensionsRef.current[imageName] = dims;
-            } catch { /* ignore */ }
+          if (resp.success && resp.data) {
+            const { annotations: apiAnns, imageWidth, imageHeight } = resp.data;
+            cocoImageDimensionsRef.current[imageName] = { width: imageWidth, height: imageHeight };
+
+            const imageAnnotations: AnnotationShape[] = [];
+            for (const ann of apiAnns) {
+              const seg = ann.segmentation;
+              if (!seg || seg.length < 6) continue;
+              const points: Point[] = [];
+              for (let i = 0; i < seg.length; i += 2) {
+                const x = seg[i], y = seg[i + 1];
+                if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) continue;
+                points.push({ x: Math.max(0, Math.min(x, imageWidth - 1)), y: Math.max(0, Math.min(y, imageHeight - 1)) });
+              }
+              if (points.length >= 3) {
+                imageAnnotations.push({
+                  id: `annotation_${ann.id}`,
+                  type: 'polygon',
+                  points,
+                  label: ann.className,
+                  color: ann.color || DEFAULT_COLORS[0],
+                  visible: true,
+                });
+              }
+            }
+
+            const mappedFromApi = applyClassColorsToAnnotations(imageAnnotations, classes);
+            annotationsRef.current = mappedFromApi;
+            setAnnotations(mappedFromApi);
+            logAnnotDebug('loadAnnotationsForImage API done', {
+              imageName,
+              activeCollId,
+              count: mappedFromApi.length,
+              token: myToken,
+            });
+            console.log(`[loadAnnotations] ${mappedFromApi.length} from API for ${imageName}`);
+
+            if (mappedFromApi.length > 0) {
+              safeLocalStorageSet(storageKey, JSON.stringify(mappedFromApi));
+              safeLocalStorageSet(
+                `annotations_${id}_${activeCollId}_${imageName}_dims`,
+                JSON.stringify({ width: imageWidth, height: imageHeight }),
+              );
+            }
+            return;
           }
-          return;
+        } catch (err) {
+          console.warn('[loadAnnotations] API load failed, falling back:', err);
         }
       }
-      if (!stillFresh()) return;
-      logAnnotDebug('loadAnnotationsForImage CLEAR (path B empty / no saved)', { imageName, activeCollId });
-      annotationsRef.current = [];
-      setAnnotations([]);
-      if (annotationId) loadGlobalClasses();
-    } catch (error) {
-      console.error('[loadAnnotations] error:', error);
-      if (!stillFresh()) return;
-      logAnnotDebug('loadAnnotationsForImage CLEAR (path B error)', { imageName, activeCollId, error: String(error) });
-      annotationsRef.current = [];
-      setAnnotations([]);
-      if (annotationId) loadGlobalClasses();
+
+      // --- PATH B: New annotation session (no annotationId) → localStorage only ---
+      try {
+        const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          const parsed = JSON.parse(saved) as AnnotationShape[];
+          if (parsed.length > 0) {
+            if (!stillFresh()) return;
+            const mappedLs = applyClassColorsToAnnotations(parsed, classes);
+            annotationsRef.current = mappedLs;
+            setAnnotations(mappedLs);
+            logAnnotDebug('loadAnnotationsForImage PATH B localStorage', { imageName, count: mappedLs.length });
+            const dimsKey = `annotations_${id}_${activeCollId}_${imageName}_dims`;
+            const savedDims = localStorage.getItem(dimsKey);
+            if (savedDims) {
+              try {
+                const dims = JSON.parse(savedDims);
+                if (dims.width > 0 && dims.height > 0) cocoImageDimensionsRef.current[imageName] = dims;
+              } catch { /* ignore */ }
+            }
+            return;
+          }
+        }
+        if (!stillFresh()) return;
+        logAnnotDebug('loadAnnotationsForImage CLEAR (path B empty / no saved)', { imageName, activeCollId });
+        annotationsRef.current = [];
+        setAnnotations([]);
+        if (annotationId) loadGlobalClasses();
+      } catch (error) {
+        console.error('[loadAnnotations] error:', error);
+        if (!stillFresh()) return;
+        logAnnotDebug('loadAnnotationsForImage CLEAR (path B error)', { imageName, activeCollId, error: String(error) });
+        annotationsRef.current = [];
+        setAnnotations([]);
+        if (annotationId) loadGlobalClasses();
+      }
+    } finally {
+      if (stillFresh()) {
+        setAnnotationsLoadingForImage(null);
+      }
     }
   };
 
@@ -3655,31 +3663,85 @@ const ImageAnnotation = () => {
   useEffect(() => {
     if (expectedVisibleAnnotationsCount <= 0) return;
     if (!canvasRef.current || !imageRef.current) return;
-    if (isLayerSwitching) return;
     const img = imageRef.current;
+    const imageKey = currentImage?.fileName || currentImageNameRef.current || '';
+    const shouldSchedule = shouldScheduleAnnotationRedraw({
+      expectedVisibleAnnotationsCount,
+      isLayerSwitching,
+      imageReady: !!(img.complete && img.naturalWidth),
+      currentImageKey: imageKey,
+      lastDrawImageKey: lastDrawImageKeyRef.current,
+      lastDrawnVisibleAnnotations: lastDrawnVisibleAnnotationsRef.current,
+    });
+
+    if (!shouldSchedule) {
+      return;
+    }
+
     if (!img.complete || !img.naturalWidth) {
       scheduleRedraw(10);
       return;
     }
-    const imageKey = currentImage?.fileName || currentImageNameRef.current || '';
-    const drawn = lastDrawnVisibleAnnotationsRef.current;
-    const lastKey = lastDrawImageKeyRef.current;
-    if (lastKey !== imageKey || drawn <= 0) {
-      scheduleRedraw(10);
-      const t1 = window.setTimeout(() => scheduleRedraw(10), 80);
-      const t2 = window.setTimeout(() => scheduleRedraw(10), 220);
-      return () => {
-        window.clearTimeout(t1);
-        window.clearTimeout(t2);
-      };
-    }
-    return;
+
+    scheduleRedraw(10);
+    const t1 = window.setTimeout(() => scheduleRedraw(10), 80);
+    const t2 = window.setTimeout(() => scheduleRedraw(10), 220);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
   }, [
     expectedVisibleAnnotationsCount,
     currentImage?.fileName,
     isLayerSwitching,
     imageScale,
     imageOffset,
+    scheduleRedraw,
+  ]);
+
+  // When annotation loading finishes, force a few redraw attempts.
+  // The loading spinner only reflects data fetch; canvas/image readiness and
+  // calibration refs may settle slightly later. Without this, polygons can stay
+  // invisible until some unrelated interaction (draw/toggle class) triggers redraw.
+  useEffect(() => {
+    if (!currentImageName) return;
+    if (annotationsLoadingForImage !== null) return;
+    if (annotations.length <= 0) return;
+
+    scheduleRedraw(12);
+    const t1 = window.setTimeout(() => scheduleRedraw(12), 90);
+    const t2 = window.setTimeout(() => scheduleRedraw(12), 260);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [
+    annotationsLoadingForImage,
+    annotations.length,
+    currentImageName,
+    displayLayer,
+    annotationLayerId,
+    calibrationIsActive,
+    scheduleRedraw,
+  ]);
+
+  // Calibration/homography refs are stored in useRef and may update after the
+  // first paint for an image/layer. Trigger redraws when these related states
+  // settle so transformed polygons are drawn without requiring user interaction.
+  useEffect(() => {
+    if (!currentImageName) return;
+    if (!annotations.length) return;
+
+    scheduleRedraw(12);
+    const t = window.setTimeout(() => scheduleRedraw(12), 120);
+    return () => window.clearTimeout(t);
+  }, [
+    calibrationIsActive,
+    calibrationEnabled,
+    annotationLayerId,
+    displayLayer,
+    currentImageName,
+    annotations.length,
     scheduleRedraw,
   ]);
 
@@ -5105,11 +5167,17 @@ const ImageAnnotation = () => {
                     const imageAnnotations: any[] = [];
                     const categoryIdToName: { [id: string]: string } = {};
                     const categoryIdToColor: { [id: string]: string } = {};
+                    const classColorMapByName: { [name: string]: string } = {};
+                    classes.forEach((cls) => {
+                      classColorMapByName[cls.name.toLowerCase()] = cls.color;
+                    });
                     
                     cocoData.categories?.forEach((cat: any, idx: number) => {
                       if (cat.id != null && cat.name) {
                         categoryIdToName[cat.id.toString()] = cat.name;
-                        categoryIdToColor[cat.id.toString()] = DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
+                        categoryIdToColor[cat.id.toString()] =
+                          classColorMapByName[String(cat.name).toLowerCase()] ||
+                          DEFAULT_COLORS[idx % DEFAULT_COLORS.length];
                       }
                     });
                     
@@ -6040,6 +6108,14 @@ const ImageAnnotation = () => {
                     <div className="text-center text-white">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-2"></div>
                       <div className="text-sm">Switching layer...</div>
+                    </div>
+                  </div>
+                )}
+                {!isLayerSwitching && annotationsLoadingForImage === currentImageName && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/35 backdrop-blur-[1px] z-10 pointer-events-none">
+                    <div className="inline-flex items-center gap-2 rounded-md bg-background/90 text-foreground px-3 py-2 border border-border shadow-lg">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm font-medium">Loading annotations...</span>
                     </div>
                   </div>
                 )}

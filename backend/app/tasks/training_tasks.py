@@ -37,10 +37,21 @@ class TrainingTask(Task):
                 task = db.query(TaskModel).filter(TaskModel.id == db_task_id).first()
                 if task:
                     task_meta = task.task_metadata or {}
+                    pause_requested = isinstance(task_meta, dict) and bool(task_meta.get("pause_requested_at"))
                     stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
                     # Don't overwrite 'stopped' or 'paused' — those were set intentionally
                     # before the SIGTERM that triggered this failure callback.
-                    if task.status in ('stopped', 'paused') or stop_requested:
+                    if task.status in ('stopped', 'paused') or pause_requested or stop_requested:
+                        if pause_requested and task.status != 'paused':
+                            task.status = 'paused'
+                            task.task_metadata = {
+                                **task_meta,
+                                'stage': 'paused',
+                                'pause_requested_at': None,
+                            }
+                            db.commit()
+                            logger.info(f"DB task {db_task_id} finalized as paused during on_failure")
+                            return
                         if stop_requested and task.status not in ('stopped', 'paused'):
                             task.status = 'stopped'
                             task.completed_at = datetime.utcnow()
@@ -153,11 +164,14 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
                 return
 
             task_meta = task.task_metadata or {}
+            pause_requested = isinstance(task_meta, dict) and bool(task_meta.get("pause_requested_at"))
             stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
 
-            if task.status in ('stopped', 'paused') or stop_requested:
-                if task.status == 'paused':
+            if task.status in ('stopped', 'paused') or pause_requested or stop_requested:
+                if task.status == 'paused' or pause_requested:
                     final_stage = 'paused'
+                    if task.status != 'paused':
+                        task.status = 'paused'
                 else:
                     final_stage = 'stopped'
                     if task.status != 'stopped':
@@ -173,6 +187,7 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
                     "stage": final_stage,
                     "latest_metrics": metrics,
                     "metrics_history": state["metrics_history"],
+                    "pause_requested_at": None,
                 }
                 if last_pt:
                     updated_meta["resume_from"] = str(last_pt)
@@ -310,8 +325,17 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if task:
             task_meta = task.task_metadata or {}
+            pause_requested = isinstance(task_meta, dict) and bool(task_meta.get("pause_requested_at"))
             stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
-            if task.status in ('paused', 'stopped') or stop_requested:
+            if task.status in ('paused', 'stopped') or pause_requested or stop_requested:
+                if pause_requested and task.status != 'paused':
+                    task.status = 'paused'
+                    task.task_metadata = {
+                        **task_meta,
+                        'stage': 'paused',
+                        'pause_requested_at': None,
+                    }
+                    db.commit()
                 if stop_requested and task.status not in ('paused', 'stopped'):
                     task.status = 'stopped'
                     task.completed_at = datetime.utcnow()

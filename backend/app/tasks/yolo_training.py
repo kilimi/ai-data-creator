@@ -308,6 +308,7 @@ class YOLOTrainingTask(TrainingTask):
         # Add progress callback
         total_epochs = self.training_config.get('epochs', 100)
         progress_callback = self._create_progress_callback(total_epochs)
+        self.model.add_callback("on_train_batch_end", progress_callback.on_train_batch_end)
         self.model.add_callback("on_train_epoch_end", progress_callback.on_train_epoch_end)
 
         self.task.progress = 40
@@ -603,8 +604,17 @@ class YOLOTrainingTask(TrainingTask):
             # Refresh from DB — status or metadata may indicate a user-requested stop.
             self.db.refresh(self.task)
             task_meta = self.task.task_metadata or {}
+            pause_requested = isinstance(task_meta, dict) and bool(task_meta.get("pause_requested_at"))
             stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
-            if self.task.status in ('stopped', 'paused') or stop_requested:
+            if self.task.status in ('stopped', 'paused') or pause_requested or stop_requested:
+                if pause_requested and self.task.status != 'paused':
+                    self.task.status = 'paused'
+                    self.task.task_metadata = {
+                        **task_meta,
+                        "stage": "paused",
+                        "pause_requested_at": None,
+                    }
+                    self.db.commit()
                 if stop_requested and self.task.status not in ('stopped', 'paused'):
                     self.task.status = 'stopped'
                     self.task.completed_at = datetime.utcnow()

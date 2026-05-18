@@ -102,6 +102,45 @@ def _clip_segmentation_polygons(
     return out if out else None
 
 
+def _build_dataset_selection_filters(
+    task_metadata: Dict[str, Any],
+) -> Tuple[Dict[int, Optional[int]], Dict[int, Optional[str]]]:
+    """Parse per-dataset collection + annotation-file selection from task metadata."""
+    dataset_collection_filter: Dict[int, Optional[int]] = {}
+    dataset_annotation_file_filter: Dict[int, Optional[str]] = {}
+
+    for cfg in task_metadata.get("annotation_file_configs", []) or []:
+        try:
+            ds_id = int(cfg.get("dataset_id"))
+        except (TypeError, ValueError):
+            continue
+
+        ann_file_raw = cfg.get("annotation_file_id")
+        if ann_file_raw in (None, ""):
+            dataset_annotation_file_filter[ds_id] = None
+        else:
+            dataset_annotation_file_filter[ds_id] = str(ann_file_raw)
+
+        coll_raw = cfg.get("collection_id")
+        if coll_raw is None:
+            dataset_collection_filter[ds_id] = None
+            continue
+        try:
+            dataset_collection_filter[ds_id] = int(coll_raw)
+        except (TypeError, ValueError):
+            dataset_collection_filter[ds_id] = None
+
+    return dataset_collection_filter, dataset_annotation_file_filter
+
+
+def _apply_selected_annotation_file_filter(query, dataset_id: int, dataset_annotation_file_filter: Dict[int, Optional[str]]):
+    """Limit query to selected annotation_file_id for a dataset when configured."""
+    selected_ann_file_id = dataset_annotation_file_filter.get(dataset_id)
+    if selected_ann_file_id:
+        return query.filter(Annotation.annotation_file_id == selected_ann_file_id)
+    return query
+
+
 class AugmentationTask(Task):
     """Base task for augmentation with progress tracking"""
     
@@ -546,24 +585,9 @@ def create_augmented_dataset_task(self, task_id: int):
         task.task_metadata = {**(task.task_metadata or {}), "stage": "collecting_images"}
         db.commit()
         
-        # Build per-dataset collection filter from task metadata.
-        # The augmentation request can include dataset_configs entries with
-        # collection_id so augmentation runs only on that selected collection.
-        dataset_collection_filter: Dict[int, Optional[int]] = {}
+        # Build per-dataset collection/annotation-file filters from task metadata.
         task_metadata = task.task_metadata or {}
-        for cfg in task_metadata.get("annotation_file_configs", []) or []:
-            try:
-                ds_id = int(cfg.get("dataset_id"))
-            except (TypeError, ValueError):
-                continue
-            coll_raw = cfg.get("collection_id")
-            if coll_raw is None:
-                dataset_collection_filter[ds_id] = None
-                continue
-            try:
-                dataset_collection_filter[ds_id] = int(coll_raw)
-            except (TypeError, ValueError):
-                dataset_collection_filter[ds_id] = None
+        dataset_collection_filter, dataset_annotation_file_filter = _build_dataset_selection_filters(task_metadata)
 
         # Get all images from source datasets (filtered by selected collection
         # when provided).
@@ -634,10 +658,13 @@ def create_augmented_dataset_task(self, task_id: int):
         # This helps preserve category_id consistency across augmented datasets
         source_class_to_category_id = {}
         for source_dataset in source_datasets:
-            # Get annotation files for this source dataset
-            source_ann_files = db.query(AnnotationFile).filter(
+            source_ann_files_query = db.query(AnnotationFile).filter(
                 AnnotationFile.dataset_id == source_dataset.id
-            ).all()
+            )
+            selected_ann_file_id = dataset_annotation_file_filter.get(source_dataset.id)
+            if selected_ann_file_id:
+                source_ann_files_query = source_ann_files_query.filter(AnnotationFile.id == selected_ann_file_id)
+            source_ann_files = source_ann_files_query.all()
             for ann_file in source_ann_files:
                 source_classes = db.query(AnnotationClass).filter(
                     AnnotationClass.annotation_file_id == ann_file.id
@@ -691,10 +718,18 @@ def create_augmented_dataset_task(self, task_id: int):
                 image_data = load_image_from_path(str(source_path))
                 image_height, image_width = image_data.shape[:2]
                 
-                # Get source annotations for this image
-                source_annotations = db.query(Annotation).filter(
+                # Get source annotations for this image.
+                # Respect selected annotation file per dataset to avoid mixing
+                # labels from other annotation files in the same dataset.
+                source_annotations_query = db.query(Annotation).filter(
                     Annotation.image_id == source_image.id
-                ).all()
+                )
+                source_annotations_query = _apply_selected_annotation_file_filter(
+                    source_annotations_query,
+                    dataset_id=source_image.dataset_id,
+                    dataset_annotation_file_filter=dataset_annotation_file_filter,
+                )
+                source_annotations = source_annotations_query.all()
                 
                 # Build per-image mappings from source annotation file's classes.
                 # Keep these local so we don't overwrite the global map used in final class creation.
