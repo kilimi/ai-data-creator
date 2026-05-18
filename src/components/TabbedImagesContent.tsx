@@ -683,6 +683,20 @@ export function TabbedImagesContent({
           </div>
         </div>
       )}
+
+      <ConfirmDeleteDialog
+        open={!!calibrationToDelete}
+        onOpenChange={(o) => !o && setCalibrationToDelete(null)}
+        entity="calibration"
+        itemName={calibrationToDelete?.label ?? null}
+        confirmLabel="Delete calibration"
+        onConfirm={async () => {
+          const c = calibrationToDelete;
+          setCalibrationToDelete(null);
+          if (c && onDeleteCalibration) await onDeleteCalibration(c.id);
+        }}
+      />
     </div>
   );
 }
+
