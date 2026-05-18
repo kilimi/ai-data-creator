@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Slider } from '@/components/ui/slider';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -253,6 +254,29 @@ const getParameterDescription = (methodId: string, paramName: string): string =>
   
   return descriptions[methodId]?.[paramName] || 'Adjust this parameter as needed';
 };
+
+// Slider config: [min, max, step] per (methodId, paramName). Falls back to number input.
+const sliderConfig: Record<string, Record<string, [number, number, number]>> = {
+  rotation: { min_angle: [-180, 0, 1], max_angle: [0, 180, 1] },
+  scale: { min_scale: [0.1, 1, 0.05], max_scale: [1, 3, 0.05] },
+  brightness: { factor: [0, 1, 0.05] },
+  contrast: { factor: [0, 1, 0.05] },
+  saturation: { factor: [0, 1, 0.05] },
+  hue_shift: { max_shift: [0, 0.5, 0.01] },
+  gaussian_noise: { std: [0, 0.1, 0.005] },
+  gaussian_blur: { kernel_size: [3, 15, 2] },
+  cutout: { num_holes: [1, 10, 1], max_size: [4, 128, 4] },
+  mixup: { alpha: [0, 1, 0.05] },
+};
+
+// Augmentation presets — one-click bundles for common scenarios.
+const augmentationPresets: { id: string; name: string; description: string; ids: string[] }[] = [
+  { id: 'light', name: 'Light', description: 'Subtle, safe for any dataset', ids: ['flip_horizontal', 'brightness', 'contrast'] },
+  { id: 'standard', name: 'Standard', description: 'Recommended general purpose', ids: ['rotation', 'flip_horizontal', 'brightness', 'contrast', 'saturation'] },
+  { id: 'heavy', name: 'Heavy', description: 'Maximize variation', ids: ['rotation', 'flip_horizontal', 'flip_vertical', 'scale', 'brightness', 'contrast', 'saturation', 'hue_shift', 'gaussian_noise'] },
+  { id: 'geometric', name: 'Geometric only', description: 'Shape & orientation', ids: ['rotation', 'flip_horizontal', 'flip_vertical', 'scale'] },
+  { id: 'color', name: 'Color only', description: 'Lighting & color', ids: ['brightness', 'contrast', 'saturation', 'hue_shift'] },
+];
 
 export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, datasets, datasetGroups = [] }: CreateAugmentedDatasetModalProps) => {
   const { toast } = useToast();
@@ -629,6 +653,67 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
     }));
   };
 
+  // Apply a preset: select exactly the methods in the preset and seed their default parameters.
+  const applyPreset = useCallback((presetId: string) => {
+    const preset = augmentationPresets.find(p => p.id === presetId);
+    if (!preset) return;
+    setSelectedAugmentations(preset.ids);
+    const params: Record<string, any> = {};
+    preset.ids.forEach(id => {
+      const method = augmentationMethods.find(m => m.id === id);
+      if (method?.parameters) params[id] = { ...method.parameters };
+    });
+    setMethodParameters(params);
+    // Auto-expand categories that have any selected methods
+    const cats = new Set(preset.ids.map(id => augmentationMethods.find(m => m.id === id)?.category).filter(Boolean) as string[]);
+    setExpandedCategories(prev => {
+      const next = { ...prev };
+      cats.forEach(c => { next[c] = true; });
+      return next;
+    });
+    toast({ title: `Preset applied: ${preset.name}`, description: `${preset.ids.length} augmentations selected.` });
+  }, [toast]);
+
+  // Compute the CSS filter/transform string approximating the combined selected augmentations.
+  const previewStyle = useMemo<React.CSSProperties>(() => {
+    const filters: string[] = [];
+    const transforms: string[] = [];
+    const param = (m: string, p: string) => methodParameters[m]?.[p] ?? augmentationMethods.find(am => am.id === m)?.parameters?.[p];
+    selectedAugmentations.forEach(id => {
+      switch (id) {
+        case 'brightness': filters.push(`brightness(${1 + (param('brightness', 'factor') ?? 0.2)})`); break;
+        case 'contrast': filters.push(`contrast(${1 + (param('contrast', 'factor') ?? 0.2)})`); break;
+        case 'saturation': filters.push(`saturate(${1 + (param('saturation', 'factor') ?? 0.2)})`); break;
+        case 'hue_shift': filters.push(`hue-rotate(${(param('hue_shift', 'max_shift') ?? 0.1) * 360}deg)`); break;
+        case 'to_gray': filters.push('grayscale(1)'); break;
+        case 'gaussian_blur': filters.push(`blur(${Math.max(0, ((param('gaussian_blur', 'kernel_size') ?? 3) - 1) / 4)}px)`); break;
+        case 'gaussian_noise': filters.push(`contrast(${1 + (param('gaussian_noise', 'std') ?? 0.01) * 5})`); break;
+        case 'rotation': {
+          const max = param('rotation', 'max_angle') ?? 30;
+          transforms.push(`rotate(${Math.round(max / 2)}deg)`);
+          break;
+        }
+        case 'flip_horizontal': transforms.push('scaleX(-1)'); break;
+        case 'flip_vertical': transforms.push('scaleY(-1)'); break;
+        case 'scale': {
+          const max = param('scale', 'max_scale') ?? 1.2;
+          transforms.push(`scale(${max})`);
+          break;
+        }
+      }
+    });
+    return {
+      filter: filters.join(' ') || undefined,
+      transform: transforms.join(' ') || undefined,
+      transition: 'filter 200ms ease, transform 200ms ease',
+    };
+  }, [selectedAugmentations, methodParameters]);
+
+  const previewThumbnail = useMemo(() => {
+    const sel = datasetSelections[0];
+    return sel?.dataset?.thumbnailUrl || '/placeholder.svg';
+  }, [datasetSelections]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -840,7 +925,62 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
 
           {/* Step 2: Augmentation Methods */}
           {step === 2 && (
-          <div className="space-y-3">
+          <div className="space-y-4">
+            {/* Presets + Live Preview */}
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4">
+              <div className="space-y-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Quick Presets</Label>
+                <div className="flex flex-wrap gap-2">
+                  {augmentationPresets.map(p => {
+                    const isActive =
+                      selectedAugmentations.length === p.ids.length &&
+                      p.ids.every(id => selectedAugmentations.includes(id));
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p.id)}
+                        title={p.description}
+                        className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                          isActive
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background hover:bg-muted border-border'
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                  {selectedAugmentations.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedAugmentations([]); setMethodParameters({}); }}
+                      className="px-3 py-1.5 rounded-full text-xs font-medium border border-dashed text-muted-foreground hover:bg-muted"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <Card className="w-full md:w-48">
+                <CardContent className="p-2 space-y-1">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground text-center">Live Preview</div>
+                  <div className="relative w-full aspect-square overflow-hidden rounded bg-muted">
+                    <img
+                      src={previewThumbnail}
+                      alt="Augmentation preview"
+                      className="w-full h-full object-cover"
+                      style={previewStyle}
+                      onError={(e) => { (e.target as HTMLImageElement).src = '/placeholder.svg'; }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground text-center">
+                    Approximation of one sample
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
             <Label>Select Augmentation Methods</Label>
             <div className="space-y-3">
               {Object.entries(groupedAugmentations).map(([category, methods]) => (
@@ -1036,6 +1176,37 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
                                           );
                                         }
                                         
+                                        // Slider input for known numeric parameters
+                                        const sCfg = sliderConfig[method.id]?.[paramName];
+                                        if (sCfg) {
+                                          const [sMin, sMax, sStep] = sCfg;
+                                          const sVal = typeof currentParams[paramName] === 'number'
+                                            ? currentParams[paramName]
+                                            : Number(defaultValue);
+                                          const display = sStep < 1 ? sVal.toFixed(2) : String(sVal);
+                                          return (
+                                            <div key={paramName} className="space-y-2">
+                                              <div className="flex items-center justify-between">
+                                                <Label htmlFor={`${method.id}-${paramName}`} className="text-sm capitalize">
+                                                  {paramName.replace(/_/g, ' ')}
+                                                </Label>
+                                                <span className="text-xs font-mono tabular-nums text-muted-foreground">{display}</span>
+                                              </div>
+                                              <Slider
+                                                id={`${method.id}-${paramName}`}
+                                                min={sMin}
+                                                max={sMax}
+                                                step={sStep}
+                                                value={[sVal]}
+                                                onValueChange={(v) => updateMethodParameter(method.id, paramName, v[0])}
+                                              />
+                                              <p className="text-xs text-muted-foreground">
+                                                {getParameterDescription(method.id, paramName)}
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+
                                         // Default number input for other parameters
                                         return (
                                         <div key={paramName} className="space-y-2">
