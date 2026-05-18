@@ -259,6 +259,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
   const { api, isConfigured } = useApi();
   
   const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [datasetName, setDatasetName] = useState('');
   const [datasetSelections, setDatasetSelections] = useState<DatasetSelection[]>([]);
   const [selectedAugmentations, setSelectedAugmentations] = useState<string[]>([]);
@@ -266,7 +267,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
   const [methodParameters, setMethodParameters] = useState<Record<string, any>>({});
   const [expandedParameters, setExpandedParameters] = useState<Record<string, boolean>>({});
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
-    geometric: true, // Start with geometric expanded by default
+    geometric: true,
     color: false,
     noise: false,
     advanced: false
