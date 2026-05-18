@@ -43,6 +43,7 @@ import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from "@/hooks/use-toast";
+import { toast as sonnerToast } from 'sonner';
 import { parseYoloPresetFromModelType, rtdetrVariantFromStored } from '@/utils/trainingCloneSettings';
 
 interface TrainModelModalProps {
@@ -574,10 +575,15 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           weightsDownloadNotice: downloadNotice
         });
 
+        sonnerToast.success("Training Started", {
+          description: `Task "${modelName}" is now running on the GPU service.`,
+          duration: 6000,
+        });
+
         if (downloadNotice) {
-          toast({
-            title: "Model weights will be downloaded",
+          sonnerToast.info("Model weights will be downloaded", {
             description: downloadNotice,
+            duration: 6000,
           });
         }
         

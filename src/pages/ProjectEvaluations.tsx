@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
+import { toast as sonnerToast } from 'sonner';
 import { EvaluationDetailsModal } from '@/components/EvaluationDetailsModal';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
 import { AlertCircle, Activity, Trash2, Pencil, ChevronDown, Download, Search, SlidersHorizontal, RotateCw, GitCompare, List, LayoutGrid, Grid3x3 } from "lucide-react";
@@ -275,9 +276,9 @@ export default function ProjectEvaluations() {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
-        toast({
-          title: "Evaluation Rerun Started",
+        sonnerToast.success("Evaluation Rerun Started", {
           description: `New evaluation task "${data.task?.name || task.name}" has been created and started.`,
+          duration: 6000,
         });
         fetchEvaluationTasks();
       } else {
@@ -747,9 +748,9 @@ export default function ProjectEvaluations() {
 
             const data = await response.json();
             
-            toast({
-              title: "Evaluation Started",
-              description: `Task "${data.task_name}" has been created.`
+            sonnerToast.success("Evaluation Started", {
+              description: `Task "${data.task_name}" has been created.`,
+              duration: 6000,
             });
             
             await fetchEvaluationTasks();
@@ -804,9 +805,9 @@ export default function ProjectEvaluations() {
 
             const data = await response.json();
             
-            toast({
-              title: "Multi-Dataset Evaluation Started",
-              description: `Task "${data.task_name}" has been created with ${data.child_task_ids?.length || 0} dataset evaluations.`
+            sonnerToast.success("Multi-Dataset Evaluation Started", {
+              description: `Task "${data.task_name}" has been created with ${data.child_task_ids?.length || 0} dataset evaluations.`,
+              duration: 6000,
             });
             
             await fetchEvaluationTasks();
