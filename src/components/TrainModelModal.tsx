@@ -43,6 +43,7 @@ import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from "@/hooks/use-toast";
+import { toast as sonnerToast } from 'sonner';
 import { parseYoloPresetFromModelType, rtdetrVariantFromStored } from '@/utils/trainingCloneSettings';
 
 interface TrainModelModalProps {
