@@ -434,9 +434,11 @@ export function TabbedImagesContent({
                                   size="icon"
                                   className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
                                   title="Delete this calibration"
-                                  onClick={async () => {
-                                    if (!window.confirm(`Delete calibration between "${nameOf(cal.source_collection_id)}" and "${nameOf(cal.target_collection_id)}"?`)) return;
-                                    await onDeleteCalibration(cal.id!);
+                                  onClick={() => {
+                                    setCalibrationToDelete({
+                                      id: cal.id!,
+                                      label: `${nameOf(cal.source_collection_id)} ↔ ${nameOf(cal.target_collection_id)}`,
+                                    });
                                   }}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
