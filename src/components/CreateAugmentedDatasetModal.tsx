@@ -539,6 +539,7 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
 
   React.useEffect(() => {
     if (open) {
+      setStep(1);
       setDatasetName('');
       setDatasetSelections([]);
       setSelectedAugmentations([]);
@@ -553,6 +554,13 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
       });
     }
   }, [open]);
+
+  // Auto-suggest dataset name when sources selected and name is empty
+  const suggestedName = useMemo(() => {
+    if (datasetSelections.length === 0) return '';
+    const base = datasetSelections[0].dataset.name.replace(/\s+/g, '_').toLowerCase();
+    return `${base}_aug_${augmentationFactor}x`;
+  }, [datasetSelections, augmentationFactor]);
 
   const handleParameterToggle = (augmentationId: string) => {
     setExpandedParameters(prev => ({
