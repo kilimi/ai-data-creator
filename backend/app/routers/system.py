@@ -148,3 +148,120 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
     if debug and not gpus and nvidia_debug:
         out["debug"] = nvidia_debug
     return out
+
+
+# ---------------------------------------------------------------------------
+# Foundation model inventory
+# ---------------------------------------------------------------------------
+from pathlib import Path as _Path
+
+from ..foundation_models import (
+    ARCH_SIZES,
+    DEPTH_ONNX_NAMES,
+    ultralytics_foundation_pt_names,
+)
+from ..model_weights_presence import PRETRAINED_MODELS_DIR, DEPTH_MODELS_DIR
+
+
+def _yolo_meta(filename: str) -> dict[str, Any]:
+    """Derive arch / size / task labels from a YOLO .pt filename."""
+    stem = filename[:-3] if filename.endswith(".pt") else filename
+    if stem.endswith("-seg"):
+        task = "segment"
+        base = stem[:-4]
+    elif stem.endswith("-cls"):
+        task = "classify"
+        base = stem[:-4]
+    else:
+        task = "detect"
+        base = stem
+    arch, size = base, ""
+    for a, s in ARCH_SIZES:
+        candidate = f"{a}_{s}" if a == "yolo_nas" else f"{a}{s}"
+        if candidate == base:
+            arch, size = a, s
+            break
+    return {"arch": arch, "size": size, "task": task}
+
+
+def _depth_meta(filename: str) -> dict[str, str]:
+    # depth_anything_v2_<variant>_<environment>_dynamic.onnx
+    parts = filename.replace("depth_anything_v2_", "").split("_")
+    variant = parts[0] if parts else ""
+    environment = parts[1] if len(parts) > 1 else ""
+    return {"variant": variant, "environment": environment}
+
+
+def _present(path: _Path) -> tuple[bool, int]:
+    if path.is_file():
+        try:
+            return True, path.stat().st_size
+        except OSError:
+            return True, 0
+    return False, 0
+
+
+@router.get("/system/models")
+async def list_foundation_models() -> dict[str, Any]:
+    """
+    Inventory the foundation weights mounted under /app/models and
+    /app/ai_models/depth_estimation. Reports each known model as present
+    or missing so the UI can guide users to fetch more.
+    """
+    yolo: list[dict[str, Any]] = []
+    yolo_present = 0
+    for fn in ultralytics_foundation_pt_names():
+        ok, size = _present(PRETRAINED_MODELS_DIR / fn)
+        if ok:
+            yolo_present += 1
+        meta = _yolo_meta(fn)
+        yolo.append({
+            "file": fn,
+            "name": fn[:-3],
+            "arch": meta["arch"],
+            "size": meta["size"],
+            "task": meta["task"],
+            "present": ok,
+            "size_mb": round(size / (1024 * 1024), 2) if size else 0,
+        })
+
+    depth: list[dict[str, Any]] = []
+    depth_present = 0
+    for fn in DEPTH_ONNX_NAMES:
+        ok, size = _present(DEPTH_MODELS_DIR / fn)
+        if ok:
+            depth_present += 1
+        meta = _depth_meta(fn)
+        depth.append({
+            "file": fn,
+            "variant": meta["variant"],
+            "environment": meta["environment"],
+            "present": ok,
+            "size_mb": round(size / (1024 * 1024), 2) if size else 0,
+        })
+
+    return {
+        "yolo": yolo,
+        "depth": depth,
+        "summary": {
+            "yolo_present": yolo_present,
+            "yolo_total": len(yolo),
+            "depth_present": depth_present,
+            "depth_total": len(depth),
+        },
+        "paths": {
+            "yolo_dir": str(PRETRAINED_MODELS_DIR),
+            "depth_dir": str(DEPTH_MODELS_DIR),
+        },
+        "commands": {
+            "all": "make download-models LAI_PRETRAINED_MODELS=all LAI_DEPTH_MODELS=all",
+            "minimal": "make download-models LAI_PRETRAINED_MODELS=minimal LAI_DEPTH_MODELS=minimal",
+            "single_yolo": "make download-models LAI_PRETRAINED_MODELS=yolo11n-seg.pt",
+            "single_depth": "make download-models LAI_DEPTH_MODELS=depth_anything_v2_vitb_outdoor_dynamic.onnx",
+            "direct": "docker compose exec backend python scripts/download_ultralytics_models.py",
+        },
+        "notice": (
+            "Models live on a host volume — drop your own .pt files into the yolo_dir to use them. "
+            "Missing weights are downloaded on demand the first time a job needs them (requires internet)."
+        ),
+    }
