@@ -294,6 +294,7 @@ def prepare_yolo_dataset(
                 
                 # Generate safe filename with dataset_id to prevent collisions
                 safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
+                safe_stem = Path(safe_filename).stem
                 dst_image_path = img_dir / safe_filename
                 
                 # Create hard link or copy
@@ -318,7 +319,7 @@ def prepare_yolo_dataset(
                         continue
                     else:
                         # Create empty label file for images without annotations
-                        label_path = lbl_dir / (src_image_path.stem + '.txt')
+                        label_path = lbl_dir / f"{safe_stem}.txt"
                         label_path.touch()
                         total_images[split_name] += 1
                         continue
@@ -458,7 +459,7 @@ def prepare_yolo_dataset(
                 
                 # Write label file (create empty file if no annotations but image is kept)
                 if label_lines:
-                    label_path = lbl_dir / (src_image_path.stem + '.txt')
+                    label_path = lbl_dir / f"{safe_stem}.txt"
                     with open(label_path, 'w') as f:
                         f.write('\n'.join(label_lines))
                     # Track image was processed
@@ -466,7 +467,7 @@ def prepare_yolo_dataset(
                     stats['images_processed'] += 1
                 elif not remove_images_without_annotations:
                     # Create empty label file if we're keeping images without annotations
-                    label_path = lbl_dir / (src_image_path.stem + '.txt')
+                    label_path = lbl_dir / f"{safe_stem}.txt"
                     label_path.touch()
                     # Track this image too
                     stats['total_images'][split_name] += 1

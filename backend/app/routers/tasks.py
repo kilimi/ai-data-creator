@@ -223,7 +223,10 @@ async def get_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/tasks/{task_id}/cancel")
 async def cancel_task(task_id: int, db: Session = Depends(get_db)):
-    """Request task stop and terminate its Celery process."""
+    """Cancel policy:
+    - running: stop immediately (status=stopped) and revoke worker task
+    - pending/paused: revoke and delete task
+    """
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -236,27 +239,71 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
     if task.task_metadata and isinstance(task.task_metadata, dict):
         celery_task_id = task.task_metadata.get('celery_task_id')
 
-    # For running tasks, record stop-request metadata first and let the worker
-    # finalize status='stopped' when it actually exits.
-    # For pending tasks, stop immediately since they have not started.
+    # Pending/paused tasks should be deleted outright
+    if task.status in ('pending', 'paused'):
+        celery_task_revoked = False
+        if celery_task_id:
+            try:
+                # Revoke queued/executing Celery work before deleting task row.
+                celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
+                logger.info(f"Revoked Celery task {celery_task_id} before deleting DB task {task_id}")
+                celery_task_revoked = True
+            except Exception as e:
+                logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
+
+        # Delete training model files if this is a training task
+        if task.task_type in ['yolo_training', 'training']:
+            try:
+                task_metadata = task.task_metadata or {}
+                results_dir = task_metadata.get('results_dir')
+
+                if not results_dir and task.project_id:
+                    training_dir = Path("projects") / str(task.project_id) / "training" / f"task_{task_id}"
+                    if training_dir.exists():
+                        results_dir = str(training_dir / "training")
+
+                if results_dir:
+                    results_path = Path(results_dir)
+                    if results_path.exists():
+                        task_dir = results_path.parent
+                        if task_dir.exists() and task_dir.name.startswith('task_'):
+                            shutil.rmtree(task_dir, ignore_errors=True)
+                            logger.info(f"Deleted training files for task {task_id} from {task_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to delete training files for task {task_id}: {e}")
+
+        # Delete associated augmentation if exists
+        augmentation = db.query(models.Augmentation).filter(models.Augmentation.task_id == task_id).first()
+        if augmentation:
+            db.delete(augmentation)
+
+        db.delete(task)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Task deleted successfully",
+            "task_id": task_id,
+            "status": "deleted",
+            "celery_task_revoked": celery_task_revoked,
+        }
+
+    # Running task: mark as stopped immediately and revoke worker process.
     if task.task_metadata is None:
         task.task_metadata = {}
     if isinstance(task.task_metadata, dict):
         task.task_metadata["stop_requested_at"] = datetime.utcnow().isoformat()
-        task.task_metadata["stop_mode"] = "graceful"
+        task.task_metadata["stop_mode"] = "force"
         task.task_metadata["stage"] = "stop_requested"
         flag_modified(task, "task_metadata")
 
-    if task.status == 'pending':
-        task.status = 'stopped'
-        task.completed_at = datetime.utcnow()
-        task.error_message = 'Task stopped by user before start'
+    task.status = 'stopped'
+    task.completed_at = datetime.utcnow()
+    task.error_message = 'Task stopped by user'
 
     db.commit()
 
-    # Always send SIGTERM to the Celery worker to interrupt model.train().
-    # The DB status is already 'stopped', so exception handlers in the worker
-    # will not overwrite it to 'failed'.
+    # Send SIGTERM to interrupt active worker execution.
     celery_task_revoked = False
     if celery_task_id:
         try:
@@ -268,7 +315,7 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
 
     return {
         "success": True,
-        "message": "Task stop requested successfully",
+        "message": "Task stopped successfully",
         "task_id": task_id,
         "status": task.status,
         "celery_task_revoked": celery_task_revoked,

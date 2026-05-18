@@ -257,6 +257,16 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
     return out;
   }, [augs]);
 
+  const resolveExampleImageUrl = useCallback((url: string): string => {
+    if (!url) return url;
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+      return url;
+    }
+    const base = getApiBaseUrl().replace(/\/$/, '');
+    const path = url.startsWith('/') ? url : `/${url}`;
+    return `${base}${path}`;
+  }, []);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl max-h-[92vh] overflow-hidden p-0 flex flex-col">
@@ -610,6 +620,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <div className="space-y-2">
                       {(['train', 'val', 'test'] as const).map(split => {
                         const imageUrl = metadata.example_images?.[split];
+                        const resolvedImageUrl = imageUrl ? resolveExampleImageUrl(imageUrl) : null;
                         if (!imageUrl) return null;
                         const isExpanded = expandedExamples.has(split);
                         return (
@@ -634,7 +645,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                             </button>
                             {isExpanded && (
                               <div className="p-3 bg-background flex items-center justify-center">
-                                <img src={imageUrl} alt={`${split} batch`} className="max-w-full h-auto" style={{ maxHeight: 400 }} />
+                                <img src={resolvedImageUrl || imageUrl} alt={`${split} batch`} className="max-w-full h-auto" style={{ maxHeight: 400 }} />
                               </div>
                             )}
                           </div>

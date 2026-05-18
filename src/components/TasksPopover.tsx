@@ -205,7 +205,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
   };
 
   const canCancelTask = (status: Task['status']) => {
-    return status === 'pending' || status === 'running';
+    return status === 'pending' || status === 'running' || status === 'paused';
   };
 
   const handleTaskClick = (task: Task) => {

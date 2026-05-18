@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { TrainingDetailsModal } from "../../components/TrainingDetailsModal";
 
 // Mock the hooks and components
@@ -42,12 +42,33 @@ vi.mock("lucide-react", () => ({
   Brain: () => <div>Brain</div>,
   TrendingUp: () => <div>TrendingUp</div>,
   Activity: () => <div>Activity</div>,
-  Zap: () => <div>Zap</div>,
-  Target: () => <div>Target</div>,
-  Gauge: () => <div>Gauge</div>,
+  Images: () => <div>Images</div>,
+  Database: () => <div>Database</div>,
+  FileBox: () => <div>FileBox</div>,
+  LineChart: () => <div>LineChart</div>,
+  LayoutGrid: () => <div>LayoutGrid</div>,
   Settings: () => <div>Settings</div>,
   ChevronDown: () => <div>ChevronDown</div>,
   ChevronUp: () => <div>ChevronUp</div>,
+}));
+
+vi.mock("@/components/ui/tabs", () => ({
+  Tabs: ({ children }: any) => <div>{children}</div>,
+  TabsList: ({ children }: any) => <div>{children}</div>,
+  TabsTrigger: ({ children, value }: any) => <button data-value={value}>{children}</button>,
+  TabsContent: ({ children }: any) => <div>{children}</div>,
+}));
+
+vi.mock("@/components/ui/card", () => ({
+  Card: ({ children }: any) => <div>{children}</div>,
+}));
+
+vi.mock("@/components/ui/skeleton", () => ({
+  Skeleton: () => <div>Loading...</div>,
+}));
+
+vi.mock("@/components/TrainingMetricsCharts", () => ({
+  default: () => <div>TrainingMetricsCharts</div>,
 }));
 
 vi.mock("@/utils/formatDuration", () => ({
@@ -117,7 +138,7 @@ describe("TrainingDetailsModal", () => {
     render(<TrainingDetailsModal open={true} onOpenChange={() => {}} taskId={42} />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Training Details - Task #42/i)).toBeInTheDocument();
+      expect(screen.getByText("YOLO training")).toBeInTheDocument();
     });
   });
 
@@ -132,5 +153,33 @@ describe("TrainingDetailsModal", () => {
     await waitFor(() => {
       expect(screen.getByText("completed")).toBeInTheDocument();
     });
+  });
+
+  it("resolves relative training example URLs to API base URL", async () => {
+    const taskWithExamples = {
+      ...mockTask,
+      task_metadata: {
+        ...mockTask.task_metadata,
+        example_images: {
+          train: "/tasks/42/examples/train",
+        },
+      },
+    };
+
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => taskWithExamples,
+    });
+
+    render(<TrainingDetailsModal open={true} onOpenChange={() => {}} taskId={42} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("train")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("train"));
+
+    const img = await screen.findByAltText("train batch");
+    expect(img.getAttribute("src")).toBe("http://localhost:9999/tasks/42/examples/train");
   });
 });

@@ -78,6 +78,7 @@ export function useTasks(projectId?: number) {
       const response = await api.cancelTask(taskId);
       if (response.success) {
         await fetchActiveTasks();
+        await fetchAllTasks();
         return true;
       }
       setError(response.error || 'Failed to cancel task');
