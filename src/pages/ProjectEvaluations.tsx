@@ -28,6 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import {
   formatEvaluationModelDisplay,
   formatMetricPct,
@@ -69,6 +70,8 @@ export default function ProjectEvaluations() {
   const [compareMode, setCompareMode] = useState(false);
   const [selectedForCompare, setSelectedForCompare] = useState<Set<number>>(new Set());
   const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("list");
+  const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+  const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
@@ -235,7 +238,7 @@ export default function ProjectEvaluations() {
     setNewTaskName(task.name);
   };
 
-  const handleDelete = async (task: any) => {
+  const performDelete = async (task: any) => {
     try {
       const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete task');
@@ -243,7 +246,13 @@ export default function ProjectEvaluations() {
       fetchEvaluationTasks();
     } catch {
       toast({ title: "Error", description: "Failed to delete evaluation task", variant: "destructive" });
+    } finally {
+      setPendingDeleteTask(null);
     }
+  };
+
+  const handleDelete = (task: any) => {
+    setPendingDeleteTask(task);
   };
 
   const handleStop = async (task: any) => {
