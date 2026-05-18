@@ -1,56 +1,56 @@
+# Multi-stage build: slim runtime on official PyTorch+CUDA base.
+# Model weights are NOT baked in — they live on a host volume (see docker-compose.yml).
+# To pre-download models after `make up`, run: `make download-models`.
 
-FROM python:3.11-slim
+# ---------- Stage 1: builder ----------
+FROM python:3.11-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc g++ cmake git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY requirements.txt .
+
+# Install Python deps into a portable prefix. torch/torchvision are provided by
+# the runtime base image, so they are filtered out here to avoid wasted layers.
+RUN pip install --upgrade pip \
+ && grep -viE '^(torch|torchvision)([<>=!~ ].*)?$' requirements.txt > /tmp/req.txt \
+ && pip install --default-timeout=1000 --retries 5 \
+        --prefix=/install -r /tmp/req.txt \
+ && pip install --default-timeout=1000 --retries 5 \
+        --prefix=/install 'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' 'fiftyone>=0.23.0'
+
+# ---------- Stage 2: runtime ----------
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/app \
+    PYTHONPATH=/opt/lai/lib/python3.11/site-packages \
+    PATH=/opt/lai/bin:$PATH
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1 \
+        curl postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    cmake \
-    libgl1 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
-    curl \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+# Copy installed site-packages from builder
+COPY --from=builder /install /opt/lai
 
-
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
-
-# Upgrade pip first
-RUN pip install --upgrade pip
-
-# Install packages with increased timeout and retries
-RUN pip install --default-timeout=1000 --retries 5 -r requirements.txt
-
-# Install Celery for task queuing (backend doesn't need training libraries)
-RUN pip install --default-timeout=1000 --retries 5 celery[redis]>=5.3.0 redis>=5.0.0 flower>=2.0.0
-
-# Install FiftyOne for visualization
-RUN pip install --default-timeout=1000 --retries 5 fiftyone>=0.23.0
-
-# Copy the rest of the application
+# Application code
 COPY . .
 
-# Pre-download Ultralytics foundation models (Auto-Annotate / Convert Model) so they are available offline
-# LAI_PRETRAINED_MODELS: all | minimal | comma list (see app.foundation_models)
-ARG LAI_PRETRAINED_MODELS=all
-ARG LAI_DEPTH_MODELS=all
-ENV HOME=/app
-ENV LAI_PRETRAINED_MODELS=${LAI_PRETRAINED_MODELS}
-ENV LAI_DEPTH_MODELS=${LAI_DEPTH_MODELS}
-RUN python scripts/download_ultralytics_models.py
+# Ensure mount points exist even before volumes are bound
+RUN mkdir -p /app/models /app/ai_models/depth_estimation /app/projects /app/data /app/runs
 
-# Pre-download Depth-Anything models for depth estimation
-RUN python scripts/download_depth_anything_models.py
+EXPOSE 8000 5151
 
-# Expose the port
-EXPOSE 8000
-EXPOSE 5151
-
-# Command to run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level",  "debug", "--reload"] 
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug", "--reload"]

@@ -27,7 +27,9 @@ const ApiSettings = lazy(() =>
   import("./pages/ApiSettings").then((m) => ({ default: m.ApiSettings })),
 );
 const NotFound = lazy(() => import("./pages/NotFound"));
-const HelpPage = lazy(() => import("./pages/help/HelpPage"));const Performance = lazy(() => import('./pages/Performance'));
+const HelpPage = lazy(() => import("./pages/help/HelpPage"));
+const Performance = lazy(() => import('./pages/Performance'));
+const SystemModels = lazy(() => import('./pages/SystemModels'));
 function RouteFallback() {
   return (
     <div
@@ -103,6 +105,7 @@ const App = () => (
                 <Route path="/help" element={<HelpPage />} />
                 <Route path="/help/:slug" element={<HelpPage />} />
                 <Route path="/performance" element={<Performance />} />
+                <Route path="/system/models" element={<SystemModels />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
