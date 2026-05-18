@@ -809,7 +809,8 @@ export const CreateAugmentedDatasetModal = ({ open, onOpenChange, projectId, dat
 
         <form onSubmit={handleSubmit} className="space-y-6" onReset={(e) => e.preventDefault()}>
 
-          {/* Source Datasets Selection */}
+          {/* Step 1: Source Datasets */}
+          {step === 1 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <Label>Source Datasets</Label>
