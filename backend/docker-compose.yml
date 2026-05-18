@@ -7,9 +7,6 @@ services:
     image: ${LAI_BACKEND_IMAGE:-lai-backend:local}
     build:
       context: .
-      args:
-        LAI_PRETRAINED_MODELS: ${LAI_PRETRAINED_MODELS:-all}
-        LAI_DEPTH_MODELS: ${LAI_DEPTH_MODELS:-all}
     volumes:
       # Host backend code: optional bind via backend/docker-compose.code-mount.yml + COMPOSE_FILE (see install.sh).
       # Host data root: set LAI_DATA_DIR via scripts/install.sh (default ../.lai-data relative to this file = repo .lai-data)
@@ -17,6 +14,9 @@ services:
       - ${LAI_DATA_DIR:-../.lai-data}/data:/app/data
       - ${BACKUP_PATH:-${LAI_DATA_DIR:-../.lai-data}/backups}:/app/backups
       - ${LAI_DATA_DIR:-../.lai-data}/runs:/app/runs
+      # Foundation model weights — populated by `make download-models` (slim image keeps it empty).
+      - ${LAI_DATA_DIR:-../.lai-data}/models:/app/models
+      - ${LAI_DATA_DIR:-../.lai-data}/ai_models:/app/ai_models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:${WEB_PORT:-8089},http://127.0.0.1:${WEB_PORT:-8089}
