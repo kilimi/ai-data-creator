@@ -441,7 +441,10 @@ export function ThresholdExplorer({
           iou_threshold: iouThreshold,
           per_class_conf: Object.keys(per_class_conf).length > 0 ? per_class_conf : null,
           save_selection: saveSelectionMode,
-          selected_class_ids: saveSelectionMode === "tp_per_class" ? selectedSaveClassIds : null,
+          selected_cells:
+            saveSelectionMode === "cm_cells"
+              ? Array.from(selectedCells).map((k) => k.split("_").map(Number))
+              : null,
         }),
       });
 
