@@ -3274,11 +3274,23 @@ async def merge_annotation_files_task(
             "annotations": []
         }
 
+        # Strategy configuration (defaults match legacy behavior: drop exact dupes)
+        scfg = strategy_cfg or {}
+        s_strategy = (scfg.get("strategy") or "exact").lower()
+        s_iou = float(scfg.get("iou_threshold", 0.5))
+        s_tie = (scfg.get("tie_breaker") or "largest").lower()
+        s_priority = scfg.get("priority_order") or list(file_ids)
+        s_cross = (scfg.get("cross_class") or "keep").lower()
+        s_cross_iou = float(scfg.get("cross_class_iou", 0.7))
+        # Map file_id -> priority rank (0 = highest)
+        priority_rank = {fid: i for i, fid in enumerate(s_priority)}
+        for fid in file_ids:
+            priority_rank.setdefault(fid, len(priority_rank))
+
         # Use sets for faster duplicate detection
         category_map = {}  # category_name -> category_id
         image_map = {}     # original_image_id -> new_coco_image_id
-        seen_annotations = set()  # (image_id, category_id, bbox_hash) for duplicate detection
-        
+
         category_id_counter = 1
         image_id_counter = 1
         annotation_id_counter = 1
