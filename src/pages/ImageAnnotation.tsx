@@ -60,7 +60,8 @@ import {
   Moon,
   Crosshair,
   Pencil,
-  SkipForward
+  SkipForward,
+  Filter as FilterIcon
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
@@ -360,6 +361,9 @@ const ImageAnnotation = () => {
   // Class panel: search filter + solo (single class isolated)
   const [classSearch, setClassSearch] = useState('');
   const [soloClassId, setSoloClassId] = useState<string | null>(null);
+  // Class-based image filter: only navigate through images that contain this class
+  const [classFilterName, setClassFilterName] = useState<string | null>(null);
+  const [classImageMap, setClassImageMap] = useState<{ [className: string]: Set<string> }>({});
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [annotationName, setAnnotationName] = useState<string>("");
   const [datasetName, setDatasetName] = useState<string>("");
@@ -1581,6 +1585,61 @@ const ImageAnnotation = () => {
   const [globalStats, setGlobalStats] = useState<{ [className: string]: number }>({});
   const [globalAvgAreas, setGlobalAvgAreas] = useState<{ [className: string]: number }>({});
 
+  // Build a class -> set of image file names map from sessionStorage COCO + localStorage overlay.
+  // Used by the "navigate by class" filter so we know which images contain each class.
+  const buildClassImageMap = useCallback((): { [className: string]: Set<string> } => {
+    const map: { [className: string]: Set<string> } = {};
+    const add = (cn: string, name: string) => {
+      if (!cn || !name) return;
+      if (!map[cn]) map[cn] = new Set<string>();
+      map[cn].add(name);
+    };
+    const remove = (cn: string, name: string) => map[cn]?.delete(name);
+
+    const sessionRef = sessionStorage.getItem(`annotation_file_${id}`);
+    const imageIdToFileName: { [id: string]: string } = {};
+    if (sessionRef) {
+      try {
+        const fileData = JSON.parse(sessionRef);
+        const cocoData = fileData?.cocoData;
+        if (cocoData?.annotations && cocoData?.categories) {
+          const catIdToName: { [k: string]: string } = {};
+          cocoData.categories.forEach((c: any) => {
+            if (c.id != null && c.name) catIdToName[c.id.toString()] = c.name;
+          });
+          cocoData.images?.forEach((img: any) => {
+            if (img.file_name != null) imageIdToFileName[img.id.toString()] = img.file_name;
+          });
+          cocoData.annotations.forEach((a: any) => {
+            if (a.category_id == null) return;
+            const cn = catIdToName[a.category_id.toString()];
+            const fn = imageIdToFileName[a.image_id?.toString()];
+            if (cn && fn) add(cn, fn);
+          });
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Overlay localStorage edits
+    const overlayCollId = displayLayer || mainLayer || 'default';
+    const prefix = `annotations_${id}_${overlayCollId}_`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const imageName = key.substring(prefix.length);
+      if (!imageName) continue;
+      // Drop existing COCO-derived associations for this image, then rebuild from local
+      Object.keys(map).forEach(cn => remove(cn, imageName));
+      const saved = localStorage.getItem(key);
+      if (!saved) continue;
+      try {
+        const parsed = JSON.parse(saved) as AnnotationShape[];
+        parsed.forEach(a => add(a.label, imageName));
+      } catch { /* ignore */ }
+    }
+    return map;
+  }, [id, displayLayer, mainLayer]);
+
   const computeGlobalStats = useCallback(async () => {
     try {
       // Use same source as Dataset Annotations view (GET /classes) so numbers match
@@ -1619,7 +1678,15 @@ const ImageAnnotation = () => {
                 count: counts[c.name] ?? 0,
               }));
             });
-            
+
+            // Build class -> image-names map from sessionStorage COCO + localStorage overlay
+            try {
+              const map = buildClassImageMap();
+              setClassImageMap(map);
+            } catch (e) {
+              console.warn('Could not build class->image map:', e);
+            }
+
             return;
           }
         } catch (dbError) {
@@ -1629,6 +1696,17 @@ const ImageAnnotation = () => {
       
       const counts: { [name: string]: number } = {};
       const totalAreas: { [name: string]: number } = {};
+      // class name -> set of image fileNames containing at least one annotation of that class
+      const imagesByClass: { [name: string]: Set<string> } = {};
+      const addImageToClass = (cn: string, name: string) => {
+        if (!cn || !name) return;
+        if (!imagesByClass[cn]) imagesByClass[cn] = new Set<string>();
+        imagesByClass[cn].add(name);
+      };
+      const removeImageFromClass = (cn: string, name: string) => {
+        if (!cn || !name) return;
+        imagesByClass[cn]?.delete(name);
+      };
 
       // Check if we have COCO data in sessionStorage (from loaded annotation file)
       const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
@@ -1651,9 +1729,11 @@ const ImageAnnotation = () => {
             // Build image ID to dimensions map and image file_name -> image_id
             const imageDimensions: { [id: string]: { width: number, height: number } } = {};
             const imageFileNameToId: { [name: string]: number } = {};
+            const imageIdToFileName: { [id: string]: string } = {};
             cocoData.images?.forEach((img: any) => {
               imageDimensions[img.id.toString()] = { width: img.width || 1, height: img.height || 1 };
               if (img.file_name != null) imageFileNameToId[img.file_name] = img.id;
+              if (img.file_name != null) imageIdToFileName[img.id.toString()] = img.file_name;
             });
             
             // Per-image COCO counts/areas so we can replace with localStorage when present
@@ -1718,6 +1798,7 @@ const ImageAnnotation = () => {
                       totalAreas[className] = (totalAreas[className] || 0) + area;
                       if (!cocoAreasByImage[imgIdStr]) cocoAreasByImage[imgIdStr] = {};
                       cocoAreasByImage[imgIdStr][className] = (cocoAreasByImage[imgIdStr][className] || 0) + area;
+                      addImageToClass(className, imageIdToFileName[imgIdStr]);
                     } else {
                       isValid = false;
                     }
@@ -1731,6 +1812,7 @@ const ImageAnnotation = () => {
                   const imgIdStr = annotation.image_id.toString();
                   if (!cocoCountsByImage[imgIdStr]) cocoCountsByImage[imgIdStr] = {};
                   cocoCountsByImage[imgIdStr][className] = (cocoCountsByImage[imgIdStr][className] || 0) + 1;
+                  addImageToClass(className, imageIdToFileName[imgIdStr]);
                 }
               }
             });
@@ -1759,6 +1841,10 @@ const ImageAnnotation = () => {
                 totalAreas[cn] = (totalAreas[cn] || 0) - cocoImgAreas[cn];
                 if (totalAreas[cn] <= 0) delete totalAreas[cn];
               });
+              // Local overlay supersedes COCO for this image — drop any class associations
+              // that came from the COCO file for this image so we can rebuild from local data.
+              const overlayImgName = imageIdToFileName[imgIdStr] || imageName;
+              Object.keys(imagesByClass).forEach(cn => removeImageFromClass(cn, overlayImgName));
               const saved = localStorage.getItem(key);
               if (!saved) continue;
               try {
@@ -1769,6 +1855,7 @@ const ImageAnnotation = () => {
                     const area = calculatePolygonArea(a.points);
                     totalAreas[a.label] = (totalAreas[a.label] || 0) + area;
                   }
+                  addImageToClass(a.label, overlayImgName);
                 });
               } catch (err) {
                 // ignore parse errors
@@ -1813,6 +1900,7 @@ const ImageAnnotation = () => {
                 const area = calculatePolygonArea(a.points);
                 totalAreas[a.label] = (totalAreas[a.label] || 0) + area;
               }
+              addImageToClass(a.label, name);
             });
           } catch (err) {
             // ignore parse errors per file
@@ -1823,6 +1911,7 @@ const ImageAnnotation = () => {
       }
 
       setGlobalStats(counts);
+      setClassImageMap(imagesByClass);
       
       // Calculate average areas
       const avgAreas: { [name: string]: number } = {};
@@ -4913,6 +5002,34 @@ const ImageAnnotation = () => {
     }
   };
 
+  // When activating a class filter, jump to the first image that contains the class
+  // (only if the current image doesn't already contain it).
+  useEffect(() => {
+    if (!classFilterName) return;
+    const filterSet = classImageMap[classFilterName];
+    if (!filterSet || filterSet.size === 0) {
+      toast({
+        title: 'No images for this class',
+        description: `No saved annotations of "${classFilterName}" found. Filter cleared.`,
+      });
+      setClassFilterName(null);
+      return;
+    }
+    if (currentImageName && filterSet.has(currentImageName)) return;
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    const target = imageList.find(n => filterSet.has(n));
+    if (!target) return;
+    const idx = imageList.findIndex(n => n === target);
+    if (idx >= 0 && idx !== currentImageIndex) {
+      setCurrentImageIndex(idx);
+      setCurrentImageName(target);
+      currentImageNameRef.current = target;
+      updateCurrentImages(target, displayLayer, imageCollections);
+      loadAnnotationsForImage(target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classFilterName, classImageMap]);
+
   const navigateImage = useCallback(async (direction: 'prev' | 'next') => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (imageList.length === 0) return;
@@ -4958,10 +5075,30 @@ const ImageAnnotation = () => {
       }
     }
     
-    const newIndex = direction === 'next' 
-      ? Math.min(currentImageIndex + 1, imageList.length - 1)
-      : Math.max(currentImageIndex - 1, 0);
-    
+    // Determine target image. When a class filter is active, navigate only through
+    // images that contain that class (intersected with the current layer's images).
+    const filterSet = classFilterName ? classImageMap[classFilterName] : null;
+    const filteredList = filterSet && filterSet.size > 0
+      ? imageList.filter(n => filterSet.has(n))
+      : imageList;
+
+    let newIndex: number;
+    if (filteredList === imageList) {
+      newIndex = direction === 'next'
+        ? Math.min(currentImageIndex + 1, imageList.length - 1)
+        : Math.max(currentImageIndex - 1, 0);
+    } else {
+      const posInFiltered = filteredList.findIndex(n => n === currentImageName);
+      const targetPos = posInFiltered === -1
+        ? (direction === 'next' ? 0 : filteredList.length - 1)
+        : direction === 'next'
+          ? Math.min(posInFiltered + 1, filteredList.length - 1)
+          : Math.max(posInFiltered - 1, 0);
+      const targetName = filteredList[targetPos];
+      const targetIdx = imageList.findIndex(n => n === targetName);
+      newIndex = targetIdx === -1 ? currentImageIndex : targetIdx;
+    }
+
     // Clean up localStorage - remove cached annotations for images that are far away (more than 5 images)
     try {
       for (let i = 0; i < imageList.length; i++) {
@@ -4989,7 +5126,7 @@ const ImageAnnotation = () => {
     
     // Load annotations for the new image
     loadAnnotationsForImage(newImageName);
-  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId]);
+  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId, classFilterName, classImageMap]);
 
   // Keyboard shortcuts: Arrow keys or A/D for previous/next image navigation
   useEffect(() => {
@@ -5855,6 +5992,26 @@ const ImageAnnotation = () => {
                   </button>
                 </div>
               )}
+              {classFilterName && (
+                <div className="mb-2 flex items-center justify-between rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <FilterIcon className="h-3 w-3 text-primary shrink-0" />
+                    <span className="truncate">
+                      Navigating images with{' '}
+                      <strong>{classFilterName}</strong>{' '}
+                      <span className="text-muted-foreground">
+                        ({classImageMap[classFilterName]?.size ?? 0})
+                      </span>
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => setClassFilterName(null)}
+                    className="text-primary hover:underline shrink-0 ml-2"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
             </div>
 
             <ScrollArea className="flex-1 scrollbar-thin">
@@ -6002,6 +6159,23 @@ const ImageAnnotation = () => {
                               title={soloClassId === classObj.id ? 'Exit solo (show all)' : 'Solo: show only this class'}
                             >
                               <Crosshair className={`w-3 h-3 ${soloClassId === classObj.id ? 'text-primary' : 'text-muted-foreground'}`} />
+                            </Button>
+                            {/* Filter navigation by this class */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={`h-6 w-6 p-0 hover:bg-muted ${classFilterName === classObj.name ? 'bg-primary/15 ring-1 ring-primary/40' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setClassFilterName(prev => prev === classObj.name ? null : classObj.name);
+                              }}
+                              title={
+                                classFilterName === classObj.name
+                                  ? 'Clear class filter — show all images'
+                                  : `Navigate only images containing "${classObj.name}" (${classImageMap[classObj.name]?.size ?? 0} images)`
+                              }
+                            >
+                              <FilterIcon className={`w-3 h-3 ${classFilterName === classObj.name ? 'text-primary' : 'text-muted-foreground'}`} />
                             </Button>
                             <Button
                               size="sm"
@@ -6492,43 +6666,63 @@ const ImageAnnotation = () => {
           <div className="p-3 bg-card border-t border-border">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-4 flex-wrap">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToImage(currentImageIndex - 1)}
-                  disabled={currentImageIndex === 0}
-                  aria-label="Previous image (primary layer)"
-                >
-                  <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
-                </Button>
+                {(() => {
+                  const baseList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+                  const filterSet = classFilterName ? classImageMap[classFilterName] : null;
+                  const filteredList = filterSet && filterSet.size > 0 ? baseList.filter(n => filterSet.has(n)) : baseList;
+                  const posInFiltered = filteredList.findIndex(n => n === currentImageName);
+                  const displayPos = posInFiltered === -1 ? currentImageIndex : posInFiltered;
+                  const displayTotal = filteredList.length;
+                  const atFirst = displayPos <= 0;
+                  const atLast = displayPos >= displayTotal - 1;
+                  return (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateImage('prev')}
+                        disabled={atFirst}
+                        aria-label="Previous image (primary layer)"
+                      >
+                        <ChevronLeft className="h-4 w-4 mr-1" />
+                        Previous
+                      </Button>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">
-                    {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
-                  </span>
-                  {currentLayerImageNames.length > 0 && (
-                    <span className="text-xs text-primary">
-                      ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
-                    </span>
-                  )}
-                  {currentImageName && (
-                    <span className="text-xs text-muted-foreground/70 truncate max-w-[260px]">
-                      {currentImageName}
-                    </span>
-                  )}
-                </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          {displayPos + 1} / {displayTotal}
+                        </span>
+                        {classFilterName && (
+                          <span className="text-xs text-primary inline-flex items-center gap-1">
+                            <FilterIcon className="h-3 w-3" />
+                            {classFilterName}
+                          </span>
+                        )}
+                        {currentLayerImageNames.length > 0 && (
+                          <span className="text-xs text-primary">
+                            ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
+                          </span>
+                        )}
+                        {currentImageName && (
+                          <span className="text-xs text-muted-foreground/70 truncate max-w-[260px]">
+                            {currentImageName}
+                          </span>
+                        )}
+                      </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToImage(currentImageIndex + 1)}
-                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
-                  aria-label="Next image (primary layer)"
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4 ml-1" />
-                </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateImage('next')}
+                        disabled={atLast}
+                        aria-label="Next image (primary layer)"
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
+                    </>
+                  );
+                })()}
 
                 <Button
                   variant="secondary"
