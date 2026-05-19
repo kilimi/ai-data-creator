@@ -6205,11 +6205,41 @@ const ImageAnnotation = () => {
                             <div className="text-xs text-muted-foreground px-1.5 py-0.5 rounded border border-border ml-1">
                               {idx + 1}
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                         </div>
+                         )}
+                       </div>
+                       {/* Filter-to-images chip (always visible, easy to discover) */}
+                       {editingClassId !== classObj.id && (classImageMap[classObj.name]?.size ?? 0) > 0 && (
+                         <button
+                           type="button"
+                           onClick={(e) => {
+                             e.stopPropagation();
+                             setClassFilterName(prev => prev === classObj.name ? null : classObj.name);
+                           }}
+                           title={
+                             classFilterName === classObj.name
+                               ? 'Click to clear navigation filter'
+                               : `Navigate only images containing "${classObj.name}"`
+                           }
+                           className={`mt-1.5 w-full flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors border ${
+                             classFilterName === classObj.name
+                               ? 'bg-primary/15 border-primary/40 text-primary'
+                               : 'bg-muted/40 border-border/60 text-muted-foreground hover:bg-muted hover:text-foreground'
+                           }`}
+                         >
+                           <span className="flex items-center gap-1.5 min-w-0">
+                             <FilterIcon className="h-3 w-3 shrink-0" />
+                             <span className="truncate">
+                               {classFilterName === classObj.name ? 'Filtering navigation' : 'Show only these images'}
+                             </span>
+                           </span>
+                           <span className="shrink-0 font-medium">
+                             {classImageMap[classObj.name]?.size ?? 0}
+                           </span>
+                         </button>
+                       )}
+                     </div>
+                   ))}
               </div>
             </ScrollArea>
           </div>
