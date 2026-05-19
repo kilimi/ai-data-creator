@@ -1132,9 +1132,17 @@ export class ApiClient {
   }
 
   async mergeAnnotationFiles(
-    datasetId: string | number, 
-    annotationFileIds: string[], 
-    mergedFilename?: string
+    datasetId: string | number,
+    annotationFileIds: string[],
+    mergedFilename?: string,
+    strategy?: {
+      strategy: 'exact' | 'iou' | 'priority' | 'union';
+      iou_threshold: number;
+      tie_breaker: 'largest' | 'smallest' | 'first' | 'last';
+      priority_order: string[];
+      cross_class: 'keep' | 'priority';
+      cross_class_iou: number;
+    }
   ): Promise<ApiResponse<{
     task_id: number;
     message: string;
@@ -1148,7 +1156,8 @@ export class ApiClient {
       },
       body: JSON.stringify({
         annotation_file_ids: annotationFileIds,
-        merged_filename: mergedFilename
+        merged_filename: mergedFilename,
+        ...(strategy ? { strategy } : {}),
       })
     });
   }

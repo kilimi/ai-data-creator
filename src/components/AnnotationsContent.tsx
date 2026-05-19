@@ -19,7 +19,7 @@ const ClassColorPicker = lazy(() => import("@/components/ClassColorPicker").then
 const ClassColorOpacityPicker = lazy(() => import("@/components/ClassColorOpacityPicker").then(m => ({ default: m.ClassColorOpacityPicker })));
 const RenameClassDialog = lazy(() => import("./RenameClassDialog").then(m => ({ default: m.RenameClassDialog })));
 const AnnotationTagsDialog = lazy(() => import("./AnnotationTagsDialog").then(m => ({ default: m.AnnotationTagsDialog })));
-import { applyMergeStrategy, collectTaggedSamples, type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
+import { type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
 import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
@@ -941,76 +941,40 @@ export function AnnotationsContent({
   };
 
   // Perform the merge with the chosen strategy.
-  // Runs client-side dedup over loaded samples, builds a single COCO file, uploads it.
+  // The backend applies the strategy exactly over all annotations (avoids loading every sample in the browser).
   const handleConfirmMerge = async (cfg: MergeStrategyConfig, mergedFileName: string) => {
     const filesToMerge = annotationFiles.filter((f) => selectedForMerge.has(f.id));
     if (filesToMerge.length < 2) return;
 
-    const allLoaded = filesToMerge.every((f) => Array.isArray(f.samples));
     try {
       if (!api) throw new Error("API not available");
 
-      if (allLoaded) {
-        // ---- Client-side merge with strategy ----
-        const tagged = collectTaggedSamples(filesToMerge);
-        const { kept, report } = applyMergeStrategy(tagged, cfg);
+      const strategyPayload = {
+        strategy: cfg.strategy,
+        iou_threshold: cfg.iouThreshold,
+        tie_breaker: cfg.tieBreaker,
+        priority_order: cfg.priorityOrder,
+        cross_class: cfg.crossClass,
+        cross_class_iou: cfg.crossClassIou,
+      } as const;
 
-        // Build a synthetic AnnotationFile that toCOCOFormat understands.
-        const mergedImageMapping: { [imageId: string]: string } = {};
-        const mergedImageDetails: { [imageId: string]: { fileName: string; width: number; height: number } } = {};
-        for (const f of filesToMerge) {
-          Object.entries(f.imageMapping || {}).forEach(([k, v]) => { mergedImageMapping[k] = v; });
-          Object.entries(f.imageDetails || {}).forEach(([k, v]) => { mergedImageDetails[k] = v; });
-        }
-        const synthetic: AnnotationFile = {
-          ...filesToMerge[0],
-          name: mergedFileName,
-          samples: kept,
-          imageMapping: mergedImageMapping,
-          imageDetails: mergedImageDetails,
-        };
-        const coco = toCOCOFormat(synthetic);
-        // Stamp merge report into COCO info for traceability.
-        (coco as any).info = {
-          ...(coco as any).info,
-          merge_strategy: cfg.strategy,
-          merge_iou_threshold: cfg.iouThreshold,
-          merge_tie_breaker: cfg.tieBreaker,
-          merge_cross_class: cfg.crossClass,
-          merge_priority_order: cfg.priorityOrder,
-          merge_report: {
-            sources: filesToMerge.map((f) => ({ id: f.id, name: f.name })),
-            total_in: report.total,
-            kept: report.kept,
-            removed_exact: report.removedExact,
-            removed_iou: report.removedIou,
-            removed_cross_class: report.removedCrossClass,
-            conflicts_flagged: report.conflicts.length,
-          },
-        };
-        await uploadGeneratedFile(mergedFileName, coco);
-        toast({
-          title: "Merge complete",
-          description: `Kept ${report.kept.toLocaleString()} of ${report.total.toLocaleString()} instances · removed ${(report.removedExact + report.removedIou + report.removedCrossClass).toLocaleString()}`,
-        });
-      } else {
-        // ---- Fallback: backend merge (samples not loaded). Strategy is applied client-side once contents load. ----
-        const response = await api.mergeAnnotationFiles(
-          id,
-          Array.from(selectedForMerge),
-          mergedFileName,
-        );
-        if (!response.success) throw new Error(response.error || "Failed to start merge task");
-        toast({
-          title: "Annotation merge started",
-          description: `Merging ${filesToMerge.length} files into "${mergedFileName}". Tip: open files first (eye icon) to apply your chosen strategy locally.`,
-        });
-      }
+      const response = await api.mergeAnnotationFiles(
+        id,
+        Array.from(selectedForMerge),
+        mergedFileName,
+        strategyPayload,
+      );
+      if (!response.success) throw new Error(response.error || "Failed to start merge task");
+
+      toast({
+        title: "Annotation merge started",
+        description: `Merging ${filesToMerge.length} files into "${mergedFileName}" using "${cfg.strategy}" strategy. You'll see the new file once processing completes.`,
+      });
 
       setMergeStrategyDialogOpen(false);
       setMergeMode(false);
       setSelectedForMerge(new Set());
-      setTimeout(async () => { await loadAnnotationFilesFromBackend(); }, 1000);
+      setTimeout(async () => { await loadAnnotationFilesFromBackend(); }, 1500);
     } catch (error) {
       console.error("Error merging annotations:", error);
       toast({

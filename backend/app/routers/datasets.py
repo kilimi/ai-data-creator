@@ -237,9 +237,23 @@ def _video_progress_get(job_id: str) -> Optional[dict]:
         return dict(entry) if entry else None
 
 
+class MergeStrategyConfig(BaseModel):
+    # 'exact' | 'iou' | 'priority' | 'union'
+    strategy: str = "exact"
+    iou_threshold: float = 0.5
+    # 'largest' | 'smallest' | 'first' | 'last'
+    tie_breaker: str = "largest"
+    # Ordered list of annotation_file_ids; index 0 = highest priority
+    priority_order: Optional[List[str]] = None
+    # 'keep' | 'priority'
+    cross_class: str = "keep"
+    cross_class_iou: float = 0.7
+
+
 class MergeAnnotationFilesRequest(BaseModel):
     annotation_file_ids: List[str]
     merged_filename: Optional[str] = None
+    strategy: Optional[MergeStrategyConfig] = None
 
 
 class ViewFiftyOneRequest(BaseModel):
@@ -3191,7 +3205,8 @@ async def merge_annotation_files_task(
     task_id: int,
     dataset_id: int,
     file_ids: List[str],
-    merged_filename: str
+    merged_filename: str,
+    strategy_cfg: Optional[dict] = None,
 ):
     """Background task to merge annotation files and create a new merged file"""
     # Use a fresh session inside background task
@@ -3259,11 +3274,23 @@ async def merge_annotation_files_task(
             "annotations": []
         }
 
+        # Strategy configuration (defaults match legacy behavior: drop exact dupes)
+        scfg = strategy_cfg or {}
+        s_strategy = (scfg.get("strategy") or "exact").lower()
+        s_iou = float(scfg.get("iou_threshold", 0.5))
+        s_tie = (scfg.get("tie_breaker") or "largest").lower()
+        s_priority = scfg.get("priority_order") or list(file_ids)
+        s_cross = (scfg.get("cross_class") or "keep").lower()
+        s_cross_iou = float(scfg.get("cross_class_iou", 0.7))
+        # Map file_id -> priority rank (0 = highest)
+        priority_rank = {fid: i for i, fid in enumerate(s_priority)}
+        for fid in file_ids:
+            priority_rank.setdefault(fid, len(priority_rank))
+
         # Use sets for faster duplicate detection
         category_map = {}  # category_name -> category_id
         image_map = {}     # original_image_id -> new_coco_image_id
-        seen_annotations = set()  # (image_id, category_id, bbox_hash) for duplicate detection
-        
+
         category_id_counter = 1
         image_id_counter = 1
         annotation_id_counter = 1
@@ -3326,21 +3353,6 @@ async def merge_annotation_files_task(
                         coco_image_id = image_map[original_image_id]
                         category_id = category_map.get(annotation.category, category_map.get("unknown", 1))
 
-                        # Convert bbox for duplicate detection
-                        bbox_tuple = None
-                        if annotation.bbox and len(annotation.bbox) >= 4:
-                            # Round bbox values for duplicate detection (avoid floating point precision issues)
-                            bbox_tuple = tuple(round(coord, 2) for coord in annotation.bbox[:4])
-                        
-                        # Create a hash for duplicate detection
-                        annotation_hash = (coco_image_id, category_id, bbox_tuple)
-                        
-                        # Skip if duplicate
-                        if annotation_hash in seen_annotations:
-                            continue
-                        
-                        seen_annotations.add(annotation_hash)
-
                         # Get image dimensions for bbox conversion
                         image_info = image_lookup.get(original_image_id)
                         img_width = image_info.width if image_info else 640
@@ -3369,7 +3381,11 @@ async def merge_annotation_files_task(
                             "category_id": category_id,
                             "bbox": pixel_bbox,
                             "area": annotation.area or (pixel_bbox[2] * pixel_bbox[3] if pixel_bbox else 0),
-                            "iscrowd": 0
+                            "iscrowd": 0,
+                            # Internal tags used by the strategy resolver below; stripped before write.
+                            "_source_file_id": annotation_file.id,
+                            "_priority": priority_rank.get(annotation_file.id, 9999),
+                            "_order": annotation_id_counter,
                         }
 
                         # Denormalize segmentation from database (stored as 0-1) to pixel coordinates
@@ -3404,6 +3420,145 @@ async def merge_annotation_files_task(
             except Exception as file_error:
                 print(f"Error processing file {annotation_file.name}: {file_error}")
                 continue
+
+        task.progress = 82
+        db.commit()
+
+        # ----- Strategy-aware resolution on bboxes -----
+        # Bbox IoU helper (COCO format [x, y, w, h])
+        def _bbox_iou(a, b):
+            ax1, ay1, aw, ah = a[0], a[1], a[2], a[3]
+            bx1, by1, bw, bh = b[0], b[1], b[2], b[3]
+            ax2, ay2 = ax1 + aw, ay1 + ah
+            bx2, by2 = bx1 + bw, by1 + bh
+            ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+            ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+            iw = max(0.0, ix2 - ix1); ih = max(0.0, iy2 - iy1)
+            inter = iw * ih
+            ua = max(0.0, aw * ah) + max(0.0, bw * bh) - inter
+            return (inter / ua) if ua > 0 else 0.0
+
+        def _area(a):
+            return max(0.0, a["bbox"][2]) * max(0.0, a["bbox"][3])
+
+        def _better(keep, cand, mode):
+            # Return True if cand should replace keep
+            if mode == "largest":
+                return _area(cand) > _area(keep)
+            if mode == "smallest":
+                return _area(cand) < _area(keep)
+            if mode == "first":
+                return cand["_order"] < keep["_order"]
+            if mode == "last":
+                return cand["_order"] > keep["_order"]
+            return False
+
+        removed_exact = 0
+        removed_iou = 0
+        removed_cross_class = 0
+
+        if s_strategy != "union":
+            # Group annotations by image
+            by_image: dict = {}
+            for ann in merged_data["annotations"]:
+                by_image.setdefault(ann["image_id"], []).append(ann)
+
+            resolved: list = []
+            for img_id, anns in by_image.items():
+                # Same-class dedup
+                kept_same: list = []
+                # Bucket by category
+                by_cat: dict = {}
+                for a in anns:
+                    by_cat.setdefault(a["category_id"], []).append(a)
+
+                for cat_id, group in by_cat.items():
+                    keepers: list = []
+                    for cand in group:
+                        merged_into = None
+                        for idx, k in enumerate(keepers):
+                            iou_val = _bbox_iou(cand["bbox"], k["bbox"])
+                            if s_strategy == "exact":
+                                if iou_val >= 0.95:
+                                    merged_into = idx
+                                    break
+                            elif s_strategy == "iou":
+                                if iou_val >= s_iou:
+                                    merged_into = idx
+                                    break
+                            elif s_strategy == "priority":
+                                if iou_val >= max(0.01, min(s_iou, 0.99)):
+                                    merged_into = idx
+                                    break
+                        if merged_into is None:
+                            keepers.append(cand)
+                        else:
+                            k = keepers[merged_into]
+                            if s_strategy == "priority":
+                                if cand["_priority"] < k["_priority"]:
+                                    keepers[merged_into] = cand
+                                elif cand["_priority"] == k["_priority"] and _better(k, cand, s_tie):
+                                    keepers[merged_into] = cand
+                            elif s_strategy == "iou":
+                                if _better(k, cand, s_tie):
+                                    keepers[merged_into] = cand
+                            # exact: keep first; drop cand
+                            if s_strategy == "exact":
+                                removed_exact += 1
+                            elif s_strategy == "iou":
+                                removed_iou += 1
+                            else:
+                                removed_iou += 1
+                    kept_same.extend(keepers)
+
+                # Cross-class resolution (only if priority mode chosen)
+                if s_cross == "priority" and len(kept_same) > 1:
+                    final_list: list = []
+                    # Sort by priority so higher priority is processed first
+                    kept_sorted = sorted(kept_same, key=lambda x: (x["_priority"], x["_order"]))
+                    for cand in kept_sorted:
+                        drop = False
+                        for k in final_list:
+                            if k["category_id"] == cand["category_id"]:
+                                continue
+                            if _bbox_iou(cand["bbox"], k["bbox"]) >= s_cross_iou:
+                                if cand["_priority"] > k["_priority"]:
+                                    drop = True
+                                    removed_cross_class += 1
+                                    break
+                        if not drop:
+                            final_list.append(cand)
+                    resolved.extend(final_list)
+                else:
+                    resolved.extend(kept_same)
+
+            # Reassign sequential ids and strip internal tags
+            resolved.sort(key=lambda x: (x["image_id"], x["_order"]))
+            for new_id, a in enumerate(resolved, start=1):
+                a["id"] = new_id
+                a.pop("_source_file_id", None)
+                a.pop("_priority", None)
+                a.pop("_order", None)
+            merged_data["annotations"] = resolved
+        else:
+            # union: just strip tags
+            for a in merged_data["annotations"]:
+                a.pop("_source_file_id", None)
+                a.pop("_priority", None)
+                a.pop("_order", None)
+
+        # Record strategy + counts into COCO info for traceability
+        merged_data["info"].update({
+            "merge_strategy": s_strategy,
+            "merge_iou_threshold": s_iou,
+            "merge_tie_breaker": s_tie,
+            "merge_cross_class": s_cross,
+            "merge_cross_class_iou": s_cross_iou,
+            "merge_priority_order": s_priority,
+            "merge_removed_exact": removed_exact,
+            "merge_removed_iou": removed_iou,
+            "merge_removed_cross_class": removed_cross_class,
+        })
 
         task.progress = 85
         db.commit()
@@ -3671,7 +3826,8 @@ async def merge_annotation_files(
                         task_id=task_id,
                         dataset_id=dataset_id,
                         file_ids=request.annotation_file_ids,
-                        merged_filename=merged_filename
+                        merged_filename=merged_filename,
+                        strategy_cfg=(request.strategy.model_dump() if request.strategy else None),
                     )
                 except Exception as e:
                     print(f"Error in merge task: {e}")

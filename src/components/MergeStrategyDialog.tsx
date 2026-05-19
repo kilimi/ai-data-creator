@@ -194,15 +194,18 @@ export function MergeStrategyDialog({ open, onOpenChange, files, onConfirm }: Pr
 
             {/* Preview */}
             <div className="rounded-md bg-muted/40 p-3">
-              <div className="text-xs font-medium mb-2">Preview</div>
+              <div className="text-xs font-medium mb-2">Preview (estimate)</div>
+              <p className="text-[11px] text-muted-foreground mb-2">
+                Estimated from loaded samples. The merge runs on the backend over the full annotation set with the strategy you select here.
+              </p>
               {!samplesLoaded ? (
                 <p className="text-xs text-muted-foreground">
-                  Annotation contents aren't fully loaded yet — open each file once (eye icon) to enable a precise preview. The merge will still run on the backend with your chosen strategy.
+                  No samples loaded yet — open files (eye icon) to see an estimate. The backend will still apply your chosen strategy exactly.
                 </p>
               ) : preview ? (
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="secondary">In: {preview.report.total.toLocaleString()}</Badge>
-                  <Badge variant="default">Kept: {preview.report.kept.toLocaleString()}</Badge>
+                  <Badge variant="secondary">In: ~{preview.report.total.toLocaleString()}</Badge>
+                  <Badge variant="default">Kept: ~{preview.report.kept.toLocaleString()}</Badge>
                   {preview.report.removedExact > 0 && (
                     <Badge variant="outline">Exact dupes: −{preview.report.removedExact}</Badge>
                   )}
