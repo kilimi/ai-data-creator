@@ -1749,6 +1749,7 @@ const ImageAnnotation = () => {
                   const imgIdStr = annotation.image_id.toString();
                   if (!cocoCountsByImage[imgIdStr]) cocoCountsByImage[imgIdStr] = {};
                   cocoCountsByImage[imgIdStr][className] = (cocoCountsByImage[imgIdStr][className] || 0) + 1;
+                  addImageToClass(className, imageIdToFileName[imgIdStr]);
                 }
               }
             });
