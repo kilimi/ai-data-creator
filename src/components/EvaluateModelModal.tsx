@@ -442,6 +442,7 @@ export function EvaluateModelModal({
       setIgnoredClasses([]);
       setAnnotationClasses([]);
       setShowIgnoredClasses(false);
+      setStep(1);
       
       onOpenChange(false);
     } finally {
