@@ -6666,43 +6666,63 @@ const ImageAnnotation = () => {
           <div className="p-3 bg-card border-t border-border">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-4 flex-wrap">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToImage(currentImageIndex - 1)}
-                  disabled={currentImageIndex === 0}
-                  aria-label="Previous image (primary layer)"
-                >
-                  <ChevronLeft className="h-4 w-4 mr-1" />
-                  Previous
-                </Button>
+                {(() => {
+                  const baseList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+                  const filterSet = classFilterName ? classImageMap[classFilterName] : null;
+                  const filteredList = filterSet && filterSet.size > 0 ? baseList.filter(n => filterSet.has(n)) : baseList;
+                  const posInFiltered = filteredList.findIndex(n => n === currentImageName);
+                  const displayPos = posInFiltered === -1 ? currentImageIndex : posInFiltered;
+                  const displayTotal = filteredList.length;
+                  const atFirst = displayPos <= 0;
+                  const atLast = displayPos >= displayTotal - 1;
+                  return (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateImage('prev')}
+                        disabled={atFirst}
+                        aria-label="Previous image (primary layer)"
+                      >
+                        <ChevronLeft className="h-4 w-4 mr-1" />
+                        Previous
+                      </Button>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">
-                    {currentImageIndex + 1} / {currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length}
-                  </span>
-                  {currentLayerImageNames.length > 0 && (
-                    <span className="text-xs text-primary">
-                      ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
-                    </span>
-                  )}
-                  {currentImageName && (
-                    <span className="text-xs text-muted-foreground/70 truncate max-w-[260px]">
-                      {currentImageName}
-                    </span>
-                  )}
-                </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">
+                          {displayPos + 1} / {displayTotal}
+                        </span>
+                        {classFilterName && (
+                          <span className="text-xs text-primary inline-flex items-center gap-1">
+                            <FilterIcon className="h-3 w-3" />
+                            {classFilterName}
+                          </span>
+                        )}
+                        {currentLayerImageNames.length > 0 && (
+                          <span className="text-xs text-primary">
+                            ({imageCollections.find(c => String(c.id) === mainLayer)?.name || 'layer'})
+                          </span>
+                        )}
+                        {currentImageName && (
+                          <span className="text-xs text-muted-foreground/70 truncate max-w-[260px]">
+                            {currentImageName}
+                          </span>
+                        )}
+                      </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => goToImage(currentImageIndex + 1)}
-                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
-                  aria-label="Next image (primary layer)"
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4 ml-1" />
-                </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigateImage('next')}
+                        disabled={atLast}
+                        aria-label="Next image (primary layer)"
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
+                    </>
+                  );
+                })()}
 
                 <Button
                   variant="secondary"
