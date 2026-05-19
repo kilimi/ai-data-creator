@@ -5982,6 +5982,7 @@ const ImageAnnotation = () => {
                   >
                     Clear
                   </button>
+                </div>
               )}
             </div>
 
