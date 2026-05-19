@@ -3353,21 +3353,6 @@ async def merge_annotation_files_task(
                         coco_image_id = image_map[original_image_id]
                         category_id = category_map.get(annotation.category, category_map.get("unknown", 1))
 
-                        # Convert bbox for duplicate detection
-                        bbox_tuple = None
-                        if annotation.bbox and len(annotation.bbox) >= 4:
-                            # Round bbox values for duplicate detection (avoid floating point precision issues)
-                            bbox_tuple = tuple(round(coord, 2) for coord in annotation.bbox[:4])
-                        
-                        # Create a hash for duplicate detection
-                        annotation_hash = (coco_image_id, category_id, bbox_tuple)
-                        
-                        # Skip if duplicate
-                        if annotation_hash in seen_annotations:
-                            continue
-                        
-                        seen_annotations.add(annotation_hash)
-
                         # Get image dimensions for bbox conversion
                         image_info = image_lookup.get(original_image_id)
                         img_width = image_info.width if image_info else 640
@@ -3396,7 +3381,11 @@ async def merge_annotation_files_task(
                             "category_id": category_id,
                             "bbox": pixel_bbox,
                             "area": annotation.area or (pixel_bbox[2] * pixel_bbox[3] if pixel_bbox else 0),
-                            "iscrowd": 0
+                            "iscrowd": 0,
+                            # Internal tags used by the strategy resolver below; stripped before write.
+                            "_source_file_id": annotation_file.id,
+                            "_priority": priority_rank.get(annotation_file.id, 9999),
+                            "_order": annotation_id_counter,
                         }
 
                         # Denormalize segmentation from database (stored as 0-1) to pixel coordinates
