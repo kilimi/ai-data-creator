@@ -322,7 +322,7 @@ describe('ThresholdExplorer Component', () => {
       });
     });
 
-    it('should send TP-per-class selection when chosen in save dialog', async () => {
+    it('should send cm_cells selection when picking confusion matrix cells', async () => {
       const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({}),
@@ -333,18 +333,25 @@ describe('ThresholdExplorer Component', () => {
 
       fireEvent.click(screen.getByRole('button', { name: /save predictions to dataset/i }));
       await waitFor(() => {
-        expect(screen.getByText(/True positives per class/i)).toBeInTheDocument();
+        expect(screen.getByText(/Pick cells from the confusion matrix/i)).toBeInTheDocument();
       });
 
-      fireEvent.click(screen.getByText(/True positives per class/i));
-      fireEvent.click(screen.getByRole('button', { name: /save predictions$/i }));
+      fireEvent.click(screen.getByText(/Pick cells from the confusion matrix/i));
+
+      // Use a quick-selector to choose diagonal cells
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /TP diagonal/i })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /TP diagonal/i }));
+
+      fireEvent.click(screen.getByRole('button', { name: /^Save \d+ prediction/i }));
 
       await waitFor(() => {
         expect(fetchMock).toHaveBeenCalledWith(
           expect.stringContaining('/predictions/evaluation/1/save-to-dataset'),
           expect.objectContaining({
             method: 'POST',
-            body: expect.stringContaining('"save_selection":"tp_per_class"'),
+            body: expect.stringContaining('"save_selection":"cm_cells"'),
           })
         );
       });
