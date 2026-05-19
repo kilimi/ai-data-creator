@@ -6112,6 +6112,23 @@ const ImageAnnotation = () => {
                             >
                               <Crosshair className={`w-3 h-3 ${soloClassId === classObj.id ? 'text-primary' : 'text-muted-foreground'}`} />
                             </Button>
+                            {/* Filter navigation by this class */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className={`h-6 w-6 p-0 hover:bg-muted ${classFilterName === classObj.name ? 'bg-primary/15 ring-1 ring-primary/40' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setClassFilterName(prev => prev === classObj.name ? null : classObj.name);
+                              }}
+                              title={
+                                classFilterName === classObj.name
+                                  ? 'Clear class filter — show all images'
+                                  : `Navigate only images containing "${classObj.name}" (${classImageMap[classObj.name]?.size ?? 0} images)`
+                              }
+                            >
+                              <FilterIcon className={`w-3 h-3 ${classFilterName === classObj.name ? 'text-primary' : 'text-muted-foreground'}`} />
+                            </Button>
                             <Button
                               size="sm"
                               variant="ghost"
