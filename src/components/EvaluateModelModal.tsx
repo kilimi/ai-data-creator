@@ -5,8 +5,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Brain, Database, ChevronDown, ChevronUp, X } from "lucide-react";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { Brain, Database, ChevronDown, ChevronUp, X, ArrowLeft, ArrowRight, Check, Sliders } from "lucide-react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { toast } from "sonner";
 import { useApi } from "@/hooks/use-api";
 import { Dataset, DatasetGroup, ImageCollection } from "@/types";
 import {
