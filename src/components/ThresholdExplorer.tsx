@@ -282,7 +282,10 @@ interface ThresholdExplorerProps {
   datasetName?: string;
 }
 
-type SaveSelectionMode = "all" | "tp_per_class";
+type SaveSelectionMode = "all" | "cm_cells";
+
+// Cell key helpers for the confusion-matrix picker
+const cellKey = (row: number, col: number) => `${row}_${col}`;
 
 export function ThresholdExplorer({
   predictions,
