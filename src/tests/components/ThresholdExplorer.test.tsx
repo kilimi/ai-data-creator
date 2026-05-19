@@ -103,6 +103,25 @@ describe('ThresholdExplorer Component', () => {
       render(<ThresholdExplorer {...defaultProps} />);
       expect(screen.queryByText('modified')).not.toBeInTheDocument();
     });
+
+    it('should show helper explanations for confidence and IoU thresholds', () => {
+      render(<ThresholdExplorer {...defaultProps} />);
+
+      expect(screen.getByText(/Minimum model confidence required to keep a prediction/i)).toBeInTheDocument();
+      expect(screen.getByText(/Minimum overlap needed to match a prediction with ground truth/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('dataset navigation', () => {
+    it('should open test dataset in a new tab when redirect button is clicked', () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+      render(<ThresholdExplorer {...defaultProps} projectId={3} datasetId={9} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /open test dataset/i }));
+
+      expect(openSpy).toHaveBeenCalledWith('/projects/3/datasets/9', '_blank', 'noopener,noreferrer');
+      openSpy.mockRestore();
+    });
   });
 
   describe('threshold adjustments', () => {
@@ -273,6 +292,62 @@ describe('ThresholdExplorer Component', () => {
       });
 
       expect(onSaved).not.toHaveBeenCalled();
+    });
+
+    it('should save dataset predictions with default all-selection mode', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      });
+      global.fetch = fetchMock;
+
+      render(<ThresholdExplorer {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /save predictions to dataset/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /save predictions$/i })).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /save predictions$/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringContaining('/predictions/evaluation/1/save-to-dataset'),
+          expect.objectContaining({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: expect.stringContaining('"save_selection":"all"'),
+          })
+        );
+      });
+    });
+
+    it('should send TP-per-class selection when chosen in save dialog', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      });
+      global.fetch = fetchMock;
+
+      render(<ThresholdExplorer {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /save predictions to dataset/i }));
+      await waitFor(() => {
+        expect(screen.getByText(/True positives per class/i)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText(/True positives per class/i));
+      fireEvent.click(screen.getByRole('button', { name: /save predictions$/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringContaining('/predictions/evaluation/1/save-to-dataset'),
+          expect.objectContaining({
+            method: 'POST',
+            body: expect.stringContaining('"save_selection":"tp_per_class"'),
+          })
+        );
+      });
     });
   });
 

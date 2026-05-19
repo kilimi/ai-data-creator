@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database } from "lucide-react";
+import { SlidersHorizontal, RotateCcw, X, Save, Check, Download, Database, ExternalLink } from "lucide-react";
 import { ConfusionMatrixCellModal, type CmSample } from "@/components/ConfusionMatrixCellModal";
 import { evaluationCocoJsonDownloadName } from "@/lib/evaluationTableDisplay";
 import { useToast } from "@/hooks/use-toast";
@@ -282,6 +282,8 @@ interface ThresholdExplorerProps {
   datasetName?: string;
 }
 
+type SaveSelectionMode = "all" | "tp_per_class";
+
 export function ThresholdExplorer({
   predictions,
   groundTruth,
@@ -324,6 +326,10 @@ export function ThresholdExplorer({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [savingToDataset, setSavingToDataset] = useState(false);
+  const [saveSelectionMode, setSaveSelectionMode] = useState<SaveSelectionMode>("all");
+  const [selectedSaveClassIds, setSelectedSaveClassIds] = useState<number[]>(() =>
+    Array.from({ length: numRealClasses }, (_, i) => i)
+  );
   const [annotationName, setAnnotationName] = useState(() => {
     const base = (evaluationName || `evaluation_${taskId}`).trim();
     return `${base}_predictions`;
@@ -430,6 +436,8 @@ export function ThresholdExplorer({
           conf_threshold: confThreshold,
           iou_threshold: iouThreshold,
           per_class_conf: Object.keys(per_class_conf).length > 0 ? per_class_conf : null,
+          save_selection: saveSelectionMode,
+          selected_class_ids: saveSelectionMode === "tp_per_class" ? selectedSaveClassIds : null,
         }),
       });
 
@@ -483,6 +491,13 @@ export function ThresholdExplorer({
     document.body.removeChild(link);
   }
 
+  function handleOpenDataset() {
+    const path = projectId > 0
+      ? `/projects/${projectId}/datasets/${datasetId}`
+      : `/datasets/${datasetId}`;
+    window.open(path, "_blank", "noopener,noreferrer");
+  }
+
   const resetDefaults = () => {
     setConfThreshold(initialConf);
     setIouThreshold(initialIou);
@@ -500,6 +515,20 @@ export function ThresholdExplorer({
 
   function resetClassConf(i: number) {
     setClassConf(i, -1);
+  }
+
+  function toggleSaveClass(classId: number) {
+    setSelectedSaveClassIds((prev) =>
+      prev.includes(classId) ? prev.filter((id) => id !== classId) : [...prev, classId].sort((a, b) => a - b)
+    );
+  }
+
+  function selectAllSaveClasses() {
+    setSelectedSaveClassIds(Array.from({ length: numRealClasses }, (_, i) => i));
+  }
+
+  function clearSaveClasses() {
+    setSelectedSaveClassIds([]);
   }
 
   const hasPerClassOverride = perClassConf.some((v) => v >= 0);
@@ -556,6 +585,21 @@ export function ThresholdExplorer({
                 <p>Save predictions to dataset</p>
               </TooltipContent>
             </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleOpenDataset}
+                  aria-label="Open test dataset"
+                  className="flex items-center justify-center w-9 h-9 rounded-md transition-colors bg-gray-800 text-gray-200 border border-gray-700 hover:bg-gray-700"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Open test dataset</p>
+              </TooltipContent>
+            </Tooltip>
           </TooltipProvider>
 
           <div className="w-px h-6 bg-gray-700" />
@@ -601,6 +645,9 @@ export function ThresholdExplorer({
                 </label>
                 <span className="text-sm font-mono text-blue-300">{confThreshold.toFixed(2)}</span>
               </div>
+              <p className="text-xs text-gray-500 mb-2">
+                Minimum model confidence required to keep a prediction. Higher values reduce false positives but may miss true objects.
+              </p>
               <Slider
                 value={[confThreshold]}
                 onValueChange={([v]) => setConfThreshold(v)}
@@ -621,6 +668,9 @@ export function ThresholdExplorer({
                 </label>
                 <span className="text-sm font-mono text-blue-300">{iouThreshold.toFixed(2)}</span>
               </div>
+              <p className="text-xs text-gray-500 mb-2">
+                Minimum overlap needed to match a prediction with ground truth. Higher values require tighter box alignment to count as true positives.
+              </p>
               <Slider
                 value={[iouThreshold]}
                 onValueChange={([v]) => setIouThreshold(v)}
@@ -846,6 +896,82 @@ export function ThresholdExplorer({
               This will save the filtered predictions as new annotations in the dataset "{datasetName ?? `Dataset ${datasetId}`}".
               Existing annotations will not be overwritten, but duplicate predictions may be added.
             </AlertDialogDescription>
+            <div className="mt-3 space-y-3">
+              <div className="text-sm text-foreground">What should be saved?</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSaveSelectionMode("all")}
+                  className={`rounded-md border px-3 py-2 text-left transition-colors ${
+                    saveSelectionMode === "all"
+                      ? "border-blue-500 bg-blue-950/40 text-blue-100"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <div className="font-medium">All filtered predictions</div>
+                  <div className="text-xs mt-1">Saves every prediction that passes confidence/per-class filters.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSaveSelectionMode("tp_per_class")}
+                  className={`rounded-md border px-3 py-2 text-left transition-colors ${
+                    saveSelectionMode === "tp_per_class"
+                      ? "border-emerald-500 bg-emerald-950/40 text-emerald-100"
+                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  <div className="font-medium">True positives per class</div>
+                  <div className="text-xs mt-1">Only saves predictions matched to ground truth in selected classes.</div>
+                </button>
+              </div>
+
+              {saveSelectionMode === "tp_per_class" && (
+                <div className="rounded-md border border-emerald-800/70 bg-emerald-950/20 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-sm font-medium text-emerald-100">Select classes from confusion matrix TP diagonal</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllSaveClasses}
+                        className="text-xs text-emerald-300 hover:text-emerald-200"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearSaveClasses}
+                        className="text-xs text-emerald-300 hover:text-emerald-200"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
+                    {metrics?.perClass?.map((c, i) => {
+                      const selected = selectedSaveClassIds.includes(i);
+                      return (
+                        <button
+                          key={`${c.name}_${i}`}
+                          type="button"
+                          onClick={() => toggleSaveClass(i)}
+                          className={`rounded-md border px-2 py-1.5 text-left transition-colors ${
+                            selected
+                              ? "border-emerald-500 bg-emerald-900/40 text-emerald-100"
+                              : "border-emerald-900/60 bg-black/20 text-emerald-300/80 hover:bg-emerald-950/40"
+                          }`}
+                        >
+                          <div className="text-sm font-medium truncate">{c.name}</div>
+                          <div className="text-xs opacity-80">TP: {c.tp}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedSaveClassIds.length === 0 && (
+                    <div className="text-xs text-amber-300 mt-2">Select at least one class to save TP predictions.</div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="mt-3">
               <label className="text-sm text-foreground mb-1 block">Annotation name</label>
               <Input
@@ -859,7 +985,7 @@ export function ThresholdExplorer({
             <AlertDialogCancel onClick={() => setShowSaveConfirm(false)}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmSaveToDataset}
-              disabled={savingToDataset}
+              disabled={savingToDataset || (saveSelectionMode === "tp_per_class" && selectedSaveClassIds.length === 0)}
               className="bg-amber-600 hover:bg-amber-700"
             >
               {savingToDataset ? "Saving…" : "Save predictions"}

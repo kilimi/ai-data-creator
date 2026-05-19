@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel
 from pathlib import Path
 from datetime import datetime
@@ -45,6 +45,127 @@ def _content_disposition_attachment(filename_safe: str) -> str:
     return f'attachment; filename="{safe}"'
 
 
+def _xywh_to_xyxy(bbox: List[float]) -> List[float]:
+    if len(bbox) < 4:
+        return [0.0, 0.0, 0.0, 0.0]
+    x, y, w, h = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    return [x, y, x + w, y + h]
+
+
+def _xyxy_to_xywh(bbox: List[float]) -> List[float]:
+    if len(bbox) < 4:
+        return [0.0, 0.0, 0.0, 0.0]
+    x1, y1, x2, y2 = float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])
+    return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
+
+
+def _iou_xyxy(a: List[float], b: List[float]) -> float:
+    if len(a) < 4 or len(b) < 4:
+        return 0.0
+    x1 = max(float(a[0]), float(b[0]))
+    y1 = max(float(a[1]), float(b[1]))
+    x2 = min(float(a[2]), float(b[2]))
+    y2 = min(float(a[3]), float(b[3]))
+    iw = max(0.0, x2 - x1)
+    ih = max(0.0, y2 - y1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    aa = max(0.0, float(a[2]) - float(a[0])) * max(0.0, float(a[3]) - float(a[1]))
+    ba = max(0.0, float(b[2]) - float(b[0])) * max(0.0, float(b[3]) - float(b[1]))
+    union = aa + ba - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+def _prediction_xyxy(pred: Dict[str, Any]) -> Optional[List[float]]:
+    bbox_xyxy = pred.get("bbox_xyxy")
+    if isinstance(bbox_xyxy, list) and len(bbox_xyxy) >= 4:
+        return [float(bbox_xyxy[0]), float(bbox_xyxy[1]), float(bbox_xyxy[2]), float(bbox_xyxy[3])]
+    bbox = pred.get("bbox")
+    if isinstance(bbox, list) and len(bbox) >= 4:
+        return _xywh_to_xyxy(bbox)
+    return None
+
+
+def _filter_true_positive_predictions(
+    predictions: List[Dict[str, Any]],
+    all_ground_truth: List[Dict[str, Any]],
+    iou_threshold: float,
+    selected_class_ids: Optional[List[int]],
+) -> List[Dict[str, Any]]:
+    selected = set(int(c) for c in (selected_class_ids or [])) if selected_class_ids else None
+
+    gt_by_image: Dict[int, List[Dict[str, Any]]] = {}
+    for gt in all_ground_truth or []:
+        try:
+            image_id = int(gt.get("image_id"))
+            class_id = int(gt.get("class_id"))
+            bbox = gt.get("bbox")
+        except Exception:
+            continue
+        if class_id < 0:
+            continue
+        if selected is not None and class_id not in selected:
+            continue
+        if not isinstance(bbox, list) or len(bbox) < 4:
+            continue
+        gt_by_image.setdefault(image_id, []).append({
+            "class_id": class_id,
+            "bbox": [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])],
+        })
+
+    preds_by_image: Dict[int, List[Dict[str, Any]]] = {}
+    for pred in predictions:
+        try:
+            image_id = int(pred.get("image_id"))
+            class_id = int(pred.get("class_id"))
+        except Exception:
+            continue
+        if selected is not None and class_id not in selected:
+            continue
+        xyxy = _prediction_xyxy(pred)
+        if xyxy is None:
+            continue
+        pred_copy = dict(pred)
+        pred_copy["bbox_xyxy"] = xyxy
+        preds_by_image.setdefault(image_id, []).append(pred_copy)
+
+    kept: List[Dict[str, Any]] = []
+    for image_id, preds in preds_by_image.items():
+        gts = gt_by_image.get(image_id, [])
+        if not gts:
+            continue
+
+        matched_gt: set[int] = set()
+        preds_sorted = sorted(preds, key=lambda p: float(p.get("conf", 0.0)), reverse=True)
+
+        for pred in preds_sorted:
+            pred_class = int(pred.get("class_id", -1))
+            pred_bbox = pred.get("bbox_xyxy")
+            if pred_class < 0 or not isinstance(pred_bbox, list) or len(pred_bbox) < 4:
+                continue
+
+            best_iou = 0.0
+            best_gt_idx = -1
+            for gi, gt in enumerate(gts):
+                if gi in matched_gt:
+                    continue
+                if int(gt.get("class_id", -1)) != pred_class:
+                    continue
+                iou_val = _iou_xyxy(pred_bbox, gt.get("bbox", []))
+                if iou_val > best_iou:
+                    best_iou = iou_val
+                    best_gt_idx = gi
+
+            if best_gt_idx >= 0 and best_iou >= float(iou_threshold):
+                matched_gt.add(best_gt_idx)
+                kept.append(pred)
+
+    return kept
+
+
 def build_thresholded_evaluation_coco_bundle(
     db: Session,
     task: Task,
@@ -52,6 +173,8 @@ def build_thresholded_evaluation_coco_bundle(
     conf_threshold: Optional[float],
     iou_threshold: Optional[float],
     per_class_conf_dict: Optional[Dict[str, Any]],
+    save_selection: Literal["all", "tp_per_class"] = "all",
+    selected_class_ids: Optional[List[int]] = None,
 ) -> tuple[Dict[str, Any], str, int, Optional[int]]:
     """
     Build COCO dict from a completed model_evaluation task (confidence-filtered; same rules as export-coco).
@@ -107,7 +230,27 @@ def build_thresholded_evaluation_coco_bundle(
             filtered_predictions.append(pred)
 
     predictions = filtered_predictions
+
+    if save_selection == "tp_per_class":
+        all_ground_truth = results.get("all_ground_truth", [])
+        if not all_ground_truth:
+            raise HTTPException(
+                status_code=400,
+                detail="Ground truth is required to save TP-per-class predictions.",
+            )
+        predictions = _filter_true_positive_predictions(
+            predictions,
+            all_ground_truth,
+            float(iou_threshold_value),
+            selected_class_ids,
+        )
+
     if not predictions:
+        if save_selection == "tp_per_class":
+            raise HTTPException(
+                status_code=404,
+                detail="No true-positive predictions match the selected classes at current thresholds.",
+            )
         raise HTTPException(status_code=404, detail="No predictions pass the confidence threshold")
 
     has_masks = any(pred.get("segmentation") and len(pred.get("segmentation", [])) > 0 for pred in predictions)
@@ -134,6 +277,8 @@ def build_thresholded_evaluation_coco_bundle(
             "conf_threshold": conf_threshold_value,
             "iou_threshold": iou_threshold_value,
             "per_class_conf": effective_per_class if effective_per_class else None,
+                "save_selection": save_selection,
+                "selected_class_ids": selected_class_ids if selected_class_ids else None,
         },
         "images": [],
         "annotations": [],
@@ -157,6 +302,10 @@ def build_thresholded_evaluation_coco_bundle(
         )
 
     for idx, pred in enumerate(predictions, start=1):
+        bbox_xywh = pred.get("bbox")
+        if not (isinstance(bbox_xywh, list) and len(bbox_xywh) >= 4):
+            bbox_xyxy = _prediction_xyxy(pred)
+            bbox_xywh = _xyxy_to_xywh(bbox_xyxy or [0.0, 0.0, 0.0, 0.0])
         segmentation = pred.get("segmentation", [])
         if segmentation and len(segmentation) > 0:
             segmentation = [segmentation]
@@ -165,7 +314,7 @@ def build_thresholded_evaluation_coco_bundle(
                 "id": idx,
                 "image_id": pred["image_id"],
                 "category_id": pred["class_id"],
-                "bbox": pred["bbox"],
+                "bbox": bbox_xywh,
                 "score": pred["conf"],
                 "segmentation": segmentation,
             }
@@ -707,6 +856,8 @@ class SaveEvalPredictionsToDatasetBody(BaseModel):
     per_class_conf: Optional[Dict[str, float]] = None
     annotation_name: Optional[str] = None
     active_collection_id: Optional[int] = None
+    save_selection: Literal["all", "tp_per_class"] = "all"
+    selected_class_ids: Optional[List[int]] = None
 
 
 @router.post("/predictions/evaluation/{task_id}/save-to-dataset")
@@ -733,6 +884,8 @@ async def save_evaluation_predictions_to_dataset(
             body.conf_threshold,
             body.iou_threshold,
             body.per_class_conf,
+            body.save_selection,
+            body.selected_class_ids,
         )
     except HTTPException as e:
         if e.status_code == 404:
@@ -1052,18 +1205,34 @@ async def view_in_fiftyone(
                         'confidence': pred['conf']
                     })
         
-        # Prepare data for FiftyOne script - convert keys to strings for JSON
-        image_dict_json = json.dumps({str(img.id): {'file_name': img.file_name, 'width': img.width, 'height': img.height} for img in images})
+        from app.routers.datasets import _filesystem_path_for_image
+        import base64
+        
+        image_dict = {}
+        for img in images:
+            fs = _filesystem_path_for_image(img, project_id, dataset_id)
+            entry = {
+                "file_name": img.file_name,
+                "width": img.width or 1,
+                "height": img.height or 1,
+            }
+            if fs is not None:
+                entry["fs_path"] = str(fs)
+            image_dict[str(img.id)] = entry
+
+        image_dict_b64 = base64.b64encode(json.dumps(image_dict).encode()).decode()
+
         # Convert image_id keys to strings in predictions and ground truth
         predictions_by_image_str = {str(k): v for k, v in predictions_by_image.items()}
         ground_truth_by_image_str = {str(k): v for k, v in ground_truth_by_image.items()}
-        predictions_json = json.dumps(predictions_by_image_str)
-        ground_truth_json = json.dumps(ground_truth_by_image_str)
+        predictions_b64 = base64.b64encode(json.dumps(predictions_by_image_str).encode()).decode()
+        ground_truth_b64 = base64.b64encode(json.dumps(ground_truth_by_image_str).encode()).decode()
         
         # Create Python script to launch FiftyOne
         script_content = f"""
 import fiftyone as fo
 import json
+import base64 as _b64
 from pathlib import Path
 
 # Create dataset
@@ -1078,17 +1247,26 @@ dataset.persistent = False
 
 # Add samples
 samples = []
-predictions_by_image = json.loads('''{predictions_json}''')
-ground_truth_by_image = json.loads('''{ground_truth_json}''')
-image_dict = json.loads('''{image_dict_json}''')
+predictions_by_image = json.loads(_b64.b64decode('''{predictions_b64}''').decode())
+ground_truth_by_image = json.loads(_b64.b64decode('''{ground_truth_b64}''').decode())
+image_dict = json.loads(_b64.b64decode('''{image_dict_b64}''').decode())
+
+_projects_root = Path("projects")
+if not _projects_root.exists():
+    _projects_root = Path("/app/projects")
+_data_root = Path("data")
 
 for img_id, img_info in image_dict.items():
-    # Construct image path
-    img_path = Path("projects") / "{project_id}" / "{dataset_id}" / "images" / img_info['file_name']
+    img_path = None
+    fp = img_info.get('fs_path')
+    if fp:
+        img_path = Path(fp)
     
-    # Fallback to old structure
+    if not img_path or not img_path.exists():
+        img_path = _projects_root / "{project_id}" / "{dataset_id}" / "images" / img_info['file_name']
+    
     if not img_path.exists():
-        img_path = Path("data") / "images" / "{dataset_id}" / img_info['file_name']
+        img_path = _data_root / "images" / "{dataset_id}" / img_info['file_name']
     
     if not img_path.exists():
         continue

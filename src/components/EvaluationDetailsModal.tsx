@@ -538,6 +538,13 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       });
       return;
     }
+
+    // Open a placeholder tab from the direct click event to avoid popup blockers.
+    const fiftyOneTab = window.open('', '_blank');
+    if (fiftyOneTab) {
+      fiftyOneTab.document.title = 'Launching FiftyOne...';
+      fiftyOneTab.document.body.innerHTML = '<p style="font-family: sans-serif; padding: 16px;">Starting FiftyOne. This page will redirect automatically...</p>';
+    }
     
     setLaunchingFiftyOne(true);
     toast({
@@ -555,19 +562,25 @@ export function EvaluationDetailsModal({ open, onOpenChange, taskId, onSaved }: 
       }
       
       const data = await response.json();
+      const targetUrl = data.url || 'http://localhost:5151';
       
       toast({
         title: "FiftyOne Launched",
-        description: data.message || "FiftyOne is starting. Check http://localhost:5151"
+        description: data.message || `FiftyOne is starting. Check ${targetUrl}`
       });
-      
-      // Open FiftyOne in new tab after a short delay
-      setTimeout(() => {
-        window.open('http://localhost:5151', '_blank');
-      }, 2000);
+
+      if (fiftyOneTab && !fiftyOneTab.closed) {
+        fiftyOneTab.location.href = targetUrl;
+      } else {
+        // Fallback if popup was blocked or manually closed.
+        window.open(targetUrl, '_blank');
+      }
       
     } catch (err) {
       console.error('Error launching FiftyOne:', err);
+      if (fiftyOneTab && !fiftyOneTab.closed) {
+        fiftyOneTab.close();
+      }
       toast({
         title: "Launch Failed",
         description: err instanceof Error ? err.message : "Failed to launch FiftyOne",
