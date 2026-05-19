@@ -978,8 +978,9 @@ class SaveEvalPredictionsToDatasetBody(BaseModel):
     per_class_conf: Optional[Dict[str, float]] = None
     annotation_name: Optional[str] = None
     active_collection_id: Optional[int] = None
-    save_selection: Literal["all", "tp_per_class"] = "all"
+    save_selection: Literal["all", "tp_per_class", "cm_cells"] = "all"
     selected_class_ids: Optional[List[int]] = None
+    selected_cells: Optional[List[List[int]]] = None
 
 
 @router.post("/predictions/evaluation/{task_id}/save-to-dataset")
