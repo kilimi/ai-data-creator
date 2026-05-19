@@ -1623,7 +1623,15 @@ const ImageAnnotation = () => {
                 count: counts[c.name] ?? 0,
               }));
             });
-            
+
+            // Build class -> image-names map from sessionStorage COCO + localStorage overlay
+            try {
+              const map = buildClassImageMap();
+              setClassImageMap(map);
+            } catch (e) {
+              console.warn('Could not build class->image map:', e);
+            }
+
             return;
           }
         } catch (dbError) {
