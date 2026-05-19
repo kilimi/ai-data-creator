@@ -1633,6 +1633,17 @@ const ImageAnnotation = () => {
       
       const counts: { [name: string]: number } = {};
       const totalAreas: { [name: string]: number } = {};
+      // class name -> set of image fileNames containing at least one annotation of that class
+      const imagesByClass: { [name: string]: Set<string> } = {};
+      const addImageToClass = (cn: string, name: string) => {
+        if (!cn || !name) return;
+        if (!imagesByClass[cn]) imagesByClass[cn] = new Set<string>();
+        imagesByClass[cn].add(name);
+      };
+      const removeImageFromClass = (cn: string, name: string) => {
+        if (!cn || !name) return;
+        imagesByClass[cn]?.delete(name);
+      };
 
       // Check if we have COCO data in sessionStorage (from loaded annotation file)
       const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
