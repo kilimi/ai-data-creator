@@ -1666,9 +1666,11 @@ const ImageAnnotation = () => {
             // Build image ID to dimensions map and image file_name -> image_id
             const imageDimensions: { [id: string]: { width: number, height: number } } = {};
             const imageFileNameToId: { [name: string]: number } = {};
+            const imageIdToFileName: { [id: string]: string } = {};
             cocoData.images?.forEach((img: any) => {
               imageDimensions[img.id.toString()] = { width: img.width || 1, height: img.height || 1 };
               if (img.file_name != null) imageFileNameToId[img.file_name] = img.id;
+              if (img.file_name != null) imageIdToFileName[img.id.toString()] = img.file_name;
             });
             
             // Per-image COCO counts/areas so we can replace with localStorage when present
