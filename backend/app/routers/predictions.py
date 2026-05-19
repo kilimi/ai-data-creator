@@ -166,6 +166,106 @@ def _filter_true_positive_predictions(
     return kept
 
 
+def _filter_predictions_by_cm_cells(
+    predictions: List[Dict[str, Any]],
+    all_ground_truth: List[Dict[str, Any]],
+    iou_threshold: float,
+    selected_cells: List[List[int]],
+    num_real_classes: int,
+) -> List[Dict[str, Any]]:
+    """
+    Keep predictions whose (gt_class, pred_class) cell matches a selected confusion-matrix cell.
+    gt_class == num_real_classes represents the background row (i.e. false positives — no GT match).
+    Cells where pred_class == num_real_classes (FN column) cannot be saved (no prediction exists).
+    """
+    if not selected_cells:
+        return []
+
+    cells: set[tuple[int, int]] = set()
+    for cell in selected_cells:
+        if not isinstance(cell, (list, tuple)) or len(cell) < 2:
+            continue
+        try:
+            r = int(cell[0])
+            c = int(cell[1])
+        except Exception:
+            continue
+        if c == num_real_classes:
+            # FN column — no prediction to save
+            continue
+        cells.add((r, c))
+
+    if not cells:
+        return []
+
+    gt_by_image: Dict[int, List[Dict[str, Any]]] = {}
+    for gt in all_ground_truth or []:
+        try:
+            image_id = int(gt.get("image_id"))
+            class_id = int(gt.get("class_id"))
+            bbox = gt.get("bbox")
+        except Exception:
+            continue
+        if class_id < 0 or class_id >= num_real_classes:
+            continue
+        if not isinstance(bbox, list) or len(bbox) < 4:
+            continue
+        gt_by_image.setdefault(image_id, []).append({
+            "class_id": class_id,
+            "bbox": [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])],
+        })
+
+    preds_by_image: Dict[int, List[Dict[str, Any]]] = {}
+    for pred in predictions:
+        try:
+            image_id = int(pred.get("image_id"))
+        except Exception:
+            continue
+        xyxy = _prediction_xyxy(pred)
+        if xyxy is None:
+            continue
+        p = dict(pred)
+        p["bbox_xyxy"] = xyxy
+        preds_by_image.setdefault(image_id, []).append(p)
+
+    kept: List[Dict[str, Any]] = []
+    for image_id, preds in preds_by_image.items():
+        gts = gt_by_image.get(image_id, [])
+        matched_gt: set[int] = set()
+        preds_sorted = sorted(preds, key=lambda p: float(p.get("conf", 0.0)), reverse=True)
+
+        for pred in preds_sorted:
+            try:
+                pred_class = int(pred.get("class_id", -1))
+            except Exception:
+                continue
+            if pred_class < 0 or pred_class >= num_real_classes:
+                continue
+            pred_bbox = pred.get("bbox_xyxy")
+
+            best_iou = 0.0
+            best_gt_idx = -1
+            for gi, gt in enumerate(gts):
+                if gi in matched_gt:
+                    continue
+                iou_val = _iou_xyxy(pred_bbox, gt.get("bbox", []))
+                if iou_val > best_iou:
+                    best_iou = iou_val
+                    best_gt_idx = gi
+
+            if best_gt_idx >= 0 and best_iou >= float(iou_threshold):
+                matched_gt.add(best_gt_idx)
+                gt_class = int(gts[best_gt_idx]["class_id"])
+                if (gt_class, pred_class) in cells:
+                    kept.append(pred)
+            else:
+                # background row FP
+                if (num_real_classes, pred_class) in cells:
+                    kept.append(pred)
+
+    return kept
+
+
 def build_thresholded_evaluation_coco_bundle(
     db: Session,
     task: Task,
