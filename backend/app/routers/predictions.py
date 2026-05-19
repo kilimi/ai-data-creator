@@ -273,8 +273,9 @@ def build_thresholded_evaluation_coco_bundle(
     conf_threshold: Optional[float],
     iou_threshold: Optional[float],
     per_class_conf_dict: Optional[Dict[str, Any]],
-    save_selection: Literal["all", "tp_per_class"] = "all",
+    save_selection: Literal["all", "tp_per_class", "cm_cells"] = "all",
     selected_class_ids: Optional[List[int]] = None,
+    selected_cells: Optional[List[List[int]]] = None,
 ) -> tuple[Dict[str, Any], str, int, Optional[int]]:
     """
     Build COCO dict from a completed model_evaluation task (confidence-filtered; same rules as export-coco).
