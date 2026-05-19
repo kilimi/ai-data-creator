@@ -333,6 +333,7 @@ export function ThresholdExplorer({
   const [selectedSaveClassIds, setSelectedSaveClassIds] = useState<number[]>(() =>
     Array.from({ length: numRealClasses }, (_, i) => i)
   );
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
   const [annotationName, setAnnotationName] = useState(() => {
     const base = (evaluationName || `evaluation_${taskId}`).trim();
     return `${base}_predictions`;
