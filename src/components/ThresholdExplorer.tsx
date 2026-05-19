@@ -538,6 +538,51 @@ export function ThresholdExplorer({
     setSelectedSaveClassIds([]);
   }
 
+  // Confusion-matrix cell picker helpers
+  function toggleCell(row: number, col: number) {
+    // FN column (col === numRealClasses) has no predictions to save — ignore.
+    if (col === numRealClasses) return;
+    const key = cellKey(row, col);
+    setSelectedCells((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function selectDiagonalCells() {
+    const next = new Set<string>();
+    for (let i = 0; i < numRealClasses; i++) next.add(cellKey(i, i));
+    setSelectedCells(next);
+  }
+  function selectFpCells() {
+    const next = new Set<string>(selectedCells);
+    for (let c = 0; c < numRealClasses; c++) next.add(cellKey(numRealClasses, c));
+    setSelectedCells(next);
+  }
+  function selectConfusionCells() {
+    const next = new Set<string>(selectedCells);
+    for (let r = 0; r < numRealClasses; r++) {
+      for (let c = 0; c < numRealClasses; c++) {
+        if (r !== c) next.add(cellKey(r, c));
+      }
+    }
+    setSelectedCells(next);
+  }
+  function clearCellSelection() {
+    setSelectedCells(new Set());
+  }
+  // Total prediction count across selected cells (from current metrics CM).
+  const selectedCellTotal = (() => {
+    if (!metrics?.cm) return 0;
+    let total = 0;
+    selectedCells.forEach((k) => {
+      const [r, c] = k.split("_").map(Number);
+      if (metrics.cm[r] && Number.isFinite(metrics.cm[r][c])) total += metrics.cm[r][c];
+    });
+    return total;
+  })();
+
   const hasPerClassOverride = perClassConf.some((v) => v >= 0);
   const isModified =
     Math.abs(confThreshold - initialConf) > 0.001 ||
