@@ -361,6 +361,9 @@ const ImageAnnotation = () => {
   // Class panel: search filter + solo (single class isolated)
   const [classSearch, setClassSearch] = useState('');
   const [soloClassId, setSoloClassId] = useState<string | null>(null);
+  // Class-based image filter: only navigate through images that contain this class
+  const [classFilterName, setClassFilterName] = useState<string | null>(null);
+  const [classImageMap, setClassImageMap] = useState<{ [className: string]: Set<string> }>({});
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
   const [annotationName, setAnnotationName] = useState<string>("");
   const [datasetName, setDatasetName] = useState<string>("");
