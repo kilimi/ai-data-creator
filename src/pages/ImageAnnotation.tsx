@@ -5047,10 +5047,30 @@ const ImageAnnotation = () => {
       }
     }
     
-    const newIndex = direction === 'next' 
-      ? Math.min(currentImageIndex + 1, imageList.length - 1)
-      : Math.max(currentImageIndex - 1, 0);
-    
+    // Determine target image. When a class filter is active, navigate only through
+    // images that contain that class (intersected with the current layer's images).
+    const filterSet = classFilterName ? classImageMap[classFilterName] : null;
+    const filteredList = filterSet && filterSet.size > 0
+      ? imageList.filter(n => filterSet.has(n))
+      : imageList;
+
+    let newIndex: number;
+    if (filteredList === imageList) {
+      newIndex = direction === 'next'
+        ? Math.min(currentImageIndex + 1, imageList.length - 1)
+        : Math.max(currentImageIndex - 1, 0);
+    } else {
+      const posInFiltered = filteredList.findIndex(n => n === currentImageName);
+      const targetPos = posInFiltered === -1
+        ? (direction === 'next' ? 0 : filteredList.length - 1)
+        : direction === 'next'
+          ? Math.min(posInFiltered + 1, filteredList.length - 1)
+          : Math.max(posInFiltered - 1, 0);
+      const targetName = filteredList[targetPos];
+      const targetIdx = imageList.findIndex(n => n === targetName);
+      newIndex = targetIdx === -1 ? currentImageIndex : targetIdx;
+    }
+
     // Clean up localStorage - remove cached annotations for images that are far away (more than 5 images)
     try {
       for (let i = 0; i < imageList.length; i++) {
@@ -5078,7 +5098,7 @@ const ImageAnnotation = () => {
     
     // Load annotations for the new image
     loadAnnotationsForImage(newImageName);
-  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId]);
+  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId, classFilterName, classImageMap]);
 
   // Keyboard shortcuts: Arrow keys or A/D for previous/next image navigation
   useEffect(() => {
