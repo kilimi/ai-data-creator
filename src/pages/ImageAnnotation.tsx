@@ -1778,6 +1778,10 @@ const ImageAnnotation = () => {
                 totalAreas[cn] = (totalAreas[cn] || 0) - cocoImgAreas[cn];
                 if (totalAreas[cn] <= 0) delete totalAreas[cn];
               });
+              // Local overlay supersedes COCO for this image — drop any class associations
+              // that came from the COCO file for this image so we can rebuild from local data.
+              const overlayImgName = imageIdToFileName[imgIdStr] || imageName;
+              Object.keys(imagesByClass).forEach(cn => removeImageFromClass(cn, overlayImgName));
               const saved = localStorage.getItem(key);
               if (!saved) continue;
               try {
@@ -1788,6 +1792,7 @@ const ImageAnnotation = () => {
                     const area = calculatePolygonArea(a.points);
                     totalAreas[a.label] = (totalAreas[a.label] || 0) + area;
                   }
+                  addImageToClass(a.label, overlayImgName);
                 });
               } catch (err) {
                 // ignore parse errors
