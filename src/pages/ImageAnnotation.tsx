@@ -6208,36 +6208,42 @@ const ImageAnnotation = () => {
                          </div>
                          )}
                        </div>
-                       {/* Filter-to-images chip (always visible, easy to discover) */}
-                       {editingClassId !== classObj.id && (classImageMap[classObj.name]?.size ?? 0) > 0 && (
-                         <button
-                           type="button"
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             setClassFilterName(prev => prev === classObj.name ? null : classObj.name);
-                           }}
-                           title={
-                             classFilterName === classObj.name
-                               ? 'Click to clear navigation filter'
-                               : `Navigate only images containing "${classObj.name}"`
-                           }
-                           className={`mt-1.5 w-full flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors border ${
-                             classFilterName === classObj.name
-                               ? 'bg-primary/15 border-primary/40 text-primary'
-                               : 'bg-muted/40 border-border/60 text-muted-foreground hover:bg-muted hover:text-foreground'
-                           }`}
-                         >
-                           <span className="flex items-center gap-1.5 min-w-0">
-                             <FilterIcon className="h-3 w-3 shrink-0" />
-                             <span className="truncate">
-                               {classFilterName === classObj.name ? 'Filtering navigation' : 'Show only these images'}
-                             </span>
-                           </span>
-                           <span className="shrink-0 font-medium">
-                             {classImageMap[classObj.name]?.size ?? 0}
-                           </span>
-                         </button>
-                       )}
+                        {/* Jump-to-next-image chip: one-shot navigation, cycles through images containing this class */}
+                        {editingClassId !== classObj.id && (classImageMap[classObj.name]?.size ?? 0) > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const filterSet = classImageMap[classObj.name];
+                              if (!filterSet || filterSet.size === 0) return;
+                              const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+                              const matches = imageList.filter(n => filterSet.has(n));
+                              if (matches.length === 0) return;
+                              const curPos = matches.findIndex(n => n === currentImageName);
+                              const nextName = matches[(curPos + 1) % matches.length];
+                              const nextIdx = imageList.findIndex(n => n === nextName);
+                              if (nextIdx < 0 || nextName === currentImageName) {
+                                toast({ title: 'Only one image', description: `"${classObj.name}" appears in just this image.` });
+                                return;
+                              }
+                              setCurrentImageIndex(nextIdx);
+                              setCurrentImageName(nextName);
+                              currentImageNameRef.current = nextName;
+                              updateCurrentImages(nextName, displayLayer, imageCollections);
+                              loadAnnotationsForImage(nextName);
+                            }}
+                            title={`Jump to next image containing "${classObj.name}" (${classImageMap[classObj.name]?.size ?? 0} images total)`}
+                            className="mt-1.5 w-full flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors border bg-muted/40 border-border/60 text-muted-foreground hover:bg-primary/10 hover:border-primary/40 hover:text-primary"
+                          >
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <ArrowRight className="h-3 w-3 shrink-0" />
+                              <span className="truncate">Go to image with this class</span>
+                            </span>
+                            <span className="shrink-0 font-medium">
+                              {classImageMap[classObj.name]?.size ?? 0}
+                            </span>
+                          </button>
+                        )}
                      </div>
                    ))}
               </div>
