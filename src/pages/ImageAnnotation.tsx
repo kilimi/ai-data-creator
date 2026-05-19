@@ -5002,6 +5002,34 @@ const ImageAnnotation = () => {
     }
   };
 
+  // When activating a class filter, jump to the first image that contains the class
+  // (only if the current image doesn't already contain it).
+  useEffect(() => {
+    if (!classFilterName) return;
+    const filterSet = classImageMap[classFilterName];
+    if (!filterSet || filterSet.size === 0) {
+      toast({
+        title: 'No images for this class',
+        description: `No saved annotations of "${classFilterName}" found. Filter cleared.`,
+      });
+      setClassFilterName(null);
+      return;
+    }
+    if (currentImageName && filterSet.has(currentImageName)) return;
+    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    const target = imageList.find(n => filterSet.has(n));
+    if (!target) return;
+    const idx = imageList.findIndex(n => n === target);
+    if (idx >= 0 && idx !== currentImageIndex) {
+      setCurrentImageIndex(idx);
+      setCurrentImageName(target);
+      currentImageNameRef.current = target;
+      updateCurrentImages(target, displayLayer, imageCollections);
+      loadAnnotationsForImage(target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classFilterName, classImageMap]);
+
   const navigateImage = useCallback(async (direction: 'prev' | 'next') => {
     const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
     if (imageList.length === 0) return;
