@@ -3826,7 +3826,8 @@ async def merge_annotation_files(
                         task_id=task_id,
                         dataset_id=dataset_id,
                         file_ids=request.annotation_file_ids,
-                        merged_filename=merged_filename
+                        merged_filename=merged_filename,
+                        strategy_cfg=(request.strategy.model_dump() if request.strategy else None),
                     )
                 except Exception as e:
                     print(f"Error in merge task: {e}")
