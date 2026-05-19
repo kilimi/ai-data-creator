@@ -450,131 +450,195 @@ export function EvaluateModelModal({
     }
   };
 
+  const canLeaveStep1 =
+    selectedDatasets.length > 0 &&
+    !selectedDatasets.some((d) => !d.collectionId);
+  const canLeaveStep2 = !!selectedModel;
+
+  const goNext = () => {
+    if (step === 1) {
+      if (selectedDatasets.length === 0) {
+        toast.error('Select at least one dataset to evaluate.');
+        return;
+      }
+      const missing = selectedDatasets.find((d) => !d.collectionId);
+      if (missing) {
+        toast.error(`Select an image collection for "${missing.datasetName}".`);
+        return;
+      }
+    }
+    if (step === 2 && !selectedModel) {
+      toast.error('Select a trained model.');
+      return;
+    }
+    setStep(((step + 1) as 1 | 2 | 3));
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5" />
             New Model Evaluation
           </DialogTitle>
           <DialogDescription>
-            Evaluate a trained model on a test dataset
+            Step {step} of 3 — {step === 1 ? 'pick datasets to evaluate on' : step === 2 ? 'choose model & checkpoint' : 'thresholds & confirm'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 mt-4">
-          {/* Evaluation Name */}
-          <div className="space-y-2">
-            <Label htmlFor="eval-name">Evaluation Name (Optional)</Label>
-            <Input
-              id="eval-name"
-              value={evaluationName}
-              onChange={(e) => setEvaluationName(e.target.value)}
-              placeholder="e.g., Test Set Evaluation"
-            />
-          </div>
-
-          {/* Model Selection */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Model Selection</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="model-select">Trained Model</Label>
-                <Select
-                  value={selectedModel}
-                  onValueChange={setSelectedModel}
-                  disabled={resourcesLoading}
+        {/* Stepper */}
+        <div className="flex items-center justify-center gap-1 pb-1">
+          {([
+            { n: 1, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
+            { n: 2, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+            { n: 3, label: 'Settings', icon: <Sliders className="w-3.5 h-3.5" /> },
+          ] as const).map((s, i) => {
+            const canJump =
+              s.n < step ||
+              (s.n === 2 && canLeaveStep1) ||
+              (s.n === 3 && canLeaveStep1 && canLeaveStep2);
+            return (
+              <React.Fragment key={s.n}>
+                <button
+                  type="button"
+                  disabled={!canJump && s.n !== step}
+                  onClick={() => canJump && setStep(s.n)}
+                  className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                    step === s.n
+                      ? 'bg-primary text-primary-foreground'
+                      : step > s.n
+                      ? 'bg-muted text-foreground hover:bg-muted/80'
+                      : 'bg-muted/40 text-muted-foreground'
+                  } ${!canJump && s.n !== step ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                 >
-                  <SelectTrigger id="model-select">
-                    <SelectValue
-                      placeholder={
-                        resourcesLoading ? 'Loading models…' : 'Select a trained model'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {trainingTasks.filter(t => t.status === 'completed' && t.task_type === 'yolo_training').map(task => (
-                      <SelectItem key={task.id} value={task.id.toString()}>
-                        {task.name} (ID: {task.id})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  {step > s.n ? <Check className="w-3.5 h-3.5" /> : s.icon}
+                  {s.label}
+                </button>
+                {i < 2 && <div className={`h-px w-8 ${step > s.n ? 'bg-primary' : 'bg-border'}`} />}
+              </React.Fragment>
+            );
+          })}
+        </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="checkpoint-select">Checkpoint</Label>
-                <Select value={selectedCheckpoint} onValueChange={(v) => setSelectedCheckpoint(v as 'best' | 'last')}>
-                  <SelectTrigger id="checkpoint-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="best">Best Model</SelectItem>
-                    <SelectItem value="last">Last Epoch</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Dataset Selection - Dropdown Menu with Cards */}
-          <Card>
-            <CardHeader className="pb-3">
-              
-              <CardTitle className="text-base flex items-center gap-2">
-                <Database className="w-4 h-4" />
-                Datasets to Evaluate
+        <div className="space-y-6 mt-2">
+          {/* Step 1: Datasets */}
+          {step === 1 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  Datasets to Evaluate
+                  {selectedDatasets.length > 0 && (
+                    <Badge variant="default" className="bg-primary">
+                      {selectedDatasets.length} selected
+                    </Badge>
+                  )}
+                </Label>
                 {selectedDatasets.length > 0 && (
-                  <Badge variant="default" className="bg-primary">
-                    {selectedDatasets.length} selected
-                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedDatasets.filter((s) => s.annotationFileId).length} with ground truth
+                  </span>
                 )}
-              </CardTitle>
-              <CardDescription>
+              </div>
+              <p className="text-xs text-muted-foreground">
                 Pick one or more datasets. Compatibility badges check whether the annotation file's classes match the selected model.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <DatasetEvalPicker
-                datasets={pickerDatasets}
-                groups={pickerGroups}
-                modelClasses={modelClasses}
-                modelTaskType={modelTaskType}
-                value={pickerValue}
-                onChange={handlePickerChange}
-              />
+              </p>
 
-              {/* Ignored Classes Section - Show when model is selected */}
+              {datasets.length === 0 && datasetGroups.length === 0 ? (
+                <Card className="p-6 text-center border-dashed">
+                  <Database className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-muted-foreground">No datasets available</p>
+                </Card>
+              ) : (
+                <DatasetEvalPicker
+                  datasets={pickerDatasets}
+                  groups={pickerGroups}
+                  modelClasses={modelClasses}
+                  modelTaskType={modelTaskType}
+                  value={pickerValue}
+                  onChange={handlePickerChange}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Step 2: Model */}
+          {step === 2 && (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Model Selection</CardTitle>
+                  <CardDescription>Pick the trained model and checkpoint to evaluate.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="model-select">Trained Model</Label>
+                    <Select
+                      value={selectedModel}
+                      onValueChange={setSelectedModel}
+                      disabled={resourcesLoading}
+                    >
+                      <SelectTrigger id="model-select">
+                        <SelectValue
+                          placeholder={
+                            resourcesLoading ? 'Loading models…' : 'Select a trained model'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {trainingTasks.filter(t => t.status === 'completed' && t.task_type === 'yolo_training').map(task => (
+                          <SelectItem key={task.id} value={task.id.toString()}>
+                            {task.name} (ID: {task.id})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="checkpoint-select">Checkpoint</Label>
+                    <Select value={selectedCheckpoint} onValueChange={(v) => setSelectedCheckpoint(v as 'best' | 'last')}>
+                      <SelectTrigger id="checkpoint-select">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="best">Best Model</SelectItem>
+                        <SelectItem value="last">Last Epoch</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </CardContent>
+              </Card>
+
               {selectedModel && modelClasses.length > 0 && (
-                <div className="space-y-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                  <button
-                    type="button"
-                    onClick={() => setShowIgnoredClasses(!showIgnoredClasses)}
-                    className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    {showIgnoredClasses ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                    <span>Ignore Classes (Predictions & Metrics)</span>
-                    {ignoredClasses.length > 0 && (
-                      <Badge variant="secondary" className="ml-1">
-                        {ignoredClasses.length} ignored
-                      </Badge>
-                    )}
-                  </button>
-                  
+                <Card>
+                  <CardHeader className="pb-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowIgnoredClasses(!showIgnoredClasses)}
+                      className="flex items-center gap-2 text-sm font-medium hover:text-foreground transition-colors"
+                    >
+                      {showIgnoredClasses ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      <span>Ignore Classes (Predictions & Metrics)</span>
+                      {ignoredClasses.length > 0 && (
+                        <Badge variant="secondary" className="ml-1">
+                          {ignoredClasses.length} ignored
+                        </Badge>
+                      )}
+                    </button>
+                  </CardHeader>
                   {showIgnoredClasses && (
-                    <div className="space-y-2">
+                    <CardContent className="space-y-2">
                       <p className="text-xs text-muted-foreground">
-                        Select classes to ignore. Predictions of these classes will not be saved, and they will be excluded from metrics calculations.
+                        Predictions of selected classes will not be saved, and they will be excluded from metrics calculations.
                       </p>
                       {loadingModelClasses ? (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary" />
                           Loading classes...
                         </div>
-                      ) : modelClasses.length > 0 ? (
+                      ) : (
                         <div className="flex flex-wrap gap-2">
                           {modelClasses.map((className) => {
                             const isIgnored = ignoredClasses.includes(className);
@@ -583,10 +647,10 @@ export function EvaluateModelModal({
                                 key={className}
                                 type="button"
                                 onClick={() => toggleIgnoredClass(className)}
-                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors border ${
                                   isIgnored
-                                    ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border border-red-300 dark:border-red-700'
-                                    : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                    ? 'bg-destructive/10 text-destructive border-destructive/40'
+                                    : 'bg-muted text-foreground border-border hover:bg-muted/70'
                                 }`}
                               >
                                 {className}
@@ -595,10 +659,6 @@ export function EvaluateModelModal({
                             );
                           })}
                         </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          No classes loaded. Select a dataset with ground truth first.
-                        </p>
                       )}
                       {ignoredClasses.length > 0 && (
                         <button
@@ -609,151 +669,210 @@ export function EvaluateModelModal({
                           Clear all ignored classes
                         </button>
                       )}
-                    </div>
+                    </CardContent>
                   )}
-                </div>
+                </Card>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          )}
 
-          {/* Thresholds */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Detection Thresholds</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          {/* Step 3: Settings & confirm */}
+          {step === 3 && (
+            <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="conf-threshold">Confidence Threshold: {confThreshold.toFixed(2)}</Label>
+                <Label htmlFor="eval-name">Evaluation Name (Optional)</Label>
                 <Input
-                  id="conf-threshold"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={confThreshold}
-                  onChange={(e) => setConfThreshold(parseFloat(e.target.value))}
+                  id="eval-name"
+                  value={evaluationName}
+                  onChange={(e) => setEvaluationName(e.target.value)}
+                  placeholder="e.g., Test Set Evaluation"
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="iou-threshold">IoU Threshold: {iouThreshold.toFixed(2)}</Label>
-                <Input
-                  id="iou-threshold"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={iouThreshold}
-                  onChange={(e) => setIouThreshold(parseFloat(e.target.value))}
-                />
-                <p className="text-xs text-muted-foreground">
-                  IoU threshold for matching predictions to ground truth
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="nms-iou-threshold">NMS IoU Threshold: {nmsIouThreshold.toFixed(2)}</Label>
-                <Input
-                  id="nms-iou-threshold"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={nmsIouThreshold}
-                  onChange={(e) => setNmsIouThreshold(parseFloat(e.target.value))}
-                />
-                <p className="text-xs text-muted-foreground">
-                  IoU threshold for Non-Maximum Suppression (removes overlapping predictions)
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Grid Inference */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Grid Inference</CardTitle>
-              <CardDescription>
-                Split images into overlapping tiles for better detection of small objects
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="use-grid"
-                  checked={useGrid}
-                  onChange={(e) => setUseGrid(e.target.checked)}
-                  className="rounded"
-                />
-                <Label htmlFor="use-grid">Enable Grid Inference</Label>
-              </div>
-
-              {useGrid && (
-                <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Detection Thresholds</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="grid-size">Grid Tile Size: {gridSize}px</Label>
+                    <Label htmlFor="conf-threshold">Confidence Threshold: {confThreshold.toFixed(2)}</Label>
                     <Input
-                      id="grid-size"
-                      type="range"
-                      min="320"
-                      max="1280"
-                      step="32"
-                      value={gridSize}
-                      onChange={(e) => setGridSize(parseInt(e.target.value))}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Each image will be divided into {gridSize}×{gridSize} tiles
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="grid-overlap">Grid Overlap: {(gridOverlap * 100).toFixed(0)}%</Label>
-                    <Input
-                      id="grid-overlap"
+                      id="conf-threshold"
                       type="range"
                       min="0"
-                      max="0.5"
+                      max="1"
                       step="0.05"
-                      value={gridOverlap}
-                      onChange={(e) => setGridOverlap(parseFloat(e.target.value))}
+                      value={confThreshold}
+                      onChange={(e) => setConfThreshold(parseFloat(e.target.value))}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="iou-threshold">IoU Threshold: {iouThreshold.toFixed(2)}</Label>
+                    <Input
+                      id="iou-threshold"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={iouThreshold}
+                      onChange={(e) => setIouThreshold(parseFloat(e.target.value))}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Overlap helps detect objects at tile boundaries
+                      IoU threshold for matching predictions to ground truth
                     </p>
                   </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
 
-          {/* Action Buttons */}
-          <div className="flex justify-end gap-3 pt-4">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleSubmit}
-              disabled={
-                isSubmitting ||
-                resourcesLoading ||
-                !selectedModel ||
-                selectedDatasets.length === 0 ||
-                selectedDatasets.some((d) => !d.collectionId)
-              }
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                  Starting...
-                </>
+                  <div className="space-y-2">
+                    <Label htmlFor="nms-iou-threshold">NMS IoU Threshold: {nmsIouThreshold.toFixed(2)}</Label>
+                    <Input
+                      id="nms-iou-threshold"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={nmsIouThreshold}
+                      onChange={(e) => setNmsIouThreshold(parseFloat(e.target.value))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      IoU threshold for Non-Maximum Suppression (removes overlapping predictions)
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Grid Inference</CardTitle>
+                  <CardDescription>
+                    Split images into overlapping tiles for better detection of small objects
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="use-grid"
+                      checked={useGrid}
+                      onChange={(e) => setUseGrid(e.target.checked)}
+                      className="rounded"
+                    />
+                    <Label htmlFor="use-grid">Enable Grid Inference</Label>
+                  </div>
+
+                  {useGrid && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="grid-size">Grid Tile Size: {gridSize}px</Label>
+                        <Input
+                          id="grid-size"
+                          type="range"
+                          min="320"
+                          max="1280"
+                          step="32"
+                          value={gridSize}
+                          onChange={(e) => setGridSize(parseInt(e.target.value))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Each image will be divided into {gridSize}×{gridSize} tiles
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="grid-overlap">Grid Overlap: {(gridOverlap * 100).toFixed(0)}%</Label>
+                        <Input
+                          id="grid-overlap"
+                          type="range"
+                          min="0"
+                          max="0.5"
+                          step="0.05"
+                          value={gridOverlap}
+                          onChange={(e) => setGridOverlap(parseFloat(e.target.value))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Overlap helps detect objects at tile boundaries
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Summary */}
+              <Card className="bg-muted/30">
+                <CardContent className="pt-4 space-y-1 text-sm">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Datasets</span>
+                    <span className="text-foreground tabular-nums">{selectedDatasets.length}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Model</span>
+                    <span className="text-foreground truncate max-w-[60%]">
+                      {trainingTasks.find((t) => t.id.toString() === selectedModel)?.name || '—'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Checkpoint</span>
+                    <span className="text-foreground">{selectedCheckpoint}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Image size</span>
+                    <span className="text-foreground tabular-nums">{selectedModelImageSize}px</span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Wizard Footer */}
+          <div className="flex items-center justify-between gap-3 pt-4 border-t">
+            <div className="text-xs text-muted-foreground">
+              {step === 1 && (selectedDatasets.length === 0
+                ? 'Pick at least one dataset to continue.'
+                : `${selectedDatasets.length} dataset(s) selected.`)}
+              {step === 2 && (!selectedModel
+                ? 'Pick a trained model to continue.'
+                : 'Model selected.')}
+              {step === 3 && `${selectedDatasets.length} dataset(s) · ${trainingTasks.find((t) => t.id.toString() === selectedModel)?.name || 'model'}`}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => (step === 1 ? onOpenChange(false) : setStep((step - 1) as 1 | 2 | 3))}
+                disabled={isSubmitting}
+              >
+                {step === 1 ? 'Cancel' : (<><ArrowLeft className="w-4 h-4 mr-1" />Back</>)}
+              </Button>
+              {step < 3 ? (
+                <Button type="button" onClick={goNext} disabled={isSubmitting || resourcesLoading}>
+                  Next<ArrowRight className="w-4 h-4 ml-1" />
+                </Button>
               ) : (
-                <>
-                  <Brain className="w-4 h-4 mr-2" />
-                  Start Evaluation
-                </>
+                <Button
+                  onClick={handleSubmit}
+                  disabled={
+                    isSubmitting ||
+                    resourcesLoading ||
+                    !selectedModel ||
+                    selectedDatasets.length === 0 ||
+                    selectedDatasets.some((d) => !d.collectionId)
+                  }
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-4 h-4 mr-2" />
+                      Start Evaluation
+                    </>
+                  )}
+                </Button>
               )}
-            </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
