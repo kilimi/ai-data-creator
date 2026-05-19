@@ -1585,6 +1585,61 @@ const ImageAnnotation = () => {
   const [globalStats, setGlobalStats] = useState<{ [className: string]: number }>({});
   const [globalAvgAreas, setGlobalAvgAreas] = useState<{ [className: string]: number }>({});
 
+  // Build a class -> set of image file names map from sessionStorage COCO + localStorage overlay.
+  // Used by the "navigate by class" filter so we know which images contain each class.
+  const buildClassImageMap = useCallback((): { [className: string]: Set<string> } => {
+    const map: { [className: string]: Set<string> } = {};
+    const add = (cn: string, name: string) => {
+      if (!cn || !name) return;
+      if (!map[cn]) map[cn] = new Set<string>();
+      map[cn].add(name);
+    };
+    const remove = (cn: string, name: string) => map[cn]?.delete(name);
+
+    const sessionRef = sessionStorage.getItem(`annotation_file_${id}`);
+    const imageIdToFileName: { [id: string]: string } = {};
+    if (sessionRef) {
+      try {
+        const fileData = JSON.parse(sessionRef);
+        const cocoData = fileData?.cocoData;
+        if (cocoData?.annotations && cocoData?.categories) {
+          const catIdToName: { [k: string]: string } = {};
+          cocoData.categories.forEach((c: any) => {
+            if (c.id != null && c.name) catIdToName[c.id.toString()] = c.name;
+          });
+          cocoData.images?.forEach((img: any) => {
+            if (img.file_name != null) imageIdToFileName[img.id.toString()] = img.file_name;
+          });
+          cocoData.annotations.forEach((a: any) => {
+            if (a.category_id == null) return;
+            const cn = catIdToName[a.category_id.toString()];
+            const fn = imageIdToFileName[a.image_id?.toString()];
+            if (cn && fn) add(cn, fn);
+          });
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Overlay localStorage edits
+    const overlayCollId = displayLayer || mainLayer || 'default';
+    const prefix = `annotations_${id}_${overlayCollId}_`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const imageName = key.substring(prefix.length);
+      if (!imageName) continue;
+      // Drop existing COCO-derived associations for this image, then rebuild from local
+      Object.keys(map).forEach(cn => remove(cn, imageName));
+      const saved = localStorage.getItem(key);
+      if (!saved) continue;
+      try {
+        const parsed = JSON.parse(saved) as AnnotationShape[];
+        parsed.forEach(a => add(a.label, imageName));
+      } catch { /* ignore */ }
+    }
+    return map;
+  }, [id, displayLayer, mainLayer]);
+
   const computeGlobalStats = useCallback(async () => {
     try {
       // Use same source as Dataset Annotations view (GET /classes) so numbers match
