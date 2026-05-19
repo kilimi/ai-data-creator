@@ -60,7 +60,8 @@ import {
   Moon,
   Crosshair,
   Pencil,
-  SkipForward
+  SkipForward,
+  Filter as FilterIcon
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
