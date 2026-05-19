@@ -61,7 +61,8 @@ import {
   Crosshair,
   Pencil,
   SkipForward,
-  Filter as FilterIcon
+  Filter as FilterIcon,
+  ArrowRight
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
