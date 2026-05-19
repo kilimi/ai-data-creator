@@ -1009,6 +1009,7 @@ async def save_evaluation_predictions_to_dataset(
             body.per_class_conf,
             body.save_selection,
             body.selected_class_ids,
+            body.selected_cells,
         )
     except HTTPException as e:
         if e.status_code == 404:
