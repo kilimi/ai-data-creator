@@ -400,6 +400,7 @@ def build_thresholded_evaluation_coco_bundle(
             "per_class_conf": effective_per_class if effective_per_class else None,
                 "save_selection": save_selection,
                 "selected_class_ids": selected_class_ids if selected_class_ids else None,
+                "selected_cells": selected_cells if selected_cells else None,
         },
         "images": [],
         "annotations": [],
