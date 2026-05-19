@@ -1735,6 +1735,7 @@ const ImageAnnotation = () => {
                       totalAreas[className] = (totalAreas[className] || 0) + area;
                       if (!cocoAreasByImage[imgIdStr]) cocoAreasByImage[imgIdStr] = {};
                       cocoAreasByImage[imgIdStr][className] = (cocoAreasByImage[imgIdStr][className] || 0) + area;
+                      addImageToClass(className, imageIdToFileName[imgIdStr]);
                     } else {
                       isValid = false;
                     }
