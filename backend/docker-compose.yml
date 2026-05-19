@@ -66,7 +66,7 @@ services:
       context: .
       dockerfile: Dockerfile.training
     # Always set CUDA_VISIBLE_DEVICES=0 so PyTorch sees the first GPU (GTX 1070 etc). Empty/unset would hide the GPU.
-    command: sh -c "export CUDA_VISIBLE_DEVICES=0; exec celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo"
+    command: sh -c "export CUDA_VISIBLE_DEVICES=0; exec python -m celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo"
     volumes:
       # Optional /app bind: backend/docker-compose.code-mount.yml (see install.sh COMPOSE_FILE).
       - ${LAI_DATA_DIR:-../.lai-data}/projects:/app/projects
@@ -118,7 +118,7 @@ services:
   # Celery Flower - Web UI for monitoring tasks
   flower:
     image: ${LAI_CELERY_IMAGE:-lai-celery:local}
-    command: celery -A app.celery_app flower --port=5555
+    command: python -m celery -A app.celery_app flower --port=5555
     ports:
       - "5555:5555"
     environment:

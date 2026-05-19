@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -94,37 +94,60 @@ export function ExportModelModal({
   const [opset, setOpset] = useState<number | ''>('');
   const [dynamic, setDynamic] = useState(false);
   const [workspace, setWorkspace] = useState<number | ''>('');
+  const lastAutoExportNameRef = useRef('');
 
   const foundationModelName = `${foundationArch}${foundationSize}`;
 
-  // Filter to only completed YOLO training tasks
+  // Filter to completed training tasks that produce exportable checkpoints.
   const availableModels = trainingTasks.filter(
-    task => task.task_type === 'yolo_training' && task.status === 'completed'
+    task => (task.task_type === 'yolo_training' || task.task_type === 'training') && task.status === 'completed'
   );
 
-  // Suggest a default task name when source/model selection changes (do not overwrite when only half/format change so user can edit)
-  useEffect(() => {
-    if (sourceType !== "trained" || !selectedModel) {
-      if (sourceType === "foundation") {
-        const precision = half ? "FP16" : "FP32";
-        setExportName(`${foundationModelName} to ${exportFormat.toUpperCase()} (${precision})`);
-      } else {
-        setModelInfo(null);
-        setExportName("");
-      }
-      return;
+  const selectedTask = availableModels.find((task) => task.id.toString() === selectedModel);
+
+  const getSuggestedExportName = () => {
+    if (sourceType === "foundation") {
+      const precision = half ? "FP16" : "FP32";
+      return `${foundationModelName} to ${exportFormat.toUpperCase()} (${precision})`;
     }
 
-    const task = availableModels.find(t => t.id.toString() === selectedModel);
-    if (task) {
-      setModelInfo(task);
-      const checkpoint = selectedCheckpoint === 'best' ? 'best' : 'last';
-      const precision = half ? 'FP16' : 'FP32';
-      setExportName(`${task.name} - ${checkpoint} to ${exportFormat.toUpperCase()} (${precision})`);
+    if (!selectedTask) {
+      return "";
     }
-    // Intentionally omit half, exportFormat from deps so toggling them does not overwrite user-edited task name
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourceType, selectedModel, selectedCheckpoint, availableModels, foundationModelName]);
+
+    const checkpoint = selectedCheckpoint === 'best' ? 'best' : 'last';
+    const precision = half ? 'FP16' : 'FP32';
+    return `${selectedTask.name} - ${checkpoint} to ${exportFormat.toUpperCase()} (${precision})`;
+  };
+
+  // Suggest a default task name when the export context changes.
+  // Preserve user edits once they diverge from the last auto-generated value.
+  useEffect(() => {
+    if (sourceType !== "trained") {
+      setModelInfo(null);
+    } else if (selectedTask) {
+      setModelInfo(selectedTask);
+    } else {
+      setModelInfo(null);
+    }
+
+    const suggestedName = getSuggestedExportName();
+    const shouldApplySuggestion = exportName === '' || exportName === lastAutoExportNameRef.current;
+
+    if (shouldApplySuggestion && exportName !== suggestedName) {
+      setExportName(suggestedName);
+    }
+
+    lastAutoExportNameRef.current = suggestedName;
+  }, [
+    exportFormat,
+    exportName,
+    foundationModelName,
+    half,
+    selectedCheckpoint,
+    selectedTask,
+    sourceType,
+  ]);
 
   const handleExport = async () => {
     const hasTrained = sourceType === "trained" && selectedModel && availableModels.length > 0;
@@ -192,6 +215,7 @@ export function ExportModelModal({
         setFoundationSize("n");
         setExportFormat('onnx');
         setExportName('');
+        lastAutoExportNameRef.current = '';
         setModelInfo(null);
         setHalf(false);
         setImgsz(640);
@@ -310,7 +334,7 @@ export function ExportModelModal({
                       <SelectContent>
                         {availableModels.length === 0 ? (
                           <SelectItem value="no-models" disabled>
-                            No completed YOLO models available
+                            No completed trained models available
                           </SelectItem>
                         ) : (
                           availableModels.map(task => (
@@ -323,7 +347,7 @@ export function ExportModelModal({
                     </Select>
                     {availableModels.length === 0 && (
                       <p className="text-sm text-muted-foreground">
-                        Train and complete at least one YOLO model in this project to convert it.
+                        Train and complete at least one model in this project to convert it.
                       </p>
                     )}
                   </div>

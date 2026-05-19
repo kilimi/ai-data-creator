@@ -1,5 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { AlertCircle, CheckCircle2, XCircle, Clock, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApi } from "@/hooks/use-api";
@@ -44,6 +46,9 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
   const [task, setTask] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editableName, setEditableName] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open && taskId) {
@@ -81,6 +86,7 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
       
       const data = await response.json();
       setTask(data);
+      setEditableName(data.name || '');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch task details');
       console.error('Error fetching export task details:', err);
@@ -142,6 +148,32 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
     });
   };
 
+  const handleSaveName = async () => {
+    if (!editableName.trim() || !task || editableName.trim() === task.name) return;
+
+    try {
+      setSavingName(true);
+      setNameError(null);
+      const response = await fetch(`${getApiBaseUrl()}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editableName.trim() }),
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || 'Failed to rename task');
+      }
+
+      const result = await response.json();
+      setTask((current) => current ? { ...current, name: result.task?.name || editableName.trim() } : current);
+    } catch (err) {
+      setNameError(err instanceof Error ? err.message : 'Failed to rename task');
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   if (!open) return null;
 
   return (
@@ -170,6 +202,24 @@ export function ExportDetailsModal({ open, onOpenChange, taskId }: ExportDetails
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold">{task.name}</h3>
                 {getStatusBadge(task.status)}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Conversion Task Name</label>
+                <div className="flex gap-2">
+                  <Input
+                    value={editableName}
+                    onChange={(e) => setEditableName(e.target.value)}
+                    placeholder="Enter task name"
+                  />
+                  <Button
+                    onClick={handleSaveName}
+                    disabled={savingName || !editableName.trim() || editableName.trim() === task.name}
+                  >
+                    {savingName ? 'Saving...' : 'Save'}
+                  </Button>
+                </div>
+                {nameError && <p className="text-sm text-destructive">{nameError}</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-4 text-sm">

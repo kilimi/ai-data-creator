@@ -83,7 +83,7 @@ async def start_yolo_export(
             export_config = {
                 "model_name": request.model_name,
                 "export_format": request.export_format,
-                "output_dir": str(Path("static/exports").resolve()),
+                "output_dir": str((Path("backups") / "exports").resolve()),
                 "half": request.half,
                 "imgsz": request.imgsz,
                 "simplify": request.simplify,
@@ -95,7 +95,7 @@ async def start_yolo_export(
             # Trained model export
             training_task = db.query(models.Task).filter(
                 models.Task.id == request.task_id,
-                models.Task.task_type == 'yolo_training'
+                models.Task.task_type.in_(['yolo_training', 'training'])
             ).first()
             
             if not training_task:
@@ -225,13 +225,13 @@ async def download_exported_model(
     
     task_metadata = task.task_metadata or {}
     exported_file = task_metadata.get('exported_file')
+    onnx_file = task_metadata.get('onnx_file')
     
     logger.info(f"Download request for task {task_id}, exported_file in metadata: {exported_file}")
     
-    # Check if we have a zip file, otherwise try to create one from the ONNX file
+    # Check if we have a zip file, otherwise try to create one from the ONNX file.
+    # Also recover when exported_file points to a stale or missing path.
     if not exported_file:
-        # Try to get ONNX file from metadata
-        onnx_file = task_metadata.get('onnx_file')
         logger.info(f"No exported_file, trying onnx_file: {onnx_file}")
         if onnx_file and Path(onnx_file).exists():
             # Create zip file on-demand for old exports
@@ -248,7 +248,17 @@ async def download_exported_model(
         # Check if exported_file is an ONNX file (old format) and create zip if needed
         file_path_check = Path(exported_file)
         logger.info(f"Checking exported_file: {exported_file}, exists: {file_path_check.exists()}, suffix: {file_path_check.suffix}")
-        if file_path_check.exists() and file_path_check.suffix.lower() == '.onnx':
+        if not file_path_check.exists():
+            logger.warning(f"Exported file path is stale or missing, trying onnx_file fallback: {onnx_file}")
+            if onnx_file and Path(onnx_file).exists():
+                zip_file = _create_zip_from_onnx(Path(onnx_file), task_metadata.get('class_names', []))
+                if zip_file:
+                    task_metadata['exported_file'] = str(zip_file)
+                    task.task_metadata = task_metadata
+                    db.commit()
+                    exported_file = str(zip_file)
+                    logger.info(f"Recreated zip file from ONNX after stale exported_file path: {zip_file}")
+        elif file_path_check.suffix.lower() == '.onnx':
             # It's an ONNX file, create zip from it
             logger.info(f"Exported file is ONNX, creating zip file...")
             zip_file = _create_zip_from_onnx(file_path_check, task_metadata.get('class_names', []))
@@ -259,7 +269,7 @@ async def download_exported_model(
                 db.commit()
                 exported_file = str(zip_file)
                 logger.info(f"Created zip file from ONNX for download: {zip_file}")
-        elif file_path_check.exists() and file_path_check.suffix.lower() == '.zip':
+        elif file_path_check.suffix.lower() == '.zip':
             logger.info(f"Exported file is already a zip file: {exported_file}")
         else:
             logger.warning(f"Exported file path exists but is neither ONNX nor ZIP: {exported_file}")
@@ -385,58 +395,85 @@ async def test_onnx_inference(
                 detail=f"Export task is not completed. Current status: {task.status}"
             )
         
-        # Verify ONNX file exists - handle both zip files and direct ONNX files
-        # Resolve to absolute path to handle relative paths correctly
-        onnx_path = Path(onnx_file_path).resolve()
+        task_metadata = task.task_metadata or {}
+
+        # Resolve requested path first, then fall back to task metadata if the zip moved
+        # or was never created but the raw ONNX still exists.
+        def _resolve_existing_export_path(path_value: Optional[str]) -> Optional[Path]:
+            if not path_value:
+                return None
+            candidate = Path(path_value)
+            if not candidate.is_absolute():
+                candidate = candidate.resolve()
+            return candidate if candidate.exists() else None
+
+        requested_path = Path(onnx_file_path)
+        onnx_path = requested_path if requested_path.is_absolute() else requested_path.resolve()
         extracted_onnx_path = None
-        
+
         logger.info(f"Processing ONNX file path: {onnx_file_path} -> resolved: {onnx_path}, exists: {onnx_path.exists()}, suffix: {onnx_path.suffix}")
+
+        if not onnx_path.exists():
+            fallback_zip = _resolve_existing_export_path(task_metadata.get('exported_file'))
+            fallback_onnx = _resolve_existing_export_path(task_metadata.get('onnx_file'))
+            if fallback_zip is not None:
+                logger.info(f"Requested export path missing; falling back to task exported_file: {fallback_zip}")
+                onnx_path = fallback_zip
+            elif fallback_onnx is not None:
+                logger.info(f"Requested export path missing; falling back to task onnx_file: {fallback_onnx}")
+                onnx_path = fallback_onnx
         
         # If the path is a zip file, extract the ONNX file from it
         if onnx_path.suffix.lower() == '.zip':
             if not onnx_path.exists():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Zip file not found at {onnx_file_path}"
-                )
+                fallback_onnx = _resolve_existing_export_path(task_metadata.get('onnx_file'))
+                if fallback_onnx is not None:
+                    logger.info(f"Zip file missing; using fallback ONNX path {fallback_onnx}")
+                    onnx_path = fallback_onnx
+                else:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Zip file not found at {onnx_file_path}"
+                    )
             
-            # Extract ONNX file from zip
-            try:
-                import zipfile
-                with zipfile.ZipFile(onnx_path, 'r') as zipf:
-                    # Find ONNX file in zip
-                    onnx_files = [f for f in zipf.namelist() if f.endswith('.onnx')]
-                    if not onnx_files:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"No ONNX file found in zip archive {onnx_file_path}"
-                        )
-                    
-                    # Use the first ONNX file found
-                    onnx_filename = onnx_files[0]
-                    
-                    # Extract to temporary directory
-                    temp_dir = Path(tempfile.gettempdir()) / f"onnx_extract_{uuid.uuid4().hex[:8]}"
-                    temp_dir.mkdir(exist_ok=True)
-                    extracted_onnx_path = temp_dir / onnx_filename
-                    
-                    # Extract the file
-                    with zipf.open(onnx_filename) as source, open(extracted_onnx_path, 'wb') as target:
-                        target.write(source.read())
-                    
-                    logger.info(f"Extracted ONNX file from zip: {onnx_filename} -> {extracted_onnx_path}")
-                    onnx_path = extracted_onnx_path
-            except zipfile.BadZipFile:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid zip file at {onnx_file_path}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to extract ONNX from zip: {e}", exc_info=True)
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to extract ONNX file from zip: {str(e)}"
-                )
+            if onnx_path.suffix.lower() == '.zip':
+                # Extract ONNX file from zip
+                try:
+                    import zipfile
+                    with zipfile.ZipFile(onnx_path, 'r') as zipf:
+                        # Find ONNX file in zip
+                        onnx_files = [f for f in zipf.namelist() if f.endswith('.onnx')]
+                        if not onnx_files:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"No ONNX file found in zip archive {onnx_file_path}"
+                            )
+                        
+                        # Use the first ONNX file found
+                        onnx_filename = onnx_files[0]
+                        
+                        # Extract to temporary directory
+                        temp_dir = Path(tempfile.gettempdir()) / f"onnx_extract_{uuid.uuid4().hex[:8]}"
+                        temp_dir.mkdir(exist_ok=True)
+                        extracted_onnx_path = temp_dir / onnx_filename
+                        
+                        # Extract the file
+                        with zipf.open(onnx_filename) as source, open(extracted_onnx_path, 'wb') as target:
+                            target.write(source.read())
+                        
+                        logger.info(f"Extracted ONNX file from zip: {onnx_filename} -> {extracted_onnx_path}")
+                        onnx_path = extracted_onnx_path
+                except zipfile.BadZipFile:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid zip file at {onnx_file_path}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to extract ONNX from zip: {e}", exc_info=True)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to extract ONNX file from zip: {str(e)}"
+                    )
         elif not onnx_path.exists():
             raise HTTPException(
                 status_code=404,
@@ -475,7 +512,6 @@ async def test_onnx_inference(
         
         # Fallback to database lookup if JSON file doesn't exist or failed
         if not class_names:
-            task_metadata = task.task_metadata or {}
             training_task_id = task_metadata.get('training_task_id')
             
             if training_task_id:

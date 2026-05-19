@@ -451,7 +451,7 @@ def get_project_sidebar_counts(project_id: int, db: Session = Depends(get_db)):
         db.query(func.count(models.Task.id))
         .filter(
             models.Task.project_id == project_id,
-            models.Task.task_type == "export",
+            models.Task.task_type == "model_export",
         )
         .scalar()
         or 0

@@ -53,4 +53,4 @@ RUN mkdir -p /app/models /app/ai_models/depth_estimation /app/projects /app/data
 
 EXPOSE 8000 5151
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug", "--reload"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "debug", "--reload"]

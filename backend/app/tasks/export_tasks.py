@@ -422,8 +422,9 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
         if not class_names and model_name:
             class_names = COCO_CLASSES
         
-        # Use static/exports directory for easy access
-        output_dir = Path("static/exports")
+        # Persist exports on a mounted volume when an output_dir is provided.
+        configured_output_dir = export_config.get("output_dir")
+        output_dir = Path(configured_output_dir) if configured_output_dir else Path("static/exports")
         output_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Starting export (model_path={model_path}, model_name={model_name}) to {export_format}")
@@ -514,7 +515,7 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
                 if exported_file.resolve() != output_path.resolve():
                     shutil.copy2(str(exported_file), str(output_path))
             elif model_path and exported_file.exists():
-                # Copy to output directory (static/exports) for trained models
+                # Copy to the configured persistent output directory for trained models.
                 shutil.copy2(str(exported_file), str(output_path))
             
             if output_path.exists():
@@ -595,8 +596,8 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
             zip_path_str = str(zip_path.resolve())
             logger.warning(f"zip_path_str not defined, using fallback: {zip_path_str}")
         
-        # Update task metadata with relative path for download (use zip file)
-        zip_relative_path = f"/static/exports/{zip_filename}"
+        # Always expose the artifact through the API download endpoint.
+        zip_relative_path = f"/export/download/{task_id}"
         task.status = "completed"
         task.completed_at = datetime.utcnow()
         task.progress = 100
