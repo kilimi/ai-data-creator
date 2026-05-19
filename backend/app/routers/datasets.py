@@ -237,9 +237,23 @@ def _video_progress_get(job_id: str) -> Optional[dict]:
         return dict(entry) if entry else None
 
 
+class MergeStrategyConfig(BaseModel):
+    # 'exact' | 'iou' | 'priority' | 'union'
+    strategy: str = "exact"
+    iou_threshold: float = 0.5
+    # 'largest' | 'smallest' | 'first' | 'last'
+    tie_breaker: str = "largest"
+    # Ordered list of annotation_file_ids; index 0 = highest priority
+    priority_order: Optional[List[str]] = None
+    # 'keep' | 'priority'
+    cross_class: str = "keep"
+    cross_class_iou: float = 0.7
+
+
 class MergeAnnotationFilesRequest(BaseModel):
     annotation_file_ids: List[str]
     merged_filename: Optional[str] = None
+    strategy: Optional[MergeStrategyConfig] = None
 
 
 class ViewFiftyOneRequest(BaseModel):
