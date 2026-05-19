@@ -19,7 +19,7 @@ const ClassColorPicker = lazy(() => import("@/components/ClassColorPicker").then
 const ClassColorOpacityPicker = lazy(() => import("@/components/ClassColorOpacityPicker").then(m => ({ default: m.ClassColorOpacityPicker })));
 const RenameClassDialog = lazy(() => import("./RenameClassDialog").then(m => ({ default: m.RenameClassDialog })));
 const AnnotationTagsDialog = lazy(() => import("./AnnotationTagsDialog").then(m => ({ default: m.AnnotationTagsDialog })));
-import { applyMergeStrategy, collectTaggedSamples, type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
+import { type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
 import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
