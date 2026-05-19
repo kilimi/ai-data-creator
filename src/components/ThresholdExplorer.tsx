@@ -282,7 +282,10 @@ interface ThresholdExplorerProps {
   datasetName?: string;
 }
 
-type SaveSelectionMode = "all" | "tp_per_class";
+type SaveSelectionMode = "all" | "cm_cells";
+
+// Cell key helpers for the confusion-matrix picker
+const cellKey = (row: number, col: number) => `${row}_${col}`;
 
 export function ThresholdExplorer({
   predictions,
@@ -330,6 +333,7 @@ export function ThresholdExplorer({
   const [selectedSaveClassIds, setSelectedSaveClassIds] = useState<number[]>(() =>
     Array.from({ length: numRealClasses }, (_, i) => i)
   );
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
   const [annotationName, setAnnotationName] = useState(() => {
     const base = (evaluationName || `evaluation_${taskId}`).trim();
     return `${base}_predictions`;
@@ -437,7 +441,10 @@ export function ThresholdExplorer({
           iou_threshold: iouThreshold,
           per_class_conf: Object.keys(per_class_conf).length > 0 ? per_class_conf : null,
           save_selection: saveSelectionMode,
-          selected_class_ids: saveSelectionMode === "tp_per_class" ? selectedSaveClassIds : null,
+          selected_cells:
+            saveSelectionMode === "cm_cells"
+              ? Array.from(selectedCells).map((k) => k.split("_").map(Number))
+              : null,
         }),
       });
 
@@ -530,6 +537,51 @@ export function ThresholdExplorer({
   function clearSaveClasses() {
     setSelectedSaveClassIds([]);
   }
+
+  // Confusion-matrix cell picker helpers
+  function toggleCell(row: number, col: number) {
+    // FN column (col === numRealClasses) has no predictions to save — ignore.
+    if (col === numRealClasses) return;
+    const key = cellKey(row, col);
+    setSelectedCells((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+  function selectDiagonalCells() {
+    const next = new Set<string>();
+    for (let i = 0; i < numRealClasses; i++) next.add(cellKey(i, i));
+    setSelectedCells(next);
+  }
+  function selectFpCells() {
+    const next = new Set<string>(selectedCells);
+    for (let c = 0; c < numRealClasses; c++) next.add(cellKey(numRealClasses, c));
+    setSelectedCells(next);
+  }
+  function selectConfusionCells() {
+    const next = new Set<string>(selectedCells);
+    for (let r = 0; r < numRealClasses; r++) {
+      for (let c = 0; c < numRealClasses; c++) {
+        if (r !== c) next.add(cellKey(r, c));
+      }
+    }
+    setSelectedCells(next);
+  }
+  function clearCellSelection() {
+    setSelectedCells(new Set());
+  }
+  // Total prediction count across selected cells (from current metrics CM).
+  const selectedCellTotal = (() => {
+    if (!metrics?.cm) return 0;
+    let total = 0;
+    selectedCells.forEach((k) => {
+      const [r, c] = k.split("_").map(Number);
+      if (metrics.cm[r] && Number.isFinite(metrics.cm[r][c])) total += metrics.cm[r][c];
+    });
+    return total;
+  })();
 
   const hasPerClassOverride = perClassConf.some((v) => v >= 0);
   const isModified =
@@ -889,91 +941,216 @@ export function ThresholdExplorer({
 
       {/* Save predictions to dataset confirmation */}
       <AlertDialog open={showSaveConfirm} onOpenChange={setShowSaveConfirm}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-3xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Save predictions to dataset?</AlertDialogTitle>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Database className="w-5 h-5 text-amber-400" />
+              Save predictions as new annotations
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This will save the filtered predictions as new annotations in the dataset "{datasetName ?? `Dataset ${datasetId}`}".
-              Existing annotations will not be overwritten, but duplicate predictions may be added.
+              Saves filtered predictions into a fresh COCO annotation file on{" "}
+              <span className="font-medium text-foreground">{datasetName ?? `Dataset ${datasetId}`}</span>.
+              Existing annotations are kept; nothing is overwritten.
             </AlertDialogDescription>
-            <div className="mt-3 space-y-3">
-              <div className="text-sm text-foreground">What should be saved?</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+
+            <div className="mt-4 space-y-4">
+              {/* Mode picker */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => setSaveSelectionMode("all")}
-                  className={`rounded-md border px-3 py-2 text-left transition-colors ${
+                  className={`rounded-lg border p-3 text-left transition-all ${
                     saveSelectionMode === "all"
-                      ? "border-blue-500 bg-blue-950/40 text-blue-100"
-                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                      ? "border-blue-500 bg-blue-950/40 ring-2 ring-blue-500/40"
+                      : "border-border bg-muted/40 hover:bg-muted"
                   }`}
                 >
-                  <div className="font-medium">All filtered predictions</div>
-                  <div className="text-xs mt-1">Saves every prediction that passes confidence/per-class filters.</div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-blue-400" />
+                    <div className="font-medium">Everything that passes the filters</div>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Saves every prediction above your confidence/per-class thresholds — ignores ground truth.
+                  </div>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSaveSelectionMode("tp_per_class")}
-                  className={`rounded-md border px-3 py-2 text-left transition-colors ${
-                    saveSelectionMode === "tp_per_class"
-                      ? "border-emerald-500 bg-emerald-950/40 text-emerald-100"
-                      : "border-border bg-muted/40 text-muted-foreground hover:bg-muted"
+                  onClick={() => setSaveSelectionMode("cm_cells")}
+                  className={`rounded-lg border p-3 text-left transition-all ${
+                    saveSelectionMode === "cm_cells"
+                      ? "border-emerald-500 bg-emerald-950/40 ring-2 ring-emerald-500/40"
+                      : "border-border bg-muted/40 hover:bg-muted"
                   }`}
                 >
-                  <div className="font-medium">True positives per class</div>
-                  <div className="text-xs mt-1">Only saves predictions matched to ground truth in selected classes.</div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-400" />
+                    <div className="font-medium">Pick cells from the confusion matrix</div>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Click cells (TP / class confusions / FP) to choose exactly which predictions to save.
+                  </div>
                 </button>
               </div>
 
-              {saveSelectionMode === "tp_per_class" && (
-                <div className="rounded-md border border-emerald-800/70 bg-emerald-950/20 p-3">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="text-sm font-medium text-emerald-100">Select classes from confusion matrix TP diagonal</div>
-                    <div className="flex items-center gap-2">
+              {saveSelectionMode === "cm_cells" && metrics?.cm && (
+                <div className="rounded-lg border border-emerald-800/70 bg-emerald-950/10 p-3 space-y-3">
+                  {/* Quick selectors + legend */}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded-sm bg-emerald-500/70 border border-emerald-400" />
+                        TP (diagonal)
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded-sm bg-amber-500/60 border border-amber-400" />
+                        Class confusion
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-3 h-3 rounded-sm bg-rose-500/60 border border-rose-400" />
+                        FP (no GT)
+                      </span>
+                      <span className="flex items-center gap-1.5 opacity-60">
+                        <span className="w-3 h-3 rounded-sm bg-muted border border-border" />
+                        FN — can't save
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={selectAllSaveClasses}
-                        className="text-xs text-emerald-300 hover:text-emerald-200"
+                        onClick={selectDiagonalCells}
+                        className="text-[11px] px-2 py-1 rounded border border-emerald-700 text-emerald-200 hover:bg-emerald-900/40"
                       >
-                        Select all
+                        TP diagonal
                       </button>
                       <button
                         type="button"
-                        onClick={clearSaveClasses}
-                        className="text-xs text-emerald-300 hover:text-emerald-200"
+                        onClick={selectConfusionCells}
+                        className="text-[11px] px-2 py-1 rounded border border-amber-700 text-amber-200 hover:bg-amber-900/40"
+                      >
+                        + Confusions
+                      </button>
+                      <button
+                        type="button"
+                        onClick={selectFpCells}
+                        className="text-[11px] px-2 py-1 rounded border border-rose-700 text-rose-200 hover:bg-rose-900/40"
+                      >
+                        + FP
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearCellSelection}
+                        className="text-[11px] px-2 py-1 rounded border border-border text-muted-foreground hover:bg-muted"
                       >
                         Clear
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
-                    {metrics?.perClass?.map((c, i) => {
-                      const selected = selectedSaveClassIds.includes(i);
-                      return (
-                        <button
-                          key={`${c.name}_${i}`}
-                          type="button"
-                          onClick={() => toggleSaveClass(i)}
-                          className={`rounded-md border px-2 py-1.5 text-left transition-colors ${
-                            selected
-                              ? "border-emerald-500 bg-emerald-900/40 text-emerald-100"
-                              : "border-emerald-900/60 bg-black/20 text-emerald-300/80 hover:bg-emerald-950/40"
-                          }`}
-                        >
-                          <div className="text-sm font-medium truncate">{c.name}</div>
-                          <div className="text-xs opacity-80">TP: {c.tp}</div>
-                        </button>
-                      );
-                    })}
+
+                  {/* Matrix */}
+                  <div className="overflow-auto max-h-[340px] rounded border border-border/60 bg-background/50">
+                    <table className="text-[11px] border-separate border-spacing-0">
+                      <thead className="sticky top-0 bg-background/95 backdrop-blur z-10">
+                        <tr>
+                          <th className="sticky left-0 bg-background/95 z-20 px-2 py-1.5 text-right text-muted-foreground font-medium">
+                            GT \ Pred →
+                          </th>
+                          {classNames.map((name, c) => (
+                            <th
+                              key={`h_${c}`}
+                              className={`px-2 py-1.5 font-medium ${
+                                c === numRealClasses ? "text-muted-foreground/70 italic" : "text-foreground"
+                              }`}
+                              title={name}
+                            >
+                              <div className="max-w-[64px] truncate">{name}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {classNames.map((rowName, r) => (
+                          <tr key={`r_${r}`}>
+                            <td
+                              className={`sticky left-0 bg-background/95 z-10 px-2 py-1 text-right font-medium border-t border-border/60 ${
+                                r === numRealClasses ? "text-muted-foreground/70 italic" : "text-foreground"
+                              }`}
+                              title={rowName}
+                            >
+                              <div className="max-w-[110px] truncate">{rowName}</div>
+                            </td>
+                            {classNames.map((_, c) => {
+                              const count = metrics.cm[r]?.[c] ?? 0;
+                              const isFnCol = c === numRealClasses;
+                              const isFpRow = r === numRealClasses;
+                              const isDiag = r === c && !isFnCol && !isFpRow;
+                              const isConfusion = !isDiag && !isFnCol && !isFpRow;
+                              const selected = selectedCells.has(cellKey(r, c));
+                              const empty = count === 0;
+
+                              let toneBase = "";
+                              let toneSelected = "";
+                              if (isFnCol) {
+                                toneBase = "bg-muted/40 text-muted-foreground/60 cursor-not-allowed";
+                              } else if (isDiag) {
+                                toneBase = "bg-emerald-900/20 text-emerald-200 hover:bg-emerald-800/40";
+                                toneSelected = "bg-emerald-600/60 text-white ring-2 ring-emerald-300";
+                              } else if (isFpRow) {
+                                toneBase = "bg-rose-900/15 text-rose-200 hover:bg-rose-800/40";
+                                toneSelected = "bg-rose-600/60 text-white ring-2 ring-rose-300";
+                              } else if (isConfusion) {
+                                toneBase = "bg-amber-900/10 text-amber-200 hover:bg-amber-800/40";
+                                toneSelected = "bg-amber-600/60 text-white ring-2 ring-amber-300";
+                              }
+
+                              return (
+                                <td
+                                  key={`c_${r}_${c}`}
+                                  className="border-t border-l border-border/40 p-0"
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleCell(r, c)}
+                                    disabled={isFnCol}
+                                    title={
+                                      isFnCol
+                                        ? `${rowName} not detected (FN — no prediction to save)`
+                                        : `GT: ${rowName} • Pred: ${classNames[c]} • ${count} prediction${count === 1 ? "" : "s"}`
+                                    }
+                                    className={`w-full h-8 min-w-[44px] flex items-center justify-center font-mono transition-all ${
+                                      selected ? toneSelected : toneBase
+                                    } ${empty && !isFnCol ? "opacity-40" : ""}`}
+                                  >
+                                    {count}
+                                  </button>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  {selectedSaveClassIds.length === 0 && (
-                    <div className="text-xs text-amber-300 mt-2">Select at least one class to save TP predictions.</div>
+
+                  {/* Summary */}
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="text-muted-foreground">
+                      <span className="font-medium text-foreground">{selectedCells.size}</span> cell{selectedCells.size === 1 ? "" : "s"} selected
+                    </div>
+                    <div className="text-emerald-300">
+                      ≈ <span className="font-semibold">{selectedCellTotal}</span> prediction{selectedCellTotal === 1 ? "" : "s"} will be saved
+                    </div>
+                  </div>
+                  {selectedCells.size === 0 && (
+                    <div className="text-xs text-amber-300">
+                      Click any matrix cell to start — diagonal = correct, off-diagonal = wrong class, bottom row = false positives.
+                    </div>
                   )}
                 </div>
               )}
             </div>
-            <div className="mt-3">
-              <label className="text-sm text-foreground mb-1 block">Annotation name</label>
+
+            <div className="mt-4">
+              <label className="text-sm text-foreground mb-1 block">Annotation file name</label>
               <Input
                 value={annotationName}
                 onChange={(e) => setAnnotationName(e.target.value)}
@@ -985,10 +1162,17 @@ export function ThresholdExplorer({
             <AlertDialogCancel onClick={() => setShowSaveConfirm(false)}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmSaveToDataset}
-              disabled={savingToDataset || (saveSelectionMode === "tp_per_class" && selectedSaveClassIds.length === 0)}
+              disabled={
+                savingToDataset ||
+                (saveSelectionMode === "cm_cells" && selectedCells.size === 0)
+              }
               className="bg-amber-600 hover:bg-amber-700"
             >
-              {savingToDataset ? "Saving…" : "Save predictions"}
+              {savingToDataset
+                ? "Saving…"
+                : saveSelectionMode === "cm_cells"
+                ? `Save ${selectedCellTotal} prediction${selectedCellTotal === 1 ? "" : "s"}`
+                : "Save predictions"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

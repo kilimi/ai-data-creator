@@ -166,6 +166,106 @@ def _filter_true_positive_predictions(
     return kept
 
 
+def _filter_predictions_by_cm_cells(
+    predictions: List[Dict[str, Any]],
+    all_ground_truth: List[Dict[str, Any]],
+    iou_threshold: float,
+    selected_cells: List[List[int]],
+    num_real_classes: int,
+) -> List[Dict[str, Any]]:
+    """
+    Keep predictions whose (gt_class, pred_class) cell matches a selected confusion-matrix cell.
+    gt_class == num_real_classes represents the background row (i.e. false positives — no GT match).
+    Cells where pred_class == num_real_classes (FN column) cannot be saved (no prediction exists).
+    """
+    if not selected_cells:
+        return []
+
+    cells: set[tuple[int, int]] = set()
+    for cell in selected_cells:
+        if not isinstance(cell, (list, tuple)) or len(cell) < 2:
+            continue
+        try:
+            r = int(cell[0])
+            c = int(cell[1])
+        except Exception:
+            continue
+        if c == num_real_classes:
+            # FN column — no prediction to save
+            continue
+        cells.add((r, c))
+
+    if not cells:
+        return []
+
+    gt_by_image: Dict[int, List[Dict[str, Any]]] = {}
+    for gt in all_ground_truth or []:
+        try:
+            image_id = int(gt.get("image_id"))
+            class_id = int(gt.get("class_id"))
+            bbox = gt.get("bbox")
+        except Exception:
+            continue
+        if class_id < 0 or class_id >= num_real_classes:
+            continue
+        if not isinstance(bbox, list) or len(bbox) < 4:
+            continue
+        gt_by_image.setdefault(image_id, []).append({
+            "class_id": class_id,
+            "bbox": [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])],
+        })
+
+    preds_by_image: Dict[int, List[Dict[str, Any]]] = {}
+    for pred in predictions:
+        try:
+            image_id = int(pred.get("image_id"))
+        except Exception:
+            continue
+        xyxy = _prediction_xyxy(pred)
+        if xyxy is None:
+            continue
+        p = dict(pred)
+        p["bbox_xyxy"] = xyxy
+        preds_by_image.setdefault(image_id, []).append(p)
+
+    kept: List[Dict[str, Any]] = []
+    for image_id, preds in preds_by_image.items():
+        gts = gt_by_image.get(image_id, [])
+        matched_gt: set[int] = set()
+        preds_sorted = sorted(preds, key=lambda p: float(p.get("conf", 0.0)), reverse=True)
+
+        for pred in preds_sorted:
+            try:
+                pred_class = int(pred.get("class_id", -1))
+            except Exception:
+                continue
+            if pred_class < 0 or pred_class >= num_real_classes:
+                continue
+            pred_bbox = pred.get("bbox_xyxy")
+
+            best_iou = 0.0
+            best_gt_idx = -1
+            for gi, gt in enumerate(gts):
+                if gi in matched_gt:
+                    continue
+                iou_val = _iou_xyxy(pred_bbox, gt.get("bbox", []))
+                if iou_val > best_iou:
+                    best_iou = iou_val
+                    best_gt_idx = gi
+
+            if best_gt_idx >= 0 and best_iou >= float(iou_threshold):
+                matched_gt.add(best_gt_idx)
+                gt_class = int(gts[best_gt_idx]["class_id"])
+                if (gt_class, pred_class) in cells:
+                    kept.append(pred)
+            else:
+                # background row FP
+                if (num_real_classes, pred_class) in cells:
+                    kept.append(pred)
+
+    return kept
+
+
 def build_thresholded_evaluation_coco_bundle(
     db: Session,
     task: Task,
@@ -173,8 +273,9 @@ def build_thresholded_evaluation_coco_bundle(
     conf_threshold: Optional[float],
     iou_threshold: Optional[float],
     per_class_conf_dict: Optional[Dict[str, Any]],
-    save_selection: Literal["all", "tp_per_class"] = "all",
+    save_selection: Literal["all", "tp_per_class", "cm_cells"] = "all",
     selected_class_ids: Optional[List[int]] = None,
+    selected_cells: Optional[List[List[int]]] = None,
 ) -> tuple[Dict[str, Any], str, int, Optional[int]]:
     """
     Build COCO dict from a completed model_evaluation task (confidence-filtered; same rules as export-coco).
@@ -244,12 +345,32 @@ def build_thresholded_evaluation_coco_bundle(
             float(iou_threshold_value),
             selected_class_ids,
         )
+    elif save_selection == "cm_cells":
+        all_ground_truth = results.get("all_ground_truth", [])
+        if not all_ground_truth:
+            raise HTTPException(
+                status_code=400,
+                detail="Ground truth is required to save predictions by confusion-matrix cell.",
+            )
+        num_real_classes = max(0, len(class_names) - 1)
+        predictions = _filter_predictions_by_cm_cells(
+            predictions,
+            all_ground_truth,
+            float(iou_threshold_value),
+            selected_cells or [],
+            num_real_classes,
+        )
 
     if not predictions:
         if save_selection == "tp_per_class":
             raise HTTPException(
                 status_code=404,
                 detail="No true-positive predictions match the selected classes at current thresholds.",
+            )
+        if save_selection == "cm_cells":
+            raise HTTPException(
+                status_code=404,
+                detail="No predictions fall into the selected confusion-matrix cells at current thresholds.",
             )
         raise HTTPException(status_code=404, detail="No predictions pass the confidence threshold")
 
@@ -279,6 +400,7 @@ def build_thresholded_evaluation_coco_bundle(
             "per_class_conf": effective_per_class if effective_per_class else None,
                 "save_selection": save_selection,
                 "selected_class_ids": selected_class_ids if selected_class_ids else None,
+                "selected_cells": selected_cells if selected_cells else None,
         },
         "images": [],
         "annotations": [],
@@ -856,8 +978,9 @@ class SaveEvalPredictionsToDatasetBody(BaseModel):
     per_class_conf: Optional[Dict[str, float]] = None
     annotation_name: Optional[str] = None
     active_collection_id: Optional[int] = None
-    save_selection: Literal["all", "tp_per_class"] = "all"
+    save_selection: Literal["all", "tp_per_class", "cm_cells"] = "all"
     selected_class_ids: Optional[List[int]] = None
+    selected_cells: Optional[List[List[int]]] = None
 
 
 @router.post("/predictions/evaluation/{task_id}/save-to-dataset")
@@ -886,6 +1009,7 @@ async def save_evaluation_predictions_to_dataset(
             body.per_class_conf,
             body.save_selection,
             body.selected_class_ids,
+            body.selected_cells,
         )
     except HTTPException as e:
         if e.status_code == 404:
