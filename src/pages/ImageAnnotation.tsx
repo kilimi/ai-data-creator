@@ -5964,6 +5964,25 @@ const ImageAnnotation = () => {
                   </button>
                 </div>
               )}
+              {classFilterName && (
+                <div className="mb-2 flex items-center justify-between rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <FilterIcon className="h-3 w-3 text-primary shrink-0" />
+                    <span className="truncate">
+                      Navigating images with{' '}
+                      <strong>{classFilterName}</strong>{' '}
+                      <span className="text-muted-foreground">
+                        ({classImageMap[classFilterName]?.size ?? 0})
+                      </span>
+                    </span>
+                  </span>
+                  <button
+                    onClick={() => setClassFilterName(null)}
+                    className="text-primary hover:underline shrink-0 ml-2"
+                  >
+                    Clear
+                  </button>
+              )}
             </div>
 
             <ScrollArea className="flex-1 scrollbar-thin">
