@@ -345,12 +345,32 @@ def build_thresholded_evaluation_coco_bundle(
             float(iou_threshold_value),
             selected_class_ids,
         )
+    elif save_selection == "cm_cells":
+        all_ground_truth = results.get("all_ground_truth", [])
+        if not all_ground_truth:
+            raise HTTPException(
+                status_code=400,
+                detail="Ground truth is required to save predictions by confusion-matrix cell.",
+            )
+        num_real_classes = max(0, len(class_names) - 1)
+        predictions = _filter_predictions_by_cm_cells(
+            predictions,
+            all_ground_truth,
+            float(iou_threshold_value),
+            selected_cells or [],
+            num_real_classes,
+        )
 
     if not predictions:
         if save_selection == "tp_per_class":
             raise HTTPException(
                 status_code=404,
                 detail="No true-positive predictions match the selected classes at current thresholds.",
+            )
+        if save_selection == "cm_cells":
+            raise HTTPException(
+                status_code=404,
+                detail="No predictions fall into the selected confusion-matrix cells at current thresholds.",
             )
         raise HTTPException(status_code=404, detail="No predictions pass the confidence threshold")
 
