@@ -85,6 +85,7 @@ export function EvaluateModelModal({
   onEvaluateMultiple
 }: EvaluateModelModalProps) {
   const { api } = useApi();
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [evaluationName, setEvaluationName] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<'best' | 'last'>('best');
