@@ -1837,6 +1837,7 @@ const ImageAnnotation = () => {
                 const area = calculatePolygonArea(a.points);
                 totalAreas[a.label] = (totalAreas[a.label] || 0) + area;
               }
+              addImageToClass(a.label, name);
             });
           } catch (err) {
             // ignore parse errors per file
@@ -1847,6 +1848,7 @@ const ImageAnnotation = () => {
       }
 
       setGlobalStats(counts);
+      setClassImageMap(imagesByClass);
       
       // Calculate average areas
       const avgAreas: { [name: string]: number } = {};
