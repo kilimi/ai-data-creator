@@ -3205,7 +3205,8 @@ async def merge_annotation_files_task(
     task_id: int,
     dataset_id: int,
     file_ids: List[str],
-    merged_filename: str
+    merged_filename: str,
+    strategy_cfg: Optional[dict] = None,
 ):
     """Background task to merge annotation files and create a new merged file"""
     # Use a fresh session inside background task
