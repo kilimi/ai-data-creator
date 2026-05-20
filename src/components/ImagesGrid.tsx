@@ -199,11 +199,25 @@ export function ImagesGrid({
   useEffect(() => {
     const el = scrollParentRef.current;
     if (!el) return;
+    // Inside a Radix ScrollArea viewport (display: table), the element itself
+    // shrinks to content width (≈0 with virtualized absolute children), which
+    // would collapse the grid to a single column. Measure the nearest ancestor
+    // that has a real layout width instead.
+    const findSizedAncestor = (start: HTMLElement): HTMLElement => {
+      let node: HTMLElement | null = start.parentElement;
+      while (node) {
+        const w = node.getBoundingClientRect().width;
+        if (w > 0) return node;
+        node = node.parentElement;
+      }
+      return start;
+    };
+    const target = findSizedAncestor(el);
     const observer = new ResizeObserver(([entry]) => {
       setContainerWidth(entry.contentRect.width);
     });
-    observer.observe(el);
-    setContainerWidth(el.getBoundingClientRect().width);
+    observer.observe(target);
+    setContainerWidth(target.getBoundingClientRect().width);
     return () => observer.disconnect();
   }, []);
 
