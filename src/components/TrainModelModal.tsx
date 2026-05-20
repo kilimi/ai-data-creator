@@ -117,6 +117,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [showClassDialog, setShowClassDialog] = useState(false);
   const [classStats, setClassStats] = useState<any | null>(null);
   const [customName, setCustomName] = useState('');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   
   // Track mount state and active fetch operations
   const isMountedRef = useRef(true);
