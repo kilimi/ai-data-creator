@@ -67,8 +67,13 @@ test.describe('Marketing tour', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(500);
 
-    // Create a collection
-    await page.getByRole('button', { name: /add collection/i }).first().click();
+    // Create a collection (empty state shows "Create image layer";
+    // once at least one exists the button becomes "Add Collection").
+    const addCollectionBtn = page
+      .getByRole('button', { name: /create image layer|add collection/i })
+      .first();
+    await expect(addCollectionBtn).toBeVisible({ timeout: 20_000 });
+    await addCollectionBtn.click();
     const collectionNameInput = page.locator('input#tab-name');
     await expect(collectionNameInput).toBeVisible({ timeout: 10_000 });
     await collectionNameInput.fill(COLLECTION_NAME);
