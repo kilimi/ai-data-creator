@@ -73,26 +73,49 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
-      
+
       const fileName = file.name.toLowerCase();
-      const isImageType = file.type.startsWith('image/');
-      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
-      
-      if (!isImageType && !isTiffFile) {
+      // Logos are previewed in a browser <img> tag, so we only accept formats
+      // browsers can actually decode. TIFF is intentionally excluded — it would
+      // upload fine but the preview would stay blank.
+      const allowedExt = /\.(png|jpe?g|webp|gif|svg)$/i;
+      const allowedMime = /^image\/(png|jpe?g|webp|gif|svg\+xml)$/i;
+      const isAllowed = allowedMime.test(file.type) || allowedExt.test(fileName);
+
+      if (!isAllowed) {
+        toast({
+          title: "Unsupported logo format",
+          description: "Use PNG, JPG, WebP, GIF, or SVG. TIFF is not previewable in the browser.",
+          variant: "destructive",
+        });
+        if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
-      
-      if (file.size > 25 * 1024 * 1024) {
+
+      if (file.size > 5 * 1024 * 1024) {
+        toast({
+          title: "Logo too large",
+          description: "Maximum size is 5 MB.",
+          variant: "destructive",
+        });
+        if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
-      
+
       setLogoFile(file);
-      
+
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
           setLogoPreview(event.target.result as string);
         }
+      };
+      reader.onerror = () => {
+        toast({
+          title: "Could not read logo",
+          description: "The file could not be loaded for preview.",
+          variant: "destructive",
+        });
       };
       reader.readAsDataURL(file);
     }
