@@ -38,6 +38,7 @@ export default defineConfig({
   use: {
     baseURL: testWebUrl,
     viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 1,
     video: {
       mode: 'on',
       size: { width: 1920, height: 1080 },
@@ -51,7 +52,12 @@ export default defineConfig({
   projects: [
     {
       name: 'marketing-chromium',
-      use: { ...devices['Desktop Chrome'] },
+      // NOTE: do NOT spread `devices['Desktop Chrome']` here — it forces a
+      // 1280x720 viewport which makes the recording look zoomed in. We want
+      // the 1920x1080 viewport defined in `use` above.
+      use: {
+        channel: 'chromium',
+      },
     },
   ],
   webServer: {
