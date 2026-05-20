@@ -271,7 +271,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,.tif,.tiff"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
                 onChange={handleFileChange}
                 className="hidden"
               />
