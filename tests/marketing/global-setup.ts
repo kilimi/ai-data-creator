@@ -21,12 +21,24 @@ async function globalSetup(_config: FullConfig) {
 
   try {
     const base = apiUrl();
-    console.log('🧹 [marketing] Clearing database...');
-    const clearRes = await page.request.delete(`${base}/database/clear`);
-    if (!clearRes.ok()) {
-      console.warn('⚠️  [marketing] DB clear failed:', clearRes.status());
+
+    // SAFETY: refuse to wipe the dev database. Require an explicit opt-in env var
+    // AND a non-default API URL (test backend on a different port).
+    const explicitOptIn = process.env.MARKETING_ALLOW_DB_CLEAR === '1';
+    const looksLikeDevApi = base.includes('localhost:9999') || base.includes('127.0.0.1:9999');
+    if (!explicitOptIn || looksLikeDevApi) {
+      console.warn(
+        '⛔ [marketing] Skipping DB clear. To wipe, set TEST_API_URL to a test backend ' +
+          '(NOT localhost:9999) and MARKETING_ALLOW_DB_CLEAR=1. Current API:', base,
+      );
     } else {
-      console.log('✅ [marketing] DB cleared');
+      console.log('🧹 [marketing] Clearing database at', base);
+      const clearRes = await page.request.delete(`${base}/database/clear`);
+      if (!clearRes.ok()) {
+        console.warn('⚠️  [marketing] DB clear failed:', clearRes.status());
+      } else {
+        console.log('✅ [marketing] DB cleared');
+      }
     }
 
     // Make sure output dir exists
