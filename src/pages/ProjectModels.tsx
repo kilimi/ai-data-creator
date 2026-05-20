@@ -10,7 +10,8 @@ import { TrainModelModal } from '@/components/TrainModelModal';
 import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { DownloadModelModal } from '@/components/DownloadModelModal';
 import { TestTrainingInferenceModal } from '@/components/TestTrainingInferenceModal';
-import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw } from "lucide-react";
+import { ImportModelModal } from '@/components/ImportModelModal';
+import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw, Upload } from "lucide-react";
 import { TrainingCard } from "@/components/TrainingCard";
 import { Project, DatasetGroup } from '@/types';
 import {
