@@ -43,6 +43,7 @@ export function DatasetForm({ initialData, onSubmit, loading = false, mode = "cr
   const [tagInput, setTagInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tagInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
   
   const form = useForm<DatasetFormValues>({
     resolver: zodResolver(datasetSchema),
