@@ -1201,12 +1201,29 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </Card>
               )}
             </div>
+            )}
 
-            <Separator />
+            {step === 3 && (
+            <div className="space-y-6">
+              {/* Custom Training Name */}
+              <div className="space-y-2">
+                <Label htmlFor="training-name" className="text-base font-medium">Training Name (Optional)</Label>
+                <Input
+                  id="training-name"
+                  type="text"
+                  placeholder="e.g., My Custom YOLO Training"
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  className="bg-background"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave empty to use default name: "[Model] Training - [Date/Time]"
+                </p>
+              </div>
 
-            {/* Dataset Options */}
-            <div className="space-y-4">
-              <Label className="text-base font-medium">Dataset Options</Label>
+              {/* Dataset Options */}
+              <div className="space-y-4">
+                <Label className="text-base font-medium">Dataset Options</Label>
               
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div className="flex items-center space-x-3">
