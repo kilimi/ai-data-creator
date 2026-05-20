@@ -10,7 +10,8 @@ import { TrainModelModal } from '@/components/TrainModelModal';
 import { TrainingDetailsModal } from '@/components/TrainingDetailsModal';
 import { DownloadModelModal } from '@/components/DownloadModelModal';
 import { TestTrainingInferenceModal } from '@/components/TestTrainingInferenceModal';
-import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw } from "lucide-react";
+import { ImportModelModal } from '@/components/ImportModelModal';
+import { AlertCircle, Search, SlidersHorizontal, Brain, Trash2, Pencil, Download, TestTube, RotateCw, Upload } from "lucide-react";
 import { TrainingCard } from "@/components/TrainingCard";
 import { Project, DatasetGroup } from '@/types';
 import {
@@ -107,6 +108,7 @@ export default function ProjectModels() {
   const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
   const [pendingStopTask, setPendingStopTask] = useState<any | null>(null);
   const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
+  const [showImportModelModal, setShowImportModelModal] = useState(false);
 
   const trainingTasksRef = useRef<any[]>([]);
   trainingTasksRef.current = trainingTasks;
@@ -385,6 +387,16 @@ export default function ProjectModels() {
             </SelectContent>
           </Select>
           
+          <Button
+            variant="outline"
+            size="sm"
+            className="whitespace-nowrap ml-2"
+            onClick={() => setShowImportModelModal(true)}
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Import Model
+          </Button>
+
           <Button 
             variant="default" 
             size="sm" 
@@ -534,6 +546,13 @@ export default function ProjectModels() {
         resourcesLoading={modalResourcesLoading}
         projectId={id || ''}
         cloneFromTaskId={trainModalCloneTaskId}
+      />
+
+      <ImportModelModal
+        open={showImportModelModal}
+        onOpenChange={setShowImportModelModal}
+        projectId={id || ''}
+        onImported={() => fetchTrainingTasks()}
       />
 
       {/* Error Details Modal */}

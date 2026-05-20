@@ -47,3 +47,37 @@ jobs:
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "⚠️ Coverage report not generated" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  marketing-tour:
+    runs-on: ubuntu-latest
+    # Marketing tour records screenshots + videos of happy-path flows.
+    # It depends on a running backend (localhost:9999); flows that hit the
+    # backend may fail in CI, so don't block the pipeline on it.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run marketing tour
+        run: npx playwright test --config=playwright.marketing.config.ts
+        env:
+          CI: 'true'
+
+      - name: Upload marketing artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketing-flows
+          path: docs/flows/
+          if-no-files-found: ignore
+          retention-days: 14
