@@ -548,6 +548,13 @@ export default function ProjectModels() {
         cloneFromTaskId={trainModalCloneTaskId}
       />
 
+      <ImportModelModal
+        open={showImportModelModal}
+        onOpenChange={setShowImportModelModal}
+        projectId={id || ''}
+        onImported={() => fetchTrainingTasks()}
+      />
+
       {/* Error Details Modal */}
       <Dialog open={!!selectedTaskError} onOpenChange={() => setSelectedTaskError(null)}>
         <DialogContent className="max-w-2xl">
