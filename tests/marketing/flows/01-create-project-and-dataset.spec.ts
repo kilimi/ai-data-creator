@@ -93,7 +93,9 @@ test.describe('Marketing tour', () => {
     );
 
     // ── 5. Open the project ───────────────────────────────────────────────
-    await page.locator('main').getByRole('link', { name: PROJECT_NAME }).first().click();
+    const projectCard = page.locator('main').getByText(PROJECT_NAME, { exact: false }).first();
+    await projectCard.waitFor({ state: 'visible', timeout: 20_000 });
+    await projectCard.click();
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(800);
     await step(
