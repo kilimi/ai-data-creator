@@ -37,16 +37,16 @@ export default defineConfig({
   outputDir: 'docs/flows/_raw',
   use: {
     baseURL: testWebUrl,
-    viewport: { width: 1440, height: 900 },
+    viewport: { width: 1920, height: 1080 },
     video: {
       mode: 'on',
-      size: { width: 1440, height: 900 },
+      size: { width: 1920, height: 1080 },
     },
     screenshot: 'on',
     trace: 'off',
     actionTimeout: 15_000,
-    // Slow down so cursor/UI changes are visible in recordings
-    launchOptions: { slowMo: 250, ...chromiumLaunchOptions },
+    // Slow down so cursor/UI changes are readable in the recording.
+    launchOptions: { slowMo: 500, ...chromiumLaunchOptions },
   },
   projects: [
     {
