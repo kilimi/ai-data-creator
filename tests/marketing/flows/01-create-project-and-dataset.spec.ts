@@ -72,11 +72,22 @@ test.describe('Marketing tour', () => {
       await page.fill('input[placeholder*="Add tags"]', tag);
       await page.press('input[placeholder*="Add tags"]', 'Enter');
     }
+
+    // Use the first drone image as the project logo so the card has a face.
+    const droneImages = listDroneImages();
+    if (droneImages.length > 0) {
+      const logoInput = page.locator('input#project-logo');
+      if (await logoInput.count()) {
+        await logoInput.setInputFiles(droneImages[0]);
+        await expect(page.locator('img[alt="Logo preview"]')).toBeVisible({ timeout: 5_000 });
+      }
+    }
+
     await step(
       page,
       testInfo,
       'create-project-filled',
-      `Project: “${PROJECT_NAME}” — tagged for drone agriculture detection.`,
+      `Project: “${PROJECT_NAME}” — tagged and with a cover image.`,
     );
 
     // ── 4. Submit project ─────────────────────────────────────────────────

@@ -105,7 +105,7 @@ export async function step(
   const idx = (((testInfo as unknown as { _stepIdx?: number })._stepIdx ?? 0) + 1);
   (testInfo as unknown as { _stepIdx?: number })._stepIdx = idx;
   await caption(page, caption_text, { step: opts.stepNumber ?? idx });
-  await page.waitForTimeout(opts.hold ?? 1200);
+  await page.waitForTimeout(opts.hold ?? 2400);
   await shot(page, testInfo, label);
 }
 
