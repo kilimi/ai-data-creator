@@ -641,6 +641,31 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     });
     setCustomName('');
     setRemoveImagesWithoutAnnotations(true);
+    setStep(1);
+  };
+
+  // Wizard step validity
+  const canLeaveStep1 = selectedDatasets.length > 0
+    && !selectedDatasets.some(s => !s.imageCollection || !s.annotation);
+  const canLeaveStep2 = !!selectedModel;
+
+  const goNext = () => {
+    if (step === 1) {
+      if (selectedDatasets.length === 0) {
+        sonnerToast.error('Select at least one dataset.');
+        return;
+      }
+      const missing = selectedDatasets.find(s => !s.imageCollection || !s.annotation);
+      if (missing) {
+        sonnerToast.error(`Pick image collection and annotation for "${missing.dataset.name}".`);
+        return;
+      }
+    }
+    if (step === 2 && !selectedModel) {
+      sonnerToast.error('Select a model architecture.');
+      return;
+    }
+    setStep(((step + 1) as 1 | 2 | 3));
   };
 
   const fetchDataForSelectionRef = useRef(fetchDataForSelection);
