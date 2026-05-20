@@ -885,29 +885,46 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               Train Model
             </DialogTitle>
             <DialogDescription>
-              Configure datasets and model settings to train a new AI model for your project.
+              Step {step} of 3 — {step === 1 ? 'pick datasets & splits' : step === 2 ? 'choose model architecture & settings' : 'name, options & confirm'}
             </DialogDescription>
           </DialogHeader>
 
+          {/* Stepper */}
+          <div className="flex items-center justify-center gap-1 pb-1">
+            {([
+              { n: 1, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
+              { n: 2, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+              { n: 3, label: 'Options', icon: <Sliders className="w-3.5 h-3.5" /> },
+            ] as const).map((s, i) => {
+              const canJump =
+                s.n < step ||
+                (s.n === 2 && canLeaveStep1) ||
+                (s.n === 3 && canLeaveStep1 && canLeaveStep2);
+              return (
+                <React.Fragment key={s.n}>
+                  <button
+                    type="button"
+                    disabled={!canJump && s.n !== step}
+                    onClick={() => canJump && setStep(s.n as 1 | 2 | 3)}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      step === s.n
+                        ? 'bg-primary text-primary-foreground'
+                        : step > s.n
+                        ? 'bg-muted text-foreground hover:bg-muted/80'
+                        : 'bg-muted/40 text-muted-foreground'
+                    } ${!canJump && s.n !== step ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {step > s.n ? <Check className="w-3.5 h-3.5" /> : s.icon}
+                    {s.label}
+                  </button>
+                  {i < 2 && <div className={`h-px w-8 ${step > s.n ? 'bg-primary' : 'bg-border'}`} />}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
           <div className="space-y-6 py-4">
-            {/* Custom Training Name */}
-            <div className="space-y-2">
-              <Label htmlFor="training-name" className="text-base font-medium">Training Name (Optional)</Label>
-              <Input
-                id="training-name"
-                type="text"
-                placeholder="e.g., My Custom YOLO Training"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                className="bg-background"
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave empty to use default name: "[Model] Training - [Date/Time]"
-              </p>
-            </div>
-
-            <Separator />
-
+            {step === 1 && (
             {/* Dataset Selection */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
