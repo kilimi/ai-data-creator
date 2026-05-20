@@ -147,7 +147,9 @@ test.describe('Marketing tour', () => {
     );
 
     // ── 9. Open the dataset ───────────────────────────────────────────────
-    await page.locator('main').getByRole('link', { name: DATASET_NAME }).first().click();
+    const datasetCard = page.locator('main').getByText(DATASET_NAME, { exact: false }).first();
+    await datasetCard.waitFor({ state: 'visible', timeout: 20_000 });
+    await datasetCard.click();
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(800);
     await step(
