@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { useEffect } from 'react';
 import '@testing-library/jest-dom';
 import { EvaluateModelModal } from '@/components/EvaluateModelModal';
 
@@ -8,15 +9,30 @@ vi.mock('@/hooks/use-api', () => ({
   useApi: () => ({
     api: {
       getAnnotationCollectionCounts: vi.fn().mockResolvedValue({ success: true, data: [] }),
+      getImageCollections: vi.fn().mockResolvedValue({
+        success: true,
+        data: [{ id: 'col1', name: 'Main', is_default: true }],
+      }),
     },
   }),
 }));
 
 // Mock DatasetEvalPicker
 vi.mock('@/components/DatasetEvalPicker', () => ({
-  DatasetEvalPicker: ({ onSelectionChange }: any) => (
-    <div data-testid="dataset-eval-picker">Dataset Eval Picker</div>
-  ),
+  DatasetEvalPicker: ({ onChange }: any) => {
+    useEffect(() => {
+      onChange?.([
+        {
+          datasetId: 1,
+          annotationFileId: 'file1',
+          collectionId: 'col1',
+        },
+      ]);
+      // Trigger initial selection once; rerunning this on every render can loop state updates.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return <div data-testid="dataset-eval-picker">Dataset Eval Picker</div>;
+  },
 }));
 
 // Mock UI components
@@ -46,12 +62,12 @@ vi.mock('@/components/ui/select', () => ({
       {children}
     </select>
   ),
-  SelectContent: ({ children }: any) => <div data-testid="select-content">{children}</div>,
+  SelectContent: ({ children }: any) => <>{children}</>,
   SelectItem: ({ children, value }: any) => (
     <option value={value}>{children}</option>
   ),
-  SelectTrigger: ({ children }: any) => <div data-testid="select-trigger">{children}</div>,
-  SelectValue: ({ placeholder }: any) => <span>{placeholder}</span>,
+  SelectTrigger: ({ children }: any) => <>{children}</>,
+  SelectValue: ({ placeholder }: any) => <>{placeholder}</>,
 }));
 
 vi.mock('@/components/ui/input', () => ({
@@ -95,6 +111,10 @@ vi.mock('lucide-react', () => ({
   Database: () => <span data-testid="database-icon">Database</span>,
   ChevronDown: () => <span data-testid="chevron-down-icon">ChevronDown</span>,
   ChevronUp: () => <span data-testid="chevron-up-icon">ChevronUp</span>,
+  ArrowLeft: () => <span data-testid="arrow-left-icon">ArrowLeft</span>,
+  ArrowRight: () => <span data-testid="arrow-right-icon">ArrowRight</span>,
+  Check: () => <span data-testid="check-icon">Check</span>,
+  Sliders: () => <span data-testid="sliders-icon">Sliders</span>,
   X: () => <span data-testid="x-icon">X</span>,
 }));
 
@@ -143,30 +163,56 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: [{ className: 'cat' }] }),
+    }) as any;
   });
+
+  const goToSettingsStep = async () => {
+    await waitFor(() => {
+      expect(screen.getByText(/1 dataset\(s\) selected\./i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    const selects = await screen.findAllByTestId('select');
+    fireEvent.change(selects[0], { target: { value: '1' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('nms-iou-threshold')).toBeInTheDocument();
+    });
+  };
 
   it('renders NMS IoU threshold slider', () => {
     render(<EvaluateModelModal {...defaultProps} />);
-    
-    const nmsSlider = screen.getByTestId('nms-iou-threshold');
-    expect(nmsSlider).toBeInTheDocument();
+
+    return goToSettingsStep().then(() => {
+      const nmsSlider = screen.getByTestId('nms-iou-threshold');
+      expect(nmsSlider).toBeInTheDocument();
+    });
   });
 
-  it('has correct default value for NMS IoU threshold (0.45)', () => {
+  it('has correct default value for NMS IoU threshold (0.45)', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     const nmsSlider = screen.getByTestId('nms-iou-threshold') as HTMLInputElement;
     expect(nmsSlider.value).toBe('0.45');
   });
 
-  it('displays NMS IoU threshold value in label', () => {
+  it('displays NMS IoU threshold value in label', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     expect(screen.getByText(/NMS IoU Threshold: 0.45/i)).toBeInTheDocument();
   });
 
-  it('updates NMS IoU threshold when slider changes', () => {
+  it('updates NMS IoU threshold when slider changes', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     const nmsSlider = screen.getByTestId('nms-iou-threshold');
     
@@ -176,8 +222,9 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
     expect(screen.getByText(/NMS IoU Threshold: 0.60/i)).toBeInTheDocument();
   });
 
-  it('has separate slider for matching IoU threshold', () => {
+  it('has separate slider for matching IoU threshold', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     const iouSlider = screen.getByTestId('iou-threshold');
     const nmsSlider = screen.getByTestId('nms-iou-threshold');
@@ -187,8 +234,9 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
     expect(iouSlider).not.toBe(nmsSlider);
   });
 
-  it('can set different values for IoU threshold and NMS IoU threshold', () => {
+  it('can set different values for IoU threshold and NMS IoU threshold', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     const iouSlider = screen.getByTestId('iou-threshold') as HTMLInputElement;
     const nmsSlider = screen.getByTestId('nms-iou-threshold') as HTMLInputElement;
@@ -205,6 +253,7 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
 
   it('includes NMS IoU threshold in single evaluation API call', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     // Select model and dataset (simplified for test)
     const nmsSlider = screen.getByTestId('nms-iou-threshold');
@@ -216,16 +265,18 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
     expect(nmsSlider).toHaveValue('0.5');
   });
 
-  it('shows helpful description for NMS IoU threshold', () => {
+  it('shows helpful description for NMS IoU threshold', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     expect(
       screen.getByText(/IoU threshold for Non-Maximum Suppression/i)
     ).toBeInTheDocument();
   });
 
-  it('shows helpful description distinguishing matching IoU from NMS IoU', () => {
+  it('shows helpful description distinguishing matching IoU from NMS IoU', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     // Check for matching IoU description
     expect(
@@ -240,6 +291,7 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
 
   it('resets NMS IoU threshold to default (0.45) when form is reset', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     const nmsSlider = screen.getByTestId('nms-iou-threshold') as HTMLInputElement;
     
@@ -252,8 +304,9 @@ describe('EvaluateModelModal - NMS IoU Threshold', () => {
     // For testing, we verify the state management is correct
   });
 
-  it('has slider range from 0 to 1 with 0.05 step', () => {
+  it('has slider range from 0 to 1 with 0.05 step', async () => {
     render(<EvaluateModelModal {...defaultProps} />);
+    await goToSettingsStep();
     
     const nmsSlider = screen.getByTestId('nms-iou-threshold');
     

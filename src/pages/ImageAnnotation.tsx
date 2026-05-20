@@ -62,7 +62,6 @@ import {
   Pencil,
   SkipForward,
   Filter as FilterIcon,
-  ArrowRight
 } from 'lucide-react';
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
@@ -129,6 +128,28 @@ function pickPreferredRgbCollection(collections: ImageCollection[]): ImageCollec
   if (byDefault) return byDefault;
   // If no RGB-like layer exists, lock to the first layer as ordered by backend.
   return collections[0];
+}
+
+export function resolveClassFilterToggleNavigation(
+  baseNavigableImageNames: string[],
+  classImageMap: { [className: string]: Set<string> },
+  currentFilterName: string | null,
+  targetClassName: string
+): {
+  nextFilterName: string | null;
+  nextList: string[];
+  firstImage: string | null;
+} {
+  const nextFilterName = currentFilterName === targetClassName ? null : targetClassName;
+  const nextFilterSet = nextFilterName ? classImageMap[nextFilterName] : null;
+  const nextList = nextFilterSet && nextFilterSet.size > 0
+    ? baseNavigableImageNames.filter((n) => nextFilterSet.has(n))
+    : baseNavigableImageNames;
+  return {
+    nextFilterName,
+    nextList,
+    firstImage: nextList.length > 0 ? nextList[0] : null,
+  };
 }
 
 function baseNameNoExt(fileName: string): string {
@@ -370,6 +391,19 @@ const ImageAnnotation = () => {
   const [datasetName, setDatasetName] = useState<string>("");
   const [projectName, setProjectName] = useState<string>("");
 
+  const baseNavigableImageNames = useMemo(() => {
+    const mainLayerCollection = imageCollections.find(c => String(c.id) === String(mainLayer));
+    return mainLayerCollection && mainLayerCollection.images.length > 0
+      ? mainLayerCollection.images.map(img => img.fileName).sort()
+      : allImageNames;
+  }, [imageCollections, mainLayer, allImageNames]);
+
+  const navigableImageNames = useMemo(() => {
+    const filterSet = classFilterName ? classImageMap[classFilterName] : null;
+    if (!filterSet || filterSet.size === 0) return baseNavigableImageNames;
+    return baseNavigableImageNames.filter(name => filterSet.has(name));
+  }, [baseNavigableImageNames, classFilterName, classImageMap]);
+
   // When an annotation is selected (e.g., by clicking on canvas), scroll only the right list container
   useEffect(() => {
     if (!selectedAnnotation) return;
@@ -545,6 +579,28 @@ const ImageAnnotation = () => {
 
   // Delete all annotations confirmation dialog state
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const [showDeleteAnnotationDialog, setShowDeleteAnnotationDialog] = useState(false);
+  const [pendingDeleteAnnotationId, setPendingDeleteAnnotationId] = useState<string | null>(null);
+  const [skipDeleteAnnotationConfirm, setSkipDeleteAnnotationConfirm] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    try {
+      const raw = localStorage.getItem(`segmentation_skip_delete_confirm_${id}`);
+      setSkipDeleteAnnotationConfirm(raw === '1');
+    } catch {
+      // no-op
+    }
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    try {
+      localStorage.setItem(`segmentation_skip_delete_confirm_${id}`, skipDeleteAnnotationConfirm ? '1' : '0');
+    } catch {
+      // no-op
+    }
+  }, [id, skipDeleteAnnotationConfirm]);
 
   // Helper function to safely save to localStorage with quota handling
   const safeLocalStorageSet = (key: string, value: string) => {
@@ -1258,11 +1314,7 @@ const ImageAnnotation = () => {
     // Skip during initial load to prevent flickering
     if (isInitialLoad) return;
 
-    const mainLayerCollection = imageCollections.find(c => String(c.id) === String(mainLayer));
-    const imageList =
-      mainLayerCollection && mainLayerCollection.images.length > 0
-        ? mainLayerCollection.images.map(img => img.fileName).sort()
-        : allImageNames;
+    const imageList = navigableImageNames;
     if (imageList.length > 0 && currentImageIndex < imageList.length) {
       const imageName = imageList[currentImageIndex];
 
@@ -1273,7 +1325,7 @@ const ImageAnnotation = () => {
       }
       updateCurrentImages(imageName, displayLayer, imageCollections);
     }
-  }, [currentImageIndex, allImageNames, mainLayer, displayLayer, imageCollections, isInitialLoad]);
+  }, [currentImageIndex, navigableImageNames, displayLayer, imageCollections, isInitialLoad]);
 
   // Reload annotations for the new collection when displayLayer changes (e.g. user clicks a layer tab)
   useEffect(() => {
@@ -1292,21 +1344,30 @@ const ImageAnnotation = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayLayer]);
 
-  // Update current index when layer changes to maintain the same image if possible
+  // Keep index aligned when the navigable list itself changes (layer/filter updates).
+  // Do not react to every currentImageName/currentImageIndex change, otherwise
+  // this effect can fight the index->name effect above and cause 2-image ping-pong.
   useEffect(() => {
     // Skip during initial load to prevent flickering
     if (isInitialLoad) return;
-    
-    if (currentLayerImageNames.length > 0 && currentImageName) {
-      const newIndex = currentLayerImageNames.findIndex(name => name === currentImageName);
-      if (newIndex !== -1 && newIndex !== currentImageIndex) {
-        setCurrentImageIndex(newIndex);
-      } else if (newIndex === -1) {
-        // Current image not found in main layer, this shouldn't happen but handle gracefully
-        setCurrentImageIndex(0);
-      }
+
+    const list = navigableImageNames;
+    if (list.length === 0) return;
+
+    const name = currentImageNameRef.current;
+    if (!name) {
+      setCurrentImageIndex(0);
+      return;
     }
-  }, [currentLayerImageNames, isInitialLoad]);
+
+    const newIndex = list.findIndex((n) => n === name);
+    if (newIndex === -1) {
+      setCurrentImageIndex(0);
+      return;
+    }
+
+    setCurrentImageIndex((prev) => (prev !== newIndex ? newIndex : prev));
+  }, [navigableImageNames, isInitialLoad]);
 
 
   const updateCurrentImages = (imageName: string, layerId: string, collections: ImageCollection[]) => {
@@ -3192,7 +3253,7 @@ const ImageAnnotation = () => {
         if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('polygon');
       } else if (e.key === 'b' || e.key === 'B') {
         if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('pencil');
-      } else if (e.key === 'a' || e.key === 'A') {
+      } else if (e.key === 'g' || e.key === 'G') {
         if (ensureClassForDrawingTools()) setActiveTool('auto-segment');
       } else if ((e.key === 'r' || e.key === 'R') && !isDrawing) {
         resetZoomAndPan();
@@ -3659,6 +3720,24 @@ const ImageAnnotation = () => {
     });
   };
 
+  const requestDeleteAnnotation = useCallback((annotationId: string) => {
+    if (!annotationId) return;
+    if (skipDeleteAnnotationConfirm) {
+      deleteAnnotation(annotationId);
+      return;
+    }
+    setPendingDeleteAnnotationId(annotationId);
+    setShowDeleteAnnotationDialog(true);
+  }, [skipDeleteAnnotationConfirm, annotations, currentImageName, classes, selectedAnnotation]);
+
+  const confirmDeleteAnnotation = useCallback(() => {
+    if (pendingDeleteAnnotationId) {
+      deleteAnnotation(pendingDeleteAnnotationId);
+    }
+    setPendingDeleteAnnotationId(null);
+    setShowDeleteAnnotationDialog(false);
+  }, [pendingDeleteAnnotationId, annotations, currentImageName, classes, selectedAnnotation]);
+
   // Keyboard shortcut for deleting selected annotation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -3666,16 +3745,13 @@ const ImageAnnotation = () => {
       if (event.key === 'Delete' && selectedAnnotation && 
           !(event.target as HTMLElement)?.tagName.match(/INPUT|TEXTAREA|SELECT/)) {
         event.preventDefault();
-        const confirmed = window.confirm('Delete this annotation? This cannot be undone.');
-        if (confirmed) {
-          deleteAnnotation(selectedAnnotation);
-        }
+        requestDeleteAnnotation(selectedAnnotation);
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedAnnotation]);
+  }, [selectedAnnotation, requestDeleteAnnotation]);
 
   // Track if we should preserve zoom on resize vs reset to fit-to-screen
   const preserveZoomRef = useRef(false);
@@ -5017,7 +5093,7 @@ const ImageAnnotation = () => {
       return;
     }
     if (currentImageName && filterSet.has(currentImageName)) return;
-    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    const imageList = navigableImageNames;
     const target = imageList.find(n => filterSet.has(n));
     if (!target) return;
     const idx = imageList.findIndex(n => n === target);
@@ -5029,10 +5105,10 @@ const ImageAnnotation = () => {
       loadAnnotationsForImage(target);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [classFilterName, classImageMap]);
+  }, [classFilterName, classImageMap, navigableImageNames]);
 
   const navigateImage = useCallback(async (direction: 'prev' | 'next') => {
-    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    const imageList = navigableImageNames;
     if (imageList.length === 0) return;
     
     // Save current image annotations to localStorage and database before navigating
@@ -5078,27 +5154,10 @@ const ImageAnnotation = () => {
     
     // Determine target image. When a class filter is active, navigate only through
     // images that contain that class (intersected with the current layer's images).
-    const filterSet = classFilterName ? classImageMap[classFilterName] : null;
-    const filteredList = filterSet && filterSet.size > 0
-      ? imageList.filter(n => filterSet.has(n))
-      : imageList;
-
     let newIndex: number;
-    if (filteredList === imageList) {
-      newIndex = direction === 'next'
-        ? Math.min(currentImageIndex + 1, imageList.length - 1)
-        : Math.max(currentImageIndex - 1, 0);
-    } else {
-      const posInFiltered = filteredList.findIndex(n => n === currentImageName);
-      const targetPos = posInFiltered === -1
-        ? (direction === 'next' ? 0 : filteredList.length - 1)
-        : direction === 'next'
-          ? Math.min(posInFiltered + 1, filteredList.length - 1)
-          : Math.max(posInFiltered - 1, 0);
-      const targetName = filteredList[targetPos];
-      const targetIdx = imageList.findIndex(n => n === targetName);
-      newIndex = targetIdx === -1 ? currentImageIndex : targetIdx;
-    }
+    newIndex = direction === 'next'
+      ? Math.min(currentImageIndex + 1, imageList.length - 1)
+      : Math.max(currentImageIndex - 1, 0);
 
     // Clean up localStorage - remove cached annotations for images that are far away (more than 5 images)
     try {
@@ -5127,7 +5186,7 @@ const ImageAnnotation = () => {
     
     // Load annotations for the new image
     loadAnnotationsForImage(newImageName);
-  }, [currentImageIndex, currentLayerImageNames, allImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId, classFilterName, classImageMap]);
+  }, [currentImageIndex, navigableImageNames, displayLayer, imageCollections, loadAnnotationsForImage, currentImageName, annotations, id, annotationId, hasUnsavedChanges, saveCurrentImageToDatabase, annotationStorageCollId]);
 
   // Keyboard shortcuts: Arrow keys or A/D for previous/next image navigation
   useEffect(() => {
@@ -5220,7 +5279,7 @@ const ImageAnnotation = () => {
   }, [id, annotationStorageCollId, currentImageName, annotations.length]);
 
   const goToNextUnannotated = async () => {
-    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    const imageList = navigableImageNames;
     for (let i = currentImageIndex + 1; i < imageList.length; i++) {
       if (!isImageAnnotated(imageList[i])) {
         await goToImage(i);
@@ -5231,7 +5290,7 @@ const ImageAnnotation = () => {
   };
 
   const goToImage = async (index: number) => {
-    const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
+    const imageList = navigableImageNames;
     if (index >= 0 && index < imageList.length) {
       // Save current image annotations to localStorage and database before navigating
       if (currentImageName) {
@@ -5493,7 +5552,7 @@ const ImageAnnotation = () => {
                 <ul className="space-y-1.5">
                   <li className="flex justify-between"><span>Select</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">V</kbd></li>
                   <li className="flex justify-between"><span>Polygon</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">P</kbd></li>
-                  <li className="flex justify-between"><span>SAM (auto-segment)</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">A</kbd></li>
+                  <li className="flex justify-between"><span>SAM (auto-segment)</span><kbd className="px-1.5 py-0.5 bg-muted rounded text-xs">G</kbd></li>
                 </ul>
               </section>
               <section>
@@ -5778,7 +5837,7 @@ const ImageAnnotation = () => {
                 title={
                   isSamProcessing
                     ? 'Processing segmentation...'
-                    : 'AI Segment — click on image to segment (A)'
+                    : 'AI Segment — click on image to segment (G)'
                 }
               >
                 {isSamProcessing ? (
@@ -5790,7 +5849,7 @@ const ImageAnnotation = () => {
                   <>
                     <Hexagon className="w-4 h-4 mr-1" />
                     <span className="flex-1 text-left">AI Segment</span>
-                    <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">A</kbd>
+                    <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">G</kbd>
                   </>
                 )}
               </Button>
@@ -6000,13 +6059,21 @@ const ImageAnnotation = () => {
                     <span className="truncate">
                       Navigating images with{' '}
                       <strong>{classFilterName}</strong>{' '}
-                      <span className="text-muted-foreground">
-                        ({classImageMap[classFilterName]?.size ?? 0})
-                      </span>
                     </span>
                   </span>
                   <button
-                    onClick={() => setClassFilterName(null)}
+                    onClick={() => {
+                      const nextList = baseNavigableImageNames;
+                      setClassFilterName(null);
+                      if (nextList.length > 0) {
+                        const first = nextList[0];
+                        setCurrentImageIndex(0);
+                        setCurrentImageName(first);
+                        currentImageNameRef.current = first;
+                        updateCurrentImages(first, displayLayer, imageCollections);
+                        loadAnnotationsForImage(first);
+                      }
+                    }}
                     className="text-primary hover:underline shrink-0 ml-2"
                   >
                     Clear
@@ -6168,12 +6235,26 @@ const ImageAnnotation = () => {
                               className={`h-6 w-6 p-0 hover:bg-muted ${classFilterName === classObj.name ? 'bg-primary/15 ring-1 ring-primary/40' : ''}`}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setClassFilterName(prev => prev === classObj.name ? null : classObj.name);
+                                const nav = resolveClassFilterToggleNavigation(
+                                  baseNavigableImageNames,
+                                  classImageMap,
+                                  classFilterName,
+                                  classObj.name,
+                                );
+                                setClassFilterName(nav.nextFilterName);
+                                if (nav.firstImage) {
+                                  const first = nav.firstImage;
+                                  setCurrentImageIndex(0);
+                                  setCurrentImageName(first);
+                                  currentImageNameRef.current = first;
+                                  updateCurrentImages(first, displayLayer, imageCollections);
+                                  loadAnnotationsForImage(first);
+                                }
                               }}
                               title={
                                 classFilterName === classObj.name
                                   ? 'Clear class filter — show all images'
-                                  : `Navigate only images containing "${classObj.name}" (${classImageMap[classObj.name]?.size ?? 0} images)`
+                                  : `Navigate only images containing "${classObj.name}"`
                               }
                             >
                               <FilterIcon className={`w-3 h-3 ${classFilterName === classObj.name ? 'text-primary' : 'text-muted-foreground'}`} />
@@ -6209,42 +6290,6 @@ const ImageAnnotation = () => {
                          </div>
                          )}
                        </div>
-                        {/* Jump-to-next-image chip: one-shot navigation, cycles through images containing this class */}
-                        {editingClassId !== classObj.id && (classImageMap[classObj.name]?.size ?? 0) > 0 && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const filterSet = classImageMap[classObj.name];
-                              if (!filterSet || filterSet.size === 0) return;
-                              const imageList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
-                              const matches = imageList.filter(n => filterSet.has(n));
-                              if (matches.length === 0) return;
-                              const curPos = matches.findIndex(n => n === currentImageName);
-                              const nextName = matches[(curPos + 1) % matches.length];
-                              const nextIdx = imageList.findIndex(n => n === nextName);
-                              if (nextIdx < 0 || nextName === currentImageName) {
-                                toast({ title: 'Only one image', description: `"${classObj.name}" appears in just this image.` });
-                                return;
-                              }
-                              setCurrentImageIndex(nextIdx);
-                              setCurrentImageName(nextName);
-                              currentImageNameRef.current = nextName;
-                              updateCurrentImages(nextName, displayLayer, imageCollections);
-                              loadAnnotationsForImage(nextName);
-                            }}
-                            title={`Jump to next image containing "${classObj.name}" (${classImageMap[classObj.name]?.size ?? 0} images total)`}
-                            className="mt-1.5 w-full flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs transition-colors border bg-muted/40 border-border/60 text-muted-foreground hover:bg-primary/10 hover:border-primary/40 hover:text-primary"
-                          >
-                            <span className="flex items-center gap-1.5 min-w-0">
-                              <ArrowRight className="h-3 w-3 shrink-0" />
-                              <span className="truncate">Go to image with this class</span>
-                            </span>
-                            <span className="shrink-0 font-medium">
-                              {classImageMap[classObj.name]?.size ?? 0}
-                            </span>
-                          </button>
-                        )}
                      </div>
                    ))}
               </div>
@@ -6704,9 +6749,7 @@ const ImageAnnotation = () => {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-4 flex-wrap">
                 {(() => {
-                  const baseList = currentLayerImageNames.length > 0 ? currentLayerImageNames : allImageNames;
-                  const filterSet = classFilterName ? classImageMap[classFilterName] : null;
-                  const filteredList = filterSet && filterSet.size > 0 ? baseList.filter(n => filterSet.has(n)) : baseList;
+                  const filteredList = navigableImageNames;
                   const posInFiltered = filteredList.findIndex(n => n === currentImageName);
                   const displayPos = posInFiltered === -1 ? currentImageIndex : posInFiltered;
                   const displayTotal = filteredList.length;
@@ -6765,9 +6808,16 @@ const ImageAnnotation = () => {
                   variant="secondary"
                   size="sm"
                   onClick={goToNextUnannotated}
-                  disabled={currentImageIndex === (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
+                  disabled={
+                    !!classFilterName ||
+                    currentImageIndex === navigableImageNames.length - 1
+                  }
                   aria-label="Next unannotated image"
-                  title="Jump to the next image with no annotations"
+                  title={
+                    classFilterName
+                      ? `Unavailable while filtering images by class: ${classFilterName}`
+                      : 'Jump to the next image with no annotations'
+                  }
                 >
                   <SkipForward className="h-4 w-4 mr-1" />
                   Next unannotated
@@ -7030,7 +7080,7 @@ const ImageAnnotation = () => {
                                 className="w-7 h-7 p-0 hover:bg-red-600/20 hover:text-red-400"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  deleteAnnotation(annotation.id);
+                                  requestDeleteAnnotation(annotation.id);
                                 }}
                                 title="Delete annotation"
                               >
@@ -7348,6 +7398,49 @@ const ImageAnnotation = () => {
             </AlertDialogCancel>
             <Button variant="destructive" onClick={deleteCurrentImageAnnotations}>
               Delete All
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Single Annotation Confirmation Dialog */}
+      <AlertDialog
+        open={showDeleteAnnotationDialog}
+        onOpenChange={(open) => {
+          setShowDeleteAnnotationDialog(open);
+          if (!open) setPendingDeleteAnnotationId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Annotation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will delete the selected annotation from image "{currentImageName}".
+              <br />
+              <span className="text-destructive font-medium">This action cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={skipDeleteAnnotationConfirm}
+              onChange={(e) => setSkipDeleteAnnotationConfirm(e.target.checked)}
+            />
+            Don't ask again
+          </label>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setShowDeleteAnnotationDialog(false);
+                setPendingDeleteAnnotationId(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <Button variant="destructive" onClick={confirmDeleteAnnotation}>
+              Delete
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

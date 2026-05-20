@@ -182,13 +182,21 @@ export function ResizableDatasetLayout({
    * lazy-load per-page annotations. In tabbed mode pagination lives per
    * collection (inside `imageCollections[*].paginatedImages`), so using only the
    * legacy `paginatedImages` prop keeps it stuck on page 1 ids.
+   * 
+   * IMPORTANT: When the modal is open (selectedImageIndex !== null), we pass ALL
+   * image IDs instead of just the current page. This prevents annotations from
+   * disappearing when navigating between pages in the modal via Next/Prev.
    */
   const currentPageImageIdsForAnnotations = useMemo(() => {
+    // When modal is open, load all annotations to allow smooth navigation
+    const isModalOpen = selectedImageIndex !== null;
+    
     if (useTabbedImages && imageCollections && imageCollections.length > 0) {
       const ids = new Set<string>();
       for (const collection of imageCollections) {
-        const currentPageImages = collection.paginatedImages || [];
-        for (const img of currentPageImages) {
+        // If modal is open, use all images; otherwise just current page
+        const imagesToUse = isModalOpen ? collection.images : collection.paginatedImages || [];
+        for (const img of imagesToUse) {
           ids.add(String(img.id));
         }
       }
@@ -197,8 +205,12 @@ export function ResizableDatasetLayout({
     if (useTabbedImages && (!imageCollections || imageCollections.length === 0)) {
       return [];
     }
+    // If modal is open, return all image IDs; otherwise just current page
+    if (isModalOpen) {
+      return images.map((img) => String(img.id));
+    }
     return paginatedImages.map((img) => String(img.id));
-  }, [useTabbedImages, imageCollections, paginatedImages]);
+  }, [useTabbedImages, imageCollections, paginatedImages, selectedImageIndex, images]);
   
   const renderAnnotationsSection = () => (
     <ScrollArea className="h-full w-full">

@@ -29,7 +29,7 @@ interface RFDETRSettingsDialogProps {
 export function RFDETRSettingsDialog({ open, onOpenChange, onSettingsUpdate }: RFDETRSettingsDialogProps) {
   const [variant, setVariant] = useState('rtdetr-l');
   const [imageSize, setImageSize] = useState('640');
-  const [epochs, setEpochs] = useState('300');
+  const [epochs, setEpochs] = useState('100');
   const [batchSize, setBatchSize] = useState('16');
 
   const handleSave = () => {

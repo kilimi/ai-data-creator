@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -7,29 +7,32 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ExportProvider } from "@/contexts/ExportContext";
 import { ApiProvider } from "@/contexts/ApiContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { lazyWithReloadRetry } from "@/lib/lazyWithReloadRetry";
 
-const Index = lazy(() => import("./pages/Index"));
-const CreateProject = lazy(() => import("./pages/CreateProject"));
-const CreateDataset = lazy(() => import("./pages/CreateDataset"));
-const ProjectLayout = lazy(() =>
+const Index = lazyWithReloadRetry(() => import("./pages/Index"), "Index");
+const CreateProject = lazyWithReloadRetry(() => import("./pages/CreateProject"), "CreateProject");
+const CreateDataset = lazyWithReloadRetry(() => import("./pages/CreateDataset"), "CreateDataset");
+const ProjectLayout = lazyWithReloadRetry(() =>
   import("./components/ProjectLayout").then((m) => ({ default: m.ProjectLayout })),
+  "ProjectLayout",
 );
-const ProjectDatasets = lazy(() => import("./pages/ProjectDatasets"));
-const ProjectModels = lazy(() => import("./pages/ProjectModels"));
-const ProjectEvaluations = lazy(() => import("./pages/ProjectEvaluations"));
-const ProjectExports = lazy(() => import("./pages/ProjectExports"));
-const EditDataset = lazy(() => import("./pages/EditDataset"));
-const Dataset = lazy(() => import("@/pages/Dataset"));
-const ImageAnnotation = lazy(() => import("./pages/ImageAnnotation"));
-const AnnotationChoice = lazy(() => import("./pages/AnnotationChoice"));
-const Classification = lazy(() => import("./pages/Classification"));
-const ApiSettings = lazy(() =>
+const ProjectDatasets = lazyWithReloadRetry(() => import("./pages/ProjectDatasets"), "ProjectDatasets");
+const ProjectModels = lazyWithReloadRetry(() => import("./pages/ProjectModels"), "ProjectModels");
+const ProjectEvaluations = lazyWithReloadRetry(() => import("./pages/ProjectEvaluations"), "ProjectEvaluations");
+const ProjectExports = lazyWithReloadRetry(() => import("./pages/ProjectExports"), "ProjectExports");
+const EditDataset = lazyWithReloadRetry(() => import("./pages/EditDataset"), "EditDataset");
+const Dataset = lazyWithReloadRetry(() => import("@/pages/Dataset"), "Dataset");
+const ImageAnnotation = lazyWithReloadRetry(() => import("./pages/ImageAnnotation"), "ImageAnnotation");
+const AnnotationChoice = lazyWithReloadRetry(() => import("./pages/AnnotationChoice"), "AnnotationChoice");
+const Classification = lazyWithReloadRetry(() => import("./pages/Classification"), "Classification");
+const ApiSettings = lazyWithReloadRetry(() =>
   import("./pages/ApiSettings").then((m) => ({ default: m.ApiSettings })),
+  "ApiSettings",
 );
-const NotFound = lazy(() => import("./pages/NotFound"));
-const HelpPage = lazy(() => import("./pages/help/HelpPage"));
-const Performance = lazy(() => import('./pages/Performance'));
-const SystemModels = lazy(() => import('./pages/SystemModels'));
+const NotFound = lazyWithReloadRetry(() => import("./pages/NotFound"), "NotFound");
+const HelpPage = lazyWithReloadRetry(() => import("./pages/help/HelpPage"), "HelpPage");
+const Performance = lazyWithReloadRetry(() => import('./pages/Performance'), "Performance");
+const SystemModels = lazyWithReloadRetry(() => import('./pages/SystemModels'), "SystemModels");
 function RouteFallback() {
   return (
     <div

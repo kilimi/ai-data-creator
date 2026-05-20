@@ -443,7 +443,7 @@ export default function ProjectModels() {
       </div>
 
       {/* Content */}
-      {loadingTasks ? (
+      {loadingTasks && trainingTasks.length === 0 ? (
         <div className="text-center py-16">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground mt-4">Loading training tasks...</p>

@@ -9,22 +9,24 @@ import { Upload, Tag, Edit, Trash2, Eye, EyeOff, Download, Square, Loader, Brush
 import { Link } from "react-router-dom";
 import { HelpHint } from "@/components/ui/help-hint";
 import { AnnotationFileCard, AnnotationFileSkeleton } from "@/components/AnnotationFileCard";
-import { lazy } from "react";
-const SplitAnnotationDialog = lazy(() => import("@/components/SplitAnnotationDialog").then(m => ({ default: m.SplitAnnotationDialog })));
-const CompareAnnotationsDialog = lazy(() => import("@/components/CompareAnnotationsDialog").then(m => ({ default: m.CompareAnnotationsDialog })));
-const MergeStrategyDialog = lazy(() => import("@/components/MergeStrategyDialog").then(m => ({ default: m.MergeStrategyDialog })));
-const MergeClassesDialog = lazy(() => import("./MergeClassesDialog").then(m => ({ default: m.MergeClassesDialog })));
-const AnnotationsUploadDialog = lazy(() => import("@/components/AnnotationsUploadDialog").then(m => ({ default: m.AnnotationsUploadDialog })));
-const ClassColorPicker = lazy(() => import("@/components/ClassColorPicker").then(m => ({ default: m.ClassColorPicker })));
-const ClassColorOpacityPicker = lazy(() => import("@/components/ClassColorOpacityPicker").then(m => ({ default: m.ClassColorOpacityPicker })));
-const RenameClassDialog = lazy(() => import("./RenameClassDialog").then(m => ({ default: m.RenameClassDialog })));
-const AnnotationTagsDialog = lazy(() => import("./AnnotationTagsDialog").then(m => ({ default: m.AnnotationTagsDialog })));
+import { lazyWithReloadRetry } from "@/lib/lazyWithReloadRetry";
+const SplitAnnotationDialog = lazyWithReloadRetry(() => import("@/components/SplitAnnotationDialog").then(m => ({ default: m.SplitAnnotationDialog })), "SplitAnnotationDialog");
+const CompareAnnotationsDialog = lazyWithReloadRetry(() => import("@/components/CompareAnnotationsDialog").then(m => ({ default: m.CompareAnnotationsDialog })), "CompareAnnotationsDialog");
+const MergeStrategyDialog = lazyWithReloadRetry(() => import("@/components/MergeStrategyDialog").then(m => ({ default: m.MergeStrategyDialog })), "MergeStrategyDialog");
+const MergeClassesDialog = lazyWithReloadRetry(() => import("./MergeClassesDialog").then(m => ({ default: m.MergeClassesDialog })), "MergeClassesDialog");
+const AnnotationsUploadDialog = lazyWithReloadRetry(() => import("@/components/AnnotationsUploadDialog").then(m => ({ default: m.AnnotationsUploadDialog })), "AnnotationsUploadDialog");
+const ClassColorPicker = lazyWithReloadRetry(() => import("@/components/ClassColorPicker").then(m => ({ default: m.ClassColorPicker })), "ClassColorPicker");
+const ClassColorOpacityPicker = lazyWithReloadRetry(() => import("@/components/ClassColorOpacityPicker").then(m => ({ default: m.ClassColorOpacityPicker })), "ClassColorOpacityPicker");
+const RenameClassDialog = lazyWithReloadRetry(() => import("./RenameClassDialog").then(m => ({ default: m.RenameClassDialog })), "RenameClassDialog");
+const AnnotationTagsDialog = lazyWithReloadRetry(() => import("./AnnotationTagsDialog").then(m => ({ default: m.AnnotationTagsDialog })), "AnnotationTagsDialog");
 import { type MergeStrategyConfig } from "@/utils/annotationMergeStrategies";
 import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
 import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
+import { mergeAnnotationSamples } from "@/utils/mergeAnnotationSamples";
+import { downloadCocoFile, buildCocoFromSamples, validateCocoData } from "@/utils/downloadCoco";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AnnotationFilters } from "./AnnotationFilters";
 import { useApi } from "@/hooks/use-api";
@@ -414,23 +416,26 @@ export function AnnotationsContent({
           
           setLastLoadedPageIds([...currentPageImageIds]);
           
-          // Update the file with the loaded samples and mark as loaded
+          // Merge newly loaded page samples into the in-memory cache instead of
+          // replacing, so modal next/prev keeps annotations across page changes.
           const updatedFiles = annotationFiles.map(f => 
-            f.id === fileId 
-              ? { 
+            f.id === fileId
+              ? (() => {
+                  const mergedSamples = mergeAnnotationSamples(f.samples || [], currentPageAnnotations);
+                  return {
                   ...f, 
-                  samples: currentPageAnnotations, 
+                  samples: mergedSamples,
                   classColors: updatedClassColors, // Save the updated colors
                   // Use the bbox state parameter if provided, otherwise preserve current state
                   showBboxes: currentBboxState !== undefined ? currentBboxState : f.showBboxes,
                   currentPageLoaded: true,
                   isLoadingCurrentPage: false,
                   // Re-detect type now that we have samples loaded
-                  type: currentPageAnnotations.length > 0 ? (() => {
-                    const hasSegmentation = currentPageAnnotations.some(sample => 
+                  type: mergedSamples.length > 0 ? (() => {
+                    const hasSegmentation = mergedSamples.some(sample => 
                       sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
                     );
-                    const hasMeaningfulBbox = currentPageAnnotations.some(sample => 
+                    const hasMeaningfulBbox = mergedSamples.some(sample => 
                       sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
                       (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
                     );
@@ -445,7 +450,8 @@ export function AnnotationsContent({
                       return 'classification';
                     }
                   })() : f.type
-                }
+                };
+              })()
               : f
           );
           setAnnotationFiles(updatedFiles);
@@ -555,20 +561,23 @@ export function AnnotationsContent({
         }
       });
       
-      // Update the annotation file with loaded samples (reference dims set) and COCO images for correct mask scaling
+      // Merge page samples into existing cache so modal navigation retains
+      // overlays across pagination boundaries.
       setAnnotationFiles(prev => prev.map(f => 
-        f.id === fileId 
-          ? { 
+        f.id === fileId
+          ? (() => {
+              const mergedSamples = mergeAnnotationSamples(f.samples || [], currentPageAnnotations);
+              return {
               ...f, 
-              samples: currentPageAnnotations,
+              samples: mergedSamples,
               cocoImages: cocoData.images || f.cocoImages,
               classColors: updatedClassColors,
               // Re-detect type now that we have samples loaded
-              type: currentPageAnnotations.length > 0 ? (() => {
-                const hasSegmentation = currentPageAnnotations.some(sample => 
+              type: mergedSamples.length > 0 ? (() => {
+                const hasSegmentation = mergedSamples.some(sample => 
                   sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
                 );
-                const hasMeaningfulBbox = currentPageAnnotations.some(sample => 
+                const hasMeaningfulBbox = mergedSamples.some(sample => 
                   sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
                   (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
                 );
@@ -583,7 +592,8 @@ export function AnnotationsContent({
                   return 'classification';
                 }
               })() : f.type
-            }
+            };
+          })()
           : f
       ));
       
@@ -2256,201 +2266,72 @@ export function AnnotationsContent({
       return;
     }
 
-    // Show loading toast for better UX
     toast({
       title: "Preparing export...",
       description: "Generating COCO format file for download.",
     });
 
     try {
+      let cocoData;
+
       if (api) {
-        // Smart approach: Try to get the annotation content directly and export as-is
-        // This avoids loading into memory as our internal format
-        console.log(`Requesting direct export for annotation file ${file.name}...`);
-        
-        // Get the annotation content directly from backend
+        // Get COCO data from backend (includes all annotations with bboxes and masks)
+        console.log(`Requesting export for annotation file ${file.name}...`);
         const contentResponse = await api.getAnnotationContent(id, file.id);
         
         if (!contentResponse || !contentResponse.success || !contentResponse.data.content) {
           throw new Error('Failed to load annotation content from backend for export.');
         }
 
-        // Parse to validate it's proper COCO format, but don't convert to our internal format
-        let cocoData;
         try {
           cocoData = JSON.parse(contentResponse.data.content);
         } catch (parseError) {
           throw new Error('Annotation file contains invalid JSON data.');
         }
-        
-        if (!cocoData.annotations || !Array.isArray(cocoData.annotations) || cocoData.annotations.length === 0) {
-          toast({
-            title: "No data to export",
-            description: "This annotation file contains no annotation data.",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        // Directly export the COCO data without any conversion 
-        // Just ensure it has proper COCO structure
-        const exportData = {
-          info: cocoData.info || {
-            description: `Annotations for ${file.name}`,
-            version: "1.0",
-            year: new Date().getFullYear(),
-            contributor: "AI Data Creator",
-            date_created: new Date().toISOString()
-          },
-          licenses: cocoData.licenses || [{
-            id: 1,
-            name: "Unknown License",
-            url: ""
-          }],
-          images: cocoData.images || [],
-          categories: cocoData.categories || [],
-          annotations: cocoData.annotations || []
-        };
-
-        console.log(`Exporting ${exportData.annotations.length} annotations directly from backend COCO data`);
-
-        // Create and download the file directly from the original COCO data
-        const dataStr = JSON.stringify(exportData, null, 2);
-        const dataBlob = new Blob([dataStr], { type: 'application/json' });
-        const url = URL.createObjectURL(dataBlob);
-        
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${file.name.replace(/\.[^/.]+$/, '')}_export.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        toast({
-          title: "Download completed",
-          description: `Successfully exported ${file.name} with ${exportData.annotations.length} annotations.`,
-        });
-
       } else {
-        // No API available - export from local samples
+        // No API available - build COCO from local samples
         const samplesData = file.samples;
-        
         if (!samplesData || samplesData.length === 0) {
           toast({
             title: "No data to export",
-            description: "This annotation file has no samples to export and no backend connection is available.",
+            description: "This annotation file has no samples to export.",
             variant: "destructive",
           });
           return;
         }
 
-        console.log(`Exporting ${samplesData.length} samples from local data`);
-        
-        // Extract unique categories from samples
-        const categoryMap = new Map<string, number>();
-        let categoryId = 1;
-        
-        samplesData.forEach(sample => {
-          if (!categoryMap.has(sample.className)) {
-            categoryMap.set(sample.className, categoryId++);
+        // Build image dimensions map
+        const imageDimensions: Record<string, { width: number; height: number }> = {};
+        imagesMemo.forEach(img => {
+          if (img.id && img.width && img.height) {
+            imageDimensions[String(img.id)] = { width: img.width, height: img.height };
           }
         });
 
-        const categories = Array.from(categoryMap.entries()).map(([name, id]) => ({
-          id,
-          name,
-          supercategory: ""
-        }));
-
-        // Create images array from samples
-        const imageSet = new Map<string, any>();
-        samplesData.forEach(sample => {
-          if (!imageSet.has(sample.imageId)) {
-            const actualImage = imagesMemo.find(img => img.id === sample.imageId);
-            const fileName = file.imageMapping?.[sample.imageId] || actualImage?.fileName || `image_${sample.imageId}.jpg`;
-            
-            imageSet.set(sample.imageId, {
-              id: parseInt(sample.imageId) || Math.abs(sample.imageId.split('').reduce((a, b) => {
-                a = ((a << 5) - a) + b.charCodeAt(0);
-                return a & a;
-              }, 0)) || Math.floor(Math.random() * 1000000),
-              width: actualImage?.width || 640,
-              height: actualImage?.height || 480,
-              file_name: fileName,
-              license: 1,
-              flickr_url: "",
-              coco_url: "",
-              date_captured: ""
-            });
-          }
-        });
-
-        const cocoData = {
-          info: {
-            description: `Annotations for ${file.name}`,
-            version: "1.0",
-            year: new Date().getFullYear(),
-            contributor: "AI Data Creator",
-            date_created: new Date().toISOString()
-          },
-          licenses: [{
-            id: 1,
-            name: "Unknown License",
-            url: ""
-          }],
-          images: Array.from(imageSet.values()),
-          categories: categories,
-          annotations: samplesData.map((sample, index) => {
-            const imageInfo = imageSet.get(sample.imageId);
-            const imageWidth = imageInfo?.width || 640;
-            const imageHeight = imageInfo?.height || 480;
-            
-            // Convert normalized bbox to absolute coordinates if needed
-            let bboxAbsolute = [0, 0, 0, 0];
-            if (sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4) {
-              if (sample.bbox[0] > 1 || sample.bbox[1] > 1 || sample.bbox[2] > 1 || sample.bbox[3] > 1) {
-                bboxAbsolute = [...sample.bbox];
-              } else {
-                bboxAbsolute = [
-                  sample.bbox[0] * imageWidth,
-                  sample.bbox[1] * imageHeight,
-                  sample.bbox[2] * imageWidth,
-                  sample.bbox[3] * imageHeight
-                ];
-              }
-            }
-            
-            return {
-              id: index + 1,
-              image_id: imageInfo?.id || parseInt(sample.imageId) || 1,
-              category_id: categoryMap.get(sample.className) || 1,
-              bbox: bboxAbsolute,
-              area: sample.area || (bboxAbsolute[2] * bboxAbsolute[3]),
-              iscrowd: 0,
-              segmentation: sample.segmentation || []
-            };
-          })
-        };
-
-        // Create and download the file
-        const dataStr = JSON.stringify(cocoData, null, 2);
-        const dataBlob = new Blob([dataStr], { type: 'application/json' });
-        const url = URL.createObjectURL(dataBlob);
-        
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${file.name.replace(/\.[^/.]+$/, '')}_export.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-
-        toast({
-          title: "Download completed",
-          description: `Successfully exported ${file.name} with ${cocoData.annotations.length} annotations.`,
-        });
+        cocoData = buildCocoFromSamples(samplesData, imageDimensions, file.imageMapping);
       }
+
+      // Validate that we have annotations
+      if (!cocoData.annotations || !Array.isArray(cocoData.annotations) || cocoData.annotations.length === 0) {
+        toast({
+          title: "No data to export",
+          description: "This annotation file contains no annotation data.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Validate and log what's included
+      const stats = validateCocoData(cocoData);
+      console.log(`Exporting ${stats.totalAnnotations} annotations: ${stats.withBbox} with bbox, ${stats.withSegmentation} with masks, ${stats.withBoth} with both`);
+
+      // Download the file
+      downloadCocoFile(cocoData, file.name.replace(/\.[^/.]+$/, '') + '_export');
+
+      toast({
+        title: "Download completed",
+        description: `Successfully exported ${file.name} with ${stats.totalAnnotations} annotations (${stats.withBbox} bbox, ${stats.withSegmentation} masks).`,
+      });
 
     } catch (error) {
       console.error('Error downloading annotation:', error);

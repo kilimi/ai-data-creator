@@ -30,7 +30,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info } from "lucide-react";
+import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info, AlertCircle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dataset, DatasetGroup } from "@/types";
 import {
   DatasetEvalPicker,
@@ -445,27 +446,40 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     setModelSettings(settings);
   };
 
-  const canTrain = () => {
-    // Check that we have at least one dataset selected
-    if (selectedDatasets.length === 0) return false;
-    
-    // Check that all datasets have both image collection AND annotation selected
-    const allConfigured = selectedDatasets.every(sel => {
-      const hasImageCollection = sel.imageCollection && sel.imageCollection.trim() !== '';
-      const hasAnnotation = sel.annotation && sel.annotation.trim() !== '';
-      return hasImageCollection && hasAnnotation;
-    });
-    
-    // Check that a model type is selected
-    if (!selectedModel || !allConfigured) return false;
-    
-    // If wandb is enabled, check if settings are configured
-    if (saveToWandb) {
-      return wandbSettings.apiKey && wandbSettings.project;
+  const getTrainBlockReasons = (): string[] => {
+    const reasons: string[] = [];
+
+    if (resourcesLoading) {
+      reasons.push('Resources are still loading…');
+      return reasons;
     }
-    
-    return true;
+
+    if (selectedDatasets.length === 0) {
+      reasons.push('Select at least one dataset.');
+    } else {
+      const missingCollection = selectedDatasets.filter(sel => !sel.imageCollection || sel.imageCollection.trim() === '');
+      const missingAnnotation = selectedDatasets.filter(sel => !sel.annotation || sel.annotation.trim() === '');
+      if (missingCollection.length > 0) {
+        reasons.push(`Image collection not selected for: ${missingCollection.map(s => s.dataset.name).join(', ')}`);
+      }
+      if (missingAnnotation.length > 0) {
+        reasons.push(`Annotation not selected for: ${missingAnnotation.map(s => s.dataset.name).join(', ')}`);
+      }
+    }
+
+    if (!selectedModel) {
+      reasons.push('Select a model type (YOLO or RF-DETR).');
+    }
+
+    if (saveToWandb) {
+      if (!wandbSettings.apiKey) reasons.push('Weights & Biases API key is required.');
+      if (!wandbSettings.project) reasons.push('Weights & Biases project name is required.');
+    }
+
+    return reasons;
   };
+
+  const canTrain = () => getTrainBlockReasons().length === 0;
 
   const handleTrain = async () => {
     if (!canTrain() || !api) return;
@@ -735,7 +749,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         const isRf =
           String(md.model_type || '').toLowerCase() === 'rtdetr' || /rtdetr/i.test(String(rawModel));
 
-        const epochs = tp.epochs ?? md.epochs ?? (isRf ? 300 : 100);
+        const epochs = tp.epochs ?? md.epochs ?? 100;
         const batchSize = tp.batch_size ?? 16;
         const imageSize = tp.image_size ?? tp.imgsz ?? md.image_size ?? 640;
         const device = tp.device ?? '0';
@@ -1014,7 +1028,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
                 {/* RF-DETR — matches rtdetr in install / foundation_models */}
                 <Card className={`cursor-pointer transition-all ${selectedModel === 'rf-detr' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
-                  onClick={() => { setSelectedModel('rf-detr'); if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 300, batchSize: 16 })); }}
+                  onClick={() => { setSelectedModel('rf-detr'); if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 100, batchSize: 16 })); }}
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-1">
@@ -1129,7 +1143,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Epochs</Label>
-                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 300} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
+                        <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 100} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Batch Size</Label>
@@ -1245,7 +1259,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         )}
                         <div>
                           <span className="text-muted-foreground text-xs">Epochs</span>
-                          <p className="font-medium">{modelSettings.epochs || (selectedModel === 'rf-detr' ? 300 : 100)}</p>
+                          <p className="font-medium">{modelSettings.epochs || 100}</p>
                         </div>
                         <div>
                           <span className="text-muted-foreground text-xs">Datasets</span>
@@ -1295,21 +1309,48 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             )}
           </div>
 
-          <DialogFooter>
-            <Button 
-              variant="outline" 
-              onClick={() => onOpenChange(false)}
-              disabled={isTraining}
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleTrain}
-              disabled={!canTrain() || isTraining || resourcesLoading}
-            >
-              <Brain className="h-4 w-4 mr-2" />
-              {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
-            </Button>
+          <DialogFooter className="flex-col items-end gap-2 sm:flex-col">
+            {!isTraining && !canTrain() && (
+              <div className="flex flex-col gap-1 w-full text-sm text-destructive">
+                {getTrainBlockReasons().map((reason, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>{reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 justify-end w-full">
+              <Button 
+                variant="outline" 
+                onClick={() => onOpenChange(false)}
+                disabled={isTraining}
+              >
+                Cancel
+              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span tabIndex={0}>
+                      <Button 
+                        onClick={handleTrain}
+                        disabled={!canTrain() || isTraining || resourcesLoading}
+                      >
+                        <Brain className="h-4 w-4 mr-2" />
+                        {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {!canTrain() && !isTraining && (
+                    <TooltipContent side="top" className="max-w-xs">
+                      <ul className="list-disc list-inside space-y-0.5 text-xs">
+                        {getTrainBlockReasons().map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
