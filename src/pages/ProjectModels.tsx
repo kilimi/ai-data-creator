@@ -108,6 +108,7 @@ export default function ProjectModels() {
   const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
   const [pendingStopTask, setPendingStopTask] = useState<any | null>(null);
   const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
+  const [showImportModelModal, setShowImportModelModal] = useState(false);
 
   const trainingTasksRef = useRef<any[]>([]);
   trainingTasksRef.current = trainingTasks;
