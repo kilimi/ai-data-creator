@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -24,16 +24,28 @@ interface RFDETRSettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSettingsUpdate: (settings: any) => void;
+  currentSettings?: any;
 }
 
-export function RFDETRSettingsDialog({ open, onOpenChange, onSettingsUpdate }: RFDETRSettingsDialogProps) {
+export function RFDETRSettingsDialog({ open, onOpenChange, onSettingsUpdate, currentSettings }: RFDETRSettingsDialogProps) {
   const [variant, setVariant] = useState('rtdetr-l');
   const [imageSize, setImageSize] = useState('640');
   const [epochs, setEpochs] = useState('100');
   const [batchSize, setBatchSize] = useState('16');
 
+  // Sync from parent state when opening
+  useEffect(() => {
+    if (!open) return;
+    const s = currentSettings || {};
+    if (s.variant) setVariant(String(s.variant));
+    if (s.imageSize !== undefined) setImageSize(String(s.imageSize));
+    if (s.epochs !== undefined) setEpochs(String(s.epochs));
+    if (s.batchSize !== undefined) setBatchSize(String(s.batchSize));
+  }, [open, currentSettings]);
+
   const handleSave = () => {
     const settings = {
+      ...(currentSettings || {}),
       variant,
       imageSize: parseInt(imageSize),
       epochs: parseInt(epochs),

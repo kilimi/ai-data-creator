@@ -25,6 +25,7 @@ interface YoloSettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSettingsUpdate: (settings: any) => void;
+  currentSettings?: any;
 }
 
 const YOLO_TRAIN_SIZES: Record<string, string[]> = {
@@ -41,7 +42,7 @@ const SIZE_LABELS: Record<string, string> = {
   x: 'Extra Large (x)',
 };
 
-export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: YoloSettingsDialogProps) {
+export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate, currentSettings }: YoloSettingsDialogProps) {
   const [version, setVersion] = useState('yolo11');
   const [size, setSize] = useState('n');
   const [task, setTask] = useState('segmentation');
@@ -57,6 +58,26 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate }: Yol
   const [savePeriod, setSavePeriod] = useState(-1);
   const [showAugmentations, setShowAugmentations] = useState(false);
   const [augmentationSettings, setAugmentationSettings] = useState<any>({});
+
+  // Sync local state from parent's currentSettings each time dialog opens
+  useEffect(() => {
+    if (!open) return;
+    const s = currentSettings || {};
+    if (s.version) setVersion(s.version);
+    if (s.size) setSize(s.size);
+    if (s.task) setTask(s.task);
+    if (s.epochs !== undefined) setEpochs(Number(s.epochs));
+    if (s.batchSize !== undefined) setBatchSize(Number(s.batchSize));
+    if (s.imageSize !== undefined) setImageSize(Number(s.imageSize));
+    if (s.device !== undefined) setDevice(String(s.device));
+    if (s.patience !== undefined) setPatience(Number(s.patience));
+    if (s.optimizer) setOptimizer(s.optimizer);
+    if (s.learningRate !== undefined) setLearningRate(Number(s.learningRate));
+    if (s.momentum !== undefined) setMomentum(Number(s.momentum));
+    if (s.weightDecay !== undefined) setWeightDecay(Number(s.weightDecay));
+    if (s.savePeriod !== undefined) setSavePeriod(Number(s.savePeriod));
+    if (s.augmentations) setAugmentationSettings(s.augmentations);
+  }, [open, currentSettings]);
 
   const allowedSizes = YOLO_TRAIN_SIZES[version] || YOLO_TRAIN_SIZES.yolo11;
   useEffect(() => {

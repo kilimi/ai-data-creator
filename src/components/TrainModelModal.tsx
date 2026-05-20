@@ -30,7 +30,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info, AlertCircle } from "lucide-react";
+import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info, AlertCircle, ArrowLeft, ArrowRight, Sliders } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dataset, DatasetGroup } from "@/types";
 import {
@@ -117,6 +117,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [showClassDialog, setShowClassDialog] = useState(false);
   const [classStats, setClassStats] = useState<any | null>(null);
   const [customName, setCustomName] = useState('');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   
   // Track mount state and active fetch operations
   const isMountedRef = useRef(true);
@@ -640,6 +641,31 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     });
     setCustomName('');
     setRemoveImagesWithoutAnnotations(true);
+    setStep(1);
+  };
+
+  // Wizard step validity
+  const canLeaveStep1 = selectedDatasets.length > 0
+    && !selectedDatasets.some(s => !s.imageCollection || !s.annotation);
+  const canLeaveStep2 = !!selectedModel;
+
+  const goNext = () => {
+    if (step === 1) {
+      if (selectedDatasets.length === 0) {
+        sonnerToast.error('Select at least one dataset.');
+        return;
+      }
+      const missing = selectedDatasets.find(s => !s.imageCollection || !s.annotation);
+      if (missing) {
+        sonnerToast.error(`Pick image collection and annotation for "${missing.dataset.name}".`);
+        return;
+      }
+    }
+    if (step === 2 && !selectedModel) {
+      sonnerToast.error('Select a model architecture.');
+      return;
+    }
+    setStep(((step + 1) as 1 | 2 | 3));
   };
 
   const fetchDataForSelectionRef = useRef(fetchDataForSelection);
@@ -859,31 +885,48 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               Train Model
             </DialogTitle>
             <DialogDescription>
-              Configure datasets and model settings to train a new AI model for your project.
+              Step {step} of 3 — {step === 1 ? 'pick datasets & splits' : step === 2 ? 'choose model architecture & settings' : 'name, options & confirm'}
             </DialogDescription>
           </DialogHeader>
 
+          {/* Stepper */}
+          <div className="flex items-center justify-center gap-1 pb-1">
+            {([
+              { n: 1, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
+              { n: 2, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+              { n: 3, label: 'Options', icon: <Sliders className="w-3.5 h-3.5" /> },
+            ] as const).map((s, i) => {
+              const canJump =
+                s.n < step ||
+                (s.n === 2 && canLeaveStep1) ||
+                (s.n === 3 && canLeaveStep1 && canLeaveStep2);
+              return (
+                <React.Fragment key={s.n}>
+                  <button
+                    type="button"
+                    disabled={!canJump && s.n !== step}
+                    onClick={() => canJump && setStep(s.n as 1 | 2 | 3)}
+                    className={`flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                      step === s.n
+                        ? 'bg-primary text-primary-foreground'
+                        : step > s.n
+                        ? 'bg-muted text-foreground hover:bg-muted/80'
+                        : 'bg-muted/40 text-muted-foreground'
+                    } ${!canJump && s.n !== step ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {step > s.n ? <Check className="w-3.5 h-3.5" /> : s.icon}
+                    {s.label}
+                  </button>
+                  {i < 2 && <div className={`h-px w-8 ${step > s.n ? 'bg-primary' : 'bg-border'}`} />}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
           <div className="space-y-6 py-4">
-            {/* Custom Training Name */}
-            <div className="space-y-2">
-              <Label htmlFor="training-name" className="text-base font-medium">Training Name (Optional)</Label>
-              <Input
-                id="training-name"
-                type="text"
-                placeholder="e.g., My Custom YOLO Training"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                className="bg-background"
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave empty to use default name: "[Model] Training - [Date/Time]"
-              </p>
-            </div>
-
-            <Separator />
-
-            {/* Dataset Selection */}
+            {step === 1 && (
             <div className="space-y-4">
+              {/* Dataset Selection */}
               <div className="flex items-center justify-between">
                 <Label className="text-base font-medium">Dataset Configuration</Label>
                 {selectedDatasets.length > 0 && (
@@ -1005,11 +1048,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </div>
               )}
             </div>
+            )}
 
-            <Separator />
-
-            {/* Model Selection */}
+            {step === 2 && (
             <div className="space-y-4">
+              {/* Model Selection */}
               <Label className="text-base font-medium">Model Selection</Label>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1158,12 +1201,29 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </Card>
               )}
             </div>
+            )}
 
-            <Separator />
+            {step === 3 && (
+            <div className="space-y-6">
+              {/* Custom Training Name */}
+              <div className="space-y-2">
+                <Label htmlFor="training-name" className="text-base font-medium">Training Name (Optional)</Label>
+                <Input
+                  id="training-name"
+                  type="text"
+                  placeholder="e.g., My Custom YOLO Training"
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  className="bg-background"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Leave empty to use default name: "[Model] Training - [Date/Time]"
+                </p>
+              </div>
 
-            {/* Dataset Options */}
-            <div className="space-y-4">
-              <Label className="text-base font-medium">Dataset Options</Label>
+              {/* Dataset Options */}
+              <div className="space-y-4">
+                <Label className="text-base font-medium">Dataset Options</Label>
               
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div className="flex items-center space-x-3">
@@ -1307,65 +1367,84 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </div>
               </>
             )}
+            </div>
+            )}
           </div>
 
-          <DialogFooter className="flex-col items-end gap-2 sm:flex-col">
-            {!isTraining && !canTrain() && (
-              <div className="flex flex-col gap-1 w-full text-sm text-destructive">
-                {getTrainBlockReasons().map((reason, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                    <span>{reason}</span>
-                  </div>
-                ))}
+          <DialogFooter>
+            <div className="flex items-center justify-between gap-3 w-full pt-2 border-t">
+              <div className="text-xs text-muted-foreground">
+                {step === 1 && (selectedDatasets.length === 0
+                  ? 'Pick at least one dataset to continue.'
+                  : `${selectedDatasets.length} dataset(s) selected.`)}
+                {step === 2 && (!selectedModel
+                  ? 'Pick a model architecture to continue.'
+                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
+                {step === 3 && (!isTraining && !canTrain()
+                  ? getTrainBlockReasons()[0]
+                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
               </div>
-            )}
-            <div className="flex gap-2 justify-end w-full">
-              <Button 
-                variant="outline" 
-                onClick={() => onOpenChange(false)}
-                disabled={isTraining}
-              >
-                Cancel
-              </Button>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span tabIndex={0}>
-                      <Button 
-                        onClick={handleTrain}
-                        disabled={!canTrain() || isTraining || resourcesLoading}
-                      >
-                        <Brain className="h-4 w-4 mr-2" />
-                        {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  {!canTrain() && !isTraining && (
-                    <TooltipContent side="top" className="max-w-xs">
-                      <ul className="list-disc list-inside space-y-0.5 text-xs">
-                        {getTrainBlockReasons().map((r, i) => <li key={i}>{r}</li>)}
-                      </ul>
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => (step === 1 ? onOpenChange(false) : setStep(((step - 1) as 1 | 2 | 3)))}
+                  disabled={isTraining}
+                >
+                  {step === 1 ? 'Cancel' : (<><ArrowLeft className="w-4 h-4 mr-1" />Back</>)}
+                </Button>
+                {step < 3 ? (
+                  <Button
+                    type="button"
+                    onClick={goNext}
+                    disabled={isTraining || resourcesLoading || (step === 1 && !canLeaveStep1) || (step === 2 && !canLeaveStep2)}
+                  >
+                    Next<ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                ) : (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>
+                          <Button
+                            onClick={handleTrain}
+                            disabled={!canTrain() || isTraining || resourcesLoading}
+                          >
+                            <Brain className="h-4 w-4 mr-2" />
+                            {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!canTrain() && !isTraining && (
+                        <TooltipContent side="top" className="max-w-xs">
+                          <ul className="list-disc list-inside space-y-0.5 text-xs">
+                            {getTrainBlockReasons().map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
             </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
 
       {/* Settings Dialogs */}
       <YoloSettingsDialog
         open={showYoloSettings}
         onOpenChange={setShowYoloSettings}
         onSettingsUpdate={handleModelSettingsUpdate}
+        currentSettings={modelSettings}
       />
 
       <RFDETRSettingsDialog
         open={showRFDETRSettings}
         onOpenChange={setShowRFDETRSettings}
         onSettingsUpdate={handleModelSettingsUpdate}
+        currentSettings={modelSettings}
       />
       {/* Class distribution dialog */}
       <Dialog open={showClassDialog} onOpenChange={setShowClassDialog}>
