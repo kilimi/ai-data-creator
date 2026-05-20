@@ -28,6 +28,10 @@ docs/flows/
 - `tests/marketing/global-setup.ts` clears the DB so every run starts clean.
 - `tests/marketing/helpers.ts` provides:
   - `installCursor(page)` — injects a visible cursor ring so videos show clicks.
+  - `installCaptionOverlay(page)` — injects the bottom "lower-third" caption banner.
+  - `caption(page, text, { step })` — show an animated caption (stays until replaced).
+  - `clearCaption(page)` — hide the current caption.
+  - `step(page, testInfo, label, captionText)` — show caption + hold + screenshot. Use this as the main rhythm of a flow so the video reads like a narrated tour ("Create dataset" → screenshot → "Add images" → screenshot…).
   - `shot(page, testInfo, label)` — numbered screenshot into `docs/flows/<flow>/`.
   - `mockTraining(page)` — intercepts `/api/training/**` so "train a model"
     flows complete instantly without actually training.
