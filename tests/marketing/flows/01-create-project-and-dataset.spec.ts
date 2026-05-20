@@ -59,7 +59,7 @@ test.describe('Marketing tour', () => {
       page,
       testInfo,
       'create-project-empty',
-      'Projects group related datasets, annotations, models and exports.',
+      'Give your project a name, description, and a few tags.',
     );
 
     // ── 3. Fill project form ──────────────────────────────────────────────
@@ -93,7 +93,9 @@ test.describe('Marketing tour', () => {
     );
 
     // ── 5. Open the project ───────────────────────────────────────────────
-    await page.locator('main').getByRole('link', { name: PROJECT_NAME }).first().click();
+    const projectCard = page.locator('main').getByText(PROJECT_NAME, { exact: false }).first();
+    await projectCard.waitFor({ state: 'visible', timeout: 20_000 });
+    await projectCard.click();
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(800);
     await step(
@@ -145,7 +147,9 @@ test.describe('Marketing tour', () => {
     );
 
     // ── 9. Open the dataset ───────────────────────────────────────────────
-    await page.locator('main').getByRole('link', { name: DATASET_NAME }).first().click();
+    const datasetCard = page.locator('main').getByText(DATASET_NAME, { exact: false }).first();
+    await datasetCard.waitFor({ state: 'visible', timeout: 20_000 });
+    await datasetCard.click();
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(800);
     await step(
