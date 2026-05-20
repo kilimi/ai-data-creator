@@ -1048,11 +1048,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </div>
               )}
             </div>
+            )}
 
-            <Separator />
-
-            {/* Model Selection */}
+            {step === 2 && (
             <div className="space-y-4">
+              {/* Model Selection */}
               <Label className="text-base font-medium">Model Selection</Label>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
