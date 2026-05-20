@@ -1437,12 +1437,14 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         open={showYoloSettings}
         onOpenChange={setShowYoloSettings}
         onSettingsUpdate={handleModelSettingsUpdate}
+        currentSettings={modelSettings}
       />
 
       <RFDETRSettingsDialog
         open={showRFDETRSettings}
         onOpenChange={setShowRFDETRSettings}
         onSettingsUpdate={handleModelSettingsUpdate}
+        currentSettings={modelSettings}
       />
       {/* Class distribution dialog */}
       <Dialog open={showClassDialog} onOpenChange={setShowClassDialog}>
