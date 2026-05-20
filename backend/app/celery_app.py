@@ -86,3 +86,64 @@ celery_app.conf.beat_schedule = {
         'schedule': timedelta(minutes=30),  # Detect stale tasks promptly
     },
 }
+
+
+# ===== WORKER STARTUP: Sync Celery tasks with database on restart =====
+# This prevents requeued tasks that should be stopped from running again
+import logging
+from celery.signals import worker_process_init
+
+logger = logging.getLogger(__name__)
+
+
+@worker_process_init.connect
+def sync_tasks_with_database(sender=None, **kwargs):
+    """
+    On worker startup, clean up any Celery tasks that were stopped/cancelled in the database.
+    This prevents task_reject_on_worker_lost=True from auto-requeuing stopped tasks after
+    container restart.
+    """
+    import time
+    time.sleep(1)  # Brief delay to ensure database is ready
+    
+    try:
+        from app.models import Task
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        import os
+        
+        DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db/lai_db')
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        db = SessionLocal()
+        
+        logger.info("=== Worker startup: Syncing Celery tasks with database ===")
+        
+        try:
+            # Find all tasks that should be stopped but might be queued in Celery
+            stopped_tasks = db.query(Task).filter(
+                Task.status.in_(['stopped', 'cancelled', 'paused'])
+            ).all()
+            
+            for task in stopped_tasks:
+                if task.task_metadata and isinstance(task.task_metadata, dict):
+                    celery_task_id = task.task_metadata.get('celery_task_id')
+                    if celery_task_id:
+                        try:
+                            # Revoke this task and remove from result backend
+                            celery_app.control.revoke(
+                                celery_task_id,
+                                terminate=True,
+                                signal='SIGKILL'
+                            )
+                            # Also delete from result backend to prevent requeue
+                            celery_app.backend.delete(celery_task_id)
+                            logger.info(f"Revoked and purged Celery task {celery_task_id} (DB task {task.id} status={task.status})")
+                        except Exception as e:
+                            logger.warning(f"Failed to revoke Celery task {celery_task_id}: {e}")
+            
+            logger.info(f"=== Worker startup sync complete: Cleaned {len(stopped_tasks)} stopped/cancelled tasks ===")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error during worker startup task sync: {e}", exc_info=True)

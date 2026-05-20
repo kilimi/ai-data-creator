@@ -247,6 +247,14 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
                 # Revoke queued/executing Celery work before deleting task row.
                 celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGKILL')
                 logger.info(f"Revoked Celery task {celery_task_id} before deleting DB task {task_id}")
+                
+                # Also delete from result backend to prevent auto-requeue
+                try:
+                    celery_app.backend.delete(celery_task_id)
+                    logger.info(f"Purged Celery result backend entry for task {celery_task_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to purge result backend for {celery_task_id}: {e}")
+                
                 celery_task_revoked = True
             except Exception as e:
                 logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
@@ -303,13 +311,20 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
 
     db.commit()
 
-    # Send SIGTERM to interrupt active worker execution.
+    # Send SIGTERM to interrupt active worker execution and clean up Celery result backend.
     celery_task_revoked = False
     if celery_task_id:
         try:
             celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')
             logger.info(f"Sent SIGTERM to Celery task {celery_task_id} for task {task_id}")
             celery_task_revoked = True
+            
+            # Also delete from result backend to prevent auto-requeue on container restart
+            try:
+                celery_app.backend.delete(celery_task_id)
+                logger.info(f"Purged Celery result backend entry for task {celery_task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to purge result backend for {celery_task_id}: {e}")
         except Exception as e:
             logger.error(f"Failed to revoke Celery task {celery_task_id}: {e}")
 

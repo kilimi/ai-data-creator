@@ -3212,6 +3212,50 @@ async def merge_annotation_files_task(
     # Use a fresh session inside background task
     db = SessionLocal()
     try:
+        def _segmentation_polygons(seg_raw):
+            """Return segmentation as list-of-polygons (flat coordinate arrays)."""
+            if not isinstance(seg_raw, list) or not seg_raw:
+                return []
+            first = seg_raw[0]
+            if isinstance(first, (int, float)):
+                return [seg_raw] if len(seg_raw) >= 6 else []
+            polys = []
+            for poly in seg_raw:
+                if isinstance(poly, list) and len(poly) >= 6:
+                    polys.append(poly)
+            return polys
+
+        def _bbox_from_polygons(polys):
+            if not polys:
+                return None
+            xs = []
+            ys = []
+            for poly in polys:
+                xs.extend(poly[0::2])
+                ys.extend(poly[1::2])
+            if not xs or not ys:
+                return None
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            return [float(min_x), float(min_y), float(max_x - min_x), float(max_y - min_y)]
+
+        def _polygon_area(poly):
+            # Shoelace formula for one polygon [x1, y1, x2, y2, ...]
+            if not isinstance(poly, list) or len(poly) < 6:
+                return 0.0
+            pts = list(zip(poly[0::2], poly[1::2]))
+            if len(pts) < 3:
+                return 0.0
+            area2 = 0.0
+            for i in range(len(pts)):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % len(pts)]
+                area2 += (x1 * y2) - (x2 * y1)
+            return abs(area2) / 2.0
+
+        def _segmentation_area(polys):
+            return float(sum(_polygon_area(p) for p in polys))
+
         # Update task status
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
         if not task:
@@ -3374,13 +3418,67 @@ async def merge_annotation_files_task(
                             else:
                                 # Already in pixel coordinates
                                 pixel_bbox = list(bbox[:4])
+                        elif (
+                            annotation.bbox_x is not None
+                            and annotation.bbox_y is not None
+                            and annotation.bbox_width is not None
+                            and annotation.bbox_height is not None
+                        ):
+                            # Legacy normalized bbox fields.
+                            pixel_bbox = [
+                                float(annotation.bbox_x) * img_width,
+                                float(annotation.bbox_y) * img_height,
+                                float(annotation.bbox_width) * img_width,
+                                float(annotation.bbox_height) * img_height,
+                            ]
+
+                        seg_raw = annotation.segmentation
+                        seg_polys = _segmentation_polygons(seg_raw)
+                        # If bbox is missing/empty, derive it from segmentation so merge strategy
+                        # and exported COCO have usable geometry.
+                        if (not pixel_bbox or pixel_bbox[2] <= 0 or pixel_bbox[3] <= 0) and seg_polys:
+                            # Detect normalized segmentation by coordinate range.
+                            flat = [v for p in seg_polys for v in p]
+                            is_norm = bool(flat) and all(0 <= float(v) <= 1 for v in flat)
+                            if is_norm:
+                                seg_for_bbox = []
+                                for poly in seg_polys:
+                                    den = []
+                                    for i in range(0, len(poly), 2):
+                                        den.append(float(poly[i]) * img_width)
+                                        den.append(float(poly[i + 1]) * img_height)
+                                    seg_for_bbox.append(den)
+                            else:
+                                seg_for_bbox = [[float(v) for v in poly] for poly in seg_polys]
+                            bbox_from_seg = _bbox_from_polygons(seg_for_bbox)
+                            if bbox_from_seg:
+                                pixel_bbox = bbox_from_seg
+
+                        bbox_area = float(pixel_bbox[2] * pixel_bbox[3]) if pixel_bbox else 0.0
+                        ann_area = float(annotation.area) if annotation.area is not None else 0.0
+                        if ann_area <= 0 and seg_polys:
+                            flat = [v for p in seg_polys for v in p]
+                            is_norm = bool(flat) and all(0 <= float(v) <= 1 for v in flat)
+                            if is_norm:
+                                denorm_polys = []
+                                for poly in seg_polys:
+                                    den = []
+                                    for i in range(0, len(poly), 2):
+                                        den.append(float(poly[i]) * img_width)
+                                        den.append(float(poly[i + 1]) * img_height)
+                                    denorm_polys.append(den)
+                                ann_area = _segmentation_area(denorm_polys)
+                            else:
+                                ann_area = _segmentation_area(seg_polys)
+                        if ann_area <= 0:
+                            ann_area = bbox_area
 
                         merged_annotation = {
                             "id": annotation_id_counter,
                             "image_id": coco_image_id,
                             "category_id": category_id,
                             "bbox": pixel_bbox,
-                            "area": annotation.area or (pixel_bbox[2] * pixel_bbox[3] if pixel_bbox else 0),
+                            "area": ann_area,
                             "iscrowd": 0,
                             # Internal tags used by the strategy resolver below; stripped before write.
                             "_source_file_id": annotation_file.id,
@@ -3394,13 +3492,18 @@ async def merge_annotation_files_task(
                                 denormalized_segmentation = []
                                 for polygon in annotation.segmentation:
                                     if isinstance(polygon, list) and len(polygon) >= 6:
+                                        is_norm_poly = all(0 <= float(v) <= 1 for v in polygon)
                                         denormalized_polygon = []
                                         for i in range(0, len(polygon), 2):
-                                            # Convert normalized (0-1) coordinates to pixel coordinates
-                                            x_norm = polygon[i]
-                                            y_norm = polygon[i + 1] if i + 1 < len(polygon) else 0
-                                            denormalized_polygon.append(x_norm * img_width)
-                                            denormalized_polygon.append(y_norm * img_height)
+                                            x_val = float(polygon[i])
+                                            y_val = float(polygon[i + 1]) if i + 1 < len(polygon) else 0.0
+                                            if is_norm_poly:
+                                                denormalized_polygon.append(x_val * img_width)
+                                                denormalized_polygon.append(y_val * img_height)
+                                            else:
+                                                # Already in pixel coordinates.
+                                                denormalized_polygon.append(x_val)
+                                                denormalized_polygon.append(y_val)
                                         denormalized_segmentation.append(denormalized_polygon)
                                 merged_annotation["segmentation"] = denormalized_segmentation
                             else:

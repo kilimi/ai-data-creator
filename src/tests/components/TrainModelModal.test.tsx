@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TrainModelModal } from "@/components/TrainModelModal";
 import { Dataset, DatasetGroup } from "@/types";
@@ -91,6 +91,9 @@ vi.mock("lucide-react", () => ({
   LayoutList: () => <div>LayoutList Icon</div>,
   Folder: () => <div>Folder Icon</div>,
   Rows3: () => <div>Rows3 Icon</div>,
+  ArrowRight: () => <div>ArrowRight Icon</div>,
+  ArrowLeft: () => <div>ArrowLeft Icon</div>,
+  Sliders: () => <div>Sliders Icon</div>,
 }));
 
 // Mock API
@@ -442,9 +445,12 @@ describe("TrainModelModal", () => {
   it("validates form before allowing training", async () => {
     renderModal();
 
-    // Train button should be disabled initially (no datasets selected)
-    const trainButton = screen.getByRole("button", { name: /train model/i });
-    expect(trainButton).toBeDisabled();
+    // On step 1, the Next button should be disabled when no dataset is selected
+    const nextButton = screen.getByRole("button", { name: /next/i });
+    expect(nextButton).toBeDisabled();
+
+    // The "Train Model" button only appears on step 3 (not reachable without valid data)
+    expect(screen.queryByRole("button", { name: /train model/i })).not.toBeInTheDocument();
   });
 
   it("enables train button when form is complete", async () => {
@@ -459,24 +465,29 @@ describe("TrainModelModal", () => {
     });
     renderModal();
 
-    // Add dataset
+    // Step 1: add dataset and wait for auto-selection
     await addSingleDataset(user);
-
     await flushMicrotasks();
-
-    // Wait for data to load
     await waitFor(() => {
       expect(mockApi.getImageCollections).toHaveBeenCalled();
       expect(mockApi.getAnnotations).toHaveBeenCalled();
     });
 
-    // Select model type via model card
-    await user.click(screen.getByText("YOLO"));
+    // Step 1 → 2
+    const nextBtn1 = await screen.findByRole("button", { name: /next/i });
+    await waitFor(() => expect(nextBtn1).not.toBeDisabled());
+    await user.click(nextBtn1);
 
-    // With single options, picker auto-selects collection and annotation.
+    // Step 2: select YOLO model card
+    await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
 
-    // Train button should now be enabled
-    const trainButton = screen.getByRole("button", { name: /train model/i });
+    // Step 2 → 3
+    const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+    await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+    await user.click(nextBtn2);
+
+    // Train button on step 3 should be enabled
+    const trainButton = await screen.findByRole("button", { name: /train model/i });
     expect(trainButton).not.toBeDisabled();
   });
 
@@ -494,28 +505,30 @@ describe("TrainModelModal", () => {
 
     renderModal({ onOpenChange });
 
-    // Add dataset
+    // Step 1: add dataset and wait for auto-selection
     await addSingleDataset(user);
+    await flushMicrotasks();
+    await waitFor(() => expect(mockApi.getImageCollections).toHaveBeenCalled());
+    await waitFor(() => expect(mockApi.getAnnotations).toHaveBeenCalled());
 
+    // Step 1 → 2
+    const nextBtn1 = await screen.findByRole("button", { name: /next/i });
+    await waitFor(() => expect(nextBtn1).not.toBeDisabled());
+    await user.click(nextBtn1);
+
+    // Step 2: select YOLO model card
+    await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
     await flushMicrotasks();
 
-    // Wait for data to load
-    await waitFor(() => {
-      expect(mockApi.getImageCollections).toHaveBeenCalled();
-    });
-
-    // Select YOLO model via model card
-    await user.click(screen.getByRole("heading", { name: "YOLO" }));
-
-    // Auto-selection should choose first/only options
-    await flushMicrotasks();
+    // Step 2 → 3
+    const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+    await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+    await user.click(nextBtn2);
 
     // Start training
-    const trainButton = screen.getByRole("button", { name: /train model/i });
+    const trainButton = await screen.findByRole("button", { name: /train model/i });
     await waitFor(() => expect(trainButton).not.toBeDisabled());
     await user.click(trainButton);
-
-    await flushMicrotasks();
 
     await waitFor(() => {
       expect(mockApi.startYoloTraining).toHaveBeenCalled();
@@ -570,13 +583,26 @@ describe("TrainModelModal", () => {
     const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     renderModal();
 
-    // Add dataset
+    // Step 1: add dataset and wait for auto-selection
     await addSingleDataset(user);
-
     await flushMicrotasks();
+    await waitFor(() => expect(mockApi.getImageCollections).toHaveBeenCalled());
+    await waitFor(() => expect(mockApi.getAnnotations).toHaveBeenCalled());
 
-    // Auto-selected options should make form valid once a model is selected.
-    await user.click(screen.getByText("YOLO"));
+    // Step 1 → 2 (Next should be enabled because single options auto-select)
+    const nextBtn1 = await screen.findByRole("button", { name: /next/i });
+    await waitFor(() => expect(nextBtn1).not.toBeDisabled());
+    await user.click(nextBtn1);
+
+    // Step 2: select YOLO
+    await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+
+    // Step 2 → 3
+    const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+    await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+    await user.click(nextBtn2);
+
+    // Train button on step 3 should be enabled
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /train model/i })).not.toBeDisabled();
     });
@@ -617,5 +643,281 @@ describe("TrainModelModal", () => {
 
     // Form should be reset (dataset is not selected anymore)
     expect(screen.queryByRole("button", { name: /remove dataset 1/i })).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Settings-propagation tests: verify every GUI field reaches the API payload
+  // ---------------------------------------------------------------------------
+
+  describe("settings propagation to API", () => {
+    /** Navigate from step 1 to step 2 (select model page). */
+    const navigateToStep2 = async (user: ReturnType<typeof userEvent.setup>) => {
+      await addSingleDataset(user);
+      await flushMicrotasks();
+      // Wait for collections+annotations to load and auto-select (makes canLeaveStep1 true)
+      await waitFor(() => expect(mockApi.getImageCollections).toHaveBeenCalled());
+      await waitFor(() => expect(mockApi.getAnnotations).toHaveBeenCalled());
+      const nextBtn = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn).not.toBeDisabled());
+      await user.click(nextBtn);
+    };
+
+    /** Advance from step 2 to step 3. selectedModel must already be set. */
+    const goToStep3 = async (user: ReturnType<typeof userEvent.setup>) => {
+      const nextBtn = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn).not.toBeDisabled());
+      await user.click(nextBtn);
+    };
+
+    beforeEach(() => {
+      mockApi.getImageCollections.mockResolvedValue({
+        success: true,
+        data: [{ name: "col1" }],
+      });
+      mockApi.getAnnotations.mockResolvedValue({
+        success: true,
+        data: [{ id: "ann1", name: "annotations.json", type: "coco" }],
+      });
+      mockApi.startYoloTraining.mockResolvedValue({
+        success: true,
+        data: { task_id: "t1" },
+      });
+      mockApi.startRTDETRTraining = vi.fn().mockResolvedValue({
+        success: true,
+        data: { task_id: "t2" },
+      });
+    });
+
+    it("sends custom YOLO settings (epochs, batchSize, imageSize, learningRate, patience) to API", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      // Step 1 → 2
+      await navigateToStep2(user);
+
+      // Select YOLO model (populates inline settings on step 2)
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+
+      // Change inline settings while still on step 2
+      fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "42" } });
+      fireEvent.change(screen.getByDisplayValue("16"), { target: { value: "8" } });
+      fireEvent.change(screen.getByDisplayValue("640"), { target: { value: "1280" } });
+      fireEvent.change(screen.getByDisplayValue("0.01"), { target: { value: "0.005" } });
+      fireEvent.change(screen.getByDisplayValue("50"), { target: { value: "25" } });
+
+      // Step 2 → 3
+      await goToStep3(user);
+
+      // Click Train Model
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      expect(req.epochs).toBe(42);
+      expect(req.batch_size).toBe(8);
+      expect(req.image_size).toBe(1280);
+      expect(req.learning_rate).toBe(0.005);
+      expect(req.patience).toBe(25);
+    });
+
+    it("sends correct YOLO model_type based on version + size + task selection", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      // Step 1 → 2 → select YOLO → 3
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+      await goToStep3(user);
+
+      // Default is yolo11 / n / segmentation → yolo11n-seg.pt
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      // model_type must be derived from version+size+task, not hardcoded
+      expect(req.model_type).toMatch(/^yolo11n-seg\.pt$/);
+      expect(req.project_id).toBe(456);
+      expect(req.dataset_configs).toHaveLength(1);
+    });
+
+    it("sends custom RF-DETR settings (variant, epochs, batchSize, imageSize) to API", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      // Step 1 → 2 → select RF-DETR → change settings → 3
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /rf-detr/i }));
+
+      // Change inline settings while still on step 2
+      fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "75" } });
+      fireEvent.change(screen.getByDisplayValue("16"), { target: { value: "4" } });
+      fireEvent.change(screen.getByDisplayValue("640"), { target: { value: "800" } });
+
+      // Step 2 → 3 → Train
+      await goToStep3(user);
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startRTDETRTraining).toHaveBeenCalled());
+
+      const req = mockApi.startRTDETRTraining.mock.calls[0][0];
+      expect(req.epochs).toBe(75);
+      expect(req.batch_size).toBe(4);
+      expect(req.image_size).toBe(800);
+      // Default variant is rtdetr-l
+      expect(req.model_type).toBe("rtdetr-l.pt");
+      expect(req.project_id).toBe(456);
+    });
+
+    it("sends default RF-DETR settings when nothing is changed", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /rf-detr/i }));
+      await goToStep3(user);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startRTDETRTraining).toHaveBeenCalled());
+
+      const req = mockApi.startRTDETRTraining.mock.calls[0][0];
+      expect(req.epochs).toBe(100);
+      expect(req.batch_size).toBe(16);
+      expect(req.image_size).toBe(640);
+      expect(req.model_type).toBe("rtdetr-l.pt");
+      expect(req.optimizer).toBe("AdamW");
+      expect(req.learning_rate).toBe(0.0001);
+      expect(req.weight_decay).toBe(0.0001);
+      expect(req.patience).toBe(50);
+    });
+
+    it("sends dataset split values as configured by the user", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      // Add dataset
+      await addSingleDataset(user);
+      await flushMicrotasks();
+      await waitFor(() => expect(mockApi.getImageCollections).toHaveBeenCalled());
+      await waitFor(() => expect(mockApi.getAnnotations).toHaveBeenCalled());
+
+      // Interact with the Train % range slider (first slider in the page)
+      const sliders = screen.getAllByRole("slider");
+      const trainSlider = sliders[0];
+      // Fire a fireEvent change to set slider to 70
+      fireEvent.change(trainSlider, { target: { value: "70" } });
+
+      // Navigate to step 2, select YOLO, go to step 3
+      const nextBtn1 = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn1).not.toBeDisabled());
+      await user.click(nextBtn1);
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+      await goToStep3(user);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      const split = req.dataset_configs[0].split;
+      // split should be an object with train/val/test that sum to 100
+      expect(split).toBeDefined();
+      expect(split.train + split.val + split.test).toBe(100);
+    });
+
+    it("sends custom task name when provided", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+      await goToStep3(user);
+
+      // On step 3, fill in the custom name
+      const nameInput = screen.getByPlaceholderText(/my custom yolo training/i);
+      await user.clear(nameInput);
+      await user.type(nameInput, "My Special Run");
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      expect(req.task_name).toBe("My Special Run");
+    });
+
+    it("does not send custom name when left empty (falls back to default)", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+      await goToStep3(user);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      // task_name should contain a fallback string, not be empty
+      expect(req.task_name).toBeTruthy();
+      expect(req.task_name).toMatch(/yolo training/i);
+    });
+
+    it("sends remove_images_without_annotations as true by default", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+      await goToStep3(user);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      expect(req.remove_images_without_annotations).toBe(true);
+    });
+
+    it("sends remove_images_without_annotations as false when unchecked", async () => {
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal();
+
+      await navigateToStep2(user);
+      await user.click(screen.getByRole("heading", { name: /^yolo$/i }));
+      await goToStep3(user);
+
+      // On step 3, uncheck the option
+      const checkbox = screen.getByLabelText(/remove images without annotations/i);
+      await user.click(checkbox);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      expect(req.remove_images_without_annotations).toBe(false);
+    });
   });
 });
