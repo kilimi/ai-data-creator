@@ -136,11 +136,23 @@ test.describe('Marketing tour', () => {
     if (await datasetDesc.isVisible().catch(() => false)) {
       await datasetDesc.fill('May 2025 drone survey — six aerial frames over crop fields.');
     }
+
+    // Attach a cover image to the dataset (uses one of the drone frames).
+    // The CreateDataset form has a single file input (the dataset logo).
+    const droneImagesForDataset = listDroneImages();
+    if (droneImagesForDataset.length > 0) {
+      const datasetLogoInput = page.locator('input[type="file"][accept*="image"]').first();
+      if (await datasetLogoInput.count()) {
+        await datasetLogoInput.setInputFiles(droneImagesForDataset[1] ?? droneImagesForDataset[0]);
+        await expect(page.locator('img[alt="Logo preview"]')).toBeVisible({ timeout: 5_000 });
+      }
+    }
+
     await step(
       page,
       testInfo,
       'create-dataset-filled',
-      `Dataset: “${DATASET_NAME}” — naming by survey date keeps things tidy.`,
+      `Dataset: “${DATASET_NAME}” — named, described, and with a cover image.`,
     );
 
     // ── 8. Submit dataset ─────────────────────────────────────────────────
@@ -152,7 +164,7 @@ test.describe('Marketing tour', () => {
       page,
       testInfo,
       'dataset-created',
-      'Dataset ready — time to feed it some drone images.',
+      'Dataset ready — next we need an image collection to hold the frames.',
     );
 
     // ── 9. Open the dataset ───────────────────────────────────────────────
@@ -165,34 +177,91 @@ test.describe('Marketing tour', () => {
       page,
       testInfo,
       'dataset-page-empty',
-      'Empty dataset — drag-and-drop or use the upload button to add images.',
+      'A fresh dataset has no image collections yet — let’s add one.',
     );
 
-    // ── 10. Upload the drone dataset ──────────────────────────────────────
+    // ── 10. Create an image collection ────────────────────────────────────
+    // Image collections are sub-groups within a dataset (e.g. "RGB", "Depth",
+    // "Masks"). A dataset can hold many of them, and each one can be uploaded
+    // to, calibrated, and exported independently.
+    await caption(
+      page,
+      'Image collections group related frames inside a dataset — RGB, depth, masks. A dataset can have many.',
+    );
+    const addCollectionBtn = page
+      .getByRole('button', { name: /add collection/i })
+      .first();
+    await expect(addCollectionBtn).toBeVisible({ timeout: 15_000 });
+    await addCollectionBtn.click();
+
+    const collectionNameInput = page.locator('input#tab-name');
+    await expect(collectionNameInput).toBeVisible({ timeout: 10_000 });
+    await collectionNameInput.fill('RGB Frames');
+    await step(
+      page,
+      testInfo,
+      'add-collection-dialog',
+      'Name the collection — e.g. “RGB Frames”. You can add more later for depth, masks, etc.',
+    );
+    await page.getByRole('button', { name: /add tab/i }).click();
+    await expect(collectionNameInput).toBeHidden({ timeout: 10_000 });
+    await page.waitForTimeout(800);
+    await step(
+      page,
+      testInfo,
+      'collection-created',
+      'Collection “RGB Frames” is ready — now we can upload images into it.',
+    );
+
+    // ── 11. Open the Upload menu → Upload Images ──────────────────────────
+    await caption(page, 'Open the Upload menu to add images or extract frames from a video.');
+    const uploadButton = page.getByRole('button', { name: /^upload$/i }).first();
+    await expect(uploadButton).toBeVisible({ timeout: 10_000 });
+    await uploadButton.click();
+    await page.waitForTimeout(300);
+    await shot(page, testInfo, 'upload-menu-open');
+    await page.getByRole('menuitem', { name: /upload images/i }).click();
+    await expect(page.getByRole('heading', { name: /upload images to/i })).toBeVisible({
+      timeout: 10_000,
+    });
+    await step(
+      page,
+      testInfo,
+      'upload-dialog',
+      'Pick the image files (or a whole folder) you want to add to this collection.',
+    );
+
+    // ── 12. Pick files and upload ─────────────────────────────────────────
     const images = listDroneImages();
     if (images.length > 0) {
-      const fileInput = page.locator('input[type="file"]').first();
-      if (await fileInput.count()) {
-        await caption(
-          page,
-          `Uploading ${images.length} aerial drone images from our sample dataset…`,
-        );
-        await fileInput.setInputFiles(images);
-        await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(2500); // let thumbnails render
-        await step(
-          page,
-          testInfo,
-          'images-uploaded',
-          `${images.length} drone images uploaded — uploads run in the background.`,
-        );
-      }
+      // The upload dialog renders two hidden file inputs (files + folder).
+      // The first one is the plain "Select Files" input.
+      const dialogFileInput = page.locator('input[type="file"]:not([webkitdirectory])').last();
+      await dialogFileInput.setInputFiles(images);
+      await page.waitForTimeout(600);
+      await step(
+        page,
+        testInfo,
+        'files-selected',
+        `${images.length} aerial drone images queued — review then upload.`,
+      );
+
+      await caption(page, 'Start the upload — it runs in chunks in the background.');
+      await page.getByRole('button', { name: new RegExp(`upload ${images.length} images`, 'i') }).click();
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(2500); // let thumbnails render
+      await step(
+        page,
+        testInfo,
+        'images-uploaded',
+        `${images.length} drone images now live in the “RGB Frames” collection.`,
+      );
     } else {
       await caption(page, 'No sample images found — skipping upload step.');
       await page.waitForTimeout(800);
     }
 
-    // ── 11. Outro ─────────────────────────────────────────────────────────
+    // ── 13. Outro ─────────────────────────────────────────────────────────
     await caption(page, 'Next up: annotate, train, and evaluate. ✨');
     await page.waitForTimeout(1800);
 
