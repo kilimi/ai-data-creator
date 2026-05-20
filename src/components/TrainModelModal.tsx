@@ -1367,53 +1367,70 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </div>
               </>
             )}
+            </div>
+            )}
           </div>
 
-          <DialogFooter className="flex-col items-end gap-2 sm:flex-col">
-            {!isTraining && !canTrain() && (
-              <div className="flex flex-col gap-1 w-full text-sm text-destructive">
-                {getTrainBlockReasons().map((reason, i) => (
-                  <div key={i} className="flex items-center gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                    <span>{reason}</span>
-                  </div>
-                ))}
+          <DialogFooter>
+            <div className="flex items-center justify-between gap-3 w-full pt-2 border-t">
+              <div className="text-xs text-muted-foreground">
+                {step === 1 && (selectedDatasets.length === 0
+                  ? 'Pick at least one dataset to continue.'
+                  : `${selectedDatasets.length} dataset(s) selected.`)}
+                {step === 2 && (!selectedModel
+                  ? 'Pick a model architecture to continue.'
+                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
+                {step === 3 && (!isTraining && !canTrain()
+                  ? getTrainBlockReasons()[0]
+                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
               </div>
-            )}
-            <div className="flex gap-2 justify-end w-full">
-              <Button 
-                variant="outline" 
-                onClick={() => onOpenChange(false)}
-                disabled={isTraining}
-              >
-                Cancel
-              </Button>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span tabIndex={0}>
-                      <Button 
-                        onClick={handleTrain}
-                        disabled={!canTrain() || isTraining || resourcesLoading}
-                      >
-                        <Brain className="h-4 w-4 mr-2" />
-                        {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  {!canTrain() && !isTraining && (
-                    <TooltipContent side="top" className="max-w-xs">
-                      <ul className="list-disc list-inside space-y-0.5 text-xs">
-                        {getTrainBlockReasons().map((r, i) => <li key={i}>{r}</li>)}
-                      </ul>
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => (step === 1 ? onOpenChange(false) : setStep(((step - 1) as 1 | 2 | 3)))}
+                  disabled={isTraining}
+                >
+                  {step === 1 ? 'Cancel' : (<><ArrowLeft className="w-4 h-4 mr-1" />Back</>)}
+                </Button>
+                {step < 3 ? (
+                  <Button
+                    type="button"
+                    onClick={goNext}
+                    disabled={isTraining || resourcesLoading || (step === 1 && !canLeaveStep1) || (step === 2 && !canLeaveStep2)}
+                  >
+                    Next<ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                ) : (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={0}>
+                          <Button
+                            onClick={handleTrain}
+                            disabled={!canTrain() || isTraining || resourcesLoading}
+                          >
+                            <Brain className="h-4 w-4 mr-2" />
+                            {isTraining ? 'Training...' : resourcesLoading ? 'Loading…' : 'Train Model'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!canTrain() && !isTraining && (
+                        <TooltipContent side="top" className="max-w-xs">
+                          <ul className="list-disc list-inside space-y-0.5 text-xs">
+                            {getTrainBlockReasons().map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </div>
             </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
 
       {/* Settings Dialogs */}
       <YoloSettingsDialog
