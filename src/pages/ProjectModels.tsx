@@ -387,6 +387,16 @@ export default function ProjectModels() {
             </SelectContent>
           </Select>
           
+          <Button
+            variant="outline"
+            size="sm"
+            className="whitespace-nowrap ml-2"
+            onClick={() => setShowImportModelModal(true)}
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Import Model
+          </Button>
+
           <Button 
             variant="default" 
             size="sm" 
