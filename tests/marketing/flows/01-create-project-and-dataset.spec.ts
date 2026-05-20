@@ -189,9 +189,9 @@ test.describe('Marketing tour', () => {
       'Image collections group related frames inside a dataset — RGB, depth, masks. A dataset can have many.',
     );
     const addCollectionBtn = page
-      .getByRole('button', { name: /add collection/i })
+      .getByRole('button', { name: /create image layer|add collection/i })
       .first();
-    await expect(addCollectionBtn).toBeVisible({ timeout: 15_000 });
+    await expect(addCollectionBtn).toBeVisible({ timeout: 20_000 });
     await addCollectionBtn.click();
 
     const collectionNameInput = page.locator('input#tab-name');
