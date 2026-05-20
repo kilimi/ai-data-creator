@@ -14,23 +14,42 @@ import * as https from 'https';
 const apiUrl = () => process.env.TEST_API_URL || 'http://localhost:9999';
 
 // Public aerial / drone Unsplash photos (stable CDN URLs, free to use).
-// Downloaded once and cached under tests/fixtures/drone-dataset/.
-const DRONE_DATASET: Array<{ name: string; url: string }> = [
-  { name: 'aerial-fields-01.jpg',   url: 'https://images.unsplash.com/photo-1473968512647-3e447244af8f?w=1280&q=80&fm=jpg' },
-  { name: 'aerial-forest-02.jpg',   url: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1280&q=80&fm=jpg' },
-  { name: 'aerial-mountain-03.jpg', url: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1280&q=80&fm=jpg' },
-  { name: 'aerial-coast-04.jpg',    url: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=1280&q=80&fm=jpg' },
-  { name: 'aerial-lake-05.jpg',     url: 'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=1280&q=80&fm=jpg' },
-  { name: 'aerial-forest-06.jpg',   url: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1280&q=80&fm=jpg' },
-];
+// Real drone imagery from the public Brighton Beach drone dataset:
+//   https://github.com/pierotofy/drone_dataset_brighton_beach
+// We fetch the file list from the GitHub Contents API on first run,
+// then download a small subset (cached under tests/fixtures/drone-dataset/).
+const DRONE_REPO_OWNER = 'pierotofy';
+const DRONE_REPO_NAME = 'drone_dataset_brighton_beach';
+const DRONE_REPO_PATH = 'images';
+const DRONE_MAX_IMAGES = 8; // keep upload time bounded for the marketing tour
 
 export const DRONE_DATASET_DIR = path.join(process.cwd(), 'tests', 'fixtures', 'drone-dataset');
 
+function httpGet(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { headers: { 'User-Agent': 'lai-marketing-tour', ...headers } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks) }),
+        );
+      },
+    );
+    req.on('error', reject);
+    req.setTimeout(30_000, () => req.destroy(new Error(`timeout: ${url}`)));
+  });
+}
+
 function download(url: string, dest: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const req = https.get(url, (res) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'lai-marketing-tour' } }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // follow redirect
         download(res.headers.location, dest).then(resolve, reject);
         return;
       }
@@ -41,18 +60,56 @@ function download(url: string, dest: string): Promise<void> {
       const file = fs.createWriteStream(dest);
       res.pipe(file);
       file.on('finish', () => file.close(() => resolve()));
-      file.on('error', (err) => {
-        fs.unlink(dest, () => reject(err));
-      });
+      file.on('error', (err) => fs.unlink(dest, () => reject(err)));
     });
     req.on('error', reject);
-    req.setTimeout(30_000, () => req.destroy(new Error(`timeout downloading ${url}`)));
+    req.setTimeout(60_000, () => req.destroy(new Error(`timeout downloading ${url}`)));
   });
+}
+
+async function listDroneRepoImages(): Promise<Array<{ name: string; url: string }>> {
+  const api = `https://api.github.com/repos/${DRONE_REPO_OWNER}/${DRONE_REPO_NAME}/contents/${DRONE_REPO_PATH}`;
+  const res = await httpGet(api, { Accept: 'application/vnd.github+json' });
+  if (res.status !== 200) {
+    throw new Error(`GitHub API ${res.status} for ${api}`);
+  }
+  const entries = JSON.parse(res.body.toString('utf-8')) as Array<{
+    name: string;
+    download_url: string;
+    type: string;
+  }>;
+  return entries
+    .filter((e) => e.type === 'file' && /\.(jpe?g|png)$/i.test(e.name))
+    .map((e) => ({ name: e.name, url: e.download_url }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, DRONE_MAX_IMAGES);
 }
 
 async function ensureDroneDataset() {
   fs.mkdirSync(DRONE_DATASET_DIR, { recursive: true });
-  for (const item of DRONE_DATASET) {
+
+  // Reuse cache if it already has enough images.
+  const existing = fs
+    .readdirSync(DRONE_DATASET_DIR)
+    .filter((f) => /\.(jpe?g|png)$/i.test(f))
+    .filter((f) => fs.statSync(path.join(DRONE_DATASET_DIR, f)).size > 10_000);
+  if (existing.length >= DRONE_MAX_IMAGES) {
+    console.log(`✅ [marketing] cached drone dataset (${existing.length} images)`);
+    return;
+  }
+
+  let dataset: Array<{ name: string; url: string }> = [];
+  try {
+    dataset = await listDroneRepoImages();
+    console.log(
+      `🛰️  [marketing] Brighton Beach drone dataset: ${dataset.length} images selected`,
+    );
+  } catch (err) {
+    console.warn('⚠️  [marketing] failed to list drone repo:', (err as Error).message);
+    return;
+  }
+
+  for (const item of dataset) {
     const dest = path.join(DRONE_DATASET_DIR, item.name);
     if (fs.existsSync(dest) && fs.statSync(dest).size > 10_000) continue;
     try {
