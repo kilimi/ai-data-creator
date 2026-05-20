@@ -46,13 +46,11 @@ test.describe('Marketing tour', () => {
     );
 
     // ── 2. Open "New Project" ─────────────────────────────────────────────
-    const newProjectLink = page
-      .locator('main')
-      .getByRole('link', { name: /new project/i })
-      .first();
-    await expect(newProjectLink).toBeVisible({ timeout: 15_000 });
+    // The home page only surfaces a "New project" link in the empty-state
+    // onboarding card or the auto-hide sidebar. To keep the tour robust
+    // whether or not other projects already exist, navigate directly.
     await caption(page, 'Start by creating a new project from the home screen.');
-    await newProjectLink.click();
+    await page.goto('/projects/new');
     await expect(page).toHaveURL(/\/projects\/new$/);
     await page.waitForLoadState('networkidle');
     await step(
