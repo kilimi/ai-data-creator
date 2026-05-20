@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { ComponentType, lazy } from "react";
 
 function isChunkLoadError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || "");
@@ -10,7 +10,7 @@ function isChunkLoadError(error: unknown): boolean {
   );
 }
 
-export function lazyWithReloadRetry<T>(
+export function lazyWithReloadRetry<T extends ComponentType<any>>(
   importer: () => Promise<{ default: T }>,
   retryKey: string,
 ) {
