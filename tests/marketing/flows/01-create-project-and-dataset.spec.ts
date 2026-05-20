@@ -59,7 +59,7 @@ test.describe('Marketing tour', () => {
       page,
       testInfo,
       'create-project-empty',
-      'Projects group related datasets, annotations, models and exports.',
+      'Give your project a name, description, and a few tags.',
     );
 
     // ── 3. Fill project form ──────────────────────────────────────────────
