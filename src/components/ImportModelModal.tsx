@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, FileCode2, ListTree, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Upload, FileCode2, ListTree, X, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { getApiBaseUrl } from '@/config/api';
 
 interface ImportModelModalProps {
@@ -21,6 +21,8 @@ interface ImportModelModalProps {
   projectId: string;
   onImported?: () => void;
 }
+
+type ModelFormat = 'onnx' | 'pt';
 
 interface ParsedClasses {
   names: string[];
@@ -51,23 +53,30 @@ function parseClassesJson(text: string): ParsedClasses {
   return { names, raw: data };
 }
 
+function detectFormat(name: string): ModelFormat | null {
+  if (/\.onnx$/i.test(name)) return 'onnx';
+  if (/\.pt$/i.test(name)) return 'pt';
+  return null;
+}
+
 export function ImportModelModal({ open, onOpenChange, projectId, onImported }: ImportModelModalProps) {
   const { toast } = useToast();
-  const onnxInputRef = useRef<HTMLInputElement | null>(null);
+  const modelInputRef = useRef<HTMLInputElement | null>(null);
   const classesInputRef = useRef<HTMLInputElement | null>(null);
 
   const [modelName, setModelName] = useState('');
-  const [onnxFile, setOnnxFile] = useState<File | null>(null);
+  const [modelFile, setModelFile] = useState<File | null>(null);
+  const [modelFormat, setModelFormat] = useState<ModelFormat | null>(null);
   const [classesFile, setClassesFile] = useState<File | null>(null);
   const [classesParseError, setClassesParseError] = useState<string | null>(null);
   const [parsedClasses, setParsedClasses] = useState<ParsedClasses | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Reset state when re-opening
   useEffect(() => {
     if (!open) {
       setModelName('');
-      setOnnxFile(null);
+      setModelFile(null);
+      setModelFormat(null);
       setClassesFile(null);
       setClassesParseError(null);
       setParsedClasses(null);
@@ -75,22 +84,25 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
     }
   }, [open]);
 
-  const pickOnnx = (file: File | null) => {
+  const pickModel = (file: File | null) => {
     if (!file) {
-      setOnnxFile(null);
+      setModelFile(null);
+      setModelFormat(null);
       return;
     }
-    if (!/\.onnx$/i.test(file.name)) {
+    const fmt = detectFormat(file.name);
+    if (!fmt) {
       toast({
         title: 'Unsupported file',
-        description: 'Please select a .onnx model file.',
+        description: 'Please select a .onnx or .pt model file.',
         variant: 'destructive',
       });
       return;
     }
-    setOnnxFile(file);
+    setModelFile(file);
+    setModelFormat(fmt);
     if (!modelName) {
-      setModelName(file.name.replace(/\.onnx$/i, ''));
+      setModelName(file.name.replace(/\.(onnx|pt)$/i, ''));
     }
   };
 
@@ -102,7 +114,7 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
       return;
     }
     if (!/\.json$/i.test(file.name)) {
-      setClassesParseError('classes file must be a .json file');
+      setClassesParseError('Classes file must be a .json file');
       return;
     }
     try {
@@ -127,18 +139,33 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  const canSubmit =
-    !!onnxFile && !!classesFile && !!parsedClasses && parsedClasses.names.length > 0 && modelName.trim().length > 0 && !submitting;
+  // classes.json is REQUIRED for .onnx (ONNX doesn't embed class names),
+  // OPTIONAL for .pt (Ultralytics weights embed `model.names`).
+  const classesRequired = modelFormat === 'onnx';
+
+  const canSubmit = useMemo(() => {
+    if (submitting) return false;
+    if (!modelFile || !modelFormat) return false;
+    if (!modelName.trim()) return false;
+    if (classesRequired && (!classesFile || !parsedClasses || parsedClasses.names.length === 0)) return false;
+    if (classesFile && !parsedClasses) return false; // file picked but failed to parse
+    return true;
+  }, [submitting, modelFile, modelFormat, modelName, classesRequired, classesFile, parsedClasses]);
 
   const handleSubmit = async () => {
-    if (!canSubmit || !onnxFile || !classesFile) return;
+    if (!canSubmit || !modelFile || !modelFormat) return;
     setSubmitting(true);
     try {
       const fd = new FormData();
       fd.append('name', modelName.trim());
       fd.append('project_id', projectId);
-      fd.append('onnx', onnxFile, onnxFile.name);
-      fd.append('classes', classesFile, classesFile.name);
+      fd.append('model_format', modelFormat);
+      fd.append('model_file', modelFile, modelFile.name);
+      // Back-compat: also expose under format-specific field name
+      fd.append(modelFormat, modelFile, modelFile.name);
+      if (classesFile) {
+        fd.append('classes', classesFile, classesFile.name);
+      }
 
       const res = await fetch(`${getApiBaseUrl()}/training/import`, {
         method: 'POST',
@@ -176,7 +203,8 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
             Import Model
           </DialogTitle>
           <DialogDescription>
-            Import an existing ONNX model and its class list. The model becomes available for inference in this project.
+            Import an existing <span className="font-medium">ONNX</span> model or an Ultralytics{' '}
+            <span className="font-medium">YOLO .pt</span> checkpoint. The model becomes available for inference in this project.
           </DialogDescription>
         </DialogHeader>
 
@@ -192,31 +220,37 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
             />
           </div>
 
-          {/* ONNX file */}
+          {/* Model file (.onnx or .pt) */}
           <div className="space-y-2">
-            <Label>Model file (.onnx)</Label>
+            <Label>Model file (.onnx or .pt)</Label>
             <input
-              ref={onnxInputRef}
+              ref={modelInputRef}
               type="file"
-              accept=".onnx"
+              accept=".onnx,.pt"
               className="hidden"
-              onChange={(e) => pickOnnx(e.target.files?.[0] ?? null)}
+              onChange={(e) => pickModel(e.target.files?.[0] ?? null)}
             />
-            {onnxFile ? (
+            {modelFile && modelFormat ? (
               <div className="flex items-center gap-3 p-3 border rounded-md bg-muted/30">
                 <FileCode2 className="w-5 h-5 text-primary shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{onnxFile.name}</div>
-                  <div className="text-xs text-muted-foreground">{formatBytes(onnxFile.size)}</div>
+                  <div className="text-sm font-medium truncate flex items-center gap-2">
+                    {modelFile.name}
+                    <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+                      {modelFormat === 'pt' ? 'YOLO .pt' : 'ONNX'}
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground">{formatBytes(modelFile.size)}</div>
                 </div>
                 <Button
                   variant="ghost"
                   size="icon"
                   onClick={() => {
-                    setOnnxFile(null);
-                    if (onnxInputRef.current) onnxInputRef.current.value = '';
+                    setModelFile(null);
+                    setModelFormat(null);
+                    if (modelInputRef.current) modelInputRef.current.value = '';
                   }}
-                  aria-label="Remove ONNX file"
+                  aria-label="Remove model file"
                 >
                   <X className="w-4 h-4" />
                 </Button>
@@ -226,17 +260,26 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
                 type="button"
                 variant="outline"
                 className="w-full justify-start"
-                onClick={() => onnxInputRef.current?.click()}
+                onClick={() => modelInputRef.current?.click()}
               >
                 <Upload className="w-4 h-4 mr-2" />
-                Choose .onnx file
+                Choose .onnx or .pt file
               </Button>
             )}
           </div>
 
           {/* classes.json */}
           <div className="space-y-2">
-            <Label>Classes (classes.json)</Label>
+            <div className="flex items-center justify-between">
+              <Label>
+                Classes (classes.json){' '}
+                {classesRequired ? (
+                  <span className="text-destructive">*</span>
+                ) : (
+                  <span className="text-muted-foreground text-xs font-normal">(optional)</span>
+                )}
+              </Label>
+            </div>
             <input
               ref={classesInputRef}
               type="file"
@@ -296,6 +339,15 @@ export function ImportModelModal({ open, onOpenChange, projectId, onImported }: 
               <div className="flex items-start gap-2 text-xs text-destructive">
                 <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                 <span>{classesParseError}</span>
+              </div>
+            )}
+            {modelFormat === 'pt' && !classesFile && (
+              <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>
+                  Ultralytics <code className="font-mono">.pt</code> checkpoints embed class names — providing
+                  classes.json is optional and only needed to override them.
+                </span>
               </div>
             )}
             <p className="text-xs text-muted-foreground">
