@@ -703,7 +703,7 @@ export function DatasetEvalPicker({
                     </Button>
                   </div>
                   {isOpen && visibleDs.length > 0 && (
-                    <div className="space-y-2 px-2 pb-2">
+                    <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2 px-2 pb-2" : "space-y-2 px-2 pb-2"}>
                       {visibleDs.map((d) => (
                         <DatasetRow key={d.id} d={d} />
                       ))}
