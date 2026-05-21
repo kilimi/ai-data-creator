@@ -7121,7 +7121,7 @@ const ImageAnnotation = () => {
                             <div className="flex items-start gap-3 flex-1 min-w-0">
                               <div 
                                 className="w-4 h-4 rounded-md border border-border flex-shrink-0 mt-0.5"
-                                style={{ backgroundColor: classes.find(c => c.name === annotation.label)?.color ?? annotation.color }}
+                                style={{ backgroundColor: resolveAnnotationDisplayColor(annotation, classes) ?? annotation.color }}
                               />
                               <div className="flex-1 min-w-0">
                                 {editingAnnotationId === annotation.id ? (
