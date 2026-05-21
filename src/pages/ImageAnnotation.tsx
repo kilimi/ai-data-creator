@@ -74,7 +74,7 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
-import { applyClassColorsToAnnotations } from '@/utils/annotationColorConsistency';
+import { applyClassColorsToAnnotations, resolveAnnotationDisplayColor } from '@/utils/annotationColorConsistency';
 import { shouldScheduleAnnotationRedraw } from '@/utils/annotationRenderVisibility';
 
 // Annotation types
