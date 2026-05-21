@@ -617,7 +617,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         response = await api.startRTDETRTraining(trainingRequest);
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'mmyolo') {
-        const archObj = mmyoloArchForTask(selectedTask as string);
+        const archObj = mmyoloArchForTask(selectedTask as TrainTask);
         const arch = archObj.id || modelSettings.arch || 'rtmdet';
         const size = modelSettings.mmyoloSize || 's';
         const mmyoloTask =
