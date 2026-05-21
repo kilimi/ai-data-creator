@@ -644,7 +644,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         annotation_file_id: sel.annotation,
         image_collection: sel.imageCollection || undefined,
         split: sel.split || { train: 80, val: 20, test: 0 },
-        weight: sel.weight ?? 1,
       }));
 
       let response;
