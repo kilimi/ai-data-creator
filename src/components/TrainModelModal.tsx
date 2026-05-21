@@ -1112,35 +1112,16 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 )}
               </div>
 
-              {/* Inline task selector — filters the dataset picker below */}
-              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="space-y-0.5">
-                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      What task are you training?
-                    </Label>
-                    <p className="text-[11px] text-muted-foreground">
-                      Datasets without matching annotations are hidden or dimmed.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setSelectedTask(t)}
-                        className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
-                          selectedTask === t
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-background hover:border-primary/50'
-                        }`}
-                      >
-                        {TASK_LABELS[t]}
-                      </button>
-                    ))}
-                  </div>
+              {/* Task is chosen in the Model step; show a compact read-only chip here */}
+              <div className="rounded-lg border border-border bg-muted/30 p-2 flex items-center justify-between flex-wrap gap-2">
+                <div className="text-[11px] text-muted-foreground">
+                  Showing datasets compatible with <span className="font-medium text-foreground">{TASK_LABELS[selectedTask].toLowerCase()}</span>.
                 </div>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setStep(1)}>
+                  Change task
+                </Button>
               </div>
+
 
               {resourcesLoading ? (
                 <Card className="p-6 text-center border-dashed">
