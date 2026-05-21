@@ -1059,16 +1059,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               Train Model
             </DialogTitle>
             <DialogDescription>
-              Step {step} of 3 — {step === 1 ? 'pick datasets & splits' : step === 2 ? 'choose model architecture & settings' : 'name, options & confirm'}
+              Step {step} of 3 — {step === 1 ? 'choose model architecture & settings' : step === 2 ? 'pick datasets & splits' : 'name, options & confirm'}
             </DialogDescription>
           </DialogHeader>
 
           {/* Stepper */}
           <div className="flex items-center justify-center gap-1 pb-1">
             {([
-              { n: 1, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
-              { n: 2, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+              { n: 1, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+              { n: 2, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
               { n: 3, label: 'Options', icon: <Sliders className="w-3.5 h-3.5" /> },
+
             ] as const).map((s, i) => {
               const canJump =
                 s.n < step ||
