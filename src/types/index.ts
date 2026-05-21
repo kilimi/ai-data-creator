@@ -14,6 +14,7 @@ export interface Dataset {
     name: string;
     annotation_count: number;
     created_at: string;
+    type?: string | null;
   }>;
   project_id: number;
   thumbnailUrl?: string;

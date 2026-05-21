@@ -89,6 +89,7 @@ vi.mock("lucide-react", () => ({
   ChevronUp: () => <div>ChevronUp Icon</div>,
   Search: () => <div>Search Icon</div>,
   LayoutList: () => <div>LayoutList Icon</div>,
+  LayoutGrid: () => <div>LayoutGrid Icon</div>,
   Folder: () => <div>Folder Icon</div>,
   Rows3: () => <div>Rows3 Icon</div>,
   ArrowRight: () => <div>ArrowRight Icon</div>,

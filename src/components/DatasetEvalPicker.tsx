@@ -20,6 +20,7 @@ import {
   X,
   Rows3,
   LayoutList,
+  LayoutGrid,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -65,11 +66,23 @@ export interface DatasetSelection {
   collectionId: string | null;
 }
 
+export type RequiredTaskType =
+  | "detection"
+  | "segmentation"
+  | "classification"
+  | "oriented";
+
 interface Props {
   datasets: PickerDataset[];
   groups?: PickerGroup[];
   modelClasses: string[];
   modelTaskType?: "detection" | "segmentation" | "classification";
+  /**
+   * When set, datasets without compatible annotation files are dimmed and
+   * cannot be selected. Datasets with zero annotation files are always hidden.
+   * "oriented" is treated as "detection" for compatibility (rotated boxes).
+   */
+  requiredTaskType?: RequiredTaskType;
   value: DatasetSelection[];
   onChange: (next: DatasetSelection[]) => void;
   /** Optional extra content rendered at the bottom of each expanded dataset row. */
@@ -95,10 +108,11 @@ export function DatasetEvalPicker({
   value,
   onChange,
   renderExpandedExtra,
+  requiredTaskType,
 }: Props) {
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
-  const [density, setDensity] = useState<"comfortable" | "dense">("comfortable");
+  const [density, setDensity] = useState<"comfortable" | "dense" | "grid">("comfortable");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
@@ -123,7 +137,29 @@ export function DatasetEvalPicker({
     return Array.from(set).sort();
   }, [datasets]);
 
+  // "oriented" boxes train on bbox annotation files (rotated boxes are a det variant)
+  const compatTaskType: "detection" | "segmentation" | "classification" | undefined =
+    requiredTaskType === "oriented" ? "detection" : requiredTaskType;
+
+  function hasAnyFiles(d: PickerDataset) {
+    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
+    return d.imageCount > 0 && gtCount > 0;
+  }
+
+  /** Returns 'match' | 'mismatch' | 'unknown' for the dataset vs requiredTaskType. */
+  function taskCompatibility(d: PickerDataset): "match" | "mismatch" | "unknown" {
+    if (!compatTaskType) return "match";
+    const files = d.annotationFiles;
+    // Lazy/back-end-only counts → we don't know types yet, allow selection.
+    if (files.length === 0) return "unknown";
+    const knownTypes = files.map((f) => f.taskType).filter(Boolean) as string[];
+    if (knownTypes.length === 0) return "unknown"; // not yet fetched
+    return knownTypes.includes(compatTaskType) ? "match" : "mismatch";
+  }
+
   function visible(d: PickerDataset) {
+    // Always hide datasets with zero annotation files — nothing to train on.
+    if (!hasAnyFiles(d)) return false;
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
     if (activeTags.size > 0) {
@@ -134,8 +170,9 @@ export function DatasetEvalPicker({
   }
 
   function isUsable(d: PickerDataset) {
-    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
-    return d.imageCount > 0 && gtCount > 0;
+    if (!hasAnyFiles(d)) return false;
+    if (taskCompatibility(d) === "mismatch") return false;
+    return true;
   }
 
   function toggleTag(t: string) {
@@ -161,15 +198,19 @@ export function DatasetEvalPicker({
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
-      // Pick latest annotation file by modifiedAt, fall back to last in list
-      const latestFile = d.annotationFiles.length > 0
-        ? [...d.annotationFiles].sort((a, b) => {
-            if (!a.modifiedAt && !b.modifiedAt) return 0;
-            if (!a.modifiedAt) return 1;
-            if (!b.modifiedAt) return -1;
-            return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
-          })[0]
+      // Block selecting datasets known to be incompatible with the chosen task.
+      if (taskCompatibility(d) === "mismatch") return;
+      // Prefer an annotation file matching the required task type; otherwise latest.
+      const filesSorted = [...d.annotationFiles].sort((a, b) => {
+        if (!a.modifiedAt && !b.modifiedAt) return 0;
+        if (!a.modifiedAt) return 1;
+        if (!b.modifiedAt) return -1;
+        return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+      });
+      const preferred = compatTaskType
+        ? filesSorted.find((f) => f.taskType === compatTaskType)
         : undefined;
+      const latestFile = preferred ?? filesSorted[0];
       const coll = d.collections[0];
       onChange([
         ...value,
@@ -197,6 +238,11 @@ export function DatasetEvalPicker({
     const isExpanded = expanded.has(d.id);
     const usable = isUsable(d);
     const isDense = density === "dense";
+    const compat = taskCompatibility(d);
+    const incompatible = compat === "mismatch";
+    const incompatReason = incompatible && compatTaskType
+      ? `No ${compatTaskType} annotations in this dataset — not usable for the selected task.`
+      : undefined;
 
     const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
     // pick representative task type from first GT file
@@ -204,6 +250,7 @@ export function DatasetEvalPicker({
 
     return (
       <div
+        title={incompatReason}
         className={cn(
           "group rounded-lg border bg-card transition-all duration-150",
           "hover:border-border hover:shadow-sm",
@@ -211,7 +258,8 @@ export function DatasetEvalPicker({
           isSelected
             ? "border-primary/60 bg-primary/[0.04] shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"
             : "border-border/60",
-          !usable && !isSelected && "opacity-55 hover:opacity-90"
+          !usable && !isSelected && "opacity-55 hover:opacity-90",
+          incompatible && !isSelected && "opacity-40 grayscale"
         )}
       >
         <div
@@ -222,9 +270,11 @@ export function DatasetEvalPicker({
         >
           <Checkbox
             checked={isSelected}
+            disabled={incompatible && !isSelected}
             onCheckedChange={(c) => toggleSelected(d, !!c)}
             className={cn(!isDense && "mt-1.5")}
           />
+
           {!isDense && (
             <div className="h-12 w-12 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center ring-1 ring-border/40">
               {d.thumbnailUrl ? (
@@ -485,8 +535,34 @@ export function DatasetEvalPicker({
             >
               <Rows3 className="h-4 w-4" />
             </button>
+            <button
+              type="button"
+              onClick={() => setDensity("grid")}
+              className={cn(
+                "h-9 w-9 flex items-center justify-center transition-colors border-l border-border",
+                density === "grid"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Card grid"
+              aria-label="Card grid view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
           </div>
         </div>
+
+        {requiredTaskType && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 font-medium">
+              Filtering by task:
+              <span className="text-foreground uppercase tracking-wide">
+                {requiredTaskType}
+              </span>
+            </span>
+            <span>Datasets without matching annotations are dimmed.</span>
+          </div>
+        )}
 
         {/* Tag filter chips */}
         {allTags.length > 0 && (
@@ -561,7 +637,7 @@ export function DatasetEvalPicker({
             <h4 className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
               Recently used
             </h4>
-            <div className="space-y-2">
+            <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
               {recent.map((d) => (
                 <DatasetRow key={d.id} d={d} />
               ))}
@@ -628,7 +704,7 @@ export function DatasetEvalPicker({
                     </Button>
                   </div>
                   {isOpen && visibleDs.length > 0 && (
-                    <div className="space-y-2 px-2 pb-2">
+                    <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2 px-2 pb-2" : "space-y-2 px-2 pb-2"}>
                       {visibleDs.map((d) => (
                         <DatasetRow key={d.id} d={d} />
                       ))}
@@ -647,7 +723,7 @@ export function DatasetEvalPicker({
                 All datasets
               </h4>
             )}
-            <div className="space-y-2">
+            <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
               {others.map((d) => (
                 <DatasetRow key={d.id} d={d} />
               ))}
