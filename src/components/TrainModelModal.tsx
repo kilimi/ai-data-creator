@@ -1106,6 +1106,36 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 )}
               </div>
 
+              {/* Inline task selector — filters the dataset picker below */}
+              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      What task are you training?
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Datasets without matching annotations are hidden or dimmed.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setSelectedTask(t)}
+                        className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                          selectedTask === t
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-background hover:border-primary/50'
+                        }`}
+                      >
+                        {TASK_LABELS[t]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               {resourcesLoading ? (
                 <Card className="p-6 text-center border-dashed">
                   <p className="text-muted-foreground text-sm">Loading datasets…</p>
@@ -1120,6 +1150,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   datasets={pickerDatasets}
                   groups={pickerGroups}
                   modelClasses={[]}
+                  requiredTaskType={requiredAnnotationTaskType}
                   value={pickerValue}
                   onChange={handlePickerChange}
                   renderExpandedExtra={(pickerSel) => {
@@ -1128,6 +1159,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     const train = selection.split?.train ?? 80;
                     const val = selection.split?.val ?? 20;
                     const test = selection.split?.test ?? 0;
+                    const weight = selection.weight ?? 1;
                     return (
                       <div className="space-y-2 pt-1 border-t border-border/40">
                         <div className="flex items-center justify-between">
@@ -1207,13 +1239,153 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                             />
                           </div>
                         </div>
+
+                        {/* Sampling weight */}
+                        <div className="pt-1 space-y-0.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
+                              Sampling weight
+                            </label>
+                            <span className="text-[11px] font-semibold">{weight.toFixed(1)}×</span>
+                          </div>
+                          <input
+                            type="range" min={0.1} max={5} step={0.1} value={weight}
+                            onChange={(e) => updateDatasetSelection(selection.id, 'weight' as any, Number(e.target.value))}
+                            className="w-full accent-primary"
+                          />
+                          <p className="text-[10px] text-muted-foreground">
+                            Boost (&gt;1×) or down-weight (&lt;1×) this dataset's contribution to training.
+                          </p>
+                        </div>
                       </div>
                     );
                   }}
                 />
               )}
+
+              {/* Live Training Summary */}
+              {selectedDatasets.length > 0 && (
+                <Card className="bg-muted/30 border-dashed">
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Sliders className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Training set summary
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                      <div className="rounded-md bg-background px-2 py-1.5">
+                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Datasets</div>
+                        <div className="font-semibold">{selectedDatasets.length}</div>
+                      </div>
+                      <div className="rounded-md bg-background px-2 py-1.5">
+                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Images (weighted)</div>
+                        <div className="font-semibold">{trainingSummary.totalImages.toLocaleString()}</div>
+                      </div>
+                      <div className="rounded-md bg-background px-2 py-1.5 flex flex-col">
+                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Train · Val · Test</div>
+                        <div className="font-semibold text-xs flex gap-2">
+                          <span className="text-green-600 dark:text-green-400">{trainingSummary.train.toLocaleString()}</span>
+                          <span className="text-yellow-600 dark:text-yellow-400">{trainingSummary.val.toLocaleString()}</span>
+                          <span className="text-blue-600 dark:text-blue-400">{trainingSummary.test.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-background px-2 py-1.5">
+                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Task</div>
+                        <div className="font-semibold text-xs">{TASK_LABELS[selectedTask]}</div>
+                      </div>
+                    </div>
+                    {trainingSummary.warnings.length > 0 && (
+                      <ul className="space-y-0.5">
+                        {trainingSummary.warnings.map((w, i) => (
+                          <li key={i} className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                            <span>{w}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Class conflict checker */}
+              {selectedDatasets.length >= 2 && (
+                <Card className="border-border/60">
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Class conflicts
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        disabled={conflictLoading || selectedDatasets.some(s => !s.annotation)}
+                        onClick={runClassConflictCheck}
+                      >
+                        {conflictLoading ? 'Checking…' : conflictReport ? 'Re-check' : 'Check class names'}
+                      </Button>
+                    </div>
+                    {!conflictReport && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Detect class names that exist in some — but not all — selected datasets so you can rename or merge them before training.
+                      </p>
+                    )}
+                    {conflictReport && (
+                      <div className="space-y-2 text-xs">
+                        {conflictReport.shared.length > 0 && (
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-1">
+                              Shared by all ({conflictReport.shared.length})
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {conflictReport.shared.map(c => (
+                                <span key={c} className="inline-flex items-center rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 px-2 py-0 text-[11px]">
+                                  {c}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {Object.keys(conflictReport.onlyIn).length === 0 ? (
+                          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                            <Check className="h-3 w-3" />
+                            No conflicts — all classes are shared across selected datasets.
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400 font-medium">
+                              ⚠ Classes only in some datasets
+                            </div>
+                            {Object.entries(conflictReport.onlyIn).map(([ds, cls]) => (
+                              <div key={ds} className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5">
+                                <div className="text-[11px] font-semibold mb-1">{ds}</div>
+                                <div className="flex flex-wrap gap-1">
+                                  {cls.map(c => (
+                                    <span key={c} className="inline-flex items-center rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 px-2 py-0 text-[11px]">
+                                      {c}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                            <p className="text-[10px] text-muted-foreground">
+                              Tip: rename matching concepts to the same label in each dataset's annotation file before training, or training will treat them as separate classes.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </div>
             )}
+
 
             {step === 2 && (() => {
               const recommended = recommendedFamily(selectedTask, deployTarget);
