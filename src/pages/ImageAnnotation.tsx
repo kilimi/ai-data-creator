@@ -6763,7 +6763,8 @@ const ImageAnnotation = () => {
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* Image adjustments — brightness/contrast/saturation. Display-only,
                 does not modify the source image or saved annotations. */}
