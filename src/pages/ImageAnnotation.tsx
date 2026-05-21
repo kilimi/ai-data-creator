@@ -4734,10 +4734,16 @@ const ImageAnnotation = () => {
   };
 
   // Save current image annotations to database (single image only)
-  const saveCurrentImageToDatabase = useCallback(async (): Promise<boolean> => {
+  const saveCurrentImageToDatabase = useCallback(async (
+    overrideAnnotations?: AnnotationShape[],
+  ): Promise<boolean> => {
     if (!annotationId || !api || !currentImageName) {
       return false;
     }
+
+    // Allow callers (e.g. "Delete all annotations") to bypass the stale
+    // `annotations` closure by passing the authoritative list explicitly.
+    const annotationsToSave = overrideAnnotations ?? annotations;
 
     try {
       // Get current image dimensions
@@ -4746,7 +4752,8 @@ const ImageAnnotation = () => {
       const imageHeight = (img as any)?.naturalHeight || 0;
 
       // Convert annotations to COCO format for this image
-      const annotationsData = annotations.map((ann, idx) => {
+      const annotationsData = annotationsToSave.map((ann, idx) => {
+
         if (ann.type === 'polygon') {
           const segmentation = ann.points.flatMap(p => [p.x, p.y]);
           const xs = ann.points.map(p => p.x);
@@ -4830,7 +4837,7 @@ const ImageAnnotation = () => {
                 
                 // Add new annotations with proper COCO format
                 let nextAnnId = Math.max(0, ...cocoData.annotations.map((a: any) => a.id || 0)) + 1;
-                annotations.forEach((ann) => {
+                annotationsToSave.forEach((ann) => {
                   if (ann.type === 'polygon') {
                     const segmentation = ann.points.flatMap(p => [p.x, p.y]);
                     const xs = ann.points.map(p => p.x);
@@ -4858,7 +4865,8 @@ const ImageAnnotation = () => {
                 // Save back to sessionStorage
                 fileData.cocoData = cocoData;
                 sessionStorage.setItem(`annotation_file_${id}`, JSON.stringify(fileData));
-                console.log(`Updated sessionStorage with ${annotations.length} annotations for ${currentImageName}`);
+                console.log(`Updated sessionStorage with ${annotationsToSave.length} annotations for ${currentImageName}`);
+
                 
                 // Recompute global statistics to reflect the changes
                 await computeGlobalStats();
@@ -5136,7 +5144,7 @@ const ImageAnnotation = () => {
 
     // Save deletion to database if in edit mode
     if (annotationId) {
-      const saveSuccess = await saveCurrentImageToDatabase();
+      const saveSuccess = await saveCurrentImageToDatabase([]);
       if (saveSuccess) {
         // Set unsaved changes to false BEFORE recomputing stats
         setHasUnsavedChanges(false);
