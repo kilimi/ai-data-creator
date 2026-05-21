@@ -329,6 +329,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
   };
 
+  // Map training task → annotation-file task type for dataset filtering.
+  const requiredAnnotationTaskType: 'detection' | 'segmentation' | 'classification' | 'oriented' =
+    selectedTask === 'segment' ? 'segmentation'
+    : selectedTask === 'classify' ? 'classification'
+    : selectedTask === 'oriented' ? 'oriented'
+    : 'detection';
+
   const addDatasetSelection = () => {
     if (datasets.length === 0) return;
     
