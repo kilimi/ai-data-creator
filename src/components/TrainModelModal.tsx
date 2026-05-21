@@ -817,13 +817,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     setStep(1);
   };
 
-  // Wizard step validity
-  const canLeaveStep1 = selectedDatasets.length > 0
+  // Wizard step validity — step 1 = Model, step 2 = Datasets
+  const canLeaveStep1 = !!selectedModel;
+  const canLeaveStep2 = selectedDatasets.length > 0
     && !selectedDatasets.some(s => !s.imageCollection || !s.annotation);
-  const canLeaveStep2 = !!selectedModel;
 
   const goNext = () => {
-    if (step === 1) {
+    if (step === 1 && !selectedModel) {
+      sonnerToast.error('Select a model architecture.');
+      return;
+    }
+    if (step === 2) {
       if (selectedDatasets.length === 0) {
         sonnerToast.error('Select at least one dataset.');
         return;
@@ -834,12 +838,9 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         return;
       }
     }
-    if (step === 2 && !selectedModel) {
-      sonnerToast.error('Select a model architecture.');
-      return;
-    }
     setStep(((step + 1) as 1 | 2 | 3));
   };
+
 
   const fetchDataForSelectionRef = useRef(fetchDataForSelection);
   fetchDataForSelectionRef.current = fetchDataForSelection;
@@ -1058,16 +1059,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               Train Model
             </DialogTitle>
             <DialogDescription>
-              Step {step} of 3 — {step === 1 ? 'pick datasets & splits' : step === 2 ? 'choose model architecture & settings' : 'name, options & confirm'}
+              Step {step} of 3 — {step === 1 ? 'choose model architecture & settings' : step === 2 ? 'pick datasets & splits' : 'name, options & confirm'}
             </DialogDescription>
           </DialogHeader>
 
           {/* Stepper */}
           <div className="flex items-center justify-center gap-1 pb-1">
             {([
-              { n: 1, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
-              { n: 2, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+              { n: 1, label: 'Model', icon: <Brain className="w-3.5 h-3.5" /> },
+              { n: 2, label: 'Datasets', icon: <Database className="w-3.5 h-3.5" /> },
               { n: 3, label: 'Options', icon: <Sliders className="w-3.5 h-3.5" /> },
+
             ] as const).map((s, i) => {
               const canJump =
                 s.n < step ||
@@ -1097,7 +1099,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           </div>
 
           <div className="space-y-6 py-4">
-            {step === 1 && (
+            {step === 2 && (
+
             <div className="space-y-4">
               {/* Dataset Selection */}
               <div className="flex items-center justify-between">
@@ -1109,35 +1112,16 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 )}
               </div>
 
-              {/* Inline task selector — filters the dataset picker below */}
-              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="space-y-0.5">
-                    <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      What task are you training?
-                    </Label>
-                    <p className="text-[11px] text-muted-foreground">
-                      Datasets without matching annotations are hidden or dimmed.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setSelectedTask(t)}
-                        className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
-                          selectedTask === t
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-background hover:border-primary/50'
-                        }`}
-                      >
-                        {TASK_LABELS[t]}
-                      </button>
-                    ))}
-                  </div>
+              {/* Task is chosen in the Model step; show a compact read-only chip here */}
+              <div className="rounded-lg border border-border bg-muted/30 p-2 flex items-center justify-between flex-wrap gap-2">
+                <div className="text-[11px] text-muted-foreground">
+                  Showing datasets compatible with <span className="font-medium text-foreground">{TASK_LABELS[selectedTask].toLowerCase()}</span>.
                 </div>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setStep(1)}>
+                  Change task
+                </Button>
               </div>
+
 
               {resourcesLoading ? (
                 <Card className="p-6 text-center border-dashed">
@@ -1429,7 +1413,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             )}
 
 
-            {step === 2 && (() => {
+            {step === 1 && (() => {
               const recommended = recommendedFamily(selectedTask, deployTarget);
               const familyCards: Array<{
                 id: 'yolo' | 'rf-detr' | 'mmyolo';
@@ -1914,12 +1898,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           <DialogFooter>
             <div className="flex items-center justify-between gap-3 w-full pt-2 border-t">
               <div className="text-xs text-muted-foreground">
-                {step === 1 && (selectedDatasets.length === 0
-                  ? 'Pick at least one dataset to continue.'
-                  : `${selectedDatasets.length} dataset(s) selected.`)}
-                {step === 2 && (!selectedModel
+                {step === 1 && (!selectedModel
                   ? 'Pick a model architecture to continue.'
                   : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+                {step === 2 && (selectedDatasets.length === 0
+                  ? 'Pick at least one dataset to continue.'
+                  : `${selectedDatasets.length} dataset(s) selected.`)}
+
                 {step === 3 && (!isTraining && !canTrain()
                   ? getTrainBlockReasons()[0]
                   : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
