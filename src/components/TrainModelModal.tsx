@@ -167,6 +167,14 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [classStats, setClassStats] = useState<any | null>(null);
   const [customName, setCustomName] = useState('');
   const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // Class conflict checker state (Step 1, multi-dataset)
+  const [conflictLoading, setConflictLoading] = useState(false);
+  const [conflictReport, setConflictReport] = useState<null | {
+    perDataset: Array<{ datasetId: number; datasetName: string; classes: string[] }>;
+    shared: string[];
+    onlyIn: Record<string, string[]>;
+  }>(null);
   
   // Track mount state and active fetch operations
   const isMountedRef = useRef(true);
