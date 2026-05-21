@@ -1413,7 +1413,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             )}
 
 
-            {step === 2 && (() => {
+            {step === 1 && (() => {
               const recommended = recommendedFamily(selectedTask, deployTarget);
               const familyCards: Array<{
                 id: 'yolo' | 'rf-detr' | 'mmyolo';
