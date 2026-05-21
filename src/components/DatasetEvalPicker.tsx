@@ -197,15 +197,19 @@ export function DatasetEvalPicker({
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
-      // Pick latest annotation file by modifiedAt, fall back to last in list
-      const latestFile = d.annotationFiles.length > 0
-        ? [...d.annotationFiles].sort((a, b) => {
-            if (!a.modifiedAt && !b.modifiedAt) return 0;
-            if (!a.modifiedAt) return 1;
-            if (!b.modifiedAt) return -1;
-            return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
-          })[0]
+      // Block selecting datasets known to be incompatible with the chosen task.
+      if (taskCompatibility(d) === "mismatch") return;
+      // Prefer an annotation file matching the required task type; otherwise latest.
+      const filesSorted = [...d.annotationFiles].sort((a, b) => {
+        if (!a.modifiedAt && !b.modifiedAt) return 0;
+        if (!a.modifiedAt) return 1;
+        if (!b.modifiedAt) return -1;
+        return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+      });
+      const preferred = compatTaskType
+        ? filesSorted.find((f) => f.taskType === compatTaskType)
         : undefined;
+      const latestFile = preferred ?? filesSorted[0];
       const coll = d.collections[0];
       onChange([
         ...value,
