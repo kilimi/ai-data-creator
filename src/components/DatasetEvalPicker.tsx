@@ -20,6 +20,7 @@ import {
   X,
   Rows3,
   LayoutList,
+  LayoutGrid,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
