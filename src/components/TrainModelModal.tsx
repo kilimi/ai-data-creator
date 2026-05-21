@@ -77,8 +77,6 @@ interface DatasetSelection {
     val: number;
     test: number;
   };
-  /** Optional sampling weight (0.1–10×). Defaults to 1×. Sent in dataset_configs. */
-  weight?: number;
 }
 
 interface ModelConfig {
@@ -540,13 +538,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     let test = 0;
     selectedDatasets.forEach(sel => {
       const n = sel.dataset.image_count ?? 0;
-      const w = sel.weight ?? 1;
-      const weighted = n * w;
-      totalImages += weighted;
+      totalImages += n;
       const s = sel.split || { train: 80, val: 20, test: 0 };
-      train += Math.round(weighted * s.train / 100);
-      val += Math.round(weighted * s.val / 100);
-      test += Math.round(weighted * s.test / 100);
+      train += Math.round(n * s.train / 100);
+      val += Math.round(n * s.val / 100);
+      test += Math.round(n * s.test / 100);
     });
     const warnings: string[] = [];
     if (selectedDatasets.length === 0) warnings.push('No datasets selected yet.');
@@ -648,7 +644,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         annotation_file_id: sel.annotation,
         image_collection: sel.imageCollection || undefined,
         split: sel.split || { train: 80, val: 20, test: 0 },
-        weight: sel.weight ?? 1,
       }));
 
       let response;
@@ -1146,8 +1141,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     const train = selection.split?.train ?? 80;
                     const val = selection.split?.val ?? 20;
                     const test = selection.split?.test ?? 0;
-                    const weight = selection.weight ?? 1;
                     return (
+
                       <div className="space-y-2 pt-1 border-t border-border/40">
                         <div className="flex items-center justify-between">
                           <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
@@ -1265,24 +1260,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         </div>
                         <p className="text-[10px] text-muted-foreground">Use a preset for speed, or type exact percentages. Total auto-balances to 100%.</p>
 
-
-                        {/* Sampling weight */}
-                        <div className="pt-1 space-y-0.5">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
-                              Sampling weight
-                            </label>
-                            <span className="text-[11px] font-semibold">{weight.toFixed(1)}×</span>
-                          </div>
-                          <input
-                            type="range" min={0.1} max={5} step={0.1} value={weight}
-                            onChange={(e) => updateDatasetSelection(selection.id, 'weight' as any, Number(e.target.value))}
-                            className="w-full accent-primary"
-                          />
-                          <p className="text-[10px] text-muted-foreground">
-                            Boost (&gt;1×) or down-weight (&lt;1×) this dataset's contribution to training.
-                          </p>
-                        </div>
                       </div>
                     );
                   }}
@@ -1305,7 +1282,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <div className="font-semibold">{selectedDatasets.length}</div>
                       </div>
                       <div className="rounded-md bg-background px-2 py-1.5">
-                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Images (weighted)</div>
+                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Images</div>
                         <div className="font-semibold">{trainingSummary.totalImages.toLocaleString()}</div>
                       </div>
                       <div className="rounded-md bg-background px-2 py-1.5 flex flex-col">
