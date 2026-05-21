@@ -6704,14 +6704,25 @@ const ImageAnnotation = () => {
             )}
 
             {/* Auto-segment preview overlay with accept/cancel controls */}
-            {autoSegmentPreview && (
+            {autoSegmentPreview && (() => {
+              // Read from the same refs the canvas uses so the SAM preview
+              // (fill "bitmask" + outline) stays aligned with the bitmap and
+              // already-accepted annotation polygons during zoom/pan. Using
+              // only React state here lags one render behind scaleRef/offsetRef
+              // updated synchronously by handleImageResize and the zoom anim,
+              // which made the bitmask drift while the outline stayed correct.
+              const sNow = scaleRef.current || imageScale;
+              const oNow = offsetRef.current || imageOffset;
+              const toScreen = (p: Point) =>
+                `${(p.x * sNow + oNow.x).toFixed(2)},${(p.y * sNow + oNow.y).toFixed(2)}`;
+              return (
               <div className="absolute inset-0 pointer-events-none">
                 {/* draw polygon outlines on top using an SVG overlay */}
                 <svg className="absolute inset-0 w-full h-full pointer-events-none">
                   {autoSegmentPreview.polygons.map((poly, i) => (
                     <polygon
                       key={`fill_${i}`}
-                      points={poly.map(p => `${(p.x * imageScale + imageOffset.x).toFixed(2)},${(p.y * imageScale + imageOffset.y).toFixed(2)}`).join(' ')}
+                      points={poly.map(toScreen).join(' ')}
                       fill="rgba(0, 255, 170, 0.25)"
                       stroke="none"
                     />
@@ -6719,7 +6730,7 @@ const ImageAnnotation = () => {
                   {autoSegmentPreview.polygons.map((poly, i) => (
                     <polyline
                       key={i}
-                      points={poly.map(p => `${(p.x * imageScale + imageOffset.x).toFixed(2)},${(p.y * imageScale + imageOffset.y).toFixed(2)}`).join(' ')}
+                      points={poly.map(toScreen).join(' ')}
                       fill="none"
                       stroke="#00FFAA"
                       strokeWidth={2}
@@ -6752,7 +6763,8 @@ const ImageAnnotation = () => {
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* Image adjustments — brightness/contrast/saturation. Display-only,
                 does not modify the source image or saved annotations. */}
