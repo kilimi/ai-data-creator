@@ -593,7 +593,8 @@ def read_project(
                     "file_name": ann_file.name,
                     "name": ann_file.name,
                     "annotation_count": ann_file.annotation_count,
-                    "created_at": ann_file.created_at
+                    "created_at": ann_file.created_at,
+                    "type": ann_file.type,
                 })
 
         for dataset in project.datasets:
