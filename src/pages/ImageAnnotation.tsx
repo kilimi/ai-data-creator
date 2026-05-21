@@ -4837,7 +4837,7 @@ const ImageAnnotation = () => {
                 
                 // Add new annotations with proper COCO format
                 let nextAnnId = Math.max(0, ...cocoData.annotations.map((a: any) => a.id || 0)) + 1;
-                annotations.forEach((ann) => {
+                annotationsToSave.forEach((ann) => {
                   if (ann.type === 'polygon') {
                     const segmentation = ann.points.flatMap(p => [p.x, p.y]);
                     const xs = ann.points.map(p => p.x);
@@ -4865,7 +4865,8 @@ const ImageAnnotation = () => {
                 // Save back to sessionStorage
                 fileData.cocoData = cocoData;
                 sessionStorage.setItem(`annotation_file_${id}`, JSON.stringify(fileData));
-                console.log(`Updated sessionStorage with ${annotations.length} annotations for ${currentImageName}`);
+                console.log(`Updated sessionStorage with ${annotationsToSave.length} annotations for ${currentImageName}`);
+
                 
                 // Recompute global statistics to reflect the changes
                 await computeGlobalStats();
