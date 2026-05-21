@@ -516,8 +516,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
 
     if (!selectedModel) {
-      reasons.push('Select a model type (YOLO or RF-DETR).');
+      reasons.push('Select a model family.');
+    } else if (selectedModel === 'mmyolo') {
+      reasons.push('MMYOLO training backend is not yet wired — please pick Ultralytics YOLO or RF-DETR for now.');
     }
+
 
     if (saveToWandb) {
       if (!wandbSettings.apiKey) reasons.push('Weights & Biases API key is required.');
