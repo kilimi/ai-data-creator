@@ -3421,7 +3421,7 @@ const ImageAnnotation = () => {
       // Always prefer the class palette color so the canvas stays in sync with
       // the left-side Classes panel, even before the reconciling effect runs
       // on the first paint after annotations load.
-      const drawColor = annClass?.color ?? annotation.color;
+      const drawColor = resolveAnnotationDisplayColor(annotation, classes) ?? annotation.color;
       ctx.strokeStyle = drawColor;
       ctx.fillStyle = drawColor + '30'; // Semi-transparent fill
       ctx.lineWidth = 2;
