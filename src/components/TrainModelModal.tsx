@@ -1282,7 +1282,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <div className="font-semibold">{selectedDatasets.length}</div>
                       </div>
                       <div className="rounded-md bg-background px-2 py-1.5">
-                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Images (weighted)</div>
+                        <div className="text-[10px] uppercase text-muted-foreground tracking-wide">Images</div>
                         <div className="font-semibold">{trainingSummary.totalImages.toLocaleString()}</div>
                       </div>
                       <div className="rounded-md bg-background px-2 py-1.5 flex flex-col">
