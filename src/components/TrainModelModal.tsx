@@ -1210,38 +1210,77 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <div style={{ width: `${val}%` }} className="h-full bg-yellow-400 transition-all" />
                           <div style={{ width: `${test}%` }} className="h-full bg-blue-500 transition-all" />
                         </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                          <div className="space-y-0.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-muted-foreground">Train</label>
-                              <span className="text-[11px] font-medium">{train}%</span>
-                            </div>
-                            <input
-                              type="range" min={0} max={100} value={train}
-                              onChange={(e) => {
-                                const t = Number(e.target.value);
-                                const v = Math.min(val, Math.max(0, 100 - t));
-                                updateDatasetSelection(selection.id, 'split', { train: t, val: v, test: Math.max(0, 100 - t - v) });
-                              }}
-                              className="w-full accent-green-500"
-                            />
-                          </div>
-                          <div className="space-y-0.5">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[11px] text-muted-foreground">Val</label>
-                              <span className="text-[11px] font-medium">{val}%</span>
-                            </div>
-                            <input
-                              type="range" min={0} max={100} value={val}
-                              onChange={(e) => {
-                                const v = Number(e.target.value);
-                                const t = Math.min(train, Math.max(0, 100 - v));
-                                updateDatasetSelection(selection.id, 'split', { train: t, val: v, test: Math.max(0, 100 - t - v) });
-                              }}
-                              className="w-full accent-yellow-400"
-                            />
-                          </div>
+
+                        {/* Quick presets */}
+                        <div className="flex flex-wrap gap-1">
+                          {[
+                            { label: '80/20', t: 80, v: 20, te: 0 },
+                            { label: '70/20/10', t: 70, v: 20, te: 10 },
+                            { label: '70/15/15', t: 70, v: 15, te: 15 },
+                            { label: '60/20/20', t: 60, v: 20, te: 20 },
+                            { label: '90/10', t: 90, v: 10, te: 0 },
+                          ].map(p => {
+                            const active = train === p.t && val === p.v && test === p.te;
+                            return (
+                              <button
+                                key={p.label}
+                                type="button"
+                                onClick={() => updateDatasetSelection(selection.id, 'split', { train: p.t, val: p.v, test: p.te })}
+                                className={`px-2 py-0.5 text-[10px] rounded border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:bg-muted border-border'}`}
+                              >
+                                {p.label}
+                              </button>
+                            );
+                          })}
                         </div>
+
+                        {/* Numeric inputs — direct, predictable */}
+                        <div className="grid grid-cols-3 gap-2">
+                          {([
+                            { key: 'train', label: 'Train', value: train, color: 'bg-green-500' },
+                            { key: 'val', label: 'Val', value: val, color: 'bg-yellow-400' },
+                            { key: 'test', label: 'Test', value: test, color: 'bg-blue-500' },
+                          ] as const).map(field => (
+                            <div key={field.key} className="space-y-0.5">
+                              <div className="flex items-center gap-1">
+                                <span className={`inline-block h-2 w-2 rounded-sm ${field.color}`} />
+                                <label className="text-[10px] text-muted-foreground uppercase tracking-wide">{field.label}</label>
+                              </div>
+                              <div className="flex items-center">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={field.value}
+                                  onChange={(e) => {
+                                    const n = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                                    let t = train, v = val, te = test;
+                                    if (field.key === 'train') {
+                                      t = n;
+                                      const rem = 100 - t;
+                                      const oldRest = val + test;
+                                      if (oldRest > 0) {
+                                        v = Math.round((val / oldRest) * rem);
+                                        te = rem - v;
+                                      } else { v = rem; te = 0; }
+                                    } else if (field.key === 'val') {
+                                      v = Math.min(n, 100 - test);
+                                      t = 100 - v - test;
+                                    } else {
+                                      te = Math.min(n, 100 - val);
+                                      t = 100 - val - te;
+                                    }
+                                    updateDatasetSelection(selection.id, 'split', { train: Math.max(0, t), val: Math.max(0, v), test: Math.max(0, te) });
+                                  }}
+                                  className="h-7 text-xs px-2"
+                                />
+                                <span className="text-[10px] text-muted-foreground ml-1">%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">Use a preset for speed, or type exact percentages. Total auto-balances to 100%.</p>
+
 
                         {/* Sampling weight */}
                         <div className="pt-1 space-y-0.5">
