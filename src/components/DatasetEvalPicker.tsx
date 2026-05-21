@@ -237,6 +237,11 @@ export function DatasetEvalPicker({
     const isExpanded = expanded.has(d.id);
     const usable = isUsable(d);
     const isDense = density === "dense";
+    const compat = taskCompatibility(d);
+    const incompatible = compat === "mismatch";
+    const incompatReason = incompatible && compatTaskType
+      ? `No ${compatTaskType} annotations in this dataset — not usable for the selected task.`
+      : undefined;
 
     const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
     // pick representative task type from first GT file
@@ -244,6 +249,7 @@ export function DatasetEvalPicker({
 
     return (
       <div
+        title={incompatReason}
         className={cn(
           "group rounded-lg border bg-card transition-all duration-150",
           "hover:border-border hover:shadow-sm",
@@ -251,7 +257,8 @@ export function DatasetEvalPicker({
           isSelected
             ? "border-primary/60 bg-primary/[0.04] shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"
             : "border-border/60",
-          !usable && !isSelected && "opacity-55 hover:opacity-90"
+          !usable && !isSelected && "opacity-55 hover:opacity-90",
+          incompatible && !isSelected && "opacity-40 grayscale"
         )}
       >
         <div
@@ -262,9 +269,11 @@ export function DatasetEvalPicker({
         >
           <Checkbox
             checked={isSelected}
+            disabled={incompatible && !isSelected}
             onCheckedChange={(c) => toggleSelected(d, !!c)}
             className={cn(!isDense && "mt-1.5")}
           />
+
           {!isDense && (
             <div className="h-12 w-12 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center ring-1 ring-border/40">
               {d.thumbnailUrl ? (
