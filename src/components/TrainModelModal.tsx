@@ -156,7 +156,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
-  const [selectedTask, setSelectedTask] = useState<TrainTask>('detect');
+  const [selectedTask, setSelectedTask] = useState<TrainTask>('segment');
   const [deployTarget, setDeployTarget] = useState<DeployTarget>('general');
   const [modelSettings, setModelSettings] = useState<any>({});
 
