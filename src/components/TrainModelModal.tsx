@@ -1587,10 +1587,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   : `${selectedDatasets.length} dataset(s) selected.`)}
                 {step === 2 && (!selectedModel
                   ? 'Pick a model architecture to continue.'
-                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
+                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
                 {step === 3 && (!isTraining && !canTrain()
                   ? getTrainBlockReasons()[0]
-                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
+                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+
               </div>
               <div className="flex items-center gap-2">
                 <Button
