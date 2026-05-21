@@ -80,9 +80,25 @@ interface DatasetSelection {
 }
 
 interface ModelConfig {
-  type: 'yolo' | 'rf-detr';
+  type: 'yolo' | 'rf-detr' | 'mmyolo';
   settings: any;
 }
+
+type TrainTask = 'detect' | 'segment' | 'oriented' | 'classify';
+type DeployTarget = 'general' | 'edge-drone' | 'server';
+
+const TASK_LABELS: Record<TrainTask, string> = {
+  detect: 'Detection (boxes)',
+  segment: 'Segmentation (masks)',
+  oriented: 'Oriented boxes (rotated)',
+  classify: 'Classification',
+};
+
+const DEPLOY_LABELS: Record<DeployTarget, string> = {
+  general: 'General purpose',
+  'edge-drone': 'Edge / DJI drone',
+  server: 'Server GPU',
+};
 
 /** Per-architecture sizes — aligned with install/foundation_models and AutoAnnotateModal. */
 const YOLO_TRAIN_SIZES: Record<string, string[]> = {
@@ -97,13 +113,41 @@ const YOLO_VERSION_LABEL: Record<string, string> = {
   yolo_nas: 'YOLO-NAS',
 };
 
+const MMYOLO_SIZES = ['tiny', 's', 'm', 'l', 'x'] as const;
+
 const LABEL_FOR_SIZE: Record<string, string> = {
   n: 'Nano',
+  tiny: 'Tiny',
   s: 'Small',
   m: 'Medium',
   l: 'Large',
   x: 'X-Large',
 };
+
+/** Which families support which task. */
+const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
+  yolo: ['detect', 'segment', 'classify'],
+  'rf-detr': ['detect'],
+  mmyolo: ['detect', 'segment', 'oriented'],
+};
+
+/** Pick the recommended family for (task, deploy). */
+function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
+  if (task === 'oriented') return 'mmyolo';
+  if (task === 'classify') return 'yolo';
+  if (deploy === 'edge-drone') return 'mmyolo';
+  if (deploy === 'server') return 'rf-detr';
+  return 'yolo';
+}
+
+/** Resolve the MMYOLO architecture from the selected task. */
+function mmyoloArchForTask(task: TrainTask): { id: string; label: string } {
+  if (task === 'oriented') return { id: 'rtmdet-r', label: 'RTMDet-Rotated' };
+  if (task === 'segment') return { id: 'rtmdet-ins', label: 'RTMDet-Ins' };
+  if (task === 'detect') return { id: 'rtmdet', label: 'RTMDet' };
+  return { id: 'yolov8-mm', label: 'YOLOv8 (MMYOLO)' };
+}
+
 
 export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null }: TrainModelModalProps) {
   const { api } = useApi();
