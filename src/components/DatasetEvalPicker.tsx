@@ -636,7 +636,7 @@ export function DatasetEvalPicker({
             <h4 className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
               Recently used
             </h4>
-            <div className="space-y-2">
+            <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
               {recent.map((d) => (
                 <DatasetRow key={d.id} d={d} />
               ))}
