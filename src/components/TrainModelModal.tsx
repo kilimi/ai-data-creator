@@ -1141,8 +1141,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     const train = selection.split?.train ?? 80;
                     const val = selection.split?.val ?? 20;
                     const test = selection.split?.test ?? 0;
-                    const weight = selection.weight ?? 1;
                     return (
+
                       <div className="space-y-2 pt-1 border-t border-border/40">
                         <div className="flex items-center justify-between">
                           <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
