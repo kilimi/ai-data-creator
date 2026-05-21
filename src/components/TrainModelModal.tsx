@@ -408,6 +408,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         id: String(f.id),
         name: f.name || f.file_name,
         classes: [] as string[],
+        taskType: ((): "detection" | "segmentation" | "classification" | undefined => {
+          const t = (f.type || '').toLowerCase();
+          if (t === 'segmentation') return 'segmentation';
+          if (t === 'classification') return 'classification';
+          if (t === 'detection' || t === 'bbox' || t === 'object_detection') return 'detection';
+          return undefined;
+        })(),
         modifiedAt: f.created_at,
       }));
       const annotationFiles = sel
