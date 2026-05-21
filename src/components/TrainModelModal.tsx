@@ -1349,8 +1349,65 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   </CardContent>
                 </Card>
               )}
-            </div>
-            )}
+
+              {selectedModel === 'mmyolo' && (() => {
+                const arch = mmyoloArchForTask(selectedTask);
+                return (
+                  <Card className="border-primary/30">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Settings className="h-4 w-4" /> MMYOLO Configuration
+                        <Badge variant="outline" className="text-[10px]">{arch.label}</Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                        <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                        Architecture is set automatically from the task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
+                      </p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Variant</Label>
+                          <Select value={modelSettings.mmyoloSize || 's'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloSize: v }))}>
+                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                            <SelectContent className="bg-background border shadow-md z-[70]">
+                              {MMYOLO_SIZES.map(sz => (
+                                <SelectItem key={sz} value={sz}>{LABEL_FOR_SIZE[sz] ?? sz}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Epochs</Label>
+                          <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 300} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Batch Size</Label>
+                          <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.batchSize || 16} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, batchSize: Number(e.target.value) }))} min={1} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Image Size</Label>
+                          <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.imageSize || 640} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, imageSize: Number(e.target.value) }))} min={32} step={32} />
+                        </div>
+                      </div>
+                      {deployTarget === 'edge-drone' && (
+                        <div className="text-xs text-muted-foreground border-l-2 border-primary/40 pl-3 py-1">
+                          After training, weights will be exportable to ONNX → TensorRT for DJI Manifold / Jetson, or RKNN for Rockchip-based payloads.
+                        </div>
+                      )}
+                      <div className="text-xs px-3 py-2 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 flex items-start gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                        MMYOLO training backend is being wired up — selecting this family lets you preview the workflow but starting a job is not yet available.
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+                  </div>
+                </div>
+              );
+            })()}
+
 
             {step === 3 && (
             <div className="space-y-6">
