@@ -5144,7 +5144,7 @@ const ImageAnnotation = () => {
 
     // Save deletion to database if in edit mode
     if (annotationId) {
-      const saveSuccess = await saveCurrentImageToDatabase();
+      const saveSuccess = await saveCurrentImageToDatabase([]);
       if (saveSuccess) {
         // Set unsaved changes to false BEFORE recomputing stats
         setHasUnsavedChanges(false);
