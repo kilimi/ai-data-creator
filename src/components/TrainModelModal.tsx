@@ -1260,24 +1260,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         </div>
                         <p className="text-[10px] text-muted-foreground">Use a preset for speed, or type exact percentages. Total auto-balances to 100%.</p>
 
-
-                        {/* Sampling weight */}
-                        <div className="pt-1 space-y-0.5">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
-                              Sampling weight
-                            </label>
-                            <span className="text-[11px] font-semibold">{weight.toFixed(1)}×</span>
-                          </div>
-                          <input
-                            type="range" min={0.1} max={5} step={0.1} value={weight}
-                            onChange={(e) => updateDatasetSelection(selection.id, 'weight' as any, Number(e.target.value))}
-                            className="w-full accent-primary"
-                          />
-                          <p className="text-[10px] text-muted-foreground">
-                            Boost (&gt;1×) or down-weight (&lt;1×) this dataset's contribution to training.
-                          </p>
-                        </div>
                       </div>
                     );
                   }}
