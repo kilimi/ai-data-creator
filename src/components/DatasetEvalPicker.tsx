@@ -150,7 +150,8 @@ export function DatasetEvalPicker({
   function taskCompatibility(d: PickerDataset): "match" | "mismatch" | "unknown" {
     if (!compatTaskType) return "match";
     const files = d.annotationFiles;
-    if (files.length === 0) return "mismatch";
+    // Lazy/back-end-only counts → we don't know types yet, allow selection.
+    if (files.length === 0) return "unknown";
     const knownTypes = files.map((f) => f.taskType).filter(Boolean) as string[];
     if (knownTypes.length === 0) return "unknown"; // not yet fetched
     return knownTypes.includes(compatTaskType) ? "match" : "mismatch";
