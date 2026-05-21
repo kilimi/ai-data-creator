@@ -534,8 +534,34 @@ export function DatasetEvalPicker({
             >
               <Rows3 className="h-4 w-4" />
             </button>
+            <button
+              type="button"
+              onClick={() => setDensity("grid")}
+              className={cn(
+                "h-9 w-9 flex items-center justify-center transition-colors border-l border-border",
+                density === "grid"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Card grid"
+              aria-label="Card grid view"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
           </div>
         </div>
+
+        {requiredTaskType && (
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 font-medium">
+              Filtering by task:
+              <span className="text-foreground uppercase tracking-wide">
+                {requiredTaskType}
+              </span>
+            </span>
+            <span>Datasets without matching annotations are dimmed.</span>
+          </div>
+        )}
 
         {/* Tag filter chips */}
         {allTags.length > 0 && (
