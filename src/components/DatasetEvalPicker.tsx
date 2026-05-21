@@ -65,11 +65,23 @@ export interface DatasetSelection {
   collectionId: string | null;
 }
 
+export type RequiredTaskType =
+  | "detection"
+  | "segmentation"
+  | "classification"
+  | "oriented";
+
 interface Props {
   datasets: PickerDataset[];
   groups?: PickerGroup[];
   modelClasses: string[];
   modelTaskType?: "detection" | "segmentation" | "classification";
+  /**
+   * When set, datasets without compatible annotation files are dimmed and
+   * cannot be selected. Datasets with zero annotation files are always hidden.
+   * "oriented" is treated as "detection" for compatibility (rotated boxes).
+   */
+  requiredTaskType?: RequiredTaskType;
   value: DatasetSelection[];
   onChange: (next: DatasetSelection[]) => void;
   /** Optional extra content rendered at the bottom of each expanded dataset row. */
