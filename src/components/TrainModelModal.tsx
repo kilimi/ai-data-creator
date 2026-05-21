@@ -529,6 +529,74 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     setModelSettings(settings);
   };
 
+  // ── Step 1 helpers: live training summary + class conflict checker ────────
+  const trainingSummary = useMemo(() => {
+    let totalImages = 0;
+    let train = 0;
+    let val = 0;
+    let test = 0;
+    selectedDatasets.forEach(sel => {
+      const n = sel.dataset.image_count ?? 0;
+      const w = sel.weight ?? 1;
+      const weighted = n * w;
+      totalImages += weighted;
+      const s = sel.split || { train: 80, val: 20, test: 0 };
+      train += Math.round(weighted * s.train / 100);
+      val += Math.round(weighted * s.val / 100);
+      test += Math.round(weighted * s.test / 100);
+    });
+    const warnings: string[] = [];
+    if (selectedDatasets.length === 0) warnings.push('No datasets selected yet.');
+    if (selectedDatasets.some(s => !s.imageCollection)) warnings.push('Image collection missing on at least one dataset.');
+    if (selectedDatasets.some(s => !s.annotation)) warnings.push('Annotation file missing on at least one dataset.');
+    if (val === 0 && selectedDatasets.length > 0) warnings.push('Validation split is 0% — training cannot evaluate.');
+    return { totalImages: Math.round(totalImages), train, val, test, warnings };
+  }, [selectedDatasets]);
+
+  const runClassConflictCheck = async () => {
+    if (!api) return;
+    setConflictLoading(true);
+    try {
+      const perDataset: Array<{ datasetId: number; datasetName: string; classes: string[] }> = [];
+      for (const sel of selectedDatasets) {
+        if (!sel.annotation) continue;
+        try {
+          const res = await api.getAnnotationClasses(sel.dataset.id, sel.annotation);
+          const stats = (res && (res as any).success) ? (res as any).data : null;
+          const classes: string[] = stats && stats.classes
+            ? Object.keys(stats.classes)
+            : Array.isArray(stats?.class_names) ? stats.class_names : [];
+          perDataset.push({ datasetId: sel.dataset.id, datasetName: sel.dataset.name, classes });
+        } catch (e) {
+          perDataset.push({ datasetId: sel.dataset.id, datasetName: sel.dataset.name, classes: [] });
+        }
+      }
+      if (perDataset.length === 0) {
+        setConflictReport({ perDataset: [], shared: [], onlyIn: {} });
+        return;
+      }
+      const allClasses = new Set<string>();
+      perDataset.forEach(p => p.classes.forEach(c => allClasses.add(c)));
+      const shared: string[] = [];
+      const onlyIn: Record<string, string[]> = {};
+      allClasses.forEach(c => {
+        const present = perDataset.filter(p => p.classes.includes(c));
+        if (present.length === perDataset.length) {
+          shared.push(c);
+        } else {
+          present.forEach(p => {
+            if (!onlyIn[p.datasetName]) onlyIn[p.datasetName] = [];
+            onlyIn[p.datasetName].push(c);
+          });
+        }
+      });
+      setConflictReport({ perDataset, shared: shared.sort(), onlyIn });
+    } finally {
+      setConflictLoading(false);
+    }
+  };
+
+
   const getTrainBlockReasons = (): string[] => {
     const reasons: string[] = [];
 
