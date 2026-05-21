@@ -80,9 +80,25 @@ interface DatasetSelection {
 }
 
 interface ModelConfig {
-  type: 'yolo' | 'rf-detr';
+  type: 'yolo' | 'rf-detr' | 'mmyolo';
   settings: any;
 }
+
+type TrainTask = 'detect' | 'segment' | 'oriented' | 'classify';
+type DeployTarget = 'general' | 'edge-drone' | 'server';
+
+const TASK_LABELS: Record<TrainTask, string> = {
+  detect: 'Detection (boxes)',
+  segment: 'Segmentation (masks)',
+  oriented: 'Oriented boxes (rotated)',
+  classify: 'Classification',
+};
+
+const DEPLOY_LABELS: Record<DeployTarget, string> = {
+  general: 'General purpose',
+  'edge-drone': 'Edge / DJI drone',
+  server: 'Server GPU',
+};
 
 /** Per-architecture sizes — aligned with install/foundation_models and AutoAnnotateModal. */
 const YOLO_TRAIN_SIZES: Record<string, string[]> = {
@@ -97,20 +113,51 @@ const YOLO_VERSION_LABEL: Record<string, string> = {
   yolo_nas: 'YOLO-NAS',
 };
 
+const MMYOLO_SIZES = ['tiny', 's', 'm', 'l', 'x'] as const;
+
 const LABEL_FOR_SIZE: Record<string, string> = {
   n: 'Nano',
+  tiny: 'Tiny',
   s: 'Small',
   m: 'Medium',
   l: 'Large',
   x: 'X-Large',
 };
 
+/** Which families support which task. */
+const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
+  yolo: ['detect', 'segment', 'classify'],
+  'rf-detr': ['detect'],
+  mmyolo: ['detect', 'segment', 'oriented'],
+};
+
+/** Pick the recommended family for (task, deploy). */
+function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
+  if (task === 'oriented') return 'mmyolo';
+  if (task === 'classify') return 'yolo';
+  if (deploy === 'edge-drone') return 'mmyolo';
+  if (deploy === 'server') return 'rf-detr';
+  return 'yolo';
+}
+
+/** Resolve the MMYOLO architecture from the selected task. */
+function mmyoloArchForTask(task: TrainTask): { id: string; label: string } {
+  if (task === 'oriented') return { id: 'rtmdet-r', label: 'RTMDet-Rotated' };
+  if (task === 'segment') return { id: 'rtmdet-ins', label: 'RTMDet-Ins' };
+  if (task === 'detect') return { id: 'rtmdet', label: 'RTMDet' };
+  return { id: 'yolov8-mm', label: 'YOLOv8 (MMYOLO)' };
+}
+
+
 export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null }: TrainModelModalProps) {
   const { api } = useApi();
   const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
+  const [selectedTask, setSelectedTask] = useState<TrainTask>('detect');
+  const [deployTarget, setDeployTarget] = useState<DeployTarget>('general');
   const [modelSettings, setModelSettings] = useState<any>({});
+
   const [showYoloSettings, setShowYoloSettings] = useState(false);
   const [showRFDETRSettings, setShowRFDETRSettings] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
@@ -469,8 +516,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
 
     if (!selectedModel) {
-      reasons.push('Select a model type (YOLO or RF-DETR).');
+      reasons.push('Select a model family.');
+    } else if (selectedModel === 'mmyolo') {
+      reasons.push('MMYOLO training backend is not yet wired — please pick Ultralytics YOLO or RF-DETR for now.');
     }
+
 
     if (saveToWandb) {
       if (!wandbSettings.apiKey) reasons.push('Weights & Biases API key is required.');
@@ -1050,38 +1100,140 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             </div>
             )}
 
-            {step === 2 && (
-            <div className="space-y-4">
-              {/* Model Selection */}
-              <Label className="text-base font-medium">Model Selection</Label>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* YOLO — same families as install-time pretrained weights (YOLO11 / YOLO26 / YOLO-NAS) */}
-                <Card className={`cursor-pointer transition-all ${selectedModel === 'yolo' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
-                  onClick={() => { setSelectedModel('yolo'); if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: 'yolo11', size: 'n', task: 'segmentation' })); }}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-1">
-                      <h4 className="font-medium">YOLO</h4>
-                      {selectedModel === 'yolo' && <Check className="h-4 w-4 text-primary" />}
-                    </div>
-                    <p className="text-xs text-muted-foreground">YOLO11, YOLO26, YOLO-NAS — detection, segmentation, classification</p>
-                  </CardContent>
-                </Card>
+            {step === 2 && (() => {
+              const recommended = recommendedFamily(selectedTask, deployTarget);
+              const familyCards: Array<{
+                id: 'yolo' | 'rf-detr' | 'mmyolo';
+                title: string;
+                subtitle: string;
+                badges: string[];
+                onPick: () => void;
+              }> = [
+                {
+                  id: 'yolo',
+                  title: 'Ultralytics YOLO',
+                  subtitle: 'YOLO11 / YOLO26 / YOLO-NAS — fastest to train, easy ONNX export.',
+                  badges: ['ONNX', 'TensorRT', 'CoreML'],
+                  onPick: () => {
+                    setSelectedModel('yolo');
+                    if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: 'yolo11', size: 'n', task: selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection' }));
+                  },
+                },
+                {
+                  id: 'rf-detr',
+                  title: 'RF-DETR',
+                  subtitle: 'Real-time detection transformer — best accuracy on small objects, server GPUs.',
+                  badges: ['ONNX', 'TensorRT', 'Server-GPU'],
+                  onPick: () => {
+                    setSelectedModel('rf-detr');
+                    if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 100, batchSize: 16 }));
+                  },
+                },
+                {
+                  id: 'mmyolo',
+                  title: 'MMYOLO (OpenMMLab)',
+                  subtitle: 'RTMDet, RTMDet-Ins, RTMDet-Rotated, YOLOv8-mm — only family with oriented boxes; great speed/accuracy for edge devices and drones.',
+                  badges: ['ONNX', 'TensorRT', 'RKNN', 'Edge', 'DJI-ready'],
+                  onPick: () => {
+                    setSelectedModel('mmyolo');
+                    if (!modelSettings.mmyoloSize) setModelSettings((prev: any) => ({ ...prev, mmyoloSize: 's', epochs: 300, batchSize: 16, imageSize: 640, optimizer: 'AdamW', learningRate: 0.004, weightDecay: 0.05 }));
+                  },
+                },
+              ];
 
-                {/* RF-DETR — matches rtdetr in install / foundation_models */}
-                <Card className={`cursor-pointer transition-all ${selectedModel === 'rf-detr' ? 'ring-2 ring-primary' : 'hover:border-primary/50'}`}
-                  onClick={() => { setSelectedModel('rf-detr'); if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 100, batchSize: 16 })); }}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-1">
-                      <h4 className="font-medium">RF-DETR</h4>
-                      {selectedModel === 'rf-detr' && <Check className="h-4 w-4 text-primary" />}
+              const available = familyCards.filter(f => FAMILY_SUPPORTS[f.id].includes(selectedTask));
+
+              // Auto-pick recommended if current selection isn't valid for task
+              if (selectedModel && !available.find(a => a.id === selectedModel)) {
+                // user must reselect
+              }
+
+              return (
+                <div className="space-y-5">
+                  {/* Step 1: Task */}
+                  <div className="space-y-2">
+                    <Label className="text-base font-medium">What are you training?</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setSelectedTask(t)}
+                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${selectedTask === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
+                        >
+                          {TASK_LABELS[t]}
+                        </button>
+                      ))}
                     </div>
-                    <p className="text-xs text-muted-foreground">Real-time detection transformer</p>
-                  </CardContent>
-                </Card>
-              </div>
+                  </div>
+
+                  {/* Step 2: Deploy target */}
+                  <div className="space-y-2">
+                    <Label className="text-base font-medium">Where will it run?</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {(Object.keys(DEPLOY_LABELS) as DeployTarget[]).map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setDeployTarget(d)}
+                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${deployTarget === d ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
+                        >
+                          {DEPLOY_LABELS[d]}
+                        </button>
+                      ))}
+                    </div>
+                    {deployTarget === 'edge-drone' && (
+                      <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
+                        <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                        Models will be exported to ONNX (TensorRT/RKNN) for on-board inference on a DJI Manifold or onboard NVIDIA Jetson.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Step 3: Family cards (filtered + recommended) */}
+                  <div className="space-y-2">
+                    <Label className="text-base font-medium">Pick a model family</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {available.map(f => {
+                        const isSelected = selectedModel === f.id;
+                        const isRecommended = recommended === f.id;
+                        return (
+                          <Card
+                            key={f.id}
+                            className={`cursor-pointer transition-all relative ${isSelected ? 'ring-2 ring-primary' : 'hover:border-primary/50'} ${isRecommended ? 'border-primary/60' : ''}`}
+                            onClick={f.onPick}
+                          >
+                            {isRecommended && (
+                              <Badge className="absolute -top-2 left-3 bg-primary text-primary-foreground text-[10px] px-2 py-0.5">
+                                Recommended
+                              </Badge>
+                            )}
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between mb-1">
+                                <h4 className="font-medium text-sm">{f.title}</h4>
+                                {isSelected && <Check className="h-4 w-4 text-primary" />}
+                              </div>
+                              <p className="text-xs text-muted-foreground mb-2.5">{f.subtitle}</p>
+                              <div className="flex flex-wrap gap-1">
+                                {f.badges.map(b => (
+                                  <Badge key={b} variant="secondary" className="text-[10px] px-1.5 py-0">{b}</Badge>
+                                ))}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
+                    </div>
+                    {available.length < 3 && (
+                      <p className="text-xs text-muted-foreground">
+                        Some families are hidden because they don't support <span className="font-medium">{TASK_LABELS[selectedTask].toLowerCase()}</span>.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Existing inline config cards below */}
+                  <div className="space-y-4">
+
 
               {/* Inline Model Settings */}
               {selectedModel === 'yolo' && (
@@ -1200,8 +1352,65 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   </CardContent>
                 </Card>
               )}
-            </div>
-            )}
+
+              {selectedModel === 'mmyolo' && (() => {
+                const arch = mmyoloArchForTask(selectedTask);
+                return (
+                  <Card className="border-primary/30">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Settings className="h-4 w-4" /> MMYOLO Configuration
+                        <Badge variant="outline" className="text-[10px]">{arch.label}</Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                        <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                        Architecture is set automatically from the task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
+                      </p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Variant</Label>
+                          <Select value={modelSettings.mmyoloSize || 's'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloSize: v }))}>
+                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                            <SelectContent className="bg-background border shadow-md z-[70]">
+                              {MMYOLO_SIZES.map(sz => (
+                                <SelectItem key={sz} value={sz}>{LABEL_FOR_SIZE[sz] ?? sz}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Epochs</Label>
+                          <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.epochs || 300} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, epochs: Number(e.target.value) }))} min={1} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Batch Size</Label>
+                          <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.batchSize || 16} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, batchSize: Number(e.target.value) }))} min={1} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Image Size</Label>
+                          <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.imageSize || 640} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, imageSize: Number(e.target.value) }))} min={32} step={32} />
+                        </div>
+                      </div>
+                      {deployTarget === 'edge-drone' && (
+                        <div className="text-xs text-muted-foreground border-l-2 border-primary/40 pl-3 py-1">
+                          After training, weights will be exportable to ONNX → TensorRT for DJI Manifold / Jetson, or RKNN for Rockchip-based payloads.
+                        </div>
+                      )}
+                      <div className="text-xs px-3 py-2 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 flex items-start gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                        MMYOLO training backend is being wired up — selecting this family lets you preview the workflow but starting a job is not yet available.
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+                  </div>
+                </div>
+              );
+            })()}
+
 
             {step === 3 && (
             <div className="space-y-6">
@@ -1309,6 +1518,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <p className="font-medium">
                             {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
                             {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
+                            {selectedModel === 'mmyolo' && `${mmyoloArchForTask(selectedTask).label} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
+
                           </p>
                         </div>
                         {selectedModel === 'yolo' && (
@@ -1379,10 +1590,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   : `${selectedDatasets.length} dataset(s) selected.`)}
                 {step === 2 && (!selectedModel
                   ? 'Pick a model architecture to continue.'
-                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
+                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
                 {step === 3 && (!isTraining && !canTrain()
                   ? getTrainBlockReasons()[0]
-                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : 'RF-DETR'}`)}
+                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+
               </div>
               <div className="flex items-center gap-2">
                 <Button
