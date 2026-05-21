@@ -3418,8 +3418,12 @@ const ImageAnnotation = () => {
       const annClass = classes.find(c => c.name === annotation.label);
       if (annClass && annClass.visible === false) return;
 
-      ctx.strokeStyle = annotation.color;
-      ctx.fillStyle = annotation.color + '30'; // Semi-transparent fill
+      // Always prefer the class palette color so the canvas stays in sync with
+      // the left-side Classes panel, even before the reconciling effect runs
+      // on the first paint after annotations load.
+      const drawColor = annClass?.color ?? annotation.color;
+      ctx.strokeStyle = drawColor;
+      ctx.fillStyle = drawColor + '30'; // Semi-transparent fill
       ctx.lineWidth = 2;
 
       if (annotation.type === 'polygon' && annotation.points.length > 2) {
@@ -3439,7 +3443,7 @@ const ImageAnnotation = () => {
         drawnVisibleAnnotations += 1;
         
         // Draw label
-        ctx.fillStyle = annotation.color;
+        ctx.fillStyle = drawColor;
         ctx.font = '12px Arial';
         const centerX = annotation.points.reduce((sum, p) => sum + p.x, 0) / annotation.points.length;
         const centerY = annotation.points.reduce((sum, p) => sum + p.y, 0) / annotation.points.length;
