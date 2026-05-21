@@ -175,6 +175,9 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     shared: string[];
     onlyIn: Record<string, string[]>;
   }>(null);
+
+  // Invalidate the conflict report whenever the selected datasets or their annotations change.
+  useEffect(() => { setConflictReport(null); }, [JSON.stringify(selectedDatasets.map(s => `${s.dataset.id}:${s.annotation}`))]);
   
   // Track mount state and active fetch operations
   const isMountedRef = useRef(true);
