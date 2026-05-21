@@ -108,10 +108,11 @@ export function DatasetEvalPicker({
   value,
   onChange,
   renderExpandedExtra,
+  requiredTaskType,
 }: Props) {
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
-  const [density, setDensity] = useState<"comfortable" | "dense">("comfortable");
+  const [density, setDensity] = useState<"comfortable" | "dense" | "grid">("comfortable");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
@@ -136,7 +137,28 @@ export function DatasetEvalPicker({
     return Array.from(set).sort();
   }, [datasets]);
 
+  // "oriented" boxes train on bbox annotation files (rotated boxes are a det variant)
+  const compatTaskType: "detection" | "segmentation" | "classification" | undefined =
+    requiredTaskType === "oriented" ? "detection" : requiredTaskType;
+
+  function hasAnyFiles(d: PickerDataset) {
+    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
+    return d.imageCount > 0 && gtCount > 0;
+  }
+
+  /** Returns 'match' | 'mismatch' | 'unknown' for the dataset vs requiredTaskType. */
+  function taskCompatibility(d: PickerDataset): "match" | "mismatch" | "unknown" {
+    if (!compatTaskType) return "match";
+    const files = d.annotationFiles;
+    if (files.length === 0) return "mismatch";
+    const knownTypes = files.map((f) => f.taskType).filter(Boolean) as string[];
+    if (knownTypes.length === 0) return "unknown"; // not yet fetched
+    return knownTypes.includes(compatTaskType) ? "match" : "mismatch";
+  }
+
   function visible(d: PickerDataset) {
+    // Always hide datasets with zero annotation files — nothing to train on.
+    if (!hasAnyFiles(d)) return false;
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
     if (activeTags.size > 0) {
@@ -147,8 +169,9 @@ export function DatasetEvalPicker({
   }
 
   function isUsable(d: PickerDataset) {
-    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
-    return d.imageCount > 0 && gtCount > 0;
+    if (!hasAnyFiles(d)) return false;
+    if (taskCompatibility(d) === "mismatch") return false;
+    return true;
   }
 
   function toggleTag(t: string) {
