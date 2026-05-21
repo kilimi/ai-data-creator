@@ -1099,7 +1099,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           </div>
 
           <div className="space-y-6 py-4">
-            {step === 1 && (
+            {step === 2 && (
+
             <div className="space-y-4">
               {/* Dataset Selection */}
               <div className="flex items-center justify-between">
