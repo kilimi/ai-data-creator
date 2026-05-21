@@ -74,7 +74,7 @@ import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
-import { applyClassColorsToAnnotations } from '@/utils/annotationColorConsistency';
+import { applyClassColorsToAnnotations, resolveAnnotationDisplayColor } from '@/utils/annotationColorConsistency';
 import { shouldScheduleAnnotationRedraw } from '@/utils/annotationRenderVisibility';
 
 // Annotation types
@@ -3421,7 +3421,7 @@ const ImageAnnotation = () => {
       // Always prefer the class palette color so the canvas stays in sync with
       // the left-side Classes panel, even before the reconciling effect runs
       // on the first paint after annotations load.
-      const drawColor = annClass?.color ?? annotation.color;
+      const drawColor = resolveAnnotationDisplayColor(annotation, classes) ?? annotation.color;
       ctx.strokeStyle = drawColor;
       ctx.fillStyle = drawColor + '30'; // Semi-transparent fill
       ctx.lineWidth = 2;
@@ -7121,7 +7121,7 @@ const ImageAnnotation = () => {
                             <div className="flex items-start gap-3 flex-1 min-w-0">
                               <div 
                                 className="w-4 h-4 rounded-md border border-border flex-shrink-0 mt-0.5"
-                                style={{ backgroundColor: classes.find(c => c.name === annotation.label)?.color ?? annotation.color }}
+                                style={{ backgroundColor: resolveAnnotationDisplayColor(annotation, classes) ?? annotation.color }}
                               />
                               <div className="flex-1 min-w-0">
                                 {editingAnnotationId === annotation.id ? (

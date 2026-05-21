@@ -43,3 +43,27 @@ export function applyClassColorsToAnnotations<T extends AnnotationColorTarget>(
 
   return changed ? remapped : annotations;
 }
+
+/**
+ * Resolve the color that should actually be rendered for an annotation.
+ *
+ * The state-level `applyClassColorsToAnnotations` reconciliation runs in a
+ * `useEffect`, so on the very first paint annotation.color can still hold a
+ * stale backend-assigned value that doesn't match the left-side Classes
+ * palette. Render code should call this helper so the canvas and right-panel
+ * swatches always agree with the Classes panel regardless of load order.
+ */
+export function resolveAnnotationDisplayColor(
+  annotation: AnnotationColorTarget,
+  classes: ClassColorSource[],
+): string | null | undefined {
+  if (annotation?.label) {
+    const target = normalizeLabel(annotation.label);
+    for (const cls of classes) {
+      if (cls?.name && cls?.color && normalizeLabel(cls.name) === target) {
+        return cls.color;
+      }
+    }
+  }
+  return annotation?.color;
+}
