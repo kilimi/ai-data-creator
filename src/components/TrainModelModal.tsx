@@ -77,8 +77,6 @@ interface DatasetSelection {
     val: number;
     test: number;
   };
-  /** Optional sampling weight (0.1–10×). Defaults to 1×. Sent in dataset_configs. */
-  weight?: number;
 }
 
 interface ModelConfig {
