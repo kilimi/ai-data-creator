@@ -20,7 +20,7 @@ from ..database import get_db, SessionLocal
 from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection, Project
 from ..model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
 from app.tasks.yolo_training_helpers import generate_safe_output_filename
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,11 +29,13 @@ logger = logging.getLogger(__name__)
 USE_CELERY = os.environ.get('USE_CELERY', 'true').lower() == 'true'
 celery_train_task = None
 celery_rtdetr_task = None
+celery_mmyolo_task = None
 
 if USE_CELERY:
     try:
         from app.tasks.training_tasks import train_yolo_model as celery_train_task
         from app.tasks.training_tasks import train_rtdetr_model as celery_rtdetr_task
+        from app.tasks.training_tasks import train_mmyolo_model as celery_mmyolo_task
         logger.info("Celery task queue enabled for training")
     except ImportError as e:
         logger.warning(f"Celery not available: {e}. Set USE_CELERY=false to disable.")
@@ -85,6 +87,331 @@ class RTDETRTrainingRequest(BaseModel):
     use_wandb: bool = False
     wandb_project: Optional[str] = None
     wandb_entity: Optional[str] = None
+
+
+# ── MMYOLO (OpenMMLab RTMDet family) ─────────────────────────────────────────
+
+MMYOLO_VALID_ARCHS: frozenset = frozenset({"rtmdet", "rtmdet-ins", "rtmdet-r"})
+MMYOLO_VALID_SIZES: frozenset = frozenset({"tiny", "s", "m", "l", "x"})
+
+
+def mmyolo_config_name(arch: str, size: str) -> str:
+    """Resolve (arch, size) → MMYolo config identifier used with `mim run mmyolo train`."""
+    if arch not in MMYOLO_VALID_ARCHS:
+        raise ValueError(f"Unknown MMYOLO arch '{arch}'. Valid: {sorted(MMYOLO_VALID_ARCHS)}")
+    if size not in MMYOLO_VALID_SIZES:
+        raise ValueError(f"Unknown MMYOLO size '{size}'. Valid: {sorted(MMYOLO_VALID_SIZES)}")
+    # MMYolo config naming convention: rtmdet_s, rtmdet-ins_m, rtmdet-r_l, rtmdet_tiny
+    return f"{arch}_{size}"
+
+
+class MMYOLOTrainingRequest(BaseModel):
+    """Request model for MMYOLO (RTMDet family) training."""
+    project_id: int
+    dataset_configs: List[Dict[str, Any]]
+    arch: str = "rtmdet"          # rtmdet | rtmdet-ins | rtmdet-r
+    size: str = "s"               # tiny | s | m | l | x
+    task: str = "detect"          # detect | segment | oriented
+    epochs: int = 300
+    batch_size: int = 16
+    image_size: int = 640
+    device: str = "0"
+    task_name: Optional[str] = None
+    optimizer: str = "AdamW"
+    learning_rate: float = 0.004
+    weight_decay: float = 0.05
+    save_period: int = -1
+    remove_images_without_annotations: bool = True
+    use_wandb: bool = False
+    wandb_project: Optional[str] = None
+    wandb_entity: Optional[str] = None
+
+    @field_validator("arch")
+    @classmethod
+    def _validate_arch(cls, v: str) -> str:
+        if v not in MMYOLO_VALID_ARCHS:
+            raise ValueError(f"arch must be one of {sorted(MMYOLO_VALID_ARCHS)}, got '{v}'")
+        return v
+
+    @field_validator("size")
+    @classmethod
+    def _validate_size(cls, v: str) -> str:
+        if v not in MMYOLO_VALID_SIZES:
+            raise ValueError(f"size must be one of {sorted(MMYOLO_VALID_SIZES)}, got '{v}'")
+        return v
+
+    @field_validator("task")
+    @classmethod
+    def _validate_task(cls, v: str) -> str:
+        if v not in {"detect", "segment", "oriented"}:
+            raise ValueError(f"task must be one of detect, segment, oriented, got '{v}'")
+        return v
+
+
+def prepare_mmyolo_dataset(
+    db,
+    dataset_configs: List[Dict[str, Any]],
+    output_dir: Path,
+    task: str = "detect",
+    remove_images_without_annotations: bool = True,
+) -> Dict[str, Any]:
+    """
+    Prepare COCO JSON format dataset for MMYOLO/RTMDet training.
+
+    Unlike YOLO .txt format, MMYOLO expects COCO JSON files:
+      output_dir/annotations/train.json
+      output_dir/annotations/val.json   (if val split > 0)
+      output_dir/images/train/
+      output_dir/images/val/
+
+    Returns dict with keys:
+      train_json, val_json (optional), class_names, class_count, image_counts
+    """
+    from app.models import Dataset, Image, Annotation, AnnotationClass, AnnotationFile, ImageCollection
+    from app.tasks.yolo_training_helpers import generate_safe_output_filename
+
+    annotations_dir = output_dir / "annotations"
+    train_images_dir = output_dir / "images" / "train"
+    val_images_dir = output_dir / "images" / "val"
+    annotations_dir.mkdir(parents=True, exist_ok=True)
+    train_images_dir.mkdir(parents=True, exist_ok=True)
+    val_images_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 1. Collect unique class names across all configs ──────────────────────
+    all_classes: set = set()
+    for config in dataset_configs:
+        annotation_file_id = config["annotation_file_id"]
+        ann_classes = db.query(AnnotationClass).filter(
+            AnnotationClass.annotation_file_id == annotation_file_id
+        ).all()
+        if not ann_classes:
+            ann_file = db.query(AnnotationFile).filter(
+                AnnotationFile.dataset_id == config["dataset_id"]
+            ).first()
+            if ann_file:
+                ann_classes = db.query(AnnotationClass).filter(
+                    AnnotationClass.annotation_file_id == ann_file.id
+                ).all()
+        for c in ann_classes:
+            all_classes.add(c.class_name)
+
+    sorted_classes = sorted(all_classes)
+    class_mapping = {name: idx for idx, name in enumerate(sorted_classes)}
+    coco_categories = [
+        {"id": idx + 1, "name": name, "supercategory": "object"}
+        for idx, name in enumerate(sorted_classes)
+    ]
+
+    # ── 2. Build per-split COCO structures ────────────────────────────────────
+    splits_data: Dict[str, Dict] = {
+        "train": {"images": [], "annotations": [], "categories": coco_categories},
+        "val": {"images": [], "annotations": [], "categories": coco_categories},
+    }
+    image_counts = {"train": 0, "val": 0}
+    global_img_id = 1
+    global_ann_id = 1
+    has_any_segmentation = False
+
+    for config in dataset_configs:
+        dataset_id = config["dataset_id"]
+        annotation_file_id = config["annotation_file_id"]
+        image_collection = config.get("image_collection")
+        split_pct = config.get("split", {"train": 80, "val": 20, "test": 0})
+
+        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+        if not dataset:
+            logger.warning(f"Dataset {dataset_id} not found, skipping")
+            continue
+
+        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+        if image_collection:
+            images_query = images_query.join(Image.collection).filter(
+                ImageCollection.name == image_collection
+            )
+        images = images_query.all()
+
+        if not images:
+            logger.warning(f"No images in dataset {dataset_id}, skipping")
+            continue
+
+        # Optionally filter images without valid annotations
+        if remove_images_without_annotations:
+            needs_seg = task in ("segment", "oriented")
+            filtered = []
+            for img in images:
+                anns = db.query(Annotation).filter(
+                    Annotation.image_id == img.id,
+                    Annotation.annotation_file_id == annotation_file_id,
+                ).all()
+                for a in anns:
+                    has_bbox = a.bbox or (a.bbox_x is not None and a.bbox_width is not None)
+                    has_seg = a.segmentation and len(a.segmentation) > 0
+                    if needs_seg and has_seg and has_bbox:
+                        filtered.append(img)
+                        break
+                    if not needs_seg and has_bbox:
+                        filtered.append(img)
+                        break
+            images = filtered
+
+        if not images:
+            logger.warning(f"No images with valid annotations in dataset {dataset_id}, skipping")
+            continue
+
+        total = len(images)
+        train_n = int(total * split_pct.get("train", 80) / 100)
+        val_n = int(total * split_pct.get("val", 20) / 100)
+
+        split_assignments = (
+            [("train", img) for img in images[:train_n]]
+            + [("val", img) for img in images[train_n: train_n + val_n]]
+        )
+
+        for split_name, image in split_assignments:
+            dst_dir = train_images_dir if split_name == "train" else val_images_dir
+
+            # Copy image file
+            if image.url and image.url.startswith("/static/projects/"):
+                src_path = Path("projects") / image.url.replace("/static/projects/", "")
+            elif image.url and image.url.startswith("projects/"):
+                src_path = Path(image.url)
+            else:
+                src_path = Path("projects") / str(dataset_id) / image.file_name
+
+            safe_filename = generate_safe_output_filename(src_path.name, image.dataset_id)
+            dst_path = dst_dir / safe_filename
+
+            if src_path.exists() and not dst_path.exists():
+                try:
+                    os.link(src_path, dst_path)
+                except OSError:
+                    shutil.copy2(src_path, dst_path)
+
+            coco_img = {
+                "id": global_img_id,
+                "file_name": safe_filename,
+                "width": image.width or 0,
+                "height": image.height or 0,
+            }
+            splits_data[split_name]["images"].append(coco_img)
+            image_counts[split_name] += 1
+
+            # Annotations
+            anns = db.query(Annotation).filter(
+                Annotation.image_id == image.id,
+                Annotation.annotation_file_id == annotation_file_id,
+            ).all()
+
+            for ann in anns:
+                ann_class = db.query(AnnotationClass).filter(
+                    AnnotationClass.annotation_file_id == annotation_file_id,
+                    AnnotationClass.category_id == ann.category_id,
+                ).first()
+                if not ann_class:
+                    continue
+                cat_id = class_mapping.get(ann_class.class_name)
+                if cat_id is None:
+                    continue
+                coco_cat_id = cat_id + 1  # COCO categories are 1-indexed
+
+                # Extract bbox in [x, y, w, h] COCO format
+                bbox_coco = None
+                if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) == 4:
+                    bbox_coco = [float(v) for v in ann.bbox]
+                elif ann.bbox and isinstance(ann.bbox, dict):
+                    bbox_coco = [
+                        float(ann.bbox.get("x", 0)),
+                        float(ann.bbox.get("y", 0)),
+                        float(ann.bbox.get("width", 0)),
+                        float(ann.bbox.get("height", 0)),
+                    ]
+                elif ann.bbox_x is not None and ann.bbox_width is not None:
+                    bbox_coco = [
+                        float(ann.bbox_x),
+                        float(ann.bbox_y or 0),
+                        float(ann.bbox_width),
+                        float(ann.bbox_height or 0),
+                    ]
+
+                # Segmentation polygon
+                seg_poly = None
+                if ann.segmentation and len(ann.segmentation) > 0:
+                    raw = ann.segmentation
+                    poly = raw[0] if isinstance(raw[0], list) else raw
+                    if len(poly) >= 6:
+                        seg_poly = [poly]
+                        has_any_segmentation = True
+
+                if task == "segment":
+                    if seg_poly is None or bbox_coco is None:
+                        continue
+                elif task == "oriented":
+                    if seg_poly is None:
+                        continue
+                else:  # detect
+                    if bbox_coco is None:
+                        continue
+
+                area = (bbox_coco[2] * bbox_coco[3]) if bbox_coco else 0.0
+                coco_ann: Dict[str, Any] = {
+                    "id": global_ann_id,
+                    "image_id": global_img_id,
+                    "category_id": coco_cat_id,
+                    "bbox": bbox_coco or [0, 0, 0, 0],
+                    "area": area,
+                    "iscrowd": 0,
+                }
+                if seg_poly is not None:
+                    coco_ann["segmentation"] = seg_poly
+                else:
+                    coco_ann["segmentation"] = []
+
+                splits_data[split_name]["annotations"].append(coco_ann)
+                global_ann_id += 1
+
+            global_img_id += 1
+
+    # ── 3. Validate ───────────────────────────────────────────────────────────
+    if not sorted_classes:
+        raise ValueError("No annotation classes found. Make sure your datasets have annotations with classes defined.")
+
+    total_train = len(splits_data["train"]["images"])
+    total_val = len(splits_data["val"]["images"])
+    if total_train == 0 and total_val == 0:
+        raise ValueError("No images were processed. Check that your datasets have images with valid annotations.")
+
+    if task == "segment" and not has_any_segmentation:
+        raise ValueError(
+            "Task 'segment' requires segmentation (polygon) annotations, but none were found. "
+            "Add polygon annotations or switch to task 'detect'."
+        )
+
+    # ── 4. Write JSON files ───────────────────────────────────────────────────
+    train_json_path = annotations_dir / "train.json"
+    with open(train_json_path, "w") as f:
+        json.dump(splits_data["train"], f)
+
+    result: Dict[str, Any] = {
+        "train_json": str(train_json_path),
+        "class_names": sorted_classes,
+        "class_count": len(sorted_classes),
+        "image_counts": image_counts,
+    }
+
+    if total_val > 0:
+        val_json_path = annotations_dir / "val.json"
+        with open(val_json_path, "w") as f:
+            json.dump(splits_data["val"], f)
+        result["val_json"] = str(val_json_path)
+
+    logger.info(
+        f"MMYOLO dataset prepared: {total_train} train, {total_val} val images, "
+        f"{len(sorted_classes)} classes, task={task}"
+    )
+    return result
+
+
+# ── End MMYOLO helpers ────────────────────────────────────────────────────────
 
 
 def _normalize_class_names(names: Any) -> List[str]:
@@ -2112,4 +2439,149 @@ print(f"Found {len(predictions)} predictions")
     except Exception as e:
         logger.error(f"Error in test inference: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+# ── MMYOLO endpoint ──────────────────────────────────────────────────────────
+
+@router.post("/training/mmyolo")
+async def start_mmyolo_training(
+    request: MMYOLOTrainingRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Start MMYOLO (RTMDet family) training.
+
+    Supported architectures:
+      - rtmdet      → RTMDet detection
+      - rtmdet-ins  → RTMDet instance segmentation
+      - rtmdet-r    → RTMDet-Rotated oriented bounding boxes
+
+    Training runs via `mim run mmyolo train` inside the Celery worker.
+    """
+    try:
+        # Validate arch+size combination
+        try:
+            config_id = mmyolo_config_name(request.arch, request.size)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        # Validate datasets and annotation files exist
+        for cfg in request.dataset_configs:
+            dataset = db.query(Dataset).filter(Dataset.id == cfg["dataset_id"]).first()
+            if not dataset:
+                raise HTTPException(
+                    status_code=404, detail=f"Dataset {cfg['dataset_id']} not found"
+                )
+            ann_file = db.query(AnnotationFile).filter(
+                AnnotationFile.id == cfg["annotation_file_id"]
+            ).first()
+            if not ann_file:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Annotation file {cfg['annotation_file_id']} not found",
+                )
+
+        task_name = (
+            request.task_name
+            or f"MMYOLO {request.arch.upper()} ({request.size.upper()}) — "
+               f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+        )
+
+        task = Task(
+            name=task_name,
+            description=(
+                f"MMYOLO training: {request.arch} · {request.size} · {request.task} "
+                f"on {len(request.dataset_configs)} dataset(s)"
+            ),
+            task_type="mmyolo_training",
+            status="pending",
+            project_id=request.project_id,
+            progress=0,
+            task_metadata={
+                "model_type": f"{request.arch}_{request.size}",
+                "arch": request.arch,
+                "size": request.size,
+                "mmyolo_task": request.task,
+                "config_id": config_id,
+                "epochs": request.epochs,
+                "batch_size": request.batch_size,
+                "image_size": request.image_size,
+                "dataset_count": len(request.dataset_configs),
+                "dataset_ids": [c["dataset_id"] for c in request.dataset_configs],
+                "dataset_configs": request.dataset_configs,
+                "training_params": {
+                    "epochs": request.epochs,
+                    "batch_size": request.batch_size,
+                    "image_size": request.image_size,
+                    "device": request.device,
+                    "optimizer": request.optimizer,
+                    "learning_rate": request.learning_rate,
+                    "weight_decay": request.weight_decay,
+                    "save_period": request.save_period,
+                },
+                "remove_images_without_annotations": request.remove_images_without_annotations,
+                "use_wandb": request.use_wandb,
+                "wandb_project": request.wandb_project,
+                "wandb_entity": request.wandb_entity,
+            },
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+
+        training_config = {
+            "project_id": request.project_id,
+            "dataset_configs": request.dataset_configs,
+            "arch": request.arch,
+            "size": request.size,
+            "task": request.task,
+            "config_id": config_id,
+            "epochs": request.epochs,
+            "batch_size": request.batch_size,
+            "image_size": request.image_size,
+            "device": request.device,
+            "optimizer": request.optimizer,
+            "learning_rate": request.learning_rate,
+            "weight_decay": request.weight_decay,
+            "save_period": request.save_period,
+            "remove_images_without_annotations": request.remove_images_without_annotations,
+            "use_wandb": request.use_wandb,
+            "wandb_project": request.wandb_project,
+            "wandb_entity": request.wandb_entity,
+        }
+
+        if USE_CELERY and celery_mmyolo_task is not None:
+            celery_task = celery_mmyolo_task.delay(task.id, training_config)
+            logger.info(
+                f"Queued MMYOLO training task {task.id} in Celery (celery_id: {celery_task.id})"
+            )
+            task.task_metadata = {**task.task_metadata, "celery_task_id": celery_task.id}
+            db.commit()
+        else:
+            logger.warning("Celery not available; MMYOLO training cannot run without Celery worker.")
+            task.status = "failed"
+            task.error_message = "Celery worker not available — cannot start MMYOLO training."
+            db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Celery worker is required for MMYOLO training but is not available.",
+            )
+
+        return {
+            "success": True,
+            "task_id": task.id,
+            "message": f"MMYOLO training started ({request.arch} · {request.size})",
+            "task": {
+                "id": task.id,
+                "name": task.name,
+                "status": task.status,
+                "progress": task.progress,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Error starting MMYOLO training: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
 

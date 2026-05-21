@@ -1445,6 +1445,42 @@ export class ApiClient {
     });
   }
 
+  async startMMYOLOTraining(request: {
+    project_id: number;
+    dataset_configs: Array<{
+      dataset_id: number;
+      annotation_file_id: string;
+      image_collection?: string;
+      split?: { train: number; val: number; test: number };
+    }>;
+    arch?: string;
+    size?: string;
+    task?: string;
+    epochs?: number;
+    batch_size?: number;
+    image_size?: number;
+    device?: string;
+    task_name?: string;
+    optimizer?: string;
+    learning_rate?: number;
+    weight_decay?: number;
+    save_period?: number;
+    remove_images_without_annotations?: boolean;
+    use_wandb?: boolean;
+    wandb_project?: string;
+    wandb_entity?: string;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    task_id: number;
+    message: string;
+    task: { id: number; name: string; status: string; progress: number };
+  }>> {
+    return this.request('/training/mmyolo', {
+      method: 'POST',
+      body: JSON.stringify(request)
+    });
+  }
+
   /**
    * Get training task status
    */

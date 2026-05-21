@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ export interface PickerCollection {
 export interface PickerDataset {
   id: number;
   name: string;
+  description?: string;
   imageCount: number;
   annotationFileCount?: number;
   thumbnailUrl?: string;
@@ -71,6 +72,8 @@ interface Props {
   modelTaskType?: "detection" | "segmentation" | "classification";
   value: DatasetSelection[];
   onChange: (next: DatasetSelection[]) => void;
+  /** Optional extra content rendered at the bottom of each expanded dataset row. */
+  renderExpandedExtra?: (sel: DatasetSelection, d: PickerDataset) => React.ReactNode;
 }
 
 // ── Task type styling ──────────────────────────────────────────────────────
@@ -91,6 +94,7 @@ export function DatasetEvalPicker({
   groups = [],
   value,
   onChange,
+  renderExpandedExtra,
 }: Props) {
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
@@ -157,13 +161,21 @@ export function DatasetEvalPicker({
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
-      const file = d.annotationFiles[0];
+      // Pick latest annotation file by modifiedAt, fall back to last in list
+      const latestFile = d.annotationFiles.length > 0
+        ? [...d.annotationFiles].sort((a, b) => {
+            if (!a.modifiedAt && !b.modifiedAt) return 0;
+            if (!a.modifiedAt) return 1;
+            if (!b.modifiedAt) return -1;
+            return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+          })[0]
+        : undefined;
       const coll = d.collections[0];
       onChange([
         ...value,
         {
           datasetId: d.id,
-          annotationFileId: file?.id ?? null,
+          annotationFileId: latestFile?.id ?? null,
           collectionId: coll?.id ?? null,
         },
       ]);
@@ -240,6 +252,11 @@ export function DatasetEvalPicker({
           >
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span className="font-semibold text-sm truncate">{d.name}</span>
+              {d.description && (
+                <span className="text-xs text-muted-foreground truncate max-w-[200px]" title={d.description}>
+                  {d.description}
+                </span>
+              )}
               {taskType && (
                 <span
                   className={cn(
@@ -347,7 +364,8 @@ export function DatasetEvalPicker({
         </div>
 
         {isSelected && isExpanded && (
-          <div className="border-t border-border/60 px-3 py-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-muted/30">
+          <div className="border-t border-border/60 px-3 py-3 space-y-3 bg-muted/30">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
                 Ground truth
@@ -407,6 +425,8 @@ export function DatasetEvalPicker({
                 </SelectContent>
               </Select>
             </div>
+            </div>
+            {renderExpandedExtra && sel && renderExpandedExtra(sel, d)}
           </div>
         )}
       </div>

@@ -30,7 +30,7 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Users, Info, AlertCircle, ArrowLeft, ArrowRight, Sliders } from "lucide-react";
+import { Brain, Database, Settings, Trash2, Plus, Image, FileText, Wand2, Check, ChevronDown, ChevronRight, Info, AlertCircle, ArrowLeft, ArrowRight, Sliders } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Dataset, DatasetGroup } from "@/types";
 import {
@@ -254,12 +254,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         ? annotationsResponse.data.map((ann: any) => ({
             id: ann.id || ann.name,
             name: ann.name,
+            created_at: ann.created_at || ann.updated_at || null,
             // fallback to several possible field names used in backend
             type: ann.type || ann.annotation_type || ann.format || ann.file_type || ann.kind || null
           }))
         : [];
       
-      // Update the selection with fetched data and auto-select if only one option
+      // Update the selection with fetched data and auto-select best defaults
       if (isMountedRef.current) {
         setSelectedDatasets(prev => prev.map(sel => {
           if (sel.id === selectionId) {
@@ -271,15 +272,22 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               loadingAnnotations: false
             };
             
-            // Auto-select if only one option available and current selection is invalid or null
+            // Always pick first collection if current is missing/invalid
             const isImageCollectionValid = updatedSel.imageCollection && collections.includes(updatedSel.imageCollection);
-            if (collections.length === 1 && !isImageCollectionValid) {
+            if (!isImageCollectionValid && collections.length > 0) {
               updatedSel.imageCollection = collections[0];
             }
             
-            const isAnnotationValid = updatedSel.annotation && annotations.find(a => a.id === updatedSel.annotation);
-            if (annotations.length === 1 && !isAnnotationValid) {
-              updatedSel.annotation = annotations[0].id;
+            // Always pick latest annotation file if current is missing/invalid
+            const isAnnotationValid = updatedSel.annotation && annotations.find((a: any) => a.id === updatedSel.annotation);
+            if (!isAnnotationValid && annotations.length > 0) {
+              const sorted = [...annotations].sort((a: any, b: any) => {
+                if (!a.created_at && !b.created_at) return 0;
+                if (!a.created_at) return 1;
+                if (!b.created_at) return -1;
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+              });
+              updatedSel.annotation = sorted[0].id;
             }
             
             return updatedSel;
@@ -398,6 +406,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         id: String(f.id),
         name: f.name || f.file_name,
         classes: [] as string[],
+        modifiedAt: f.created_at,
       }));
       const annotationFiles = sel
         ? sel.annotations.map(a => ({
@@ -405,6 +414,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
             name: a.name,
             classes: [] as string[],
             taskType: (a.type as any) || undefined,
+            modifiedAt: (a as any).created_at,
           }))
         : annotationFilesFromProps;
       const collections = sel
@@ -413,6 +423,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       return {
         id: d.id,
         name: d.name,
+        description: d.description || undefined,
         imageCount: d.image_count ?? 0,
         annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
         thumbnailUrl: d.thumbnailUrl,
@@ -517,8 +528,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
     if (!selectedModel) {
       reasons.push('Select a model family.');
-    } else if (selectedModel === 'mmyolo') {
-      reasons.push('MMYOLO training backend is not yet wired — please pick Ultralytics YOLO or RF-DETR for now.');
     }
 
 
@@ -538,17 +547,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     setIsTraining(true);
     
     try {
-      // Check if model is implemented
-      if (selectedModel !== 'yolo' && selectedModel !== 'rf-detr') {
-        toast({
-          title: "Not Implemented",
-          description: `${String(selectedModel).toUpperCase()} training is not yet implemented`,
-          variant: "destructive",
-        });
-        setIsTraining(false);
-        return;
-      }
-
       // Prepare dataset configurations
       const datasetConfigs = selectedDatasets.map(sel => ({
         dataset_id: sel.dataset.id,
@@ -618,6 +616,35 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
         response = await api.startRTDETRTraining(trainingRequest);
         modelName = trainingRequest.model_type;
+      } else if (selectedModel === 'mmyolo') {
+        const archObj = mmyoloArchForTask(selectedTask as string);
+        const arch = archObj.id || modelSettings.arch || 'rtmdet';
+        const size = modelSettings.mmyoloSize || 's';
+        const mmyoloTask =
+          arch === 'rtmdet-ins' ? 'segment' :
+          arch === 'rtmdet-r'   ? 'oriented' : 'detect';
+        const trainingRequest = {
+          project_id: parseInt(projectId),
+          dataset_configs: datasetConfigs,
+          arch,
+          size,
+          task: mmyoloTask,
+          epochs: modelSettings.epochs || 300,
+          batch_size: modelSettings.batchSize || 16,
+          image_size: modelSettings.imageSize || 640,
+          device: modelSettings.device || '0',
+          optimizer: modelSettings.optimizer || 'AdamW',
+          learning_rate: modelSettings.learningRate || 0.004,
+          weight_decay: modelSettings.weightDecay || 0.05,
+          save_period: modelSettings.savePeriod !== undefined ? modelSettings.savePeriod : -1,
+          remove_images_without_annotations: removeImagesWithoutAnnotations,
+          use_wandb: saveToWandb,
+          wandb_project: saveToWandb ? wandbSettings.project : undefined,
+          wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
+          task_name: customName.trim() || `MMYOLO ${arch.toUpperCase()} ${size.toUpperCase()} - ${new Date().toLocaleString()}`
+        };
+        response = await api.startMMYOLOTraining(trainingRequest);
+        modelName = `${arch}-${size}`;
       }
 
       // Handle both wrapped and unwrapped responses
@@ -1002,100 +1029,95 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   modelClasses={[]}
                   value={pickerValue}
                   onChange={handlePickerChange}
+                  renderExpandedExtra={(pickerSel) => {
+                    const selection = selectedDatasets.find(s => s.dataset.id === pickerSel.datasetId);
+                    if (!selection) return null;
+                    const train = selection.split?.train ?? 80;
+                    const val = selection.split?.val ?? 20;
+                    const test = selection.split?.test ?? 0;
+                    return (
+                      <div className="space-y-2 pt-1 border-t border-border/40">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
+                            Train / Val / Test split
+                          </label>
+                          <div className="flex items-center gap-3 text-xs font-medium">
+                            <span className="flex items-center gap-1">
+                              <span className="inline-block h-2 w-2 rounded-sm bg-green-500" />
+                              {train}%
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="inline-block h-2 w-2 rounded-sm bg-yellow-400" />
+                              {val}%
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <span className="inline-block h-2 w-2 rounded-sm bg-blue-500" />
+                              {test}%
+                            </span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-5 w-5"
+                              onClick={async () => {
+                                if (!selection.annotation) return;
+                                try {
+                                  const res = await api?.getAnnotationClasses(selection.dataset.id, selection.annotation);
+                                  if (res && res.success) {
+                                    setClassStats(res.data);
+                                    setShowClassDialog(true);
+                                  }
+                                } catch (e) {
+                                  console.error('Error fetching class stats', e);
+                                }
+                              }}
+                              aria-label="Show class stats"
+                              title="View class statistics"
+                            >
+                              <Info className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="w-full h-2.5 rounded-full overflow-hidden bg-muted flex">
+                          <div style={{ width: `${train}%` }} className="h-full bg-green-500 transition-all" />
+                          <div style={{ width: `${val}%` }} className="h-full bg-yellow-400 transition-all" />
+                          <div style={{ width: `${test}%` }} className="h-full bg-blue-500 transition-all" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                          <div className="space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-muted-foreground">Train</label>
+                              <span className="text-[11px] font-medium">{train}%</span>
+                            </div>
+                            <input
+                              type="range" min={0} max={100} value={train}
+                              onChange={(e) => {
+                                const t = Number(e.target.value);
+                                const v = Math.min(val, Math.max(0, 100 - t));
+                                updateDatasetSelection(selection.id, 'split', { train: t, val: v, test: Math.max(0, 100 - t - v) });
+                              }}
+                              className="w-full accent-green-500"
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[11px] text-muted-foreground">Val</label>
+                              <span className="text-[11px] font-medium">{val}%</span>
+                            </div>
+                            <input
+                              type="range" min={0} max={100} value={val}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                const t = Math.min(train, Math.max(0, 100 - v));
+                                updateDatasetSelection(selection.id, 'split', { train: t, val: v, test: Math.max(0, 100 - t - v) });
+                              }}
+                              className="w-full accent-yellow-400"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }}
                 />
-              )}
-
-              {/* Per-dataset Train / Val / Test split */}
-              {selectedDatasets.length > 0 && (
-                <div className="space-y-3">
-                  <Label className="text-sm font-medium">Train / Val / Test split</Label>
-                  {selectedDatasets.map((selection) => (
-                    <Card key={selection.id} className="p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Database className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="text-sm font-medium truncate">{selection.dataset.name}</span>
-                          {selection.fromGroup && (
-                            <Badge variant="outline" className="text-xs">
-                              <Users className="h-3 w-3 mr-1" />
-                              {selection.groupName}
-                            </Badge>
-                          )}
-                          {selection.annotation && (() => {
-                            const sel = selection.annotations.find(a => a.id === selection.annotation);
-                            const t = sel?.type || 'unknown';
-                            const variant = t === 'classification' ? 'default' : t === 'segmentation' ? 'secondary' : 'outline';
-                            return <Badge variant={variant} className="text-xs">{t}</Badge>;
-                          })()}
-                        </div>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-6 w-6"
-                          onClick={async () => {
-                            if (!selection.annotation) return;
-                            try {
-                              const res = await api?.getAnnotationClasses(selection.dataset.id, selection.annotation);
-                              if (res && res.success) {
-                                setClassStats(res.data);
-                                setShowClassDialog(true);
-                              }
-                            } catch (e) {
-                              console.error('Error fetching class stats', e);
-                            }
-                          }}
-                          aria-label="Show class stats"
-                        >
-                          <Info className="h-3 w-3" />
-                        </Button>
-                      </div>
-                      <div className="text-xs flex justify-between mb-1">
-                        <span>Train: {selection.split?.train ?? 80}%</span>
-                        <span>Val: {selection.split?.val ?? 20}%</span>
-                        <span>Test: {selection.split?.test ?? 0}%</span>
-                      </div>
-                      <div className="w-full h-3 rounded overflow-hidden bg-muted flex">
-                        <div style={{ width: `${selection.split?.train ?? 80}%` }} className="h-3 bg-green-500" />
-                        <div style={{ width: `${selection.split?.val ?? 20}%` }} className="h-3 bg-yellow-400" />
-                        <div style={{ width: `${selection.split?.test ?? 0}%` }} className="h-3 bg-blue-500" />
-                      </div>
-                      <div className="mt-2 grid grid-cols-2 gap-3">
-                        <div>
-                          <Label className="text-xs">Train %</Label>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            value={selection.split?.train ?? 80}
-                            onChange={(e) => {
-                              const train = Number(e.target.value);
-                              const val = Math.min(selection.split?.val ?? 20, Math.max(0, 100 - train));
-                              const test = Math.max(0, 100 - train - val);
-                              updateDatasetSelection(selection.id, 'split', { train, val, test });
-                            }}
-                            className="w-full"
-                          />
-                        </div>
-                        <div>
-                          <Label className="text-xs">Val %</Label>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            value={selection.split?.val ?? 20}
-                            onChange={(e) => {
-                              const val = Number(e.target.value);
-                              const train = Math.min(selection.split?.train ?? 80, Math.max(0, 100 - val));
-                              const test = Math.max(0, 100 - train - val);
-                              updateDatasetSelection(selection.id, 'split', { train, val, test });
-                            }}
-                            className="w-full"
-                          />
-                        </div>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
               )}
             </div>
             )}

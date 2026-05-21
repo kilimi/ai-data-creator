@@ -19,3 +19,6 @@ coverage/
 
 # Test artifacts
 .test-cache/
+
+
+tests/fixtures/
