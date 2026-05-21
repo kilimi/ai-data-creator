@@ -314,6 +314,15 @@ export function EvaluateModelModal({
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 640;
   }, [selectedModel, trainingTasks]);
 
+  const evaluationCandidateTasks = useMemo(
+    () => trainingTasks.filter((task) => {
+      if (task.status !== 'completed') return false;
+      if (task.task_type === 'yolo_training') return true;
+      return !!(task.task_metadata?.best_model || task.task_metadata?.last_model);
+    }),
+    [trainingTasks]
+  );
+
   // Picker change handler — reconciles add/remove/update with selectedDatasets state
   const handlePickerChange = useCallback(async (next: DatasetSelection[]) => {
     const prevIds = new Set(selectedDatasets.map(s => s.datasetId));
@@ -587,7 +596,7 @@ export function EvaluateModelModal({
                         />
                       </SelectTrigger>
                       <SelectContent>
-                        {trainingTasks.filter(t => t.status === 'completed' && t.task_type === 'yolo_training').map(task => (
+                        {evaluationCandidateTasks.map(task => (
                           <SelectItem key={task.id} value={task.id.toString()}>
                             {task.name} (ID: {task.id})
                           </SelectItem>

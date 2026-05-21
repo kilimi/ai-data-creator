@@ -152,6 +152,20 @@ export function resolveClassFilterToggleNavigation(
   };
 }
 
+export function buildAutoSegmentMaskOverlayStyle(
+  imageOffset: { x: number; y: number },
+  imageScale: number,
+  naturalWidth: number,
+  naturalHeight: number
+): React.CSSProperties {
+  return {
+    left: imageOffset.x,
+    top: imageOffset.y,
+    width: Math.max(0, naturalWidth) * imageScale,
+    height: Math.max(0, naturalHeight) * imageScale,
+  };
+}
+
 function baseNameNoExt(fileName: string): string {
   if (!fileName.includes('.')) return fileName.toLowerCase();
   return fileName.slice(0, fileName.lastIndexOf('.')).toLowerCase();
@@ -404,6 +418,27 @@ const ImageAnnotation = () => {
     return baseNavigableImageNames.filter(name => filterSet.has(name));
   }, [baseNavigableImageNames, classFilterName, classImageMap]);
 
+  // Keep annotation swatches in sync with the left-side Classes palette.
+  // Must react to BOTH classes and annotation arrivals: on first image load,
+  // async annotation fetch can complete after classes are already set.
+  useEffect(() => {
+    if (classes.length === 0 || annotations.length === 0) return;
+
+    const remapped = applyClassColorsToAnnotations(annotations, classes);
+    if (remapped === annotations) return;
+
+    annotationsRef.current = remapped;
+    setAnnotations(remapped);
+
+    if (id && currentImageName) {
+      const activeCollId = displayLayer ?? mainLayer ?? 'default';
+      safeLocalStorageSet(
+        `annotations_${id}_${activeCollId}_${currentImageName}`,
+        JSON.stringify(remapped),
+      );
+    }
+  }, [classes, annotations, id, currentImageName, displayLayer, mainLayer]);
+
   // When an annotation is selected (e.g., by clicking on canvas), scroll only the right list container
   useEffect(() => {
     if (!selectedAnnotation) return;
@@ -581,6 +616,8 @@ const ImageAnnotation = () => {
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [showDeleteAnnotationDialog, setShowDeleteAnnotationDialog] = useState(false);
   const [pendingDeleteAnnotationId, setPendingDeleteAnnotationId] = useState<string | null>(null);
+  const [showDeleteClassDialog, setShowDeleteClassDialog] = useState(false);
+  const [pendingDeleteClassId, setPendingDeleteClassId] = useState<string | null>(null);
   const [skipDeleteAnnotationConfirm, setSkipDeleteAnnotationConfirm] = useState(false);
 
   useEffect(() => {
@@ -3550,44 +3587,141 @@ const ImageAnnotation = () => {
   const deleteClass = (classId: string) => {
     const classToDelete = classes.find(c => c.id === classId);
     if (!classToDelete) return;
+    setPendingDeleteClassId(classId);
+    setShowDeleteClassDialog(true);
+  };
 
-    // Check if there are annotations using this class
-    const annotationsWithClass = annotations.filter(a => a.label === classToDelete.name);
-    if (annotationsWithClass.length > 0) {
-      const confirmed = window.confirm(
-        `This class has ${annotationsWithClass.length} annotation(s). Deleting it will also remove all annotations using this class. Continue?`
-      );
-      if (!confirmed) return;
+  const confirmDeleteClass = () => {
+    if (!id || !pendingDeleteClassId) return;
 
-      // Delete all annotations using this class
-      setAnnotations(prev => {
-        const updated = prev.filter(a => a.label !== classToDelete.name);
-        if (currentImageName) {
-          saveAnnotationsToLocalStorage(currentImageName, updated);
-        }
-        return updated;
-      });
+    const classToDelete = classes.find(c => c.id === pendingDeleteClassId);
+    if (!classToDelete) {
+      setPendingDeleteClassId(null);
+      setShowDeleteClassDialog(false);
+      return;
     }
 
-    // Remove the class
-    setClasses(prev => {
-      const updated = prev.filter(c => c.id !== classId);
+    const affectedImages = new Set<string>();
+    let deletedAnnotationCount = 0;
+
+    try {
+      const annotationFileRef = sessionStorage.getItem(`annotation_file_${id}`);
+      if (annotationFileRef) {
+        const fileData = JSON.parse(annotationFileRef);
+        const cocoData = fileData?.cocoData;
+        if (cocoData?.annotations && cocoData?.categories) {
+          const imageIdToFileName: { [key: string]: string } = {};
+          cocoData.images?.forEach((img: any) => {
+            if (img?.id != null && img?.file_name) {
+              imageIdToFileName[String(img.id)] = img.file_name;
+            }
+          });
+
+          const removedCategoryIds = new Set(
+            cocoData.categories
+              .filter((category: any) => category?.name === classToDelete.name)
+              .map((category: any) => String(category.id))
+          );
+
+          if (removedCategoryIds.size > 0) {
+            cocoData.annotations = cocoData.annotations.filter((annotation: any) => {
+              const shouldRemove = annotation?.category_id != null && removedCategoryIds.has(String(annotation.category_id));
+              if (shouldRemove) {
+                deletedAnnotationCount += 1;
+                const imageName = imageIdToFileName[String(annotation.image_id)];
+                if (imageName) affectedImages.add(imageName);
+              }
+              return !shouldRemove;
+            });
+            cocoData.categories = cocoData.categories.filter((category: any) => category?.name !== classToDelete.name);
+            fileData.cocoData = cocoData;
+            sessionStorage.setItem(`annotation_file_${id}`, JSON.stringify(fileData));
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Could not update annotation session data during class deletion:', error);
+    }
+
+    const keyPrefix = `annotations_${id}_`;
+    const keysToUpdate: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || !key.startsWith(keyPrefix) || key.endsWith('_dims')) continue;
+      keysToUpdate.push(key);
+    }
+
+    keysToUpdate.forEach((key) => {
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as AnnotationShape[];
+        if (!Array.isArray(parsed)) return;
+        const filtered = parsed.filter((annotation) => annotation.label !== classToDelete.name);
+        const removedCount = parsed.length - filtered.length;
+        if (removedCount <= 0) return;
+
+        deletedAnnotationCount += removedCount;
+        localStorage.setItem(key, JSON.stringify(filtered));
+      } catch (error) {
+        console.warn('Could not update cached annotations during class deletion:', { key, error });
+      }
+    });
+
+    setAnnotations((prev) => {
+      const removedSelectedAnnotation = prev.some(
+        (annotation) => annotation.id === selectedAnnotation && annotation.label === classToDelete.name,
+      );
+      const updated = prev.filter((annotation) => annotation.label !== classToDelete.name);
+      if (removedSelectedAnnotation) {
+        setSelectedAnnotation(null);
+      }
+      return updated;
+    });
+
+    setClasses((prev) => {
+      const updated = prev.filter((annotationClass) => annotationClass.id !== pendingDeleteClassId);
       saveGlobalClasses(updated);
       return updated;
     });
 
-    // Clear selection if deleted class was selected
-    if (selectedClass === classId) {
+    if (selectedClass === pendingDeleteClassId) {
       setSelectedClass(null);
     }
+    if (soloClassId === pendingDeleteClassId) {
+      setSoloClassId(null);
+    }
+    if (classFilterName === classToDelete.name) {
+      setClassFilterName(null);
+    }
 
+    setGlobalStats((prev) => {
+      const updated = { ...prev };
+      delete updated[classToDelete.name];
+      return updated;
+    });
+    setGlobalAvgAreas((prev) => {
+      const updated = { ...prev };
+      delete updated[classToDelete.name];
+      return updated;
+    });
+    setClassImageMap((prev) => {
+      const updated = { ...prev };
+      delete updated[classToDelete.name];
+      return updated;
+    });
     setHasUnsavedChanges(true);
+    setPendingDeleteClassId(null);
+    setShowDeleteClassDialog(false);
 
+    const imageCount = affectedImages.size || classImageMap[classToDelete.name]?.size || 0;
     toast({
       title: 'Class deleted',
-      description: `Class "${classToDelete.name}" has been removed`,
+      description:
+        deletedAnnotationCount > 0
+          ? `Removed class "${classToDelete.name}" and ${deletedAnnotationCount} annotation(s) across ${imageCount} image(s) in this session.`
+          : `Class "${classToDelete.name}" has been removed from this session.`,
     });
-    computeGlobalStatsDebounced();
   };
 
   const startEditingClass = (classId: string, currentName: string) => {
@@ -6568,13 +6702,16 @@ const ImageAnnotation = () => {
             {/* Auto-segment preview overlay with accept/cancel controls */}
             {autoSegmentPreview && (
               <div className="absolute inset-0 pointer-events-none">
-                {/* show mask image if available */}
-                {autoSegmentPreview.maskDataUrl && (
-                  <img src={autoSegmentPreview.maskDataUrl} alt="mask preview" className="absolute inset-0 w-full h-full object-contain opacity-60 pointer-events-none" />
-                )}
-
                 {/* draw polygon outlines on top using an SVG overlay */}
                 <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                  {autoSegmentPreview.polygons.map((poly, i) => (
+                    <polygon
+                      key={`fill_${i}`}
+                      points={poly.map(p => `${(p.x * imageScale + imageOffset.x).toFixed(2)},${(p.y * imageScale + imageOffset.y).toFixed(2)}`).join(' ')}
+                      fill="rgba(0, 255, 170, 0.25)"
+                      stroke="none"
+                    />
+                  ))}
                   {autoSegmentPreview.polygons.map((poly, i) => (
                     <polyline
                       key={i}
@@ -7098,8 +7235,7 @@ const ImageAnnotation = () => {
 
               {/* Statistics Tab */}
               <TabsContent value="statistics" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
-                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin">
-                  <div className="p-3">
+                <div className="flex-1 min-h-0 p-3 flex flex-col">
                   {(() => {
                     // Merge saved globalStats with unsaved current-image annotations
                     const mergedStats: { [name: string]: number } = { ...globalStats };
@@ -7132,7 +7268,7 @@ const ImageAnnotation = () => {
                     }
 
                     return (
-                      <div className="space-y-3">
+                      <div className="h-full min-h-0 flex flex-col gap-3">
                         {/* Summary row */}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -7174,7 +7310,7 @@ const ImageAnnotation = () => {
                         </div>
 
                         {/* Class rows */}
-                        <div className="space-y-1">
+                        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 pr-1 scrollbar-thin">
                           {sortedClasses.map((c) => {
                             const count = mergedStats[c.name] || 0;
                             const pct = total > 0 ? (count / total) * 100 : 0;
@@ -7234,7 +7370,6 @@ const ImageAnnotation = () => {
                       </div>
                     );
                   })()}
-                  </div>
                 </div>
               </TabsContent>
             </Tabs>
@@ -7441,6 +7576,46 @@ const ImageAnnotation = () => {
             </AlertDialogCancel>
             <Button variant="destructive" onClick={confirmDeleteAnnotation}>
               Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={showDeleteClassDialog}
+        onOpenChange={(open) => {
+          setShowDeleteClassDialog(open);
+          if (!open) setPendingDeleteClassId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Class?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteClassId && (() => {
+                const pendingClass = classes.find((annotationClass) => annotationClass.id === pendingDeleteClassId);
+                if (!pendingClass) return 'This will remove the selected class from this session.';
+                const annotationCount = globalStats[pendingClass.name] ?? 0;
+                const imageCount = classImageMap[pendingClass.name]?.size ?? 0;
+                return annotationCount > 0
+                  ? `This will delete class "${pendingClass.name}" and remove ${annotationCount} annotation(s) across ${imageCount} image(s) in the current session.`
+                  : `This will delete class "${pendingClass.name}" from the current session.`;
+              })()}
+              <br />
+              <span className="text-destructive font-medium">This action cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setShowDeleteClassDialog(false);
+                setPendingDeleteClassId(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <Button variant="destructive" onClick={confirmDeleteClass}>
+              Delete Class
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

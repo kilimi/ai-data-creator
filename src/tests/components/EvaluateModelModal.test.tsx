@@ -394,3 +394,84 @@ describe('EvaluateModelModal - API Integration', () => {
     expect(mockOnEvaluateMultiple).not.toHaveBeenCalled();
   });
 });
+
+describe('EvaluateModelModal - Imported Models', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, data: [{ className: 'cat' }] }),
+    }) as any;
+  });
+
+  it('shows imported PT models but excludes imported ONNX models from evaluation', async () => {
+    render(
+      <EvaluateModelModal
+        open={true}
+        onOpenChange={vi.fn()}
+        trainingTasks={[
+          {
+            id: 1,
+            name: 'Imported PT Model',
+            status: 'completed',
+            task_type: 'training',
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+            project_id: 1,
+            progress: 100,
+            task_metadata: {
+              image_size: 640,
+              best_model: '/models/imported.pt',
+              class_names: ['cat'],
+            },
+          },
+          {
+            id: 2,
+            name: 'Imported ONNX Model',
+            status: 'completed',
+            task_type: 'training',
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+            project_id: 1,
+            progress: 100,
+            task_metadata: {
+              image_size: 640,
+              onnx_file: '/models/imported.onnx',
+              class_names: ['cat'],
+            },
+          },
+        ]}
+        resourcesLoading={false}
+        projectId="1"
+        datasets={[
+          {
+            id: 1,
+            name: 'Test Dataset',
+            description: '',
+            tags: [],
+            image_count: 0,
+            annotation_count: 0,
+            annotation_file_count: 0,
+            image_dir: '/test',
+            created_at: '2024-01-01',
+            updated_at: '2024-01-01',
+            project_id: 1,
+            annotation_files: [],
+          },
+        ] as any}
+        datasetGroups={[]}
+        onEvaluate={vi.fn().mockResolvedValue(undefined)}
+        onEvaluateMultiple={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 dataset\(s\) selected\./i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    expect(await screen.findByText('Imported PT Model (ID: 1)')).toBeInTheDocument();
+    expect(screen.queryByText('Imported ONNX Model (ID: 2)')).not.toBeInTheDocument();
+  });
+});

@@ -450,7 +450,7 @@ export function ThresholdExplorer({
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `Server error: ${response.status}`);
+        throw new Error(errorData.error || errorData.detail || `Server error: ${response.status}`);
       }
 
       toast({
@@ -542,6 +542,7 @@ export function ThresholdExplorer({
   function toggleCell(row: number, col: number) {
     // FN column (col === numRealClasses) has no predictions to save — ignore.
     if (col === numRealClasses) return;
+    if ((metrics?.cm?.[row]?.[col] ?? 0) <= 0) return;
     const key = cellKey(row, col);
     setSelectedCells((prev) => {
       const next = new Set(prev);
@@ -1110,10 +1111,12 @@ export function ThresholdExplorer({
                                   <button
                                     type="button"
                                     onClick={() => toggleCell(r, c)}
-                                    disabled={isFnCol}
+                                    disabled={isFnCol || empty}
                                     title={
                                       isFnCol
                                         ? `${rowName} not detected (FN — no prediction to save)`
+                                        : empty
+                                          ? `GT: ${rowName} • Pred: ${classNames[c]} • no predictions to save`
                                         : `GT: ${rowName} • Pred: ${classNames[c]} • ${count} prediction${count === 1 ? "" : "s"}`
                                     }
                                     className={`w-full h-8 min-w-[44px] flex items-center justify-center font-mono transition-all ${
@@ -1164,7 +1167,7 @@ export function ThresholdExplorer({
               onClick={confirmSaveToDataset}
               disabled={
                 savingToDataset ||
-                (saveSelectionMode === "cm_cells" && selectedCells.size === 0)
+                (saveSelectionMode === "cm_cells" && (selectedCells.size === 0 || selectedCellTotal === 0))
               }
               className="bg-amber-600 hover:bg-amber-700"
             >

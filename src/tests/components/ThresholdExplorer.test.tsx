@@ -356,6 +356,33 @@ describe('ThresholdExplorer Component', () => {
         );
       });
     });
+
+    it('should surface backend detail when saving selected cells fails', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ detail: 'No predictions fall into the selected confusion-matrix cells at current thresholds.' }),
+      });
+
+      render(<ThresholdExplorer {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /save predictions to dataset/i }));
+      await waitFor(() => {
+        expect(screen.getByText(/Pick cells from the confusion matrix/i)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText(/Pick cells from the confusion matrix/i));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /TP diagonal/i })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /TP diagonal/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^Save \d+ prediction/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/No predictions fall into the selected confusion-matrix cells at current thresholds\./i)).toBeInTheDocument();
+      });
+    });
   });
 
   describe('per-class confidence', () => {

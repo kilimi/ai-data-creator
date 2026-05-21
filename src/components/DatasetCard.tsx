@@ -292,7 +292,12 @@ export function DatasetCard({ dataset, className, onDelete, onDatasetUpdated, on
         "group overflow-hidden hover-card flex flex-col h-full transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/40 cursor-pointer",
         className,
       )}
-      onClick={() => navigate(datasetHref)}
+      onClick={() => {
+        // Dialog content is rendered in a portal but events still bubble through
+        // the React tree; avoid card navigation while a dialog is open.
+        if (isEditDialogOpen || isMoveDialogOpen) return;
+        navigate(datasetHref);
+      }}
     >
       <CardHeader className="p-0">
         <div className="relative h-40 w-full overflow-hidden bg-muted/30">

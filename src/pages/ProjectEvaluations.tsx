@@ -88,21 +88,13 @@ export default function ProjectEvaluations() {
       );
       if (response.ok) {
         const data = await response.json();
-        const list = Array.isArray(data) ? data : [];
-        if (list.length === 0) {
-          const { MOCK_EVALUATION_TASKS } = await import('@/lib/mockTasks');
-          setEvaluationTasks(MOCK_EVALUATION_TASKS);
-        } else {
-          setEvaluationTasks(list);
-        }
+        setEvaluationTasks(Array.isArray(data) ? data : []);
       } else {
-        const { MOCK_EVALUATION_TASKS } = await import('@/lib/mockTasks');
-        setEvaluationTasks(MOCK_EVALUATION_TASKS);
+        setEvaluationTasks([]);
       }
     } catch (error) {
       console.error('Error fetching evaluation tasks:', error);
-      const { MOCK_EVALUATION_TASKS } = await import('@/lib/mockTasks');
-      setEvaluationTasks(MOCK_EVALUATION_TASKS);
+      setEvaluationTasks([]);
     } finally {
       setLoadingTasks(false);
     }
@@ -117,7 +109,7 @@ export default function ProjectEvaluations() {
         fetch(`http://localhost:9999/projects/${id}/datasets/list`),
         fetch(`http://localhost:9999/projects/${id}/dataset-groups/`),
         fetch(
-          `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training&status=completed&metadata_mode=list&limit=150`
+          `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training&status=completed&metadata_mode=list&limit=150`
         ),
       ]);
       if (dsRes.ok) {

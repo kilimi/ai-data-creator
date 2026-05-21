@@ -168,7 +168,7 @@ def _filter_true_positive_predictions(
 
 def _filter_predictions_by_cm_cells(
     predictions: List[Dict[str, Any]],
-    all_ground_truth: List[Dict[str, Any]],
+    all_ground_truth: Optional[List[Dict[str, Any]]],
     iou_threshold: float,
     selected_cells: List[List[int]],
     num_real_classes: int,
@@ -197,6 +197,24 @@ def _filter_predictions_by_cm_cells(
 
     if not cells:
         return []
+
+    # If no ground truth is available, degrade gracefully:
+    # keep predictions by selected prediction columns only.
+    if not all_ground_truth:
+        selected_pred_classes = {
+            c for _, c in cells if 0 <= c < num_real_classes
+        }
+        if not selected_pred_classes:
+            return []
+        kept_no_gt: List[Dict[str, Any]] = []
+        for pred in predictions:
+            try:
+                pred_class = int(pred.get("class_id", -1))
+            except Exception:
+                continue
+            if pred_class in selected_pred_classes:
+                kept_no_gt.append(pred)
+        return kept_no_gt
 
     gt_by_image: Dict[int, List[Dict[str, Any]]] = {}
     for gt in all_ground_truth or []:
@@ -295,6 +313,32 @@ def build_thresholded_evaluation_coco_bundle(
     collection_id = results.get("collection_id")
     class_names = results.get("class_names", [])
     checkpoint = results.get("checkpoint", "best")
+    task_meta = task.task_metadata or {}
+
+    # Keep save/export behavior consistent with evaluation settings:
+    # classes ignored in evaluation metrics should not be persisted as predictions.
+    ignored_classes = task_meta.get("ignored_classes") or []
+    ignored_class_ids: set[int] = set()
+    if ignored_classes:
+        class_name_to_id = {
+            str(name).strip().lower(): idx
+            for idx, name in enumerate(class_names)
+            if name is not None
+        }
+        ignored_class_ids = {
+            class_name_to_id[str(name).strip().lower()]
+            for name in ignored_classes
+            if isinstance(name, str) and str(name).strip().lower() in class_name_to_id
+        }
+
+    # Also exclude synthetic/non-usable labels from persisted output.
+    non_savable_class_ids: set[int] = set()
+    for idx, class_name in enumerate(class_names):
+        normalized = (str(class_name).strip().lower() if class_name is not None else "")
+        if not normalized or normalized in {"background", "bg", "empty", "__background__", "background_empty"}:
+            non_savable_class_ids.add(idx)
+
+    excluded_class_ids = ignored_class_ids | non_savable_class_ids
 
     if dataset_id is None:
         raise HTTPException(status_code=400, detail="Evaluation results are missing dataset_id")
@@ -321,7 +365,12 @@ def build_thresholded_evaluation_coco_bundle(
     filtered_predictions = []
     for pred in predictions:
         pred_conf = pred.get("conf", 0)
-        pred_class_id = pred.get("class_id", 0)
+        try:
+            pred_class_id = int(pred.get("class_id", 0))
+        except Exception:
+            continue
+        if pred_class_id in excluded_class_ids:
+            continue
         if effective_per_class and pred_class_id < len(class_names):
             class_name = class_names[pred_class_id]
             threshold = effective_per_class.get(class_name, conf_threshold_value)
@@ -347,11 +396,6 @@ def build_thresholded_evaluation_coco_bundle(
         )
     elif save_selection == "cm_cells":
         all_ground_truth = results.get("all_ground_truth", [])
-        if not all_ground_truth:
-            raise HTTPException(
-                status_code=400,
-                detail="Ground truth is required to save predictions by confusion-matrix cell.",
-            )
         num_real_classes = max(0, len(class_names) - 1)
         predictions = _filter_predictions_by_cm_cells(
             predictions,
@@ -398,6 +442,8 @@ def build_thresholded_evaluation_coco_bundle(
             "conf_threshold": conf_threshold_value,
             "iou_threshold": iou_threshold_value,
             "per_class_conf": effective_per_class if effective_per_class else None,
+                "ignored_classes": ignored_classes if ignored_classes else None,
+                "excluded_class_ids": sorted(excluded_class_ids) if excluded_class_ids else None,
                 "save_selection": save_selection,
                 "selected_class_ids": selected_class_ids if selected_class_ids else None,
                 "selected_cells": selected_cells if selected_cells else None,
@@ -408,6 +454,8 @@ def build_thresholded_evaluation_coco_bundle(
     }
 
     for idx, class_name in enumerate(class_names):
+        if idx in excluded_class_ids:
+            continue
         coco_output["categories"].append(
             {"id": idx, "name": class_name, "supercategory": "object"}
         )

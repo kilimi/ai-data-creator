@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Dict, Any, List
@@ -17,7 +17,7 @@ import io
 import zipfile
 
 from ..database import get_db, SessionLocal
-from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection
+from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection, Project
 from ..model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
 from app.tasks.yolo_training_helpers import generate_safe_output_filename
 from pydantic import BaseModel
@@ -85,6 +85,238 @@ class RTDETRTrainingRequest(BaseModel):
     use_wandb: bool = False
     wandb_project: Optional[str] = None
     wandb_entity: Optional[str] = None
+
+
+def _normalize_class_names(names: Any) -> List[str]:
+    if isinstance(names, list):
+        return [str(name) for name in names]
+    if isinstance(names, dict):
+        try:
+            items = sorted(names.items(), key=lambda item: int(item[0]))
+        except Exception:
+            items = list(names.items())
+        return [str(value) for _, value in items]
+    return []
+
+
+async def _read_import_classes(classes: Optional[UploadFile]) -> List[str]:
+    if not classes:
+        return []
+
+    try:
+        payload = json.loads((await classes.read()).decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid classes.json: {exc}") from exc
+
+    class_names: List[str] = []
+    if isinstance(payload, list):
+        class_names = [str(name) for name in payload]
+    elif isinstance(payload, dict):
+        if "class_names" in payload:
+            class_names = _normalize_class_names(payload.get("class_names"))
+        elif "names" in payload:
+            class_names = _normalize_class_names(payload.get("names"))
+        elif "classes" in payload:
+            class_names = _normalize_class_names(payload.get("classes"))
+
+    class_names = [name for name in class_names if name]
+    if not class_names:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                'Could not find class names in classes.json. Expected '
+                '{"class_names": [...]}, {"names": [...]}, or a JSON array.'
+            ),
+        )
+    return class_names
+
+
+def _extract_ultralytics_model_info(model_path: Path) -> Dict[str, Any]:
+    """Extract class names and image size from Ultralytics YOLO model."""
+    try:
+        from ultralytics import YOLO
+
+        model = YOLO(str(model_path))
+        class_names = _normalize_class_names(getattr(model, "names", []))
+        
+        # Extract image size from model args
+        imgsz = 640  # default fallback
+        if hasattr(model, "args") and model.args:
+            # model.args.imgsz could be int or list/tuple [h, w]
+            model_imgsz = getattr(model.args, "imgsz", 640)
+            if isinstance(model_imgsz, (list, tuple)) and len(model_imgsz) > 0:
+                imgsz = int(model_imgsz[0])
+            elif isinstance(model_imgsz, int):
+                imgsz = model_imgsz
+        
+        return {
+            "class_names": class_names,
+            "image_size": imgsz,
+        }
+    except Exception as exc:
+        logger.warning("Failed to extract model info from %s: %s", model_path, exc)
+        return {
+            "class_names": [],
+            "image_size": 640,
+        }
+
+
+def _extract_ultralytics_class_names(model_path: Path) -> List[str]:
+    """Backward compatibility wrapper - extract only class names from YOLO model."""
+    info = _extract_ultralytics_model_info(model_path)
+    return info.get("class_names", [])
+
+
+def _sanitize_uploaded_filename(filename: Optional[str], expected_suffix: str) -> str:
+    candidate = Path(filename or f"imported_model{expected_suffix}").name
+    candidate = re.sub(r'[^A-Za-z0-9._-]', '_', candidate).strip('._')
+    if not candidate:
+        candidate = f"imported_model{expected_suffix}"
+    if Path(candidate).suffix.lower() != expected_suffix:
+        candidate = f"{Path(candidate).stem}{expected_suffix}"
+    return candidate
+
+
+@router.post("/training/import")
+async def import_model(
+    name: str = Form(...),
+    project_id: int = Form(...),
+    model_format: str = Form(...),
+    model_file: Optional[UploadFile] = File(None),
+    pt: Optional[UploadFile] = File(None),
+    onnx: Optional[UploadFile] = File(None),
+    classes: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+):
+    model_name = name.strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Model name is required")
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    fmt = model_format.strip().lower()
+    if fmt not in {"pt", "onnx"}:
+        raise HTTPException(status_code=400, detail="model_format must be 'pt' or 'onnx'")
+
+    upload = model_file or (pt if fmt == "pt" else onnx)
+    if not upload:
+        raise HTTPException(status_code=400, detail="Model file is required")
+
+    expected_suffix = f".{fmt}"
+    original_filename = upload.filename or f"imported_model{expected_suffix}"
+    if Path(original_filename).suffix.lower() != expected_suffix:
+        raise HTTPException(status_code=400, detail=f"Expected a {expected_suffix} file")
+
+    task = Task(
+        name=model_name,
+        description=f"Imported {fmt.upper()} model",
+        task_type="training",
+        status="pending",
+        project_id=project_id,
+        progress=0,
+        started_at=datetime.utcnow(),
+        task_metadata={"stage": "importing_model", "model_format": fmt},
+    )
+    db.add(task)
+    db.flush()
+
+    task_root = Path("projects") / str(project_id) / "training" / f"task_{task.id}"
+    results_dir = task_root / "training"
+    weights_dir = results_dir / "weights"
+    imports_dir = task_root / "imports"
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    imports_dir.mkdir(parents=True, exist_ok=True)
+
+    model_filename = _sanitize_uploaded_filename(original_filename, expected_suffix)
+    model_path = (weights_dir / model_filename) if fmt == "pt" else (imports_dir / model_filename)
+
+    try:
+        with model_path.open("wb") as target:
+            shutil.copyfileobj(upload.file, target)
+
+        class_names = await _read_import_classes(classes)
+        image_size = 640  # default
+        
+        if fmt == "onnx":
+            if not class_names:
+                raise HTTPException(status_code=400, detail="classes.json is required for ONNX model imports")
+            classes_path = Path(str(model_path) + ".classes.json")
+            with classes_path.open("w", encoding="utf-8") as classes_file:
+                json.dump({"class_names": class_names}, classes_file, indent=2)
+            # Try to extract image size from ONNX model input shape
+            try:
+                import onnx
+                onnx_model = onnx.load(str(model_path))
+                if onnx_model.graph.input:
+                    input_tensor = onnx_model.graph.input[0]
+                    if input_tensor.type.tensor_type.shape.dim:
+                        # ONNX typically has shape [batch, channels, height, width] or [batch, height, width, channels]
+                        dims = [d.dim_value for d in input_tensor.type.tensor_type.shape.dim if d.dim_value > 0]
+                        if len(dims) >= 3:
+                            # Try to find the image dimension (usually the largest non-batch dimension)
+                            spatial_dims = dims[1:]  # Skip batch dimension
+                            image_size = int(spatial_dims[0]) if spatial_dims else 640
+            except Exception as e:
+                logger.debug("Could not extract image size from ONNX model: %s", e)
+                image_size = 640
+        else:  # fmt == "pt"
+            if not class_names:
+                model_info = _extract_ultralytics_model_info(model_path)
+                class_names = model_info.get("class_names", [])
+                image_size = model_info.get("image_size", 640)
+            else:
+                # If class names were provided but we still need image size, extract just that
+                model_info = _extract_ultralytics_model_info(model_path)
+                image_size = model_info.get("image_size", 640)
+
+        metadata: Dict[str, Any] = {
+            "source": "imported_model",
+            "imported_model": True,
+            "imported_at": datetime.utcnow().isoformat(),
+            "model_format": fmt,
+            "model_type": model_filename,
+            "model_config": {"model": model_filename},
+            "results_dir": str(results_dir),
+            "class_names": class_names,
+            "num_classes": len(class_names),
+            "image_size": image_size,
+            "original_model_file": original_filename,
+        }
+        if fmt == "pt":
+            metadata["best_model"] = str(model_path)
+        else:
+            metadata["onnx_file"] = str(model_path)
+
+        task.status = "completed"
+        task.progress = 100
+        task.completed_at = datetime.utcnow()
+        task.task_metadata = metadata
+
+        db.commit()
+        db.refresh(task)
+
+        return {
+            "success": True,
+            "message": "Model imported successfully",
+            "task": {
+                "id": task.id,
+                "name": task.name,
+                "status": task.status,
+                "task_type": task.task_type,
+                "task_metadata": task.task_metadata,
+            },
+        }
+    except HTTPException:
+        db.rollback()
+        shutil.rmtree(task_root, ignore_errors=True)
+        raise
+    except Exception as exc:
+        db.rollback()
+        shutil.rmtree(task_root, ignore_errors=True)
+        logger.exception("Failed to import model for project %s", project_id)
+        raise HTTPException(status_code=500, detail=f"Failed to import model: {exc}") from exc
 
 
 def prepare_yolo_dataset(

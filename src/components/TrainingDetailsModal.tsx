@@ -74,6 +74,7 @@ interface TaskDetails {
     best_model?: string;
     results_dir?: string;
     class_names?: string[];
+    image_size?: number;
     image_counts?: { train: number; val: number; test: number };
     dataset_count?: number;
     dataset_ids?: number[];
@@ -427,7 +428,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                     <KV label="Model" value={modelName} />
                     <KV label="Epochs" value={epochsTotal ?? "—"} />
                     <KV label="Batch size" value={metadata?.training_params?.batch_size ?? metadata?.training_params?.batch ?? "—"} />
-                    <KV label="Image size" value={metadata?.training_params?.image_size ?? metadata?.training_params?.imgsz ?? "—"} />
+                    <KV label="Image size" value={metadata?.training_params?.image_size ?? metadata?.training_params?.imgsz ?? (metadata as any)?.training_config?.image_size ?? metadata?.image_size ?? "—"} />
                     <KV label="Optimizer" value={metadata?.training_params?.optimizer ?? "auto"} />
                     <KV label="Learning rate" value={metadata?.training_params?.lr0 ?? 0.01} />
                     <KV label="Patience" value={metadata?.training_params?.patience ?? 50} />

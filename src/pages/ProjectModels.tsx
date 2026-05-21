@@ -124,19 +124,13 @@ export default function ProjectModels() {
       );
       if (response.ok) {
         const data = await response.json();
-        const list = Array.isArray(data) ? data : [];
-        if (list.length === 0) {
-          const { MOCK_TRAINING_TASKS } = await import('@/lib/mockTasks');
-          setTrainingTasks(MOCK_TRAINING_TASKS);
-        } else {
-          setTrainingTasks(list);
-        }
+        setTrainingTasks(Array.isArray(data) ? data : []);
       } else {
-        const { MOCK_TRAINING_TASKS } = await import('@/lib/mockTasks');
-        setTrainingTasks(MOCK_TRAINING_TASKS);
+        setTrainingTasks([]);
       }
     } catch (error) {
       console.error('Error fetching training tasks:', error);
+      setTrainingTasks([]);
     } finally {
       setLoadingTasks(false);
     }

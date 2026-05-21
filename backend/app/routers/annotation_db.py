@@ -726,7 +726,6 @@ async def save_annotations_direct(
             # COCO category id 0 is valid; `if cat_id` would wrongly skip it in Python.
             if cat_id is not None and cat_name:
                 category_mapping[cat_id] = cat_name
-                class_counts[cat_name] = 0
         
         # Process images and create mapping
         coco_image_mapping = {}
@@ -848,6 +847,8 @@ async def save_annotations_direct(
         # Bulk insert annotation classes
         cls_rows_direct = []
         for class_name, count in class_counts.items():
+            if count <= 0:
+                continue
             cat_id = None
             for c_id, c_name in category_mapping.items():
                 if c_name == class_name:
@@ -1070,9 +1071,11 @@ async def get_annotation_classes(
     
     class_data = []
     for cls in classes:
+        count = cls.count if cls.count is not None else 0
+        class_name = (cls.class_name or "").strip()
         class_data.append({
-            "className": cls.class_name,
-            "count": cls.count if cls.count is not None else 0,
+            "className": class_name,
+            "count": count,
             "color": cls.color or "#ea384c",
             "opacity": cls.opacity if cls.opacity is not None else 0.25,
             "categoryId": cls.category_id
