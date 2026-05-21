@@ -1898,12 +1898,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           <DialogFooter>
             <div className="flex items-center justify-between gap-3 w-full pt-2 border-t">
               <div className="text-xs text-muted-foreground">
-                {step === 1 && (selectedDatasets.length === 0
-                  ? 'Pick at least one dataset to continue.'
-                  : `${selectedDatasets.length} dataset(s) selected.`)}
-                {step === 2 && (!selectedModel
+                {step === 1 && (!selectedModel
                   ? 'Pick a model architecture to continue.'
                   : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+                {step === 2 && (selectedDatasets.length === 0
+                  ? 'Pick at least one dataset to continue.'
+                  : `${selectedDatasets.length} dataset(s) selected.`)}
+
                 {step === 3 && (!isTraining && !canTrain()
                   ? getTrainBlockReasons()[0]
                   : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
