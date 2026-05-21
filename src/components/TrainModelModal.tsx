@@ -538,13 +538,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     let test = 0;
     selectedDatasets.forEach(sel => {
       const n = sel.dataset.image_count ?? 0;
-      const w = sel.weight ?? 1;
-      const weighted = n * w;
-      totalImages += weighted;
+      totalImages += n;
       const s = sel.split || { train: 80, val: 20, test: 0 };
-      train += Math.round(weighted * s.train / 100);
-      val += Math.round(weighted * s.val / 100);
-      test += Math.round(weighted * s.test / 100);
+      train += Math.round(n * s.train / 100);
+      val += Math.round(n * s.val / 100);
+      test += Math.round(n * s.test / 100);
     });
     const warnings: string[] = [];
     if (selectedDatasets.length === 0) warnings.push('No datasets selected yet.');
