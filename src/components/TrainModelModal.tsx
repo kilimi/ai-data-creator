@@ -1445,7 +1445,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   badges: ['ONNX', 'TensorRT', 'RKNN', 'Edge', 'DJI-ready'],
                   onPick: () => {
                     setSelectedModel('mmyolo');
-                    if (!modelSettings.mmyoloSize) setModelSettings((prev: any) => ({ ...prev, mmyoloSize: 's', epochs: 300, batchSize: 16, imageSize: 640, optimizer: 'AdamW', learningRate: 0.004, weightDecay: 0.05 }));
+                    setModelSettings((prev: any) => ({
+                      ...prev,
+                      mmyoloArch: prev.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget),
+                      ...(prev.mmyoloSize ? {} : { mmyoloSize: 's', epochs: 300, batchSize: 16, imageSize: 640, optimizer: 'AdamW', learningRate: 0.004, weightDecay: 0.05 }),
+                    }));
                   },
                 },
               ];
