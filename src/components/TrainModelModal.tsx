@@ -1484,7 +1484,16 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <button
                           key={d}
                           type="button"
-                          onClick={() => setDeployTarget(d)}
+                          onClick={() => {
+                            setDeployTarget(d);
+                            // Preselect MMYOLO + YOLOv8 architecture for DJI drone
+                            if (d === 'edge-drone') {
+                              setModelSettings((prev: any) => ({
+                                ...prev,
+                                mmyoloArch: defaultMmyoloArchForTask(selectedTask, 'edge-drone'),
+                              }));
+                            }
+                          }}
                           className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${deployTarget === d ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
                         >
                           {DEPLOY_LABELS[d]}
