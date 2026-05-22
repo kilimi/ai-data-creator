@@ -85,7 +85,7 @@ interface ModelConfig {
 }
 
 type TrainTask = 'detect' | 'segment' | 'oriented' | 'classify';
-type DeployTarget = 'edge-drone';
+type DeployTarget = 'general' | 'edge-drone';
 
 const TASK_LABELS: Record<TrainTask, string> = {
   detect: 'Detection (boxes)',
@@ -95,6 +95,7 @@ const TASK_LABELS: Record<TrainTask, string> = {
 };
 
 const DEPLOY_LABELS: Record<DeployTarget, string> = {
+  general: 'General purpose',
   'edge-drone': 'DJI Drone',
 };
 
