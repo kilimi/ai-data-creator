@@ -153,7 +153,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
   const [selectedTask, setSelectedTask] = useState<TrainTask>('segment');
-  const [deployTarget, setDeployTarget] = useState<DeployTarget>('edge-drone');
+  const [deployTarget, setDeployTarget] = useState<DeployTarget>('general');
   const [modelSettings, setModelSettings] = useState<any>({});
 
   const [showYoloSettings, setShowYoloSettings] = useState(false);
