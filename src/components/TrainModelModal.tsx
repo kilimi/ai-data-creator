@@ -1473,7 +1473,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
                       <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                       {deployTarget === 'edge-drone'
-                        ? 'For DJI Matrice drones with Manifold 2. Models are converted to ONNX → TensorRT/RKNN. Only standard detection and segmentation tasks are supported.'
+                        ? 'For DJI Matrice 4E. Trained with MMYOLO (YOLOv8) per DJI’s required structure, then submitted to the DJI Developer Portal for quantization. The optimized model is side-loaded via DJI Pilot 2 and runs on-board. Limited to object detection with up to 10 classes.'
                         : 'Standard PyTorch weights for desktop, server, or cloud inference.'}
                     </p>
                   </div>
