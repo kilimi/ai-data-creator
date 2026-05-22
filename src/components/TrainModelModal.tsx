@@ -728,7 +728,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         response = await api.startRTDETRTraining(trainingRequest);
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'mmyolo') {
-        const arch = modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask as TrainTask);
+        const arch = modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask as TrainTask, deployTarget);
         const size = modelSettings.mmyoloSize || 's';
         const mmyoloTask =
           arch === 'rtmdet-ins' ? 'segment' :
