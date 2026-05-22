@@ -1679,7 +1679,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 const archOptions = mmyoloArchsForTask(selectedTask);
                 const currentArch = modelSettings.mmyoloArch && archOptions.some(a => a.id === modelSettings.mmyoloArch)
                   ? modelSettings.mmyoloArch
-                  : defaultMmyoloArchForTask(selectedTask);
+                  : defaultMmyoloArchForTask(selectedTask, deployTarget);
                 return (
                   <Card className="border-primary/30">
                     <CardHeader className="pb-2">
