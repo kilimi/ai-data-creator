@@ -1473,8 +1473,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
                       <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                       {deployTarget === 'edge-drone'
-                        ? 'Models will be exported to ONNX (TensorRT/RKNN) for on-board inference on a DJI Manifold or onboard NVIDIA Jetson.'
-                        : 'Models will be exported to standard PyTorch weights for general-purpose inference.'}
+                        ? 'For DJI Matrice drones with Manifold 2. Models are converted to ONNX → TensorRT/RKNN. Only standard detection and segmentation tasks are supported.'
+                        : 'Standard PyTorch weights for desktop, server, or cloud inference.'}
                     </p>
                   </div>
 
