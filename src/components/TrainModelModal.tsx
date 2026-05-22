@@ -1858,7 +1858,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <p className="font-medium">
                             {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
                             {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
-                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask))} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
+                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget))} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
 
                           </p>
                         </div>
