@@ -138,12 +138,29 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
   return 'yolo';
 }
 
-/** Resolve the MMYOLO architecture from the selected task. */
-function mmyoloArchForTask(task: TrainTask): { id: string; label: string } {
-  if (task === 'oriented') return { id: 'rtmdet-r', label: 'RTMDet-Rotated' };
-  if (task === 'segment') return { id: 'rtmdet-ins', label: 'RTMDet-Ins' };
-  if (task === 'detect') return { id: 'rtmdet', label: 'RTMDet' };
-  return { id: 'yolov8-mm', label: 'YOLOv8 (MMYOLO)' };
+/** MMYOLO architectures available per task (backend-validated set). */
+const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
+  detect:   [{ id: 'rtmdet',     label: 'RTMDet' }],
+  segment:  [{ id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
+  oriented: [{ id: 'rtmdet-r',   label: 'RTMDet-Rotated' }],
+  classify: [],
+};
+
+function mmyoloArchsForTask(task: TrainTask) {
+  return MMYOLO_ARCHS_BY_TASK[task] ?? [];
+}
+
+/** Default MMYOLO architecture id for a task (first available). */
+function defaultMmyoloArchForTask(task: TrainTask): string {
+  return mmyoloArchsForTask(task)[0]?.id ?? 'rtmdet';
+}
+
+function mmyoloArchLabel(id: string): string {
+  for (const list of Object.values(MMYOLO_ARCHS_BY_TASK)) {
+    const hit = list.find(a => a.id === id);
+    if (hit) return hit.label;
+  }
+  return id;
 }
 
 
