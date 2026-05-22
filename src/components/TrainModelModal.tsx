@@ -141,7 +141,7 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
 /** MMYOLO architectures available per task (backend-validated set). */
 const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
   detect:   [{ id: 'yolov8', label: 'YOLOv8 (DJI Matrice compatible)' }, { id: 'rtmdet', label: 'RTMDet' }],
-  segment:  [{ id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
+  segment:  [{ id: 'yolov8', label: 'YOLOv8-Seg (DJI Matrice compatible)' }, { id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
   oriented: [{ id: 'rtmdet-r',   label: 'RTMDet-Rotated' }],
   classify: [],
 };
@@ -160,7 +160,11 @@ function defaultMmyoloArchForTask(task: TrainTask, deploy?: DeployTarget): strin
   return opts[0]?.id ?? 'rtmdet';
 }
 
-function mmyoloArchLabel(id: string): string {
+function mmyoloArchLabel(id: string, task?: TrainTask): string {
+  if (task) {
+    const taskHit = MMYOLO_ARCHS_BY_TASK[task]?.find(a => a.id === id);
+    if (taskHit) return taskHit.label;
+  }
   for (const list of Object.values(MMYOLO_ARCHS_BY_TASK)) {
     const hit = list.find(a => a.id === id);
     if (hit) return hit.label;
