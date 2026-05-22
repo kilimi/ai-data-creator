@@ -85,7 +85,7 @@ interface ModelConfig {
 }
 
 type TrainTask = 'detect' | 'segment' | 'oriented' | 'classify';
-type DeployTarget = 'general' | 'edge-drone' | 'server';
+type DeployTarget = 'edge-drone';
 
 const TASK_LABELS: Record<TrainTask, string> = {
   detect: 'Detection (boxes)',
@@ -95,9 +95,7 @@ const TASK_LABELS: Record<TrainTask, string> = {
 };
 
 const DEPLOY_LABELS: Record<DeployTarget, string> = {
-  general: 'General purpose',
-  'edge-drone': 'Edge / DJI drone',
-  server: 'Server GPU',
+  'edge-drone': 'DJI Drone',
 };
 
 /** Per-architecture sizes — aligned with install/foundation_models and AutoAnnotateModal. */
