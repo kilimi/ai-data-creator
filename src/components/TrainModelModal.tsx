@@ -138,12 +138,29 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
   return 'yolo';
 }
 
-/** Resolve the MMYOLO architecture from the selected task. */
-function mmyoloArchForTask(task: TrainTask): { id: string; label: string } {
-  if (task === 'oriented') return { id: 'rtmdet-r', label: 'RTMDet-Rotated' };
-  if (task === 'segment') return { id: 'rtmdet-ins', label: 'RTMDet-Ins' };
-  if (task === 'detect') return { id: 'rtmdet', label: 'RTMDet' };
-  return { id: 'yolov8-mm', label: 'YOLOv8 (MMYOLO)' };
+/** MMYOLO architectures available per task (backend-validated set). */
+const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
+  detect:   [{ id: 'rtmdet',     label: 'RTMDet' }],
+  segment:  [{ id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
+  oriented: [{ id: 'rtmdet-r',   label: 'RTMDet-Rotated' }],
+  classify: [],
+};
+
+function mmyoloArchsForTask(task: TrainTask) {
+  return MMYOLO_ARCHS_BY_TASK[task] ?? [];
+}
+
+/** Default MMYOLO architecture id for a task (first available). */
+function defaultMmyoloArchForTask(task: TrainTask): string {
+  return mmyoloArchsForTask(task)[0]?.id ?? 'rtmdet';
+}
+
+function mmyoloArchLabel(id: string): string {
+  for (const list of Object.values(MMYOLO_ARCHS_BY_TASK)) {
+    const hit = list.find(a => a.id === id);
+    if (hit) return hit.label;
+  }
+  return id;
 }
 
 
@@ -706,8 +723,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         response = await api.startRTDETRTraining(trainingRequest);
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'mmyolo') {
-        const archObj = mmyoloArchForTask(selectedTask as TrainTask);
-        const arch = archObj.id || modelSettings.arch || 'rtmdet';
+        const arch = modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask as TrainTask);
         const size = modelSettings.mmyoloSize || 's';
         const mmyoloTask =
           arch === 'rtmdet-ins' ? 'segment' :
@@ -1642,23 +1658,41 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               )}
 
               {selectedModel === 'mmyolo' && (() => {
-                const arch = mmyoloArchForTask(selectedTask);
+                const archOptions = mmyoloArchsForTask(selectedTask);
+                const currentArch = modelSettings.mmyoloArch && archOptions.some(a => a.id === modelSettings.mmyoloArch)
+                  ? modelSettings.mmyoloArch
+                  : defaultMmyoloArchForTask(selectedTask);
                 return (
                   <Card className="border-primary/30">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
                         <Settings className="h-4 w-4" /> MMYOLO Configuration
-                        <Badge variant="outline" className="text-[10px]">{arch.label}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{mmyoloArchLabel(currentArch)}</Badge>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                         <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                        Architecture is set automatically from the task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
+                        Architectures are filtered by the selected task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
                       </p>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="space-y-1">
-                          <Label className="text-xs">Variant</Label>
+                          <Label className="text-xs">Architecture</Label>
+                          <Select
+                            value={currentArch}
+                            onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloArch: v }))}
+                            disabled={archOptions.length <= 1}
+                          >
+                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                            <SelectContent className="bg-background border shadow-md z-[70]">
+                              {archOptions.map(a => (
+                                <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Size</Label>
                           <Select value={modelSettings.mmyoloSize || 's'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloSize: v }))}>
                             <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
                             <SelectContent className="bg-background border shadow-md z-[70]">
@@ -1806,7 +1840,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <p className="font-medium">
                             {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
                             {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
-                            {selectedModel === 'mmyolo' && `${mmyoloArchForTask(selectedTask).label} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
+                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask))} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
 
                           </p>
                         </div>
