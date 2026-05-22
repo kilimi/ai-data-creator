@@ -1691,7 +1691,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
                         <Settings className="h-4 w-4" /> MMYOLO Configuration
-                        <Badge variant="outline" className="text-[10px]">{mmyoloArchLabel(currentArch)}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{mmyoloArchLabel(currentArch, selectedTask)}</Badge>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
@@ -1718,7 +1718,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                             </Select>
                           ) : (
                             <div className="h-8 text-xs bg-muted border rounded-md px-3 flex items-center text-muted-foreground">
-                              {mmyoloArchLabel(currentArch)}
+                              {mmyoloArchLabel(currentArch, selectedTask)}
                             </div>
                           )}
                         </div>
@@ -1863,7 +1863,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <p className="font-medium">
                             {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
                             {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
-                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget))} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
+                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget), selectedTask)} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
 
                           </p>
                         </div>
