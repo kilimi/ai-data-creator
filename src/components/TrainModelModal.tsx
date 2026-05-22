@@ -140,7 +140,7 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
 
 /** MMYOLO architectures available per task (backend-validated set). */
 const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
-  detect:   [{ id: 'rtmdet',     label: 'RTMDet' }],
+  detect:   [{ id: 'yolov8',     label: 'YOLOv8 (DJI-compatible)' }, { id: 'rtmdet', label: 'RTMDet' }],
   segment:  [{ id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
   oriented: [{ id: 'rtmdet-r',   label: 'RTMDet-Rotated' }],
   classify: [],
@@ -150,9 +150,14 @@ function mmyoloArchsForTask(task: TrainTask) {
   return MMYOLO_ARCHS_BY_TASK[task] ?? [];
 }
 
-/** Default MMYOLO architecture id for a task (first available). */
-function defaultMmyoloArchForTask(task: TrainTask): string {
-  return mmyoloArchsForTask(task)[0]?.id ?? 'rtmdet';
+/** Default MMYOLO architecture id for a task + optional deploy target. */
+function defaultMmyoloArchForTask(task: TrainTask, deploy?: DeployTarget): string {
+  const opts = mmyoloArchsForTask(task);
+  if (deploy === 'edge-drone') {
+    const yv8 = opts.find(o => o.id === 'yolov8');
+    if (yv8) return yv8.id;
+  }
+  return opts[0]?.id ?? 'rtmdet';
 }
 
 function mmyoloArchLabel(id: string): string {
@@ -723,7 +728,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         response = await api.startRTDETRTraining(trainingRequest);
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'mmyolo') {
-        const arch = modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask as TrainTask);
+        const arch = modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask as TrainTask, deployTarget);
         const size = modelSettings.mmyoloSize || 's';
         const mmyoloTask =
           arch === 'rtmdet-ins' ? 'segment' :
@@ -1440,7 +1445,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   badges: ['ONNX', 'TensorRT', 'RKNN', 'Edge', 'DJI-ready'],
                   onPick: () => {
                     setSelectedModel('mmyolo');
-                    if (!modelSettings.mmyoloSize) setModelSettings((prev: any) => ({ ...prev, mmyoloSize: 's', epochs: 300, batchSize: 16, imageSize: 640, optimizer: 'AdamW', learningRate: 0.004, weightDecay: 0.05 }));
+                    setModelSettings((prev: any) => ({
+                      ...prev,
+                      mmyoloArch: prev.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget),
+                      ...(prev.mmyoloSize ? {} : { mmyoloSize: 's', epochs: 300, batchSize: 16, imageSize: 640, optimizer: 'AdamW', learningRate: 0.004, weightDecay: 0.05 }),
+                    }));
                   },
                 },
               ];
@@ -1479,7 +1488,16 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         <button
                           key={d}
                           type="button"
-                          onClick={() => setDeployTarget(d)}
+                          onClick={() => {
+                            setDeployTarget(d);
+                            // Preselect MMYOLO + YOLOv8 architecture for DJI drone
+                            if (d === 'edge-drone') {
+                              setModelSettings((prev: any) => ({
+                                ...prev,
+                                mmyoloArch: defaultMmyoloArchForTask(selectedTask, 'edge-drone'),
+                              }));
+                            }
+                          }}
                           className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${deployTarget === d ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
                         >
                           {DEPLOY_LABELS[d]}
@@ -1661,7 +1679,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 const archOptions = mmyoloArchsForTask(selectedTask);
                 const currentArch = modelSettings.mmyoloArch && archOptions.some(a => a.id === modelSettings.mmyoloArch)
                   ? modelSettings.mmyoloArch
-                  : defaultMmyoloArchForTask(selectedTask);
+                  : defaultMmyoloArchForTask(selectedTask, deployTarget);
                 return (
                   <Card className="border-primary/30">
                     <CardHeader className="pb-2">
@@ -1840,7 +1858,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <p className="font-medium">
                             {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
                             {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
-                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask))} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
+                            {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget))} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
 
                           </p>
                         </div>
