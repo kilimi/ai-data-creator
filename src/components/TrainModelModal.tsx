@@ -140,7 +140,7 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
 
 /** MMYOLO architectures available per task (backend-validated set). */
 const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
-  detect:   [{ id: 'yolov8',     label: 'YOLOv8 (DJI-compatible)' }, { id: 'rtmdet', label: 'RTMDet' }],
+  detect:   [{ id: 'yolov8', label: 'YOLOv8 (DJI Matrice compatible)' }, { id: 'rtmdet', label: 'RTMDet' }],
   segment:  [{ id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
   oriented: [{ id: 'rtmdet-r',   label: 'RTMDet-Rotated' }],
   classify: [],
@@ -1691,23 +1691,30 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <CardContent className="space-y-4">
                       <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                         <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                        Architectures are filtered by the selected task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
+                        {selectedTask === 'detect'
+                          ? 'Defaults to YOLOv8 for DJI Matrice compatibility. Advanced mmcv configs are generated server-side.'
+                          : 'Architecture is fixed for this task. Advanced mmcv configs are generated server-side.'}
                       </p>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="space-y-1">
                           <Label className="text-xs">Architecture</Label>
-                          <Select
-                            value={currentArch}
-                            onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloArch: v }))}
-                            disabled={archOptions.length <= 1}
-                          >
-                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
-                            <SelectContent className="bg-background border shadow-md z-[70]">
-                              {archOptions.map(a => (
-                                <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          {archOptions.length > 1 ? (
+                            <Select
+                              value={currentArch}
+                              onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloArch: v }))}
+                            >
+                              <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                              <SelectContent className="bg-background border shadow-md z-[70]">
+                                {archOptions.map(a => (
+                                  <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="h-8 text-xs bg-muted border rounded-md px-3 flex items-center text-muted-foreground">
+                              {mmyoloArchLabel(currentArch)}
+                            </div>
+                          )}
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Size</Label>
@@ -1733,15 +1740,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <Input type="number" className="h-8 text-xs bg-background" value={modelSettings.imageSize || 640} onChange={(e) => setModelSettings((prev: any) => ({ ...prev, imageSize: Number(e.target.value) }))} min={32} step={32} />
                         </div>
                       </div>
-                      {deployTarget === 'edge-drone' && (
-                        <div className="text-xs text-muted-foreground border-l-2 border-primary/40 pl-3 py-1">
-                          After training, weights will be exportable to ONNX → TensorRT for DJI Manifold / Jetson, or RKNN for Rockchip-based payloads.
-                        </div>
-                      )}
-                      <div className="text-xs px-3 py-2 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 flex items-start gap-1.5">
-                        <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                        MMYOLO training backend is being wired up — selecting this family lets you preview the workflow but starting a job is not yet available.
-                      </div>
+
                     </CardContent>
                   </Card>
                 );
