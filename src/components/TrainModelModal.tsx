@@ -85,7 +85,7 @@ interface ModelConfig {
 }
 
 type TrainTask = 'detect' | 'segment' | 'oriented' | 'classify';
-type DeployTarget = 'edge-drone';
+type DeployTarget = 'general' | 'edge-drone';
 
 const TASK_LABELS: Record<TrainTask, string> = {
   detect: 'Detection (boxes)',
@@ -95,6 +95,7 @@ const TASK_LABELS: Record<TrainTask, string> = {
 };
 
 const DEPLOY_LABELS: Record<DeployTarget, string> = {
+  general: 'General purpose',
   'edge-drone': 'DJI Drone',
 };
 
@@ -130,10 +131,11 @@ const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
 };
 
 /** Pick the recommended family for (task, deploy). */
-function recommendedFamily(task: TrainTask, _deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
+function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
   if (task === 'oriented') return 'mmyolo';
   if (task === 'classify') return 'yolo';
-  return 'mmyolo';
+  if (deploy === 'edge-drone') return 'mmyolo';
+  return 'yolo';
 }
 
 /** Resolve the MMYOLO architecture from the selected task. */
@@ -151,7 +153,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
   const [selectedTask, setSelectedTask] = useState<TrainTask>('segment');
-  const [deployTarget, setDeployTarget] = useState<DeployTarget>('edge-drone');
+  const [deployTarget, setDeployTarget] = useState<DeployTarget>('general');
   const [modelSettings, setModelSettings] = useState<any>({});
 
   const [showYoloSettings, setShowYoloSettings] = useState(false);
@@ -1456,15 +1458,23 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   {/* Deploy target */}
                   <div className="space-y-2">
                     <Label className="text-base font-medium">Where will it run?</Label>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary" className="px-3 py-1.5 text-xs">
-                        <Info className="h-3 w-3 mr-1" />
-                        DJI Drone
-                      </Badge>
+                    <div className="flex flex-wrap gap-2">
+                      {(['general', 'edge-drone'] as DeployTarget[]).map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setDeployTarget(d)}
+                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${deployTarget === d ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
+                        >
+                          {DEPLOY_LABELS[d]}
+                        </button>
+                      ))}
                     </div>
                     <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
-                      <Info className="h-3.5 w-3.5 mt-1.5 flex-shrink-0" />
-                      Models will be exported to ONNX (TensorRT/RKNN) for on-board inference on a DJI Manifold or onboard NVIDIA Jetson.
+                      <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                      {deployTarget === 'edge-drone'
+                        ? 'Models will be exported to ONNX (TensorRT/RKNN) for on-board inference on a DJI Manifold or onboard NVIDIA Jetson.'
+                        : 'Models will be exported to standard PyTorch weights for general-purpose inference.'}
                     </p>
                   </div>
 
