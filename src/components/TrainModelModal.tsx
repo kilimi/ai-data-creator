@@ -1490,11 +1490,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           type="button"
                           onClick={() => {
                             setDeployTarget(d);
-                            // Preselect MMYOLO + YOLOv8 architecture for DJI drone
+                            // Preselect MMYOLO + YOLOv8 architecture for DJI drone,
+                            // but only when the user hasn't already picked an arch — otherwise we'd
+                            // clobber their choice and they couldn't switch to RTMDet.
                             if (d === 'edge-drone') {
                               setModelSettings((prev: any) => ({
                                 ...prev,
-                                mmyoloArch: defaultMmyoloArchForTask(selectedTask, 'edge-drone'),
+                                mmyoloArch: prev.mmyoloArch || defaultMmyoloArchForTask(selectedTask, 'edge-drone'),
                               }));
                             }
                           }}
