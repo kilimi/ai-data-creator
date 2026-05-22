@@ -131,10 +131,11 @@ const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
 };
 
 /** Pick the recommended family for (task, deploy). */
-function recommendedFamily(task: TrainTask, _deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
+function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
   if (task === 'oriented') return 'mmyolo';
   if (task === 'classify') return 'yolo';
-  return 'mmyolo';
+  if (deploy === 'edge-drone') return 'mmyolo';
+  return 'yolo';
 }
 
 /** Resolve the MMYOLO architecture from the selected task. */
