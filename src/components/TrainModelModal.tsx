@@ -1658,23 +1658,41 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               )}
 
               {selectedModel === 'mmyolo' && (() => {
-                const arch = mmyoloArchForTask(selectedTask);
+                const archOptions = mmyoloArchsForTask(selectedTask);
+                const currentArch = modelSettings.mmyoloArch && archOptions.some(a => a.id === modelSettings.mmyoloArch)
+                  ? modelSettings.mmyoloArch
+                  : defaultMmyoloArchForTask(selectedTask);
                 return (
                   <Card className="border-primary/30">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2">
                         <Settings className="h-4 w-4" /> MMYOLO Configuration
-                        <Badge variant="outline" className="text-[10px]">{arch.label}</Badge>
+                        <Badge variant="outline" className="text-[10px]">{mmyoloArchLabel(currentArch)}</Badge>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                         <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                        Architecture is set automatically from the task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
+                        Architectures are filtered by the selected task ({TASK_LABELS[selectedTask]}). Advanced mmcv configs are generated server-side.
                       </p>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="space-y-1">
-                          <Label className="text-xs">Variant</Label>
+                          <Label className="text-xs">Architecture</Label>
+                          <Select
+                            value={currentArch}
+                            onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloArch: v }))}
+                            disabled={archOptions.length <= 1}
+                          >
+                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                            <SelectContent className="bg-background border shadow-md z-[70]">
+                              {archOptions.map(a => (
+                                <SelectItem key={a.id} value={a.id}>{a.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Size</Label>
                           <Select value={modelSettings.mmyoloSize || 's'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloSize: v }))}>
                             <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
                             <SelectContent className="bg-background border shadow-md z-[70]">
