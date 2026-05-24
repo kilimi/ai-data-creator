@@ -250,6 +250,20 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
   }, [modelSettings.version, modelSettings.size]);
 
+  // Reset model selection & settings when the user changes deploy target or task
+  const configResetInitRef = useRef(false);
+  useEffect(() => {
+    if (!configResetInitRef.current) {
+      configResetInitRef.current = true;
+      return;
+    }
+    setSelectedModel(null);
+    setModelSettings({});
+    setShowYoloSettings(false);
+    setShowRFDETRSettings(false);
+    setShowMMYOLOSettings(false);
+  }, [deployTarget, selectedTask]);
+
   // DJI mode policy: only MMYOLO YOLOv8 Detection is allowed in GUI.
   useEffect(() => {
     if (deployTarget !== 'edge-drone') return;
@@ -261,6 +275,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       mmyoloSize: prev.mmyoloSize || 's',
     }));
   }, [deployTarget]);
+
 
   // Dataset settings
   const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
