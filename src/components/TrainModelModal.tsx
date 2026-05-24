@@ -137,7 +137,7 @@ const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
 
 /** Pick the recommended family for (task, deploy). */
 function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
-  if (deploy === 'edge-drone') return 'yolo';
+  if (deploy === 'edge-drone') return 'mmyolo';
   if (task === 'oriented') return 'mmyolo';
   if (task === 'classify') return 'yolo';
   return 'yolo';
