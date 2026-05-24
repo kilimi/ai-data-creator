@@ -144,6 +144,7 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
 /** MMYOLO architectures available per task (backend-validated set). */
 const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
   detect: [
+    { id: 'yolov8', label: 'YOLOv8 (DJI-compatible)' },
     { id: 'rtmdet', label: 'RTMDet' },
     { id: 'rtmdet-ins', label: 'RTMDet-Ins' },
     { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
@@ -1509,7 +1510,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   id: 'yolo',
                   title: 'Ultralytics YOLO',
                   subtitle: 'YOLO11 / YOLO26 / YOLO-NAS — fastest to train, easy ONNX export.',
-                  badges: ['ONNX', 'TensorRT', 'CoreML'],
+                  badges: [],
                   onPick: () => {
                     setSelectedModel('yolo');
                     if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: deployTarget === 'edge-drone' ? 'yolo8' : 'yolo11', size: 'n', task: selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection' }));
@@ -1519,7 +1520,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   id: 'rf-detr',
                   title: 'RF-DETR',
                   subtitle: 'Real-time detection transformer — best accuracy on small objects, server GPUs.',
-                  badges: ['ONNX', 'TensorRT', 'Server-GPU'],
+                  badges: [],
                   onPick: () => {
                     setSelectedModel('rf-detr');
                     if (!modelSettings.variant) setModelSettings((prev: any) => ({ ...prev, variant: 'rtdetr-l', imageSize: 640, epochs: 100, batchSize: 16 }));
@@ -1528,8 +1529,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 {
                   id: 'mmyolo',
                   title: 'MMYOLO (OpenMMLab)',
-                  subtitle: 'RTMDet, RTMDet-Ins, RTMDet-Rotated — only family with oriented boxes; great speed/accuracy for edge devices and drones.',
-                  badges: ['ONNX', 'TensorRT', 'RKNN', 'Edge', 'DJI-ready'],
+                  subtitle: 'YOLOv8, RTMDet, RTMDet-Ins, RTMDet-Rotated — only family with oriented boxes; great speed/accuracy for edge devices and drones.',
+                  badges: [],
                   onPick: () => {
                     setSelectedModel('mmyolo');
                     setModelSettings((prev: any) => ({
