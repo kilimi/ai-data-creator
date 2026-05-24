@@ -58,6 +58,8 @@ interface TrainModelModalProps {
   projectId: string;
   /** When set with `open`, load this task's saved training settings into the form (does not start training). */
   cloneFromTaskId?: number | null;
+  /** Default task to preselect when the modal opens. */
+  defaultTask?: TrainTask;
 }
 
 interface DatasetSelection {
