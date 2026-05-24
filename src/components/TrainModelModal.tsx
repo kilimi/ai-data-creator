@@ -1509,7 +1509,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 {
                   id: 'yolo',
                   title: 'Ultralytics YOLO',
-                  subtitle: 'YOLO11 / YOLO26 / YOLO-NAS — fastest to train, easy ONNX export.',
+                  subtitle: 'YOLOv8 / YOLO11 / YOLO26 / YOLO-NAS — fastest to train, easy ONNX export.',
                   badges: [],
                   onPick: () => {
                     setSelectedModel('yolo');
