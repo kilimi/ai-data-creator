@@ -2055,7 +2055,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               <div className="text-xs text-muted-foreground">
                 {step === 1 && (!selectedModel
                   ? 'Pick a model architecture to continue.'
-                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+                  : `Selected: ${selectedModel === 'yolo' ? 'Ultralytics YOLO' : selectedModel === 'rf-detr' ? 'Ultralytics RT-DETR' : 'MMYOLO'}`)}
                 {step === 2 && (selectedDatasets.length === 0
                   ? 'Pick at least one dataset to continue.'
                   : `${selectedDatasets.length} dataset(s) selected.`)}
