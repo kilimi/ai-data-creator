@@ -1736,7 +1736,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <Settings className="h-4 w-4" /> RF-DETR Configuration
+                        <Settings className="h-4 w-4" /> Ultralytics RT-DETR Configuration
                       </CardTitle>
                       <Button size="sm" variant="outline" onClick={() => setShowRFDETRSettings(true)}>
                         <Settings className="h-3 w-3 mr-1" /> All Settings
