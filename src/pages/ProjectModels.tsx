@@ -120,7 +120,7 @@ export default function ProjectModels() {
     setLoadingTasks(true);
     try {
       const response = await fetch(
-        `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training&metadata_mode=list&limit=200`
+        `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training,mmyolo_training&metadata_mode=list&limit=200`
       );
       if (response.ok) {
         const data = await response.json();

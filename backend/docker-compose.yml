@@ -14,6 +14,7 @@ services:
       - ${LAI_DATA_DIR:-../.lai-data}/data:/app/data
       - ${BACKUP_PATH:-${LAI_DATA_DIR:-../.lai-data}/backups}:/app/backups
       - ${LAI_DATA_DIR:-../.lai-data}/runs:/app/runs
+      - ${LAI_DATA_DIR:-../.lai-data}/cache/backend:/app/.cache
       # Foundation model weights — populated by `make download-models` (slim image keeps it empty).
       - ${LAI_DATA_DIR:-../.lai-data}/models:/app/models
       - ${LAI_DATA_DIR:-../.lai-data}/ai_models:/app/ai_models
@@ -24,6 +25,8 @@ services:
       - TRAINING_SERVICE_URL=http://training:8000
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=true
+      - XDG_CACHE_HOME=/app/.cache
+      - MIM_CACHE_DIR=/app/.cache/mim
       - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017
       - FIFTYONE_DEFAULT_APP_PORT=5151
       - FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0
@@ -73,12 +76,15 @@ services:
       - ${LAI_DATA_DIR:-../.lai-data}/data:/app/data
       - ${LAI_DATA_DIR:-../.lai-data}/backups:/app/backups
       - ${LAI_DATA_DIR:-../.lai-data}/runs:/app/runs
+      - ${LAI_DATA_DIR:-../.lai-data}/cache/celery_worker:/app/.cache
       # Shared model weights with the backend service.
       - ${LAI_DATA_DIR:-../.lai-data}/models:/app/models
       - ${LAI_DATA_DIR:-../.lai-data}/ai_models:/app/ai_models
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db/lai_db
       - REDIS_URL=redis://redis:6379/0
+      - XDG_CACHE_HOME=/app/.cache
+      - MIM_CACHE_DIR=/app/.cache/mim
       # Expose GPU to the container; use first GPU. Do not set CUDA_VISIBLE_DEVICES to empty or PyTorch will see no GPU.
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0

@@ -122,6 +122,7 @@ class MMYOLOTrainingRequest(BaseModel):
     weight_decay: float = 0.05
     save_period: int = -1
     remove_images_without_annotations: bool = True
+    dji_patch_path: Optional[str] = None
     use_wandb: bool = False
     wandb_project: Optional[str] = None
     wandb_entity: Optional[str] = None
@@ -2443,6 +2444,37 @@ print(f"Found {len(predictions)} predictions")
 
 # ── MMYOLO endpoint ──────────────────────────────────────────────────────────
 
+@router.post("/training/mmyolo/dji-patch")
+async def upload_mmyolo_dji_patch(file: UploadFile = File(...)):
+    """Upload DJI AI Inside patch file used to modify MMYOLO before training."""
+    try:
+        filename = file.filename or ""
+        if not filename.lower().endswith(".patch"):
+            raise HTTPException(status_code=400, detail="Only .patch files are supported.")
+
+        patch_dir = Path(os.environ.get("DJI_PATCH_STORAGE_DIR", "/app/data/dji_patches"))
+        patch_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name)
+        stored_name = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{safe_name}"
+        stored_path = patch_dir / stored_name
+
+        with open(stored_path, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+
+        return {
+            "success": True,
+            "patch_name": safe_name,
+            "patch_path": str(stored_path),
+            "uploaded_at": datetime.utcnow().isoformat() + "Z",
+            "message": "DJI patch uploaded successfully.",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to upload DJI patch: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
 @router.post("/training/mmyolo")
 async def start_mmyolo_training(
     request: MMYOLOTrainingRequest,
@@ -2480,6 +2512,13 @@ async def start_mmyolo_training(
                     status_code=404,
                     detail=f"Annotation file {cfg['annotation_file_id']} not found",
                 )
+
+        if request.dji_patch_path:
+            patch_path = Path(request.dji_patch_path)
+            if not patch_path.exists() or not patch_path.is_file():
+                raise HTTPException(status_code=400, detail="Provided DJI patch file does not exist.")
+            if patch_path.suffix.lower() != ".patch":
+                raise HTTPException(status_code=400, detail="DJI patch must be a .patch file.")
 
         task_name = (
             request.task_name
@@ -2520,6 +2559,7 @@ async def start_mmyolo_training(
                     "save_period": request.save_period,
                 },
                 "remove_images_without_annotations": request.remove_images_without_annotations,
+                "dji_patch_path": request.dji_patch_path,
                 "use_wandb": request.use_wandb,
                 "wandb_project": request.wandb_project,
                 "wandb_entity": request.wandb_entity,
@@ -2545,6 +2585,7 @@ async def start_mmyolo_training(
             "weight_decay": request.weight_decay,
             "save_period": request.save_period,
             "remove_images_without_annotations": request.remove_images_without_annotations,
+            "dji_patch_path": request.dji_patch_path,
             "use_wandb": request.use_wandb,
             "wandb_project": request.wandb_project,
             "wandb_entity": request.wandb_entity,

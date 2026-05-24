@@ -29,6 +29,7 @@ interface YoloSettingsDialogProps {
 }
 
 const YOLO_TRAIN_SIZES: Record<string, string[]> = {
+  yolo8: ['n', 's', 'm', 'l', 'x'],
   yolo11: ['n', 's', 'm', 'l', 'x'],
   yolo26: ['n', 's', 'm', 'l', 'x'],
   yolo_nas: ['s', 'm', 'l'],
@@ -140,6 +141,7 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate, curre
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="bg-background border shadow-md z-[70]">
+                <SelectItem value="yolo8">YOLOv8</SelectItem>
                 <SelectItem value="yolo11">YOLOv11</SelectItem>
                 <SelectItem value="yolo26">YOLO26</SelectItem>
                 <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>

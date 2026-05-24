@@ -109,7 +109,7 @@ export default function ProjectEvaluations() {
         fetch(`http://localhost:9999/projects/${id}/datasets/list`),
         fetch(`http://localhost:9999/projects/${id}/dataset-groups/`),
         fetch(
-          `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training&status=completed&metadata_mode=list&limit=150`
+          `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training,mmyolo_training&status=completed&metadata_mode=list&limit=150`
         ),
       ]);
       if (dsRes.ok) {

@@ -120,7 +120,11 @@ export class ApiClient {
         }
 
         if (!response.ok) {
-          const errorMessage = data.detail || `${response.status} ${response.statusText}`;
+          // Pydantic v2 returns detail as an array of {type,loc,msg,input,ctx} on 422
+          const rawDetail = data.detail;
+          const errorMessage = Array.isArray(rawDetail)
+            ? rawDetail.map((e: any) => e.msg || JSON.stringify(e)).join('; ')
+            : (typeof rawDetail === 'string' ? rawDetail : rawDetail ? JSON.stringify(rawDetail) : `${response.status} ${response.statusText}`);
           console.error("API error:", data);
           return {
             success: false,
@@ -1466,6 +1470,7 @@ export class ApiClient {
     weight_decay?: number;
     save_period?: number;
     remove_images_without_annotations?: boolean;
+    dji_patch_path?: string;
     use_wandb?: boolean;
     wandb_project?: string;
     wandb_entity?: string;
@@ -1478,6 +1483,21 @@ export class ApiClient {
     return this.request('/training/mmyolo', {
       method: 'POST',
       body: JSON.stringify(request)
+    });
+  }
+
+  async uploadMMYOLODJIPatch(file: File): Promise<ApiResponse<{
+    success: boolean;
+    patch_name: string;
+    patch_path: string;
+    uploaded_at: string;
+    message: string;
+  }>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('/training/mmyolo/dji-patch', {
+      method: 'POST',
+      body: formData,
     });
   }
 

@@ -362,6 +362,55 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
 
 # ── MMYOLO Celery task ────────────────────────────────────────────────────────
 
+def _prepare_dji_mmyolo_repo(patch_path: str) -> Path:
+    """
+    Prepare MMYOLO repo using DJI workflow:
+    - clone open-mmlab/mmyolo
+    - checkout tags/v0.6.0
+    - create/switch branch drone-model-training
+    - apply DJI patch
+    - install editable package
+    """
+    import subprocess
+    import sys
+
+    repo_root = Path(os.environ.get("MMYOLO_DJI_REPO_DIR", "/app/data/mmyolo_dji"))
+    repo_dir = repo_root / "mmyolo"
+    patch_file = Path(patch_path)
+
+    if not patch_file.exists():
+        raise FileNotFoundError(f"DJI patch file not found: {patch_file}")
+
+    repo_root.mkdir(parents=True, exist_ok=True)
+
+    if not (repo_dir / ".git").exists():
+        subprocess.run(
+            ["git", "clone", "https://github.com/open-mmlab/mmyolo.git", str(repo_dir)],
+            check=True,
+        )
+
+    subprocess.run(["git", "-C", str(repo_dir), "fetch", "--tags"], check=True)
+    subprocess.run(["git", "-C", str(repo_dir), "checkout", "tags/v0.6.0"], check=True)
+
+    branch_exists = subprocess.run(
+        ["git", "-C", str(repo_dir), "show-ref", "--verify", "--quiet", "refs/heads/drone-model-training"],
+    ).returncode == 0
+    if branch_exists:
+        subprocess.run(["git", "-C", str(repo_dir), "switch", "drone-model-training"], check=True)
+    else:
+        subprocess.run(["git", "-C", str(repo_dir), "switch", "-c", "drone-model-training"], check=True)
+
+    # Apply patch only when applicable; if already applied, continue.
+    can_apply = subprocess.run(
+        ["git", "-C", str(repo_dir), "apply", "--check", str(patch_file)]
+    ).returncode == 0
+    if can_apply:
+        subprocess.run(["git", "-C", str(repo_dir), "apply", str(patch_file)], check=True)
+
+    subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(repo_dir)], check=True)
+
+    return repo_dir
+
 @celery_app.task(
     base=TrainingTask,
     bind=True,
@@ -369,17 +418,216 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
 )
 def train_mmyolo_model(self, task_id: int, training_config: dict):
     """
-    Train an MMYOLO / RTMDet model.
+    Train an MMYOLO RTMDet-family model via OpenMMLab.
 
-    Pipeline:
-      1. Prepare COCO-JSON dataset via prepare_mmyolo_dataset()
-      2. Build a minimal MMYolo Python config file
-      3. Run  `python -m mim run mmyolo train <config_path>`  as a subprocess
-      4. Stream stdout for epoch progress and update the DB task
-      5. Store best.pth path and mark task completed
-
-    The Celery task honours pause/stop requests the same way as the YOLO task.
+    Uses `python -m mim run mmyolo train` for all supported architectures.
     """
+    import subprocess
+    import sys
+    import re
+    from datetime import datetime
+    from pathlib import Path
+
+    from app.database import SessionLocal
+    from app.models import Task as TaskModel
+
+    db = SessionLocal()
+    try:
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if not task:
+            logger.error(f"MMYOLO task {task_id} not found in DB")
+            return
+
+        task.status = "running"
+        task.started_at = datetime.utcnow()
+        task.task_metadata = {**(task.task_metadata or {}), "stage": "preparing_dataset"}
+        db.commit()
+
+        project_id = training_config["project_id"]
+        output_base = Path("projects") / str(project_id) / "training" / f"task_{task_id}"
+        output_base.mkdir(parents=True, exist_ok=True)
+        dataset_dir = output_base / "dataset"
+
+        arch: str = training_config.get("arch", "rtmdet")
+        size: str = training_config.get("size", "s")
+        train_task: str = training_config.get("task", "detect")
+        dji_patch_path: str | None = training_config.get("dji_patch_path")
+        epochs: int = training_config.get("epochs", 300)
+        batch_size: int = training_config.get("batch_size", 16)
+        image_size: int = training_config.get("image_size", 640)
+        device: str = training_config.get("device", "0")
+
+        if dji_patch_path:
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "stage": "preparing_dji_patch",
+                "dji_patch_path": dji_patch_path,
+            }
+            db.commit()
+
+            repo_dir = _prepare_dji_mmyolo_repo(dji_patch_path)
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "stage": "dji_patch_ready",
+                "dji_repo_dir": str(repo_dir),
+            }
+            db.commit()
+        # ── RTMDet family via mim ─────────────────────────────────────────────
+        from app.routers.training import prepare_mmyolo_dataset
+
+        dataset_info = prepare_mmyolo_dataset(
+            db,
+            training_config["dataset_configs"],
+            dataset_dir,
+            task=train_task,
+            remove_images_without_annotations=training_config.get(
+                "remove_images_without_annotations", True
+            ),
+        )
+
+        task.task_metadata = {
+            **(task.task_metadata or {}),
+            "stage": "dataset_prepared",
+            "class_names": dataset_info["class_names"],
+            "num_classes": dataset_info["class_count"],
+            "image_counts": dataset_info["image_counts"],
+        }
+        task.progress = 10
+        db.commit()
+
+        config_id: str = f"{arch}_{size}"
+        num_classes: int = dataset_info["class_count"]
+        train_json: str = dataset_info["train_json"]
+        val_json: str = dataset_info.get("val_json", train_json)
+        train_images: str = str(dataset_dir / "images" / "train")
+        val_images: str = str(dataset_dir / "images" / "val")
+
+        cfg_content = f"""_base_ = ['{config_id}.py']
+
+train_batch_size_per_gpu = {batch_size}
+train_num_workers = 4
+val_batch_size_per_gpu = 1
+val_num_workers = 2
+max_epochs = {epochs}
+num_classes = {num_classes}
+img_scale = ({image_size}, {image_size})
+
+train_ann_file = '{train_json}'
+train_data_prefix = '{train_images}/'
+val_ann_file = '{val_json}'
+val_data_prefix = '{val_images}/'
+
+work_dir = '{str(output_base / "training")}'
+"""
+
+        cfg_path = output_base / "mmyolo_config.py"
+        cfg_path.write_text(cfg_content)
+
+        task.task_metadata = {**(task.task_metadata or {}), "stage": "training", "config_path": str(cfg_path)}
+        task.progress = 15
+        db.commit()
+
+        cmd = [
+            sys.executable, "-m", "mim", "run", "mmyolo", "train",
+            str(cfg_path),
+            "--cfg-options", f"train_batch_size_per_gpu={batch_size}",
+        ]
+        logger.info(f"MMYOLO task {task_id}: running command: {' '.join(cmd)}")
+
+        import os as _os
+        env = {**_os.environ}
+        if device != "cpu":
+            env["CUDA_VISIBLE_DEVICES"] = device
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+
+        epoch_log: list = []
+        for line in process.stdout:  # type: ignore[union-attr]
+            line = line.rstrip()
+            logger.debug(f"MMYOLO[{task_id}]: {line}")
+            epoch_log.append(line)
+
+            db.refresh(task)
+            task_meta = task.task_metadata or {}
+            if task_meta.get("stop_requested_at"):
+                process.terminate()
+                task.status = "stopped"
+                task.completed_at = datetime.utcnow()
+                task.task_metadata = {**task_meta, "stage": "stopped"}
+                db.commit()
+                return
+            if task_meta.get("pause_requested_at"):
+                process.terminate()
+                task.status = "paused"
+                task.task_metadata = {**task_meta, "stage": "paused", "pause_requested_at": None}
+                db.commit()
+                return
+
+            m = re.search(r"Epoch\s*\S*\s*\[\s*(\d+)\]", line)
+            if m:
+                current_epoch = int(m.group(1))
+                progress = 15 + int((current_epoch / epochs) * 75)
+                task.progress = min(progress, 90)
+                task.task_metadata = {
+                    **task_meta,
+                    "stage": "training",
+                    "current_epoch": current_epoch,
+                    "total_epochs": epochs,
+                }
+                db.commit()
+
+        process.wait()
+
+        if process.returncode != 0:
+            error_tail = "\n".join(epoch_log[-30:])
+            raise RuntimeError(
+                f"mim run mmyolo train exited with code {process.returncode}.\n{error_tail}"
+            )
+
+        weights_dir = output_base / "training"
+        best_model = None
+        for candidate in [weights_dir / "best.pth", weights_dir / "epoch_last.pth"]:
+            if candidate.exists():
+                best_model = str(candidate)
+                break
+
+        task.status = "completed"
+        task.completed_at = datetime.utcnow()
+        task.progress = 100
+        task.task_metadata = {
+            **(task.task_metadata or {}),
+            "stage": "completed",
+            "best_model": best_model,
+            "results_dir": str(weights_dir),
+            "class_names": dataset_info["class_names"],
+            "class_count": dataset_info["class_count"],
+            "image_counts": dataset_info["image_counts"],
+        }
+        db.commit()
+        logger.info(f"MMYOLO task {task_id} completed. best_model={best_model}")
+        return {"status": "completed", "task_id": task_id, "best_model": best_model}
+
+    except Exception as exc:
+        logger.error(f"Error in MMYOLO training task {task_id}: {exc}", exc_info=True)
+        task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+        if task:
+            task_meta = task.task_metadata or {}
+            if task.status not in ("paused", "stopped"):
+                task.status = "failed"
+                task.completed_at = datetime.utcnow()
+                task.error_message = str(exc)
+                task.task_metadata = {**task_meta, "stage": "failed", "error": str(exc)}
+                db.commit()
+        raise
+    finally:
+        db.close()
+
     import json as _json
     import subprocess
     import sys

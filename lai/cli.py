@@ -182,17 +182,42 @@ def cmd_download_models(ns: argparse.Namespace) -> int:
     _hint_guided_install(root)
     env_yolo = ns.yolo or "minimal"
     env_depth = ns.depth or "minimal"
+    env_mmyolo = ns.mmyolo or "minimal"
     base = [
         "docker", "compose", "exec",
         "-e", f"LAI_PRETRAINED_MODELS={env_yolo}",
         "-e", f"LAI_DEPTH_MODELS={env_depth}",
+        "-e", f"LAI_MMYOLO_MODELS={env_mmyolo}",
         "backend",
     ]
-    print(f"Downloading models  yolo={env_yolo!r}  depth={env_depth!r}", file=sys.stderr)
+    print(
+        f"Downloading models  yolo={env_yolo!r}  depth={env_depth!r}  mmyolo={env_mmyolo!r}",
+        file=sys.stderr,
+    )
     rc = _run([*base, "python", "scripts/download_ultralytics_models.py"], root)
     if rc != 0:
         return rc
-    return _run([*base, "python", "scripts/download_depth_anything_models.py"], root)
+    rc = _run([*base, "python", "scripts/download_depth_anything_models.py"], root)
+    if rc != 0:
+        return rc
+    return _run(
+        [
+            *base,
+            "sh",
+            "-lc",
+            (
+                "if [ -f scripts/download_mmyolo_models.py ]; then "
+                "python scripts/download_mmyolo_models.py; "
+                "elif [ -f backend/scripts/download_mmyolo_models.py ]; then "
+                "python backend/scripts/download_mmyolo_models.py; "
+                "else "
+                "echo 'download_mmyolo_models.py not found in container' >&2; "
+                "exit 1; "
+                "fi"
+            ),
+        ],
+        root,
+    )
 
 
 def cmd_sync(ns: argparse.Namespace) -> int:
@@ -350,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sp = sub.add_parser(
         "download-models",
-        help="Pre-download YOLO + Depth-Anything weights into the host models volume",
+        help="Pre-download YOLO + Depth-Anything + MMYOLO weights into the host models volume",
     )
     sp.add_argument(
         "--yolo",
@@ -361,6 +386,11 @@ def main(argv: list[str] | None = None) -> int:
         "--depth",
         default=None,
         help="LAI_DEPTH_MODELS spec: all | minimal | none | comma list (default: minimal)",
+    )
+    sp.add_argument(
+        "--mmyolo",
+        default=None,
+        help="LAI_MMYOLO_MODELS spec: all | minimal | none | comma list (default: minimal)",
     )
     sp.add_argument("--refresh", action="store_true")
     sp.set_defaults(func=cmd_download_models)

@@ -24,7 +24,9 @@ RUN pip install --upgrade pip \
  && pip install --default-timeout=1000 --retries 5 \
         --prefix=/install -r /tmp/req.txt \
  && pip install --default-timeout=1000 --retries 5 \
-        --prefix=/install 'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' 'fiftyone>=0.23.0'
+     --prefix=/install 'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' 'fiftyone>=0.23.0' \
+ && pip install --default-timeout=1000 --retries 5 \
+     --prefix=/install 'openmim>=0.3.9' 'mmengine>=0.10.5' 'mmdet>=3.3.0' 'mmcv-lite>=2.1.0' 'mmyolo>=0.6.0'
 
 # ---------- Stage 2: runtime ----------
 FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime AS runtime

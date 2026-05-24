@@ -41,6 +41,7 @@ import {
 } from "@/components/DatasetEvalPicker";
 import { YoloSettingsDialog } from "./YoloSettingsDialog";
 import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
+import { MMYOLOSettingsDialog } from "./MMYOLOSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from "@/hooks/use-toast";
@@ -101,12 +102,14 @@ const DEPLOY_LABELS: Record<DeployTarget, string> = {
 
 /** Per-architecture sizes — aligned with install/foundation_models and AutoAnnotateModal. */
 const YOLO_TRAIN_SIZES: Record<string, string[]> = {
+  yolo8: ['n', 's', 'm', 'l', 'x'],
   yolo11: ['n', 's', 'm', 'l', 'x'],
   yolo26: ['n', 's', 'm', 'l', 'x'],
   yolo_nas: ['s', 'm', 'l'],
 };
 
 const YOLO_VERSION_LABEL: Record<string, string> = {
+  yolo8: 'YOLOv8',
   yolo11: 'YOLOv11',
   yolo26: 'YOLO26',
   yolo_nas: 'YOLO-NAS',
@@ -132,17 +135,29 @@ const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
 
 /** Pick the recommended family for (task, deploy). */
 function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
+  if (deploy === 'edge-drone') return 'yolo';
   if (task === 'oriented') return 'mmyolo';
   if (task === 'classify') return 'yolo';
-  if (deploy === 'edge-drone') return 'mmyolo';
   return 'yolo';
 }
 
 /** MMYOLO architectures available per task (backend-validated set). */
 const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
-  detect:   [{ id: 'yolov8', label: 'YOLOv8 (DJI Matrice compatible)' }, { id: 'rtmdet', label: 'RTMDet' }],
-  segment:  [{ id: 'yolov8', label: 'YOLOv8-Seg (DJI Matrice compatible)' }, { id: 'rtmdet-ins', label: 'RTMDet-Ins' }],
-  oriented: [{ id: 'rtmdet-r',   label: 'RTMDet-Rotated' }],
+  detect: [
+    { id: 'rtmdet', label: 'RTMDet' },
+    { id: 'rtmdet-ins', label: 'RTMDet-Ins' },
+    { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
+  ],
+  segment: [
+    { id: 'rtmdet-ins', label: 'RTMDet-Ins' },
+    { id: 'rtmdet', label: 'RTMDet' },
+    { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
+  ],
+  oriented: [
+    { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
+    { id: 'rtmdet', label: 'RTMDet' },
+    { id: 'rtmdet-ins', label: 'RTMDet-Ins' },
+  ],
   classify: [],
 };
 
@@ -153,10 +168,7 @@ function mmyoloArchsForTask(task: TrainTask) {
 /** Default MMYOLO architecture id for a task + optional deploy target. */
 function defaultMmyoloArchForTask(task: TrainTask, deploy?: DeployTarget): string {
   const opts = mmyoloArchsForTask(task);
-  if (deploy === 'edge-drone') {
-    const yv8 = opts.find(o => o.id === 'yolov8');
-    if (yv8) return yv8.id;
-  }
+  void deploy;
   return opts[0]?.id ?? 'rtmdet';
 }
 
@@ -184,6 +196,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
   const [showYoloSettings, setShowYoloSettings] = useState(false);
   const [showRFDETRSettings, setShowRFDETRSettings] = useState(false);
+  const [showMMYOLOSettings, setShowMMYOLOSettings] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
   const [showClassDialog, setShowClassDialog] = useState(false);
   const [classStats, setClassStats] = useState<any | null>(null);
@@ -233,6 +246,26 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
   }, [modelSettings.version, modelSettings.size]);
 
+  // DJI mode policy: only YOLOv8 is allowed in GUI.
+  useEffect(() => {
+    if (deployTarget !== 'edge-drone') return;
+    setSelectedModel('yolo');
+    setModelSettings((prev: any) => {
+      const nextTask = prev.task || (selectedTask === 'classify'
+        ? 'classification'
+        : selectedTask === 'segment'
+          ? 'segmentation'
+          : 'detection');
+      const nextSize = ['n', 's', 'm', 'l', 'x'].includes(prev.size) ? prev.size : 'n';
+      return {
+        ...prev,
+        version: 'yolo8',
+        size: nextSize,
+        task: nextTask,
+      };
+    });
+  }, [deployTarget, selectedTask]);
+
   // Dataset settings
   const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
 
@@ -244,6 +277,12 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     project: '',
     entity: ''
   });
+  const [djiPatchUploading, setDjiPatchUploading] = useState(false);
+  const [djiPatch, setDjiPatch] = useState<null | {
+    name: string;
+    path: string;
+    uploadedAt?: string;
+  }>(null);
 
   // Fetch image collections for a specific dataset selection
   const fetchDataForSelection = async (selectionId: string, datasetId: number) => {
@@ -551,6 +590,10 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   };
 
   const handleModelSettingsUpdate = (settings: any) => {
+    if (deployTarget === 'edge-drone') {
+      setModelSettings({ ...settings, version: 'yolo8' });
+      return;
+    }
     setModelSettings(settings);
   };
 
@@ -645,6 +688,19 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       reasons.push('Select a model family.');
     }
 
+    if (deployTarget === 'edge-drone') {
+      if (selectedModel !== 'yolo') {
+        reasons.push('DJI Drone mode supports only YOLOv8 in this GUI flow.');
+      }
+      if ((modelSettings.version || 'yolo11') !== 'yolo8') {
+        reasons.push('DJI Drone mode requires YOLOv8 model version.');
+      }
+    }
+
+    if (selectedModel === 'mmyolo' && deployTarget === 'edge-drone' && !djiPatch?.path) {
+      reasons.push('Upload DJI AI Inside patch (.patch) for MMYOLO edge-drone training.');
+    }
+
 
     if (saveToWandb) {
       if (!wandbSettings.apiKey) reasons.push('Weights & Biases API key is required.');
@@ -652,6 +708,31 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
 
     return reasons;
+  };
+
+  const handleDJIPatchUpload = async (file: File | null) => {
+    if (!file || !api) return;
+    if (!file.name.toLowerCase().endsWith('.patch')) {
+      sonnerToast.error('Please upload a .patch file from DJI AI Inside portal.');
+      return;
+    }
+    setDjiPatchUploading(true);
+    try {
+      const res = await api.uploadMMYOLODJIPatch(file);
+      if (!res.success || !res.data) {
+        throw new Error(res.error || 'Failed to upload DJI patch');
+      }
+      setDjiPatch({
+        name: res.data.patch_name,
+        path: res.data.patch_path,
+        uploadedAt: res.data.uploaded_at,
+      });
+      sonnerToast.success('DJI patch uploaded and ready for training.');
+    } catch (err) {
+      sonnerToast.error(err instanceof Error ? err.message : 'Failed to upload DJI patch');
+    } finally {
+      setDjiPatchUploading(false);
+    }
   };
 
   const canTrain = () => getTrainBlockReasons().length === 0;
@@ -752,6 +833,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           weight_decay: modelSettings.weightDecay || 0.05,
           save_period: modelSettings.savePeriod !== undefined ? modelSettings.savePeriod : -1,
           remove_images_without_annotations: removeImagesWithoutAnnotations,
+          dji_patch_path: deployTarget === 'edge-drone' ? djiPatch?.path : undefined,
           use_wandb: saveToWandb,
           wandb_project: saveToWandb ? wandbSettings.project : undefined,
           wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
@@ -832,6 +914,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     });
     setCustomName('');
     setRemoveImagesWithoutAnnotations(true);
+    setDjiPatch(null);
     setStep(1);
   };
 
@@ -1429,7 +1512,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   badges: ['ONNX', 'TensorRT', 'CoreML'],
                   onPick: () => {
                     setSelectedModel('yolo');
-                    if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: 'yolo11', size: 'n', task: selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection' }));
+                    if (!modelSettings.epochs) setModelSettings((prev: any) => ({ ...prev, epochs: 100, batchSize: 16, imageSize: 640, device: '0', patience: 50, optimizer: 'auto', learningRate: 0.01, momentum: 0.937, weightDecay: 0.0005, savePeriod: -1, version: deployTarget === 'edge-drone' ? 'yolo8' : 'yolo11', size: 'n', task: selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection' }));
                   },
                 },
                 {
@@ -1445,7 +1528,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 {
                   id: 'mmyolo',
                   title: 'MMYOLO (OpenMMLab)',
-                  subtitle: 'RTMDet, RTMDet-Ins, RTMDet-Rotated, YOLOv8-mm — only family with oriented boxes; great speed/accuracy for edge devices and drones.',
+                  subtitle: 'RTMDet, RTMDet-Ins, RTMDet-Rotated — only family with oriented boxes; great speed/accuracy for edge devices and drones.',
                   badges: ['ONNX', 'TensorRT', 'RKNN', 'Edge', 'DJI-ready'],
                   onPick: () => {
                     setSelectedModel('mmyolo');
@@ -1458,7 +1541,9 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 },
               ];
 
-              const available = familyCards.filter(f => FAMILY_SUPPORTS[f.id].includes(selectedTask));
+              const available = familyCards
+                .filter(f => FAMILY_SUPPORTS[f.id].includes(selectedTask))
+                .filter(f => deployTarget !== 'edge-drone' || f.id === 'yolo');
 
               // Auto-pick recommended if current selection isn't valid for task
               if (selectedModel && !available.find(a => a.id === selectedModel)) {
@@ -1494,9 +1579,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           type="button"
                           onClick={() => {
                             setDeployTarget(d);
-                            // Preselect MMYOLO + YOLOv8 architecture for DJI drone,
-                            // but only when the user hasn't already picked an arch — otherwise we'd
-                            // clobber their choice and they couldn't switch to RTMDet.
+                            // Preselect the default MMYOLO architecture for deploy target.
                             if (d === 'edge-drone') {
                               setModelSettings((prev: any) => ({
                                 ...prev,
@@ -1513,7 +1596,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
                       <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                       {deployTarget === 'edge-drone'
-                        ? 'For DJI Matrice 4E. Trained with MMYOLO (YOLOv8) per DJI’s required structure, then submitted to the DJI Developer Portal for quantization. The optimized model is side-loaded via DJI Pilot 2 and runs on-board. Limited to object detection with up to 10 classes.'
+                        ? 'For DJI Matrice 4E, this GUI enforces YOLOv8 as the only training model option.'
                         : 'Standard PyTorch weights for desktop, server, or cloud inference.'}
                     </p>
                   </div>
@@ -1580,14 +1663,21 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="space-y-1">
                         <Label className="text-xs">Version</Label>
-                        <Select value={modelSettings.version || 'yolo11'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, version: v }))}>
-                          <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
-                          <SelectContent className="bg-background border shadow-md z-[70]">
-                            <SelectItem value="yolo11">YOLOv11</SelectItem>
-                            <SelectItem value="yolo26">YOLO26</SelectItem>
-                            <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        {deployTarget === 'edge-drone' ? (
+                          <div className="h-8 text-xs bg-muted border rounded-md px-3 flex items-center text-muted-foreground">
+                            YOLOv8
+                          </div>
+                        ) : (
+                          <Select value={modelSettings.version || 'yolo11'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, version: v }))}>
+                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                            <SelectContent className="bg-background border shadow-md z-[70]">
+                              <SelectItem value="yolo8">YOLOv8</SelectItem>
+                              <SelectItem value="yolo11">YOLOv11</SelectItem>
+                              <SelectItem value="yolo26">YOLO26</SelectItem>
+                              <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Size</Label>
@@ -1689,18 +1779,50 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 return (
                   <Card className="border-primary/30">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Settings className="h-4 w-4" /> MMYOLO Configuration
-                        <Badge variant="outline" className="text-[10px]">{mmyoloArchLabel(currentArch, selectedTask)}</Badge>
-                      </CardTitle>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Settings className="h-4 w-4" /> MMYOLO Configuration
+                          <Badge variant="outline" className="text-[10px]">{mmyoloArchLabel(currentArch, selectedTask)}</Badge>
+                        </CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => setShowMMYOLOSettings(true)}>
+                          <Settings className="h-3 w-3 mr-1" /> All Settings
+                        </Button>
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                         <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                        {selectedTask === 'detect'
-                          ? 'Defaults to YOLOv8 for DJI Matrice compatibility. Advanced mmcv configs are generated server-side.'
-                          : 'Architecture is fixed for this task. Advanced mmcv configs are generated server-side.'}
+                        {'Choose the MMYOLO architecture you want to train. Advanced mmcv configs are generated server-side.'}
                       </p>
+
+                      {deployTarget === 'edge-drone' && (
+                        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                          <p className="text-xs text-amber-900 dark:text-amber-300 flex items-start gap-1.5">
+                            <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                            DJI AI Inside requires a private MMYOLO patch from the DJI developer portal. Upload that .patch file here before starting training.
+                          </p>
+                          <div className="space-y-1">
+                            <Label className="text-xs">DJI Patch File (.patch)</Label>
+                            <Input
+                              type="file"
+                              accept=".patch,text/plain"
+                              className="h-8 text-xs bg-background"
+                              disabled={djiPatchUploading}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                handleDJIPatchUpload(file);
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            {djiPatch
+                              ? `Uploaded: ${djiPatch.name}`
+                              : 'No patch uploaded yet.'}
+                          </p>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="space-y-1">
                           <Label className="text-xs">Architecture</Label>
@@ -2003,6 +2125,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         onOpenChange={setShowRFDETRSettings}
         onSettingsUpdate={handleModelSettingsUpdate}
         currentSettings={modelSettings}
+      />
+
+      <MMYOLOSettingsDialog
+        open={showMMYOLOSettings}
+        onOpenChange={setShowMMYOLOSettings}
+        onSettingsUpdate={handleModelSettingsUpdate}
+        currentSettings={modelSettings}
+        deployTarget={deployTarget}
+        djiPatchName={djiPatch?.name || null}
+        djiPatchUploading={djiPatchUploading}
+        onDJIPatchUpload={handleDJIPatchUpload}
       />
       {/* Class distribution dialog */}
       <Dialog open={showClassDialog} onOpenChange={setShowClassDialog}>
