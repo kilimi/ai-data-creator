@@ -586,7 +586,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
   const handleModelSettingsUpdate = (settings: any) => {
     if (deployTarget === 'edge-drone') {
-      setModelSettings({ ...settings, version: 'yolo8' });
+      setModelSettings({ ...settings, mmyoloArch: 'yolov8' });
       return;
     }
     setModelSettings(settings);
