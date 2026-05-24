@@ -960,6 +960,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       // Cancel all active fetches
       activeFetchesRef.current.forEach(controller => controller.abort());
       activeFetchesRef.current.clear();
+    } else {
+      setSelectedTask(defaultTask || 'detect');
     }
     
     return () => {
