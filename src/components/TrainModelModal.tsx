@@ -144,6 +144,7 @@ function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-
 /** MMYOLO architectures available per task (backend-validated set). */
 const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> = {
   detect: [
+    { id: 'yolov8', label: 'YOLOv8 (DJI-compatible)' },
     { id: 'rtmdet', label: 'RTMDet' },
     { id: 'rtmdet-ins', label: 'RTMDet-Ins' },
     { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
