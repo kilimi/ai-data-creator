@@ -137,7 +137,7 @@ const FAMILY_SUPPORTS: Record<'yolo' | 'rf-detr' | 'mmyolo', TrainTask[]> = {
 
 /** Pick the recommended family for (task, deploy). */
 function recommendedFamily(task: TrainTask, deploy: DeployTarget): 'yolo' | 'rf-detr' | 'mmyolo' {
-  if (deploy === 'edge-drone') return 'yolo';
+  if (deploy === 'edge-drone') return 'mmyolo';
   if (task === 'oriented') return 'mmyolo';
   if (task === 'classify') return 'yolo';
   return 'yolo';
@@ -170,8 +170,8 @@ function mmyoloArchsForTask(task: TrainTask) {
 
 /** Default MMYOLO architecture id for a task + optional deploy target. */
 function defaultMmyoloArchForTask(task: TrainTask, deploy?: DeployTarget): string {
+  if (deploy === 'edge-drone') return 'yolov8';
   const opts = mmyoloArchsForTask(task);
-  void deploy;
   return opts[0]?.id ?? 'rtmdet';
 }
 
@@ -249,25 +249,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
   }, [modelSettings.version, modelSettings.size]);
 
-  // DJI mode policy: only YOLOv8 is allowed in GUI.
+  // DJI mode policy: only MMYOLO YOLOv8 Detection is allowed in GUI.
   useEffect(() => {
     if (deployTarget !== 'edge-drone') return;
-    setSelectedModel('yolo');
-    setModelSettings((prev: any) => {
-      const nextTask = prev.task || (selectedTask === 'classify'
-        ? 'classification'
-        : selectedTask === 'segment'
-          ? 'segmentation'
-          : 'detection');
-      const nextSize = ['n', 's', 'm', 'l', 'x'].includes(prev.size) ? prev.size : 'n';
-      return {
-        ...prev,
-        version: 'yolo8',
-        size: nextSize,
-        task: nextTask,
-      };
-    });
-  }, [deployTarget, selectedTask]);
+    setSelectedModel('mmyolo');
+    setSelectedTask('detect');
+    setModelSettings((prev: any) => ({
+      ...prev,
+      mmyoloArch: 'yolov8',
+      mmyoloSize: prev.mmyoloSize || 's',
+    }));
+  }, [deployTarget]);
 
   // Dataset settings
   const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
@@ -594,7 +586,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
   const handleModelSettingsUpdate = (settings: any) => {
     if (deployTarget === 'edge-drone') {
-      setModelSettings({ ...settings, version: 'yolo8' });
+      setModelSettings({ ...settings, mmyoloArch: 'yolov8' });
       return;
     }
     setModelSettings(settings);
@@ -692,16 +684,18 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
 
     if (deployTarget === 'edge-drone') {
-      if (selectedModel !== 'yolo') {
-        reasons.push('DJI Drone mode supports only YOLOv8 in this GUI flow.');
+      if (selectedModel !== 'mmyolo') {
+        reasons.push('DJI Drone mode supports only MMYOLO YOLOv8 Detection in this GUI flow.');
       }
-      if ((modelSettings.version || 'yolo11') !== 'yolo8') {
-        reasons.push('DJI Drone mode requires YOLOv8 model version.');
+      if (modelSettings.mmyoloArch && modelSettings.mmyoloArch !== 'yolov8') {
+        reasons.push('DJI Drone mode requires the YOLOv8 architecture.');
       }
-    }
-
-    if (selectedModel === 'mmyolo' && deployTarget === 'edge-drone' && !djiPatch?.path) {
-      reasons.push('Upload DJI AI Inside patch (.patch) for MMYOLO edge-drone training.');
+      if (selectedTask !== 'detect') {
+        reasons.push('DJI Drone mode requires the Detection task.');
+      }
+      if (!djiPatch?.path) {
+        reasons.push('Upload DJI AI Inside patch (.patch) for MMYOLO edge-drone training.');
+      }
     }
 
 
@@ -1548,7 +1542,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
               const available = familyCards
                 .filter(f => FAMILY_SUPPORTS[f.id].includes(selectedTask))
-                .filter(f => deployTarget !== 'edge-drone' || f.id === 'yolo');
+                .filter(f => deployTarget !== 'edge-drone' || f.id === 'mmyolo');
 
               // Auto-pick recommended if current selection isn't valid for task
               if (selectedModel && !available.find(a => a.id === selectedModel)) {
@@ -1561,16 +1555,21 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   <div className="space-y-2">
                     <Label className="text-base font-medium">What are you training?</Label>
                     <div className="flex flex-wrap gap-2">
-                      {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setSelectedTask(t)}
-                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${selectedTask === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
-                        >
-                          {TASK_LABELS[t]}
-                        </button>
-                      ))}
+                      {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => {
+                        const disabled = deployTarget === 'edge-drone' && t !== 'detect';
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => setSelectedTask(t)}
+                            className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${selectedTask === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                            title={disabled ? 'DJI Drone mode supports only Detection' : undefined}
+                          >
+                            {TASK_LABELS[t]}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1601,7 +1600,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
                       <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                       {deployTarget === 'edge-drone'
-                        ? 'For DJI Matrice 4E, this GUI enforces YOLOv8 as the only training model option.'
+                        ? 'For DJI Matrice 4E, this GUI enforces MMYOLO YOLOv8 with the Detection task.'
                         : 'Standard PyTorch weights for desktop, server, or cloud inference.'}
                     </p>
                   </div>
