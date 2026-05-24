@@ -1518,7 +1518,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 },
                 {
                   id: 'rf-detr',
-                  title: 'RF-DETR',
+                  title: 'Ultralytics RT-DETR',
                   subtitle: 'Real-time detection transformer — best accuracy on small objects, server GPUs.',
                   badges: [],
                   onPick: () => {
@@ -1736,7 +1736,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   <CardHeader className="pb-2">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm flex items-center gap-2">
-                        <Settings className="h-4 w-4" /> RF-DETR Configuration
+                        <Settings className="h-4 w-4" /> Ultralytics RT-DETR Configuration
                       </CardTitle>
                       <Button size="sm" variant="outline" onClick={() => setShowRFDETRSettings(true)}>
                         <Settings className="h-3 w-3 mr-1" /> All Settings
@@ -1985,7 +1985,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                           <span className="text-muted-foreground text-xs">Model</span>
                           <p className="font-medium">
                             {selectedModel === 'yolo' && `${YOLO_VERSION_LABEL[modelSettings.version || 'yolo11'] ?? modelSettings.version} · ${(modelSettings.size || 'n').toUpperCase()}`}
-                            {selectedModel === 'rf-detr' && `RF-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
+                            {selectedModel === 'rf-detr' && `Ultralytics RT-DETR ${(modelSettings.variant || 'rtdetr-l').toUpperCase()}`}
                             {selectedModel === 'mmyolo' && `${mmyoloArchLabel(modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask, deployTarget), selectedTask)} · ${(modelSettings.mmyoloSize || 's').toUpperCase()}`}
 
                           </p>
@@ -2055,14 +2055,14 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
               <div className="text-xs text-muted-foreground">
                 {step === 1 && (!selectedModel
                   ? 'Pick a model architecture to continue.'
-                  : `Selected: ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+                  : `Selected: ${selectedModel === 'yolo' ? 'Ultralytics YOLO' : selectedModel === 'rf-detr' ? 'Ultralytics RT-DETR' : 'MMYOLO'}`)}
                 {step === 2 && (selectedDatasets.length === 0
                   ? 'Pick at least one dataset to continue.'
                   : `${selectedDatasets.length} dataset(s) selected.`)}
 
                 {step === 3 && (!isTraining && !canTrain()
                   ? getTrainBlockReasons()[0]
-                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'Ultralytics YOLO' : selectedModel === 'rf-detr' ? 'Ultralytics RT-DETR' : 'MMYOLO'}`)}
 
               </div>
               <div className="flex items-center gap-2">
