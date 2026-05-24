@@ -2062,7 +2062,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
                 {step === 3 && (!isTraining && !canTrain()
                   ? getTrainBlockReasons()[0]
-                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'YOLO' : selectedModel === 'rf-detr' ? 'RF-DETR' : 'MMYOLO'}`)}
+                  : `${selectedDatasets.length} dataset(s) · ${selectedModel === 'yolo' ? 'Ultralytics YOLO' : selectedModel === 'rf-detr' ? 'Ultralytics RT-DETR' : 'MMYOLO'}`)}
 
               </div>
               <div className="flex items-center gap-2">
