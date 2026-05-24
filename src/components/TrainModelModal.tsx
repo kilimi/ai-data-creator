@@ -1542,7 +1542,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
               const available = familyCards
                 .filter(f => FAMILY_SUPPORTS[f.id].includes(selectedTask))
-                .filter(f => deployTarget !== 'edge-drone' || f.id === 'yolo');
+                .filter(f => deployTarget !== 'edge-drone' || f.id === 'mmyolo');
 
               // Auto-pick recommended if current selection isn't valid for task
               if (selectedModel && !available.find(a => a.id === selectedModel)) {
