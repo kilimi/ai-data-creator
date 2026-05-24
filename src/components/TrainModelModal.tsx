@@ -170,8 +170,8 @@ function mmyoloArchsForTask(task: TrainTask) {
 
 /** Default MMYOLO architecture id for a task + optional deploy target. */
 function defaultMmyoloArchForTask(task: TrainTask, deploy?: DeployTarget): string {
+  if (deploy === 'edge-drone') return 'yolov8';
   const opts = mmyoloArchsForTask(task);
-  void deploy;
   return opts[0]?.id ?? 'rtmdet';
 }
 
