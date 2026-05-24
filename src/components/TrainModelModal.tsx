@@ -152,6 +152,7 @@ const MMYOLO_ARCHS_BY_TASK: Record<TrainTask, { id: string; label: string }[]> =
     { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
   ],
   segment: [
+    { id: 'yolov8', label: 'YOLOv8' },
     { id: 'rtmdet-ins', label: 'RTMDet-Ins' },
     { id: 'rtmdet', label: 'RTMDet' },
     { id: 'rtmdet-r', label: 'RTMDet-Rotated' },
