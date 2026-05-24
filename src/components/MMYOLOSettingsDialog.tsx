@@ -80,32 +80,6 @@ export function MMYOLOSettingsDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {deployTarget === 'edge-drone' && (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
-              <p className="text-xs text-amber-900 dark:text-amber-300 flex items-start gap-1.5">
-                <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                DJI AI Inside requires a private MMYOLO patch from the DJI developer portal.
-              </p>
-              <div className="space-y-1">
-                <Label htmlFor="mmyolo-dji-patch">DJI Patch File (.patch)</Label>
-                <Input
-                  id="mmyolo-dji-patch"
-                  type="file"
-                  accept=".patch,text/plain"
-                  className="bg-background"
-                  disabled={djiPatchUploading}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0] || null;
-                    onDJIPatchUpload?.(file);
-                    e.currentTarget.value = '';
-                  }}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {djiPatchName ? `Uploaded: ${djiPatchName}` : 'No patch uploaded yet.'}
-              </p>
-            </div>
-          )}
 
           <div className="space-y-2">
             <Label htmlFor="mmyolo-optimizer">Optimizer</Label>
