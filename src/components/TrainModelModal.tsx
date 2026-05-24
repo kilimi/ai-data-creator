@@ -684,16 +684,18 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
 
     if (deployTarget === 'edge-drone') {
-      if (selectedModel !== 'yolo') {
-        reasons.push('DJI Drone mode supports only YOLOv8 in this GUI flow.');
+      if (selectedModel !== 'mmyolo') {
+        reasons.push('DJI Drone mode supports only MMYOLO YOLOv8 Detection in this GUI flow.');
       }
-      if ((modelSettings.version || 'yolo11') !== 'yolo8') {
-        reasons.push('DJI Drone mode requires YOLOv8 model version.');
+      if (modelSettings.mmyoloArch && modelSettings.mmyoloArch !== 'yolov8') {
+        reasons.push('DJI Drone mode requires the YOLOv8 architecture.');
       }
-    }
-
-    if (selectedModel === 'mmyolo' && deployTarget === 'edge-drone' && !djiPatch?.path) {
-      reasons.push('Upload DJI AI Inside patch (.patch) for MMYOLO edge-drone training.');
+      if (selectedTask !== 'detect') {
+        reasons.push('DJI Drone mode requires the Detection task.');
+      }
+      if (!djiPatch?.path) {
+        reasons.push('Upload DJI AI Inside patch (.patch) for MMYOLO edge-drone training.');
+      }
     }
 
 
