@@ -1595,7 +1595,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                     <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
                       <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                       {deployTarget === 'edge-drone'
-                        ? 'For DJI Matrice 4E, this GUI enforces YOLOv8 as the only training model option.'
+                        ? 'For DJI Matrice 4E, this GUI enforces MMYOLO YOLOv8 with the Detection task.'
                         : 'Standard PyTorch weights for desktop, server, or cloud inference.'}
                     </p>
                   </div>
