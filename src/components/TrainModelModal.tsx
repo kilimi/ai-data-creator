@@ -1555,16 +1555,21 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   <div className="space-y-2">
                     <Label className="text-base font-medium">What are you training?</Label>
                     <div className="flex flex-wrap gap-2">
-                      {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setSelectedTask(t)}
-                          className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${selectedTask === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'}`}
-                        >
-                          {TASK_LABELS[t]}
-                        </button>
-                      ))}
+                      {(Object.keys(TASK_LABELS) as TrainTask[]).map(t => {
+                        const disabled = deployTarget === 'edge-drone' && t !== 'detect';
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => setSelectedTask(t)}
+                            className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${selectedTask === t ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:border-primary/50'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                            title={disabled ? 'DJI Drone mode supports only Detection' : undefined}
+                          >
+                            {TASK_LABELS[t]}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
 
