@@ -249,25 +249,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
   }, [modelSettings.version, modelSettings.size]);
 
-  // DJI mode policy: only YOLOv8 is allowed in GUI.
+  // DJI mode policy: only MMYOLO YOLOv8 Detection is allowed in GUI.
   useEffect(() => {
     if (deployTarget !== 'edge-drone') return;
-    setSelectedModel('yolo');
-    setModelSettings((prev: any) => {
-      const nextTask = prev.task || (selectedTask === 'classify'
-        ? 'classification'
-        : selectedTask === 'segment'
-          ? 'segmentation'
-          : 'detection');
-      const nextSize = ['n', 's', 'm', 'l', 'x'].includes(prev.size) ? prev.size : 'n';
-      return {
-        ...prev,
-        version: 'yolo8',
-        size: nextSize,
-        task: nextTask,
-      };
-    });
-  }, [deployTarget, selectedTask]);
+    setSelectedModel('mmyolo');
+    setSelectedTask('detect');
+    setModelSettings((prev: any) => ({
+      ...prev,
+      mmyoloArch: 'yolov8',
+      mmyoloSize: prev.mmyoloSize || 's',
+    }));
+  }, [deployTarget]);
 
   // Dataset settings
   const [removeImagesWithoutAnnotations, setRemoveImagesWithoutAnnotations] = useState(true);
