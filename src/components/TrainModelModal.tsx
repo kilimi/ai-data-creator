@@ -58,6 +58,8 @@ interface TrainModelModalProps {
   projectId: string;
   /** When set with `open`, load this task's saved training settings into the form (does not start training). */
   cloneFromTaskId?: number | null;
+  /** Default task to preselect when the modal opens. */
+  defaultTask?: TrainTask;
 }
 
 interface DatasetSelection {
@@ -186,12 +188,12 @@ function mmyoloArchLabel(id: string, task?: TrainTask): string {
 }
 
 
-export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null }: TrainModelModalProps) {
+export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null, defaultTask }: TrainModelModalProps) {
   const { api } = useApi();
   const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
-  const [selectedTask, setSelectedTask] = useState<TrainTask>('detect');
+  const [selectedTask, setSelectedTask] = useState<TrainTask>(defaultTask || 'detect');
   const [deployTarget, setDeployTarget] = useState<DeployTarget>('general');
   const [modelSettings, setModelSettings] = useState<any>({});
 
@@ -958,6 +960,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       // Cancel all active fetches
       activeFetchesRef.current.forEach(controller => controller.abort());
       activeFetchesRef.current.clear();
+    } else {
+      setSelectedTask(defaultTask || 'detect');
     }
     
     return () => {
