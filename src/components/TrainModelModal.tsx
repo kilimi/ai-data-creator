@@ -1518,7 +1518,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 },
                 {
                   id: 'rf-detr',
-                  title: 'RF-DETR',
+                  title: 'Ultralytics RT-DETR',
                   subtitle: 'Real-time detection transformer — best accuracy on small objects, server GPUs.',
                   badges: [],
                   onPick: () => {
