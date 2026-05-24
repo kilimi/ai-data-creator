@@ -188,12 +188,12 @@ function mmyoloArchLabel(id: string, task?: TrainTask): string {
 }
 
 
-export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null }: TrainModelModalProps) {
+export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGroups = [], resourcesLoading = false, projectId, cloneFromTaskId = null, defaultTask }: TrainModelModalProps) {
   const { api } = useApi();
   const { toast } = useToast();
   const [selectedDatasets, setSelectedDatasets] = useState<DatasetSelection[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelConfig['type'] | null>(null);
-  const [selectedTask, setSelectedTask] = useState<TrainTask>('detect');
+  const [selectedTask, setSelectedTask] = useState<TrainTask>(defaultTask || 'detect');
   const [deployTarget, setDeployTarget] = useState<DeployTarget>('general');
   const [modelSettings, setModelSettings] = useState<any>({});
 
