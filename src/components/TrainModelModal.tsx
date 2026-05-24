@@ -773,7 +773,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         if (!modelType) {
           const ver = modelSettings.version || 'yolo11';
           const sz = modelSettings.size || 'n';
-          const task = modelSettings.task || 'segmentation';
+          const task = modelSettings.task || (selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection');
           modelType = `${ver}${sz}${task === 'segmentation' ? '-seg' : task === 'classification' ? '-cls' : ''}.pt`;
         }
         // Prepare YOLO training request
@@ -1711,7 +1711,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Task</Label>
-                        <Select value={modelSettings.task || 'segmentation'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, task: v }))}>
+                        <Select value={modelSettings.task || (selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection')} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, task: v }))}>
                           <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
                           <SelectContent className="bg-background border shadow-md z-[70]">
                             <SelectItem value="detection">Detection</SelectItem>
@@ -2009,7 +2009,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         {selectedModel === 'yolo' && (
                           <div>
                             <span className="text-muted-foreground text-xs">Task</span>
-                            <p className="font-medium capitalize">{modelSettings.task || 'segmentation'}</p>
+                            <p className="font-medium capitalize">{modelSettings.task || (selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection')}</p>
                           </div>
                         )}
                         <div>
