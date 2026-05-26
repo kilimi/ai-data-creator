@@ -3,7 +3,7 @@
 # with matching CUDA ABI. Weights live on a mounted volume.
 
 # ---------- Stage 1: builder ----------
-FROM python:3.11-slim AS builder
+FROM python:3.10-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -26,16 +26,17 @@ RUN pip install --upgrade pip setuptools wheel \
         --prefix=/install 'ultralytics>=8.0.0' 'opencv-python-headless>=4.7.0' \
      'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' \
  && pip install --default-timeout=1000 --retries 5 \
-     --prefix=/install 'openmim>=0.3.9' 'mmengine>=0.10.5' 'mmdet>=3.3.0' 'mmcv-lite>=2.1.0' 'mmyolo>=0.6.0'
+     --prefix=/install 'openmim>=0.3.9'
 
 # ---------- Stage 2: runtime ----------
-FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime AS runtime
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/opt/lai/lib/python3.11/site-packages \
-    PATH=/opt/lai/bin:$PATH
+    PYTHONPATH=/opt/lai/lib/python3.10/site-packages \
+    PATH=/opt/lai/bin:$PATH \
+    MMYOLO_PYTHON=/opt/conda/envs/mmyolo/bin/python
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1 \
@@ -46,6 +47,24 @@ WORKDIR /app
 
 COPY --from=builder /install /opt/lai
 COPY . .
+
+ENV PYTHONNOUSERSITE=1
+
+# Install stable tooling
+RUN pip install --upgrade \
+    pip==23.3.1 \
+    setuptools==68.2.2 \
+    wheel==0.41.2
+
+# Install MMYOLO in a dedicated conda env following the requested stack.
+RUN conda create -n mmyolo python=3.8 pytorch==1.10.1 torchvision==0.11.2 cudatoolkit=11.3 -c pytorch -y \
+ && PYTHONPATH= conda run -n mmyolo pip install openmim \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmengine>=0.6.0" \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmcv>=2.0.0rc4,<2.1.0" \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmdet>=3.0.0,<4.0.0" \
+ && git clone --depth 1 https://github.com/open-mmlab/mmyolo.git /opt/mmyolo \
+ && PYTHONPATH= conda run -n mmyolo pip install -r /opt/mmyolo/requirements/albu.txt \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install -v -e /opt/mmyolo
 
 RUN mkdir -p /app/projects /app/data /app/models /app/ai_models/depth_estimation /app/runs
 

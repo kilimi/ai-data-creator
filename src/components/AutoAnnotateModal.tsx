@@ -39,7 +39,6 @@ type Family = "yolo" | "depth_anything";
 const YOLO_ARCHS = [
   { value: "yolo11", label: "YOLO11", desc: "Latest generation" },
   { value: "yolo26", label: "YOLO26", desc: "Newest release" },
-  { value: "yolo_nas", label: "YOLO-NAS", desc: "Neural architecture search" },
   { value: "rtdetr", label: "RT-DETR", desc: "Transformer-based" },
 ];
 
@@ -58,11 +57,6 @@ const YOLO_SIZES: Record<string, { value: string; label: string }[]> = {
     { value: "l", label: "Large" },
     { value: "x", label: "X-Large" },
   ],
-  yolo_nas: [
-    { value: "s", label: "Small" },
-    { value: "m", label: "Medium" },
-    { value: "l", label: "Large" },
-  ],
   rtdetr: [
     { value: "l", label: "Large" },
     { value: "x", label: "X-Large" },
@@ -79,7 +73,6 @@ const YOLO_TASKS: { value: YoloTask; label: string; desc: string }[] = [
 const ARCH_SUPPORTED_TASKS: Record<string, YoloTask[]> = {
   yolo11: ["segment", "classify"],
   yolo26: ["segment", "classify"],
-  yolo_nas: ["segment"],
   rtdetr: ["segment"],
 };
 

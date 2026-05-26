@@ -371,11 +371,56 @@ async def resume_task(task_id: int, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    metadata = task.task_metadata or {}
+
+    # Recovery path: if backend restarted after pause was requested, task can remain
+    # stuck in 'running' with pause_requested_at set even though no worker is active.
+    pause_requested = isinstance(metadata, dict) and bool(metadata.get("pause_requested_at"))
+    if task.status == 'running' and pause_requested:
+        task.status = 'paused'
+        task.task_metadata = {
+            **metadata,
+            "stage": "paused",
+            "pause_requested_at": None,
+            "paused_recovered_at": datetime.utcnow().isoformat(),
+        }
+        flag_modified(task, "task_metadata")
+        db.commit()
+        db.refresh(task)
+        metadata = task.task_metadata or {}
+
     if task.status != 'paused':
         raise HTTPException(status_code=400, detail=f"Cannot resume task with status '{task.status}' (must be 'paused')")
 
-    metadata = task.task_metadata or {}
+    if task.task_type == 'mmyolo_training':
+        raise HTTPException(
+            status_code=400,
+            detail="MMYOLO pause/resume is not supported yet. Use rerun for MMYOLO tasks."
+        )
+
     resume_from = metadata.get("resume_from")
+    if not resume_from:
+        # Best-effort fallback for older tasks where resume_from was not persisted.
+        candidates = [
+            metadata.get("last_model"),
+            metadata.get("yolo_last_model"),
+            metadata.get("best_model"),
+            metadata.get("yolo_best_model"),
+        ]
+        if task.project_id:
+            task_root = Path("projects") / str(task.project_id) / "training" / f"task_{task_id}"
+            candidates.extend([
+                str(task_root / "training" / "weights" / "last.pt"),
+                str(task_root / "training" / "last.pt"),
+                str(task_root / "training" / "weights" / "best.pt"),
+                str(task_root / "training" / "best.pt"),
+            ])
+
+        for candidate in candidates:
+            if candidate and Path(candidate).exists():
+                resume_from = str(candidate)
+                break
+
     if not resume_from:
         raise HTTPException(status_code=400, detail="No resume checkpoint found. The training may not have saved a checkpoint yet.")
 
@@ -384,7 +429,14 @@ async def resume_task(task_id: int, db: Session = Depends(get_db)):
     # Inject resume path into config
     training_config = {**training_config, "resume_from": resume_from}
 
-    task_type = task.task_type  # 'yolo_training' or 'rtdetr_training'
+    task_type = task.task_type
+    model_variant = str(metadata.get("model_variant") or "").lower()
+    model_type_hint = str(
+        metadata.get("model_type")
+        or training_config.get("model_type")
+        or ""
+    ).lower()
+    is_rtdetr = task_type == 'training' and (model_variant.startswith('rtdetr') or model_type_hint.startswith('rtdetr'))
 
     # Create a new task record for the resumed run
     from app.models import Task as TaskModel
@@ -408,7 +460,7 @@ async def resume_task(task_id: int, db: Session = Depends(get_db)):
 
     # Dispatch Celery task
     from app.celery_app import celery_app as _celery
-    if task_type == 'rtdetr_training':
+    if is_rtdetr:
         celery_result = _celery.send_task(
             'app.tasks.training_tasks.train_rtdetr_model',
             args=[new_task.id, training_config],

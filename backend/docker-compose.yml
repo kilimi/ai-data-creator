@@ -30,7 +30,6 @@ services:
       - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017
       - FIFTYONE_DEFAULT_APP_PORT=5151
       - FIFTYONE_DEFAULT_APP_ADDRESS=0.0.0.0
-      - NVIDIA_VISIBLE_DEVICES=all
     ports:
       - "9999:8000"
       - "5151:5151"  # FiftyOne UI
@@ -56,11 +55,6 @@ services:
         reservations:
           memory: 1G
           cpus: "1.0"
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    runtime: nvidia
 
   # Celery Worker for Training Tasks with GPU support
   celery_worker:

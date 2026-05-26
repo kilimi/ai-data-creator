@@ -214,6 +214,19 @@ class Task(Base):
     augmentation = relationship("Augmentation", back_populates="task", uselist=False)
 
 
+class WorkerGpuStatus(Base):
+    __tablename__ = "worker_gpu_status"
+
+    id = Column(Integer, primary_key=True, default=1)
+    has_gpu = Column(Boolean, default=False, nullable=False)
+    gpu_count = Column(Integer, default=0, nullable=False)
+    gpus = Column(JSON, nullable=False, default=list)
+    memory_used_mb = Column(Integer, default=0, nullable=False)
+    memory_total_mb = Column(Integer, default=0, nullable=False)
+    source = Column(String, default='celery_worker', nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class AnnotationFile(Base):
     __tablename__ = "annotation_files"
 

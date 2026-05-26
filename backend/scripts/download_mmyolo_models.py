@@ -23,6 +23,9 @@ import sys
 from pathlib import Path
 
 DEST_DIR = Path("/app/models/mmyolo")
+MMYOLO_PYTHON = os.environ.get('MMYOLO_PYTHON', '/opt/mmyolo-venv/bin/python')
+if not Path(MMYOLO_PYTHON).exists():
+    MMYOLO_PYTHON = sys.executable
 
 # UI-facing aliases -> (mim package, official config id)
 ALIAS_TO_TARGET = {
@@ -68,7 +71,7 @@ def run_download(alias: str) -> bool:
 
     package, config_name = target
     cmd = [
-        sys.executable,
+        MMYOLO_PYTHON,
         "-m",
         "mim",
         "download",
@@ -78,8 +81,10 @@ def run_download(alias: str) -> bool:
         "--dest",
         str(DEST_DIR),
     ]
+    env = {**os.environ}
+    env.pop("PYTHONPATH", None)
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=env)
         return True
     except subprocess.CalledProcessError as exc:
         print(
@@ -100,7 +105,9 @@ def main() -> int:
         return 0
 
     # Fail early if mim is unavailable.
-    probe = subprocess.run([sys.executable, "-m", "mim", "--help"], capture_output=True)
+    probe_env = {**os.environ}
+    probe_env.pop("PYTHONPATH", None)
+    probe = subprocess.run([MMYOLO_PYTHON, "-m", "mim", "--help"], capture_output=True, env=probe_env)
     if probe.returncode != 0:
         print("mim is not available in this environment. Install openmim/mmyolo first.", file=sys.stderr)
         return 1

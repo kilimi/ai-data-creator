@@ -20,7 +20,7 @@ from ..database import get_db, SessionLocal
 from ..models import Task, Dataset, AnnotationFile, Image, Annotation, AnnotationClass, ImageCollection, Project
 from ..model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
 from app.tasks.yolo_training_helpers import generate_safe_output_filename
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -66,6 +66,16 @@ class YoloTrainingRequest(BaseModel):
     wandb_project: Optional[str] = None
     wandb_entity: Optional[str] = None
 
+    @field_validator("model_type")
+    @classmethod
+    def _normalize_model_type(cls, v: str) -> str:
+        raw = (v or "").strip()
+        if not raw:
+            return "yolo11n-seg.pt"
+        if re.match(r"^yolo_?nas", raw, re.IGNORECASE):
+            raise ValueError("YOLO-NAS models are no longer supported")
+        return raw
+
 
 class RTDETRTrainingRequest(BaseModel):
     """Request model for RT-DETR training"""
@@ -91,7 +101,7 @@ class RTDETRTrainingRequest(BaseModel):
 
 # ── MMYOLO (OpenMMLab RTMDet family) ─────────────────────────────────────────
 
-MMYOLO_VALID_ARCHS: frozenset = frozenset({"rtmdet", "rtmdet-ins", "rtmdet-r"})
+MMYOLO_VALID_ARCHS: frozenset = frozenset({"yolov8", "rtmdet", "rtmdet-ins", "rtmdet-r"})
 MMYOLO_VALID_SIZES: frozenset = frozenset({"tiny", "s", "m", "l", "x"})
 
 
@@ -101,15 +111,18 @@ def mmyolo_config_name(arch: str, size: str) -> str:
         raise ValueError(f"Unknown MMYOLO arch '{arch}'. Valid: {sorted(MMYOLO_VALID_ARCHS)}")
     if size not in MMYOLO_VALID_SIZES:
         raise ValueError(f"Unknown MMYOLO size '{size}'. Valid: {sorted(MMYOLO_VALID_SIZES)}")
-    # MMYolo config naming convention: rtmdet_s, rtmdet-ins_m, rtmdet-r_l, rtmdet_tiny
+    if arch == "yolov8":
+        # Official MMYOLO YOLOv8 config ids.
+        return f"yolov8_{size}_syncbn_fast_8xb16-500e_coco"
+    # Existing RTMDet-family short aliases are preserved for backward compatibility.
     return f"{arch}_{size}"
 
 
 class MMYOLOTrainingRequest(BaseModel):
-    """Request model for MMYOLO (RTMDet family) training."""
+    """Request model for MMYOLO (YOLOv8 + RTMDet family) training."""
     project_id: int
     dataset_configs: List[Dict[str, Any]]
-    arch: str = "rtmdet"          # rtmdet | rtmdet-ins | rtmdet-r
+    arch: str = "rtmdet"          # yolov8 | rtmdet | rtmdet-ins | rtmdet-r
     size: str = "s"               # tiny | s | m | l | x
     task: str = "detect"          # detect | segment | oriented
     epochs: int = 300
@@ -147,6 +160,12 @@ class MMYOLOTrainingRequest(BaseModel):
         if v not in {"detect", "segment", "oriented"}:
             raise ValueError(f"task must be one of detect, segment, oriented, got '{v}'")
         return v
+
+    @model_validator(mode="after")
+    def _validate_arch_task_combo(self):
+        if self.arch == "yolov8" and self.task != "detect":
+            raise ValueError("arch 'yolov8' supports only task='detect'")
+        return self
 
 
 def prepare_mmyolo_dataset(
@@ -917,9 +936,20 @@ def prepare_yolo_dataset(
                             logger.debug(f"Skipping annotation {annotation.id} - missing seg or bbox (has_seg={has_seg}, has_bbox={has_bbox})")
                             continue
                     
-                    # Get image dimensions
-                    img_width = image.width or 1
-                    img_height = image.height or 1
+                    # Get image dimensions. Fall back to reading the real image size
+                    # if DB metadata is missing, otherwise normalized labels become invalid.
+                    img_width = image.width
+                    img_height = image.height
+                    if not img_width or not img_height or img_width <= 0 or img_height <= 0:
+                        try:
+                            from PIL import Image as PILImage
+                            with PILImage.open(dst_image_path) as pil_img:
+                                img_width, img_height = pil_img.size
+                        except Exception as dim_err:
+                            logger.warning(
+                                f"Could not read image dimensions for {dst_image_path}: {dim_err}; using 1x1 fallback"
+                            )
+                            img_width, img_height = 1, 1
                     
                     # Handle segmentation if present
                     if annotation.segmentation:
@@ -1494,7 +1524,7 @@ async def rerun_training(
         if not original_task:
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
         
-        if original_task.task_type not in ['yolo_training', 'training']:
+        if original_task.task_type not in ['yolo_training', 'training', 'mmyolo_training']:
             raise HTTPException(
                 status_code=400,
                 detail=f"Task type {original_task.task_type} is not supported for rerun"
@@ -1614,20 +1644,27 @@ async def rerun_training(
                 # Try to find any datasets in the project and use the first annotation file
                 project_datasets = db.query(Dataset).filter(Dataset.project_id == original_task.project_id).all()
                 if project_datasets:
-                    logger.warning(f"Attempting fallback: using first dataset from project {original_task.project_id}")
-                    for dataset in project_datasets[:1]:  # Just use first dataset as last resort
+                    logger.warning(
+                        f"Attempting fallback: scanning project {original_task.project_id} datasets for usable annotations"
+                    )
+                    for dataset in project_datasets:
                         ann_file = db.query(AnnotationFile).filter(
                             AnnotationFile.dataset_id == dataset.id
                         ).first()
-                        if ann_file:
-                            reconstructed_configs.append({
-                                'dataset_id': dataset.id,
-                                'annotation_file_id': ann_file.id,
-                                'image_collection': None,
-                                'split': {'train': 80, 'val': 20, 'test': 0}
-                            })
-                            logger.warning(f"Fallback: Using dataset {dataset.id} with annotation file {ann_file.id}")
-                            break
+                        if not ann_file:
+                            logger.info(f"Fallback skip: dataset {dataset.id} has no annotation files")
+                            continue
+
+                        reconstructed_configs.append({
+                            'dataset_id': dataset.id,
+                            'annotation_file_id': ann_file.id,
+                            'image_collection': None,
+                            'split': {'train': 80, 'val': 20, 'test': 0}
+                        })
+                        logger.warning(
+                            f"Fallback: Using dataset {dataset.id} with annotation file {ann_file.id}"
+                        )
+                        break
             
             if not reconstructed_configs:
                 raise HTTPException(
@@ -1640,8 +1677,310 @@ async def rerun_training(
                     )
                 )
         
-        # Determine model type
-        model_type = metadata.get('model_type') or metadata.get('model_config', {}).get('model') or 'yolo11n-seg.pt'
+        # Determine model type/family
+        model_type_raw = metadata.get('model_type') or metadata.get('model_config', {}).get('model') or 'yolo11n-seg.pt'
+        model_variant = metadata.get('model_variant')
+        is_mmyolo = original_task.task_type == 'mmyolo_training' or bool(metadata.get('config_id')) or bool(metadata.get('arch'))
+        is_rtdetr = bool(model_variant) or str(model_type_raw).lower().startswith('rtdetr')
+
+        # MMYOLO rerun path
+        if is_mmyolo:
+            arch = metadata.get('arch') or training_params.get('arch', 'rtmdet')
+            size = metadata.get('size') or training_params.get('size', 's')
+            mmyolo_task = metadata.get('mmyolo_task') or training_params.get('task', 'detect')
+
+            try:
+                config_id = mmyolo_config_name(arch, size)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+
+            request_data = {
+                'project_id': original_task.project_id,
+                'dataset_configs': reconstructed_configs,
+                'arch': arch,
+                'size': size,
+                'task': mmyolo_task,
+                'epochs': training_params.get('epochs', metadata.get('epochs', 300)),
+                'batch_size': training_params.get('batch_size', 16),
+                'image_size': training_params.get('image_size', training_params.get('imgsz', 640)),
+                'device': training_params.get('device', '0'),
+                'task_name': f"{original_task.name} (Rerun)",
+                'optimizer': training_params.get('optimizer', 'AdamW'),
+                'learning_rate': training_params.get('learning_rate', 0.004),
+                'weight_decay': training_params.get('weight_decay', 0.05),
+                'save_period': training_params.get('save_period', -1),
+                'remove_images_without_annotations': metadata.get('remove_images_without_annotations', True),
+                'dji_patch_path': metadata.get('dji_patch_path'),
+                'use_wandb': metadata.get('use_wandb', False),
+                'wandb_project': metadata.get('wandb_project'),
+                'wandb_entity': metadata.get('wandb_entity'),
+            }
+
+            request = MMYOLOTrainingRequest(**request_data)
+
+            for cfg in request.dataset_configs:
+                dataset = db.query(Dataset).filter(Dataset.id == cfg['dataset_id']).first()
+                if not dataset:
+                    raise HTTPException(status_code=404, detail=f"Dataset {cfg['dataset_id']} not found")
+                ann_file = db.query(AnnotationFile).filter(
+                    AnnotationFile.id == cfg['annotation_file_id']
+                ).first()
+                if not ann_file:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Annotation file {cfg['annotation_file_id']} not found"
+                    )
+
+            if request.dji_patch_path:
+                patch_path = Path(request.dji_patch_path)
+                if not patch_path.exists() or not patch_path.is_file():
+                    raise HTTPException(status_code=400, detail="Provided DJI patch file does not exist.")
+                if patch_path.suffix.lower() != ".patch":
+                    raise HTTPException(status_code=400, detail="DJI patch must be a .patch file.")
+
+            task_name = (
+                request.task_name
+                or f"MMYOLO {request.arch.upper()} ({request.size.upper()}) — "
+                   f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
+            )
+
+            task = Task(
+                name=task_name,
+                description=(
+                    f"MMYOLO training: {request.arch} · {request.size} · {request.task} "
+                    f"on {len(request.dataset_configs)} dataset(s) (Rerun of task {task_id})"
+                ),
+                task_type="mmyolo_training",
+                status="pending",
+                project_id=request.project_id,
+                progress=0,
+                task_metadata={
+                    "model_type": f"{request.arch}_{request.size}",
+                    "arch": request.arch,
+                    "size": request.size,
+                    "mmyolo_task": request.task,
+                    "config_id": config_id,
+                    "epochs": request.epochs,
+                    "batch_size": request.batch_size,
+                    "image_size": request.image_size,
+                    "dataset_count": len(request.dataset_configs),
+                    "dataset_ids": [c["dataset_id"] for c in request.dataset_configs],
+                    "dataset_configs": request.dataset_configs,
+                    "training_params": {
+                        "epochs": request.epochs,
+                        "batch_size": request.batch_size,
+                        "image_size": request.image_size,
+                        "device": request.device,
+                        "optimizer": request.optimizer,
+                        "learning_rate": request.learning_rate,
+                        "weight_decay": request.weight_decay,
+                        "save_period": request.save_period,
+                        "arch": request.arch,
+                        "size": request.size,
+                        "task": request.task,
+                    },
+                    "remove_images_without_annotations": request.remove_images_without_annotations,
+                    "dji_patch_path": request.dji_patch_path,
+                    "use_wandb": request.use_wandb,
+                    "wandb_project": request.wandb_project,
+                    "wandb_entity": request.wandb_entity,
+                    "rerun_of_task_id": task_id,
+                },
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+
+            training_config = {
+                "project_id": request.project_id,
+                "dataset_configs": request.dataset_configs,
+                "arch": request.arch,
+                "size": request.size,
+                "task": request.task,
+                "config_id": config_id,
+                "epochs": request.epochs,
+                "batch_size": request.batch_size,
+                "image_size": request.image_size,
+                "device": request.device,
+                "optimizer": request.optimizer,
+                "learning_rate": request.learning_rate,
+                "weight_decay": request.weight_decay,
+                "save_period": request.save_period,
+                "remove_images_without_annotations": request.remove_images_without_annotations,
+                "dji_patch_path": request.dji_patch_path,
+                "use_wandb": request.use_wandb,
+                "wandb_project": request.wandb_project,
+                "wandb_entity": request.wandb_entity,
+            }
+
+            if USE_CELERY and celery_mmyolo_task is not None:
+                celery_task = celery_mmyolo_task.delay(task.id, training_config)
+                logger.info(
+                    f"Queued rerun MMYOLO training task {task.id} in Celery (celery_id: {celery_task.id}, rerun of {task_id})"
+                )
+                task.task_metadata = {**task.task_metadata, "celery_task_id": celery_task.id}
+                db.commit()
+            else:
+                logger.warning("Celery not available; MMYOLO rerun cannot run without Celery worker.")
+                task.status = "failed"
+                task.error_message = "Celery worker not available — cannot start MMYOLO rerun."
+                db.commit()
+                raise HTTPException(
+                    status_code=503,
+                    detail="Celery worker is required for MMYOLO rerun but is not available.",
+                )
+
+            return {
+                "success": True,
+                "task_id": task.id,
+                "original_task_id": task_id,
+                "message": f"MMYOLO rerun started ({request.arch} · {request.size})",
+                "task": {
+                    "id": task.id,
+                    "name": task.name,
+                    "status": task.status,
+                    "progress": task.progress,
+                },
+            }
+
+        # RT-DETR rerun path (uses RT-DETR task queue and metadata shape)
+        if is_rtdetr:
+            rtdetr_model_type = model_variant or model_type_raw
+
+            request_data = {
+                'project_id': original_task.project_id,
+                'dataset_configs': reconstructed_configs,
+                'model_type': rtdetr_model_type,
+                'epochs': training_params.get('epochs', metadata.get('epochs', 100)),
+                'batch_size': training_params.get('batch_size', 16),
+                'image_size': training_params.get('image_size', training_params.get('imgsz', 640)),
+                'device': training_params.get('device', '0'),
+                'task_name': f"{original_task.name} (Rerun)",
+                'patience': training_params.get('patience', 50),
+                'optimizer': training_params.get('optimizer', 'AdamW'),
+                'learning_rate': training_params.get('learning_rate', 0.0001),
+                'weight_decay': training_params.get('weight_decay', 0.0001),
+                'save_period': training_params.get('save_period', -1),
+                'use_wandb': metadata.get('use_wandb', False),
+                'wandb_project': metadata.get('wandb_project'),
+                'wandb_entity': metadata.get('wandb_entity'),
+            }
+
+            request = RTDETRTrainingRequest(**request_data)
+
+            for config in request.dataset_configs:
+                dataset = db.query(Dataset).filter(Dataset.id == config['dataset_id']).first()
+                if not dataset:
+                    raise HTTPException(status_code=404, detail=f"Dataset {config['dataset_id']} not found")
+
+                ann_file = db.query(AnnotationFile).filter(
+                    AnnotationFile.id == config['annotation_file_id']
+                ).first()
+                if not ann_file:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Annotation file {config['annotation_file_id']} not found"
+                    )
+
+            task = Task(
+                project_id=request.project_id,
+                name=request.task_name or f"RT-DETR Training - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Rerun)",
+                task_type="training",
+                status="queued",
+                progress=0,
+                task_metadata={
+                    "model_type": "rtdetr",
+                    "model_variant": request.model_type,
+                    "training_params": request.dict(exclude={'project_id', 'dataset_configs', 'task_name'}),
+                    "dataset_configs": request.dataset_configs,
+                    "rerun_of_task_id": task_id,
+                }
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+
+            output_dir = Path(f"projects/{request.project_id}/training/task_{task.id}")
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            dataset_info = prepare_yolo_dataset(
+                db=db,
+                dataset_configs=request.dataset_configs,
+                output_dir=output_dir,
+                model_type=request.model_type,
+                remove_images_without_annotations=True
+            )
+
+            data_yaml = {
+                'path': str(output_dir.absolute()),
+                'train': 'images/train',
+                'val': 'images/val',
+                'test': 'images/test',
+                'names': {i: name for i, name in enumerate(dataset_info['class_names'])},
+                'nc': len(dataset_info['class_names'])
+            }
+
+            yaml_path = output_dir / "data.yaml"
+            with open(yaml_path, 'w') as f:
+                import yaml
+                yaml.dump(data_yaml, f)
+
+            task.task_metadata = {
+                **task.task_metadata,
+                "output_dir": str(output_dir),
+                "data_yaml": str(yaml_path),
+                "num_classes": len(dataset_info['class_names']),
+                "class_names": dataset_info['class_names'],
+                "classes": dataset_info['class_names']
+            }
+            db.commit()
+            db.refresh(task)
+
+            training_config = {
+                "task_id": task.id,
+                "model_type": request.model_type,
+                "data_yaml": str(yaml_path),
+                "epochs": request.epochs,
+                "batch_size": request.batch_size,
+                "image_size": request.image_size,
+                "device": request.device,
+                "output_dir": str(output_dir),
+                "patience": request.patience,
+                "optimizer": request.optimizer,
+                "learning_rate": request.learning_rate,
+                "weight_decay": request.weight_decay,
+                "use_wandb": request.use_wandb,
+                "wandb_project": request.wandb_project,
+                "wandb_entity": request.wandb_entity
+            }
+
+            if USE_CELERY and celery_rtdetr_task is not None:
+                celery_task = celery_rtdetr_task.delay(task.id, training_config)
+                logger.info(f"Queued rerun RT-DETR training task {task.id} in Celery (task_id: {celery_task.id}, rerun of {task_id})")
+                task.task_metadata = {
+                    **task.task_metadata,
+                    "celery_task_id": celery_task.id
+                }
+                db.commit()
+            else:
+                logger.warning("RT-DETR rerun requires Celery worker")
+                raise HTTPException(status_code=500, detail="RT-DETR rerun requires Celery")
+
+            return {
+                "success": True,
+                "task_id": task.id,
+                "original_task_id": task_id,
+                "message": "RT-DETR rerun started",
+                "task": {
+                    "id": task.id,
+                    "name": task.name,
+                    "status": task.status,
+                    "progress": task.progress
+                }
+            }
+
+        # Default YOLO rerun path
+        model_type = model_type_raw
         
         # Reconstruct YoloTrainingRequest
         request_data = {
@@ -1892,6 +2231,7 @@ async def start_rtdetr_training(
             "output_dir": str(output_dir),
             "data_yaml": str(yaml_path),
             "num_classes": len(dataset_info['class_names']),
+            "class_names": dataset_info['class_names'],
             "classes": dataset_info['class_names']
         }
         db.commit()
@@ -2481,9 +2821,10 @@ async def start_mmyolo_training(
     db: Session = Depends(get_db),
 ):
     """
-    Start MMYOLO (RTMDet family) training.
+        Start MMYOLO (YOLOv8 + RTMDet family) training.
 
     Supported architectures:
+            - yolov8      → YOLOv8 detection
       - rtmdet      → RTMDet detection
       - rtmdet-ins  → RTMDet instance segmentation
       - rtmdet-r    → RTMDet-Rotated oriented bounding boxes

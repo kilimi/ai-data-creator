@@ -64,8 +64,8 @@ def _auto_annotate_tags(model_name: str, task_type: str) -> List[str]:
         if size_part:
             tags.insert(2, size_part)
     else:
-        # YOLO-style: yolo11n, yolo26s, yolo_nasm, rtdetrl
-        match = re.match(r"(yolo11|yolo26|yolo_nas|rtdetr)([nsmlx])", model_name, re.IGNORECASE)
+        # YOLO-style: yolo11n, yolo26s, rtdetrl
+        match = re.match(r"(yolo11|yolo26|rtdetr)([nsmlx])", model_name, re.IGNORECASE)
         if match:
             arch, size = match.group(1), match.group(2).lower()
             tags.insert(1, arch)

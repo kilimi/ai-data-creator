@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from '@/hooks/use-toast';
 import { getApiBaseUrl } from "@/config/api";
+import { attachmentFilenameFromContentDisposition } from "@/lib/evaluationTableDisplay";
 
 interface DownloadModelModalProps {
   open: boolean;
@@ -101,12 +102,8 @@ export function DownloadModelModal({
       // Get filename from Content-Disposition header or use default
       const contentDisposition = response.headers.get('Content-Disposition');
       let filename = `${taskName}_${selectedCheckpoint}.zip`;
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i);
-        if (filenameMatch) {
-          filename = filenameMatch[1];
-        }
-      }
+      const headerFilename = attachmentFilenameFromContentDisposition(contentDisposition);
+      if (headerFilename) filename = headerFilename;
 
       // Create blob and download
       const blob = await response.blob();

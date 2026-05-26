@@ -2,6 +2,10 @@
 Celery application for background task processing.
 """
 import os
+import json
+import shutil
+import subprocess
+from datetime import datetime
 from celery import Celery
 from kombu import Queue
 
@@ -94,6 +98,115 @@ import logging
 from celery.signals import worker_process_init
 
 logger = logging.getLogger(__name__)
+GPU_STATUS_REDIS_KEY = os.environ.get('LAI_GPU_STATUS_REDIS_KEY', 'lai:worker_gpu_status')
+GPU_STATUS_TTL_SECONDS = int(os.environ.get('LAI_GPU_STATUS_TTL_SECONDS', '300'))
+
+
+def _run_nvidia_smi() -> list[dict]:
+    """Best-effort nvidia-smi query from the worker container."""
+    candidates = []
+    which_path = shutil.which('nvidia-smi')
+    if which_path:
+        candidates.append(which_path)
+    candidates.extend(['nvidia-smi', '/usr/bin/nvidia-smi'])
+
+    seen = set()
+    for exe in candidates:
+        if not exe or exe in seen:
+            continue
+        seen.add(exe)
+        try:
+            out = subprocess.run(
+                [
+                    exe,
+                    '--query-gpu=name,memory.used,memory.total,utilization.gpu',
+                    '--format=csv,noheader,nounits',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if out.returncode != 0 or not out.stdout.strip():
+                continue
+            gpus = []
+            for line in out.stdout.strip().split('\n'):
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) < 4:
+                    continue
+                try:
+                    gpus.append({
+                        'name': parts[0],
+                        'memory_used_mb': int(float(parts[1] or 0)),
+                        'memory_total_mb': int(float(parts[2] or 0)),
+                        'utilization_percent': int(float(parts[3] or 0)),
+                    })
+                except ValueError:
+                    continue
+            if gpus:
+                return gpus
+        except Exception:
+            continue
+    return []
+
+
+def _collect_worker_gpu_status() -> dict:
+    gpus = _run_nvidia_smi()
+    total_used_mb = sum(g.get('memory_used_mb', 0) for g in gpus)
+    total_mb = sum(g.get('memory_total_mb', 0) for g in gpus)
+    return {
+        'has_gpu': len(gpus) > 0,
+        'gpu_count': len(gpus),
+        'gpus': gpus,
+        'memory_used_mb': total_used_mb,
+        'memory_total_mb': total_mb,
+        'source': 'celery_worker',
+        'updated_at': datetime.utcnow().isoformat() + 'Z',
+    }
+
+
+def _publish_worker_gpu_status() -> None:
+    """Publish worker-visible GPU status into Redis for API-side reads."""
+    try:
+        import redis
+
+        status = _collect_worker_gpu_status()
+        client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        client.setex(GPU_STATUS_REDIS_KEY, GPU_STATUS_TTL_SECONDS, json.dumps(status))
+        logger.info(
+            "Published worker GPU status to Redis key=%s has_gpu=%s count=%s",
+            GPU_STATUS_REDIS_KEY,
+            status.get('has_gpu'),
+            status.get('gpu_count'),
+        )
+    except Exception as e:
+        logger.warning("Failed to publish worker GPU status: %s", e)
+
+
+def _upsert_worker_gpu_status_db() -> None:
+    """Persist latest worker-visible GPU usage in DB for API reads."""
+    try:
+        from app.database import SessionLocal
+        from app.models import WorkerGpuStatus
+
+        status = _collect_worker_gpu_status()
+        db = SessionLocal()
+        try:
+            row = db.query(WorkerGpuStatus).filter(WorkerGpuStatus.id == 1).first()
+            if row is None:
+                row = WorkerGpuStatus(id=1)
+                db.add(row)
+            row.has_gpu = bool(status.get('has_gpu', False))
+            row.gpu_count = int(status.get('gpu_count', 0) or 0)
+            row.gpus = list(status.get('gpus', []))
+            row.memory_used_mb = int(status.get('memory_used_mb', 0) or 0)
+            row.memory_total_mb = int(status.get('memory_total_mb', 0) or 0)
+            row.source = str(status.get('source', 'celery_worker'))
+            row.updated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Failed to persist worker GPU status to DB: %s", e)
 
 
 @worker_process_init.connect
@@ -147,3 +260,8 @@ def sync_tasks_with_database(sender=None, **kwargs):
             db.close()
     except Exception as e:
         logger.error(f"Error during worker startup task sync: {e}", exc_info=True)
+    finally:
+        # Keep this outside DB sync success/failure so the API can still learn GPU
+        # availability from the worker even when DB is temporarily unavailable.
+        _publish_worker_gpu_status()
+        _upsert_worker_gpu_status_db()

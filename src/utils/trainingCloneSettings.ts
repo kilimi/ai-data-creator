@@ -36,8 +36,11 @@ export function parseYoloPresetFromModelType(modelTypeRaw: string | undefined | 
     return { version, size, task, modelSize: buildYoloModelSize(version, size, task) };
   }
 
-  const ym = /^yolov?(\d*)([nsmlx])(?:[-._]|$)/i.exec(base);
+  const ym = /^yolov?(\d+)([nsmlx])(?:[-._]|$)/i.exec(base);
   if (ym && ym[2]) {
+    const num = parseInt(ym[1], 10);
+    // v8 and below use "yolov{n}" prefix; v11+ use "yolo{n}" (no "v")
+    version = num >= 10 ? `yolo${num}` : `yolov${num}`;
     size = ym[2].toLowerCase();
     return { version, size, task, modelSize: buildYoloModelSize(version, size, task) };
   }
@@ -45,12 +48,16 @@ export function parseYoloPresetFromModelType(modelTypeRaw: string | undefined | 
   return { version, size, task, modelSize: buildYoloModelSize(version, size, task) };
 }
 
-function buildYoloModelSize(
+export function buildYoloModelSize(
   version: string,
   size: string,
   task: "detection" | "segmentation" | "classification"
 ): string {
-  let name = `${version}${size}`;
+  const normalizedVersion = (version || "").toLowerCase();
+  const normalizedSize = (size || "n").toLowerCase();
+  let name = normalizedVersion === "yolo_nas"
+    ? `yolo_nas_${normalizedSize}`
+    : `${normalizedVersion}${normalizedSize}`;
   if (task === "segmentation") name += "-seg";
   else if (task === "classification") name += "-cls";
   return `${name}.pt`;

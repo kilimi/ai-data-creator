@@ -46,31 +46,60 @@ def parse_yolo_label(label_path: Path, img_width: int, img_height: int, is_segme
             if len(parts) < 2:
                 continue
                 
-            class_id = int(parts[0])
+            try:
+                class_id = int(float(parts[0]))
+            except (TypeError, ValueError):
+                continue
+            
+            try:
+                values = [float(x) for x in parts[1:]]
+            except (TypeError, ValueError):
+                continue
             
             if is_segmentation:
-                # Segmentation: all remaining values are polygon coordinates
-                if len(parts) < 7:  # Need at least class_id + 3 points (x,y) = 7 values
+                # Ultralytics segmentation labels store polygon points after class id.
+                # Be tolerant to both normalized [0..1] and pixel-coordinate inputs.
+                if len(values) < 6 or (len(values) % 2) != 0:
                     continue
-                coords = [float(x) for x in parts[1:]]
-                # Convert normalized coordinates to pixel coordinates
+
+                needs_normalization = max((abs(v) for v in values), default=0.0) <= 1.5
                 pixel_coords = []
-                for i in range(0, len(coords), 2):
-                    x = int(coords[i] * img_width)
-                    y = int(coords[i+1] * img_height)
+                for i in range(0, len(values), 2):
+                    if needs_normalization:
+                        x = int(round(values[i] * img_width))
+                        y = int(round(values[i + 1] * img_height))
+                    else:
+                        x = int(round(values[i]))
+                        y = int(round(values[i + 1]))
+
+                    x = max(0, min(img_width - 1, x))
+                    y = max(0, min(img_height - 1, y))
                     pixel_coords.extend([x, y])
+
+                if len(pixel_coords) < 6:
+                    continue
                 annotations.append(('segmentation', class_id, pixel_coords))
             else:
                 # Detection: class_id x_center y_center width height
-                if len(parts) != 5:
+                if len(values) != 4:
                     continue
-                x_center, y_center, width, height = [float(x) for x in parts[1:5]]
+                x_center, y_center, width, height = values
                 
                 # Convert normalized YOLO format to pixel coordinates (xyxy)
                 x1 = int((x_center - width/2) * img_width)
                 y1 = int((y_center - height/2) * img_height)
                 x2 = int((x_center + width/2) * img_width)
                 y2 = int((y_center + height/2) * img_height)
+
+                # Clamp so slightly-invalid labels still render a visible box.
+                x1 = max(0, min(img_width - 1, x1))
+                y1 = max(0, min(img_height - 1, y1))
+                x2 = max(0, min(img_width - 1, x2))
+                y2 = max(0, min(img_height - 1, y2))
+                if x2 <= x1:
+                    x2 = min(img_width - 1, x1 + 1)
+                if y2 <= y1:
+                    y2 = min(img_height - 1, y1 + 1)
                 
                 annotations.append(('bbox', class_id, [x1, y1, x2, y2]))
     
@@ -94,13 +123,17 @@ def draw_annotations_on_image(img: np.ndarray, annotations: List,
     
     for annotation in annotations:
         ann_type, class_id, coords = annotation
-        
-        # Ensure class_id is valid
-        if class_id >= len(class_names) or class_id >= len(colors):
-            continue
-        
-        color = colors[class_id]
-        class_name = class_names[class_id]
+
+        # Be tolerant to class-index mismatches so annotations are still visible.
+        if class_id < len(class_names):
+            class_name = class_names[class_id]
+        else:
+            class_name = f"Class {class_id}"
+
+        if colors:
+            color = colors[class_id % len(colors)]
+        else:
+            color = (0, 255, 0)
         
         if ann_type == 'segmentation' and is_segmentation:
             # Draw segmentation polygon
@@ -143,6 +176,25 @@ def draw_annotations_on_image(img: np.ndarray, annotations: List,
     return img_annotated
 
 
+def letterbox_image(img: np.ndarray, target_size: Tuple[int, int], pad_color: Tuple[int, int, int] = (114, 114, 114)) -> np.ndarray:
+    """Resize while preserving aspect ratio, then pad to target size (Ultralytics-style letterbox)."""
+    target_w, target_h = target_size
+    src_h, src_w = img.shape[:2]
+    if src_h <= 0 or src_w <= 0:
+        return np.full((target_h, target_w, 3), pad_color, dtype=np.uint8)
+
+    scale = min(target_w / src_w, target_h / src_h)
+    new_w = max(1, int(round(src_w * scale)))
+    new_h = max(1, int(round(src_h * scale)))
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    canvas = np.full((target_h, target_w, 3), pad_color, dtype=np.uint8)
+    x = (target_w - new_w) // 2
+    y = (target_h - new_h) // 2
+    canvas[y:y + new_h, x:x + new_w] = resized
+    return canvas
+
+
 def create_training_examples(
     dataset_dir: Path,
     output_dir: Path,
@@ -183,20 +235,44 @@ def create_training_examples(
             logger.warning(f"Images directory not found: {images_dir}")
             continue
         
-        # Get all image files
-        image_files = list(images_dir.glob('*.jpg')) + list(images_dir.glob('*.png'))
+        # Get all image files (case-insensitive extensions)
+        image_files = [
+            p for p in images_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+        ]
         if not image_files:
             logger.warning(f"No images found in {images_dir}")
             continue
         
         logger.info(f"Found {len(image_files)} images in {split} split")
         
-        # Sample random images
+        # Prefer labeled images so previews reliably show boxes/masks.
+        labeled_images = []
+        unlabeled_images = []
+        for img_path in image_files:
+            label_path = labels_dir / f"{img_path.stem}.txt"
+            if label_path.exists() and label_path.stat().st_size > 0:
+                labeled_images.append(img_path)
+            else:
+                unlabeled_images.append(img_path)
+
         num_to_sample = min(num_examples, len(image_files))
-        sampled_images = random.sample(image_files, num_to_sample)
+        sample_labeled = min(num_to_sample, len(labeled_images))
+        sampled_images = random.sample(labeled_images, sample_labeled) if sample_labeled > 0 else []
+        remaining = num_to_sample - len(sampled_images)
+        if remaining > 0 and unlabeled_images:
+            sampled_images.extend(random.sample(unlabeled_images, min(remaining, len(unlabeled_images))))
+
+        random.shuffle(sampled_images)
+        logger.info(
+            f"{split}: sampled {len(sampled_images)} images "
+            f"({len([p for p in sampled_images if p in labeled_images])} labeled, "
+            f"{len([p for p in sampled_images if p in unlabeled_images])} unlabeled)"
+        )
         
         # Create individual annotated images
         annotated_images = []
+        total_annotations = 0
         for img_path in sampled_images:
             # Read image
             img = cv2.imread(str(img_path))
@@ -211,6 +287,7 @@ def create_training_examples(
             
             # Parse annotations
             annotations = parse_yolo_label(label_path, img_width, img_height, is_segmentation)
+            total_annotations += len(annotations)
             
             # Draw annotations
             img_annotated = draw_annotations_on_image(
@@ -222,6 +299,8 @@ def create_training_examples(
         if not annotated_images:
             logger.warning(f"No valid annotated images for {split} split")
             continue
+
+        logger.info(f"{split}: rendered {total_annotations} annotations across {len(annotated_images)} sampled images")
         
         # Create mosaic grid
         rows, cols = grid_size
@@ -230,11 +309,11 @@ def create_training_examples(
         if num_images == 0:
             continue
         
-        # Resize all images to same size for grid
+        # Letterbox to same size for grid while preserving aspect ratio
         target_size = (640, 640)  # Standard size
         resized_images = []
         for img in annotated_images[:num_images]:
-            resized = cv2.resize(img, target_size)
+            resized = letterbox_image(img, target_size)
             resized_images.append(resized)
         
         # Pad with black images if needed

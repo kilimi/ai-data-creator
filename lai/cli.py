@@ -10,24 +10,24 @@ import lai
 from lai.paths import _candidate_repo_root, bundle_data_dir, get_bundle_root
 from lai.uninstall import run_uninstall
 from lai.wizard import run_wizard
-
-
-def _guided_setup_done(root: Path) -> bool:
-    """True if .env exists and was written with LAI_DATA_DIR (scripts/install.sh)."""
-    p = root / ".env"
-    if not p.is_file():
-        return False
-    try:
-        for line in p.read_text().splitlines():
-            s = line.strip()
-            if s.startswith("#") or not s:
-                continue
-            if s.startswith("LAI_DATA_DIR=") and s.split("=", 1)[1].strip():
-                return True
-    except OSError:
-        pass
-    return False
-
+        _run(
+            [
+                comp, "exec", *env_flags,
+                "celery_worker",
+                "sh", "-lc",
+                (
+                "if [ -f scripts/download_mmyolo_models.py ]; then "
+                "python scripts/download_mmyolo_models.py; "
+                "elif [ -f backend/scripts/download_mmyolo_models.py ]; then "
+                "python backend/scripts/download_mmyolo_models.py; "
+                "else "
+                "echo 'download_mmyolo_models.py not found in container' >&2; "
+                "exit 1; "
+                "fi"
+                ),
+            ],
+            check=False,
+        )
 
 def _hint_guided_install(root: Path) -> None:
     if _guided_setup_done(root):

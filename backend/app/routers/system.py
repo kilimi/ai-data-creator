@@ -6,14 +6,85 @@ environment (typically Linux in Docker), so client OS (Windows/Linux/macOS)
 does not matter — the navbar always shows whatever GPU the backend container sees.
 """
 import logging
+import json
+import os
 import shutil
 import subprocess
 from typing import Any, List
 
 from fastapi import APIRouter
+from sqlalchemy.orm import Session
+from celery.exceptions import TimeoutError as CeleryTimeoutError
+
+from ..database import SessionLocal
+from ..models import WorkerGpuStatus
+from ..celery_app import celery_app
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+GPU_STATUS_REDIS_KEY = os.environ.get('LAI_GPU_STATUS_REDIS_KEY', 'lai:worker_gpu_status')
+GPU_STATUS_MAX_AGE_SECONDS = int(os.environ.get('LAI_GPU_STATUS_MAX_AGE_SECONDS', '180'))
+GPU_REFRESH_ON_REQUEST = os.environ.get('LAI_GPU_REFRESH_ON_REQUEST', '1') not in ('0', 'false', 'False')
+GPU_REFRESH_TIMEOUT_SECONDS = float(os.environ.get('LAI_GPU_REFRESH_TIMEOUT_SECONDS', '2.0'))
+
+
+def _read_worker_gpu_status_db() -> dict[str, Any] | None:
+    """Read latest worker GPU status sample from DB if it's fresh."""
+    db: Session = SessionLocal()
+    try:
+        row = db.query(WorkerGpuStatus).filter(WorkerGpuStatus.id == 1).first()
+        if not row:
+            return None
+        age_s = None
+        if row.updated_at is not None:
+            from datetime import datetime, timezone
+            age_s = (datetime.utcnow() - row.updated_at.replace(tzinfo=None)).total_seconds()
+            if age_s > GPU_STATUS_MAX_AGE_SECONDS:
+                return None
+        return {
+            'has_gpu': bool(row.has_gpu),
+            'gpu_count': int(row.gpu_count or 0),
+            'gpus': list(row.gpus or []),
+            'memory_used_mb': int(row.memory_used_mb or 0),
+            'memory_total_mb': int(row.memory_total_mb or 0),
+            'source': row.source or 'celery_worker_db',
+            'updated_at': row.updated_at.isoformat() + 'Z' if row.updated_at else None,
+            'age_seconds': int(age_s) if age_s is not None else None,
+        }
+    except Exception as e:
+        logger.debug('worker gpu status db read failed: %s', e)
+    finally:
+        db.close()
+    return None
+
+
+def _read_worker_gpu_status() -> dict[str, Any] | None:
+    """Read latest worker-published GPU status from Redis."""
+    try:
+        import redis
+
+        client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        raw = client.get(GPU_STATUS_REDIS_KEY)
+        if not raw:
+            return None
+        payload = json.loads(raw)
+        if isinstance(payload, dict) and isinstance(payload.get('has_gpu'), bool):
+            return payload
+    except Exception as e:
+        logger.debug('worker gpu status cache read failed: %s', e)
+    return None
+
+
+def _trigger_worker_gpu_refresh() -> None:
+    """Request a fresh GPU sample from celery_worker with a short timeout."""
+    try:
+        async_result = celery_app.send_task("app.tasks.task_monitoring.refresh_worker_gpu_status")
+        async_result.get(timeout=GPU_REFRESH_TIMEOUT_SECONDS)
+    except CeleryTimeoutError:
+        logger.debug("worker gpu refresh request timed out")
+    except Exception as e:
+        logger.debug("worker gpu refresh request failed: %s", e)
 
 
 def _run_nvidia_smi(exe: str) -> List[dict[str, Any]]:
@@ -126,6 +197,56 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
     Tries nvidia-smi first (full memory/utilization), then PyTorch CUDA if available.
     Add ?debug=1 to the URL to include a hint when no GPU is detected.
     """
+    # Fast path: read worker-visible status (worker has GPU, backend may not).
+    cached_db = _read_worker_gpu_status_db()
+    if cached_db:
+        return cached_db
+
+    # Fast path fallback: redis cache from worker.
+    cached = _read_worker_gpu_status()
+    if cached:
+        return {
+            'has_gpu': bool(cached.get('has_gpu', False)),
+            'gpu_count': int(cached.get('gpu_count', 0) or 0),
+            'gpus': list(cached.get('gpus', [])),
+            'memory_used_mb': int(cached.get('memory_used_mb', 0) or 0),
+            'memory_total_mb': int(cached.get('memory_total_mb', 0) or 0),
+            'source': cached.get('source', 'celery_worker'),
+            'updated_at': cached.get('updated_at'),
+        }
+
+    # Mostly on-request refresh: ask worker for a fresh sample when no cache exists.
+    if GPU_REFRESH_ON_REQUEST:
+        _trigger_worker_gpu_refresh()
+        cached_db = _read_worker_gpu_status_db()
+        if cached_db:
+            return cached_db
+        cached = _read_worker_gpu_status()
+        if cached:
+            return {
+                'has_gpu': bool(cached.get('has_gpu', False)),
+                'gpu_count': int(cached.get('gpu_count', 0) or 0),
+                'gpus': list(cached.get('gpus', [])),
+                'memory_used_mb': int(cached.get('memory_used_mb', 0) or 0),
+                'memory_total_mb': int(cached.get('memory_total_mb', 0) or 0),
+                'source': cached.get('source', 'celery_worker'),
+                'updated_at': cached.get('updated_at'),
+            }
+
+    # Cache miss means we do not yet know whether the worker has a GPU.
+    # Do not claim "No GPU" here because backend may be CPU-only by design.
+    if debug:
+        return {
+            'has_gpu': False,
+            'gpu_count': 0,
+            'gpus': [],
+            'memory_used_mb': 0,
+            'memory_total_mb': 0,
+            'source': 'unknown',
+            'status': 'unknown',
+            'debug': ['worker GPU cache miss'],
+        }
+
     gpus, nvidia_debug = _query_gpu_nvidia_smi()
     if not gpus:
         gpus = _query_gpu_torch()
@@ -144,6 +265,7 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
         "gpus": gpus,
         "memory_used_mb": total_used_mb,
         "memory_total_mb": total_mb,
+        "source": "backend",
     }
     if debug and not gpus and nvidia_debug:
         out["debug"] = nvidia_debug
@@ -177,7 +299,7 @@ def _yolo_meta(filename: str) -> dict[str, Any]:
         base = stem
     arch, size = base, ""
     for a, s in ARCH_SIZES:
-        candidate = f"{a}_{s}" if a == "yolo_nas" else f"{a}{s}"
+        candidate = f"{a}{s}"
         if candidate == base:
             arch, size = a, s
             break

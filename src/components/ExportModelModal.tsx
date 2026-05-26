@@ -31,7 +31,6 @@ type ConvertSource = "trained" | "foundation";
 const YOLO_ARCHS = [
   { value: "yolo11", label: "YOLO11" },
   { value: "yolo26", label: "YOLO26" },
-  { value: "yolo_nas", label: "YOLO-NAS" },
   { value: "rtdetr", label: "RT-DETR" },
 ];
 
@@ -49,11 +48,6 @@ const YOLO_SIZES: Record<string, { value: string; label: string }[]> = {
     { value: "m", label: "Medium" },
     { value: "l", label: "Large" },
     { value: "x", label: "X-Large" },
-  ],
-  yolo_nas: [
-    { value: "s", label: "Small" },
-    { value: "m", label: "Medium" },
-    { value: "l", label: "Large" },
   ],
   rtdetr: [
     { value: "l", label: "Large" },

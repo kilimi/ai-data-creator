@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Settings, Wand2 } from "lucide-react";
 import { YoloAugmentationsDialog } from "./YoloAugmentationsDialog";
+import { buildYoloModelSize } from "@/utils/trainingCloneSettings";
 
 interface YoloSettingsDialogProps {
   open: boolean;
@@ -30,10 +31,17 @@ interface YoloSettingsDialogProps {
 
 const YOLO_TRAIN_SIZES: Record<string, string[]> = {
   yolo8: ['n', 's', 'm', 'l', 'x'],
+  yolov8: ['n', 's', 'm', 'l', 'x'],
   yolo11: ['n', 's', 'm', 'l', 'x'],
   yolo26: ['n', 's', 'm', 'l', 'x'],
-  yolo_nas: ['s', 'm', 'l'],
 };
+
+function normalizeYoloVersion(version: string): string {
+  const v = (version || '').toLowerCase();
+  if (v === 'yolo8') return 'yolov8';
+  if (v === 'yolo_nas' || v === 'yolonas') return 'yolo11';
+  return version;
+}
 
 const SIZE_LABELS: Record<string, string> = {
   n: 'Nano (n) - Fastest',
@@ -90,16 +98,11 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate, curre
 
   const handleSave = () => {
     // Construct model file name based on version, size, and task
-    let modelSize = `${version}${size}`;
-    if (task === 'segmentation') {
-      modelSize += '-seg';
-    } else if (task === 'classification') {
-      modelSize += '-cls';
-    }
-    modelSize += '.pt';
+    const normalizedVersion = normalizeYoloVersion(version);
+    const modelSize = buildYoloModelSize(normalizedVersion, size, task as "detection" | "segmentation" | "classification");
 
     const settings = {
-      version,
+      version: normalizedVersion,
       size,
       task,
       modelSize,
@@ -144,7 +147,6 @@ export function YoloSettingsDialog({ open, onOpenChange, onSettingsUpdate, curre
                 <SelectItem value="yolo8">YOLOv8</SelectItem>
                 <SelectItem value="yolo11">YOLOv11</SelectItem>
                 <SelectItem value="yolo26">YOLO26</SelectItem>
-                <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>
               </SelectContent>
             </Select>
           </div>

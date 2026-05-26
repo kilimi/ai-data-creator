@@ -10,6 +10,11 @@ from __future__ import annotations
 
 # (architecture id, size letter) — same matrix as scripts/download_ultralytics_models.py
 ARCH_SIZES: tuple[tuple[str, str], ...] = (
+    ("yolov8", "n"),
+    ("yolov8", "s"),
+    ("yolov8", "m"),
+    ("yolov8", "l"),
+    ("yolov8", "x"),
     ("yolo11", "n"),
     ("yolo11", "s"),
     ("yolo11", "m"),
@@ -20,9 +25,6 @@ ARCH_SIZES: tuple[tuple[str, str], ...] = (
     ("yolo26", "m"),
     ("yolo26", "l"),
     ("yolo26", "x"),
-    ("yolo_nas", "s"),
-    ("yolo_nas", "m"),
-    ("yolo_nas", "l"),
     ("rtdetr", "l"),
     ("rtdetr", "x"),
 )
@@ -31,26 +33,33 @@ ARCH_SIZES: tuple[tuple[str, str], ...] = (
 TASK_SUFFIXES: tuple[str, ...] = ("", "-seg", "-cls")
 
 # Allowed install / LAI_PRETRAINED_MODELS arch tokens (prefix match on base name)
-KNOWN_ARCH_PREFIXES: tuple[str, ...] = ("yolo11", "yolo26", "yolo_nas", "rtdetr")
+KNOWN_ARCH_PREFIXES: tuple[str, ...] = (
+    "yolov8",
+    "yolo8",  # alias -> yolov8
+    "yolo11",
+    "yolo26",
+    "rtdetr",
+)
 
 
 def ultralytics_foundation_pt_names() -> list[str]:
     """All .pt filenames for the full foundation matrix."""
     names: list[str] = []
     for arch, size in ARCH_SIZES:
-        # YOLO-NAS uses an underscore before the size letter (yolo_nas_s.pt),
-        # other families use simple concatenation (yolo11n.pt, yolo26s.pt, rtdetrl.pt).
-        if arch == "yolo_nas":
-            base = f"{arch}_{size}"
-        else:
-            base = f"{arch}{size}"
+        base = f"{arch}{size}"
         for suf in TASK_SUFFIXES:
             names.append(f"{base}{suf}.pt" if suf else f"{base}.pt")
     return names
 
 
-# Small default image: YOLO11 nano/small × three heads
+# Small default image: YOLOv8 + YOLO11 nano/small × three heads
 MINIMAL_ULTRALYTICS_PT: tuple[str, ...] = (
+    "yolov8n.pt",
+    "yolov8n-seg.pt",
+    "yolov8n-cls.pt",
+    "yolov8s.pt",
+    "yolov8s-seg.pt",
+    "yolov8s-cls.pt",
     "yolo11n.pt",
     "yolo11n-seg.pt",
     "yolo11n-cls.pt",
@@ -77,7 +86,7 @@ def resolve_ultralytics_pretrained_spec(spec: str | None) -> list[str]:
     - all / empty: full matrix
     - minimal: MINIMAL_ULTRALYTICS_PT (must exist in full matrix)
     - comma-separated:
-        - arch tokens: yolo11, yolo26, yolo_nas, rtdetr (prefix match on base name)
+        - arch tokens: yolo11, yolo26, rtdetr (prefix match on base name)
         - exact files: yolo11n-seg.pt
     """
     full = set(ultralytics_foundation_pt_names())
@@ -93,6 +102,7 @@ def resolve_ultralytics_pretrained_spec(spec: str | None) -> list[str]:
 
     for t in tokens:
         tl = t.lower()
+        token_prefix = "yolov8" if tl == "yolo8" else tl
         if tl == "all":
             return sorted(full)
         if tl == "minimal":
@@ -107,7 +117,7 @@ def resolve_ultralytics_pretrained_spec(spec: str | None) -> list[str]:
         for name in full:
             stem = name[:-3]  # drop .pt
             base = stem.replace("-seg", "").replace("-cls", "")
-            if base.startswith(tl):
+            if base.startswith(token_prefix):
                 out.add(name)
 
     resolved = sorted(out)

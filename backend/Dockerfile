@@ -1,9 +1,9 @@
-# Multi-stage build: slim runtime on official PyTorch+CUDA base.
+# Multi-stage build: slim CPU runtime for the backend API.
 # Model weights are NOT baked in — they live on a host volume (see docker-compose.yml).
 # To pre-download models after `make up`, run: `make download-models`.
 
 # ---------- Stage 1: builder ----------
-FROM python:3.11-slim AS builder
+FROM python:3.10-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -24,17 +24,15 @@ RUN pip install --upgrade pip \
  && pip install --default-timeout=1000 --retries 5 \
         --prefix=/install -r /tmp/req.txt \
  && pip install --default-timeout=1000 --retries 5 \
-     --prefix=/install 'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' 'fiftyone>=0.23.0' \
- && pip install --default-timeout=1000 --retries 5 \
-     --prefix=/install 'openmim>=0.3.9' 'mmengine>=0.10.5' 'mmdet>=3.3.0' 'mmcv-lite>=2.1.0' 'mmyolo>=0.6.0'
+     --prefix=/install 'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' 'fiftyone>=0.23.0'
 
 # ---------- Stage 2: runtime ----------
-FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime AS runtime
+FROM python:3.10-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HOME=/app \
-    PYTHONPATH=/opt/lai/lib/python3.11/site-packages \
+    PYTHONPATH=/opt/lai/lib/python3.10/site-packages \
     PATH=/opt/lai/bin:$PATH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -49,6 +47,11 @@ COPY --from=builder /install /opt/lai
 
 # Application code
 COPY . .
+
+###################################################################
+
+ENV PYTHONNOUSERSITE=1
+
 
 # Ensure mount points exist even before volumes are bound
 RUN mkdir -p /app/models /app/ai_models/depth_estimation /app/projects /app/data /app/runs

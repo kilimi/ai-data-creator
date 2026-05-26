@@ -46,7 +46,7 @@ import { TrainingStartedDialog } from "./TrainingStartedDialog";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from "@/hooks/use-toast";
 import { toast as sonnerToast } from 'sonner';
-import { parseYoloPresetFromModelType, rtdetrVariantFromStored } from '@/utils/trainingCloneSettings';
+import { buildYoloModelSize, parseYoloPresetFromModelType, rtdetrVariantFromStored } from '@/utils/trainingCloneSettings';
 
 interface TrainModelModalProps {
   open: boolean;
@@ -107,15 +107,21 @@ const YOLO_TRAIN_SIZES: Record<string, string[]> = {
   yolo8: ['n', 's', 'm', 'l', 'x'],
   yolo11: ['n', 's', 'm', 'l', 'x'],
   yolo26: ['n', 's', 'm', 'l', 'x'],
-  yolo_nas: ['s', 'm', 'l'],
 };
 
 const YOLO_VERSION_LABEL: Record<string, string> = {
   yolo8: 'YOLOv8',
+  yolov8: 'YOLOv8',
   yolo11: 'YOLOv11',
   yolo26: 'YOLO26',
-  yolo_nas: 'YOLO-NAS',
 };
+
+function normalizeYoloVersion(version: string): string {
+  const v = (version || '').toLowerCase();
+  if (v === 'yolo8') return 'yolov8';
+  if (v === 'yolo_nas' || v === 'yolonas') return 'yolo11';
+  return version;
+}
 
 const MMYOLO_SIZES = ['tiny', 's', 'm', 'l', 'x'] as const;
 
@@ -240,10 +246,11 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     epochs: 0
   });
 
-  const yoloVersion = modelSettings.version || 'yolo11';
+  const yoloVersion = normalizeYoloVersion(modelSettings.version || 'yolo11');
   const allowedYoloSizes = YOLO_TRAIN_SIZES[yoloVersion] || YOLO_TRAIN_SIZES.yolo11;
   useEffect(() => {
-    const allowed = YOLO_TRAIN_SIZES[modelSettings.version || 'yolo11'] || YOLO_TRAIN_SIZES.yolo11;
+    const normalizedVersion = normalizeYoloVersion(modelSettings.version || 'yolo11');
+    const allowed = YOLO_TRAIN_SIZES[normalizedVersion] || YOLO_TRAIN_SIZES.yolo11;
     const sz = modelSettings.size || 'n';
     if (!allowed.includes(sz)) {
       setModelSettings((prev: any) => ({ ...prev, size: allowed[0] }));
@@ -768,14 +775,12 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       let modelName = '';
 
       if (selectedModel === 'yolo') {
-        // Compute model file name from inline settings if not set by full dialog
-        let modelType = modelSettings.modelSize;
-        if (!modelType) {
-          const ver = modelSettings.version || 'yolo11';
-          const sz = modelSettings.size || 'n';
-          const task = modelSettings.task || (selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection');
-          modelType = `${ver}${sz}${task === 'segmentation' ? '-seg' : task === 'classification' ? '-cls' : ''}.pt`;
-        }
+        // Always derive model_type from current UI selections so cloned stale modelSize
+        // cannot override user changes to version/size/task.
+        const ver = normalizeYoloVersion(modelSettings.version || 'yolo11');
+        const sz = modelSettings.size || 'n';
+        const task = modelSettings.task || (selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection');
+        const modelType = buildYoloModelSize(ver, sz, task);
         // Prepare YOLO training request
         const trainingRequest = {
           project_id: parseInt(projectId),
@@ -960,6 +965,30 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   fetchDataForSelectionRef.current = fetchDataForSelection;
 
   const lastSuccessfulCloneKeyRef = useRef<string | null>(null);
+
+  // If clone hydration provides model settings but selectedModel is temporarily cleared
+  // by other state transitions, re-select the cloned family until user changes it.
+  useEffect(() => {
+    if (!open || cloneFromTaskId == null) return;
+    if (selectedModel) return;
+
+    if (modelSettings.variant) {
+      setSelectedModel('rf-detr');
+      return;
+    }
+
+    if (modelSettings.version || modelSettings.size || modelSettings.modelSize) {
+      setSelectedModel('yolo');
+    }
+  }, [
+    open,
+    cloneFromTaskId,
+    selectedModel,
+    modelSettings.variant,
+    modelSettings.version,
+    modelSettings.size,
+    modelSettings.modelSize,
+  ]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1523,7 +1552,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 {
                   id: 'yolo',
                   title: 'Ultralytics YOLO',
-                  subtitle: 'YOLOv8 / YOLO11 / YOLO26 / YOLO-NAS — fastest to train, easy ONNX export.',
+                  subtitle: 'YOLOv8 / YOLO11 / YOLO26 — fastest to train, easy ONNX export.',
                   badges: [],
                   onPick: () => {
                     setSelectedModel('yolo');
@@ -1691,7 +1720,6 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                               <SelectItem value="yolo8">YOLOv8</SelectItem>
                               <SelectItem value="yolo11">YOLOv11</SelectItem>
                               <SelectItem value="yolo26">YOLO26</SelectItem>
-                              <SelectItem value="yolo_nas">YOLO-NAS</SelectItem>
                             </SelectContent>
                           </Select>
                         )}

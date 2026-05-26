@@ -3,6 +3,7 @@ Celery tasks for training.
 """
 import os
 import logging
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
@@ -15,6 +16,38 @@ from app.celery_app import celery_app
 from app.models import Task as TaskModel
 
 logger = logging.getLogger(__name__)
+
+MMYOLO_PYTHON = os.environ.get('MMYOLO_PYTHON', '/opt/mmyolo-venv/bin/python')
+
+
+def _resolve_mmyolo_base_config(config_id: str) -> str:
+    """Resolve a MMYOLO config id to an existing config file path when possible."""
+    cfg = (config_id or "").strip()
+    if not cfg:
+        return "rtmdet_s_syncbn_fast_8xb32-300e_coco.py"
+
+    p = Path(cfg)
+    if p.exists():
+        return str(p)
+
+    if cfg.endswith('.py'):
+        direct = Path('/opt/mmyolo/configs') / cfg
+        if direct.exists():
+            return str(direct)
+        stem = Path(cfg).stem
+    else:
+        direct = Path('/opt/mmyolo/configs') / f"{cfg}.py"
+        if direct.exists():
+            return str(direct)
+        stem = cfg.replace('\\', '/').split('/')[-1]
+
+    # Fallback: locate by filename under configs tree.
+    matches = sorted(Path('/opt/mmyolo/configs').glob(f"**/{stem}.py"))
+    if matches:
+        return str(matches[0])
+
+    # Last resort: keep old behavior.
+    return cfg if cfg.endswith('.py') else f"{cfg}.py"
 
 # Database setup for Celery workers
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@db/lai_db')
@@ -111,6 +144,7 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
     """
     from ultralytics import RTDETR
     from sqlalchemy.orm.attributes import flag_modified
+    from app.tasks.yolo_training_helpers import get_runtime_training_project
 
     db = SessionLocal()
 
@@ -120,6 +154,71 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         "total_epochs": training_config.get('epochs', 100),
         "metrics_history": [],
     }
+
+    def _create_rtdetr_training_examples(task: TaskModel) -> None:
+        """Create annotated dataset previews for RT-DETR tasks (best-effort)."""
+        try:
+            from app.tasks.training_visualization import create_training_examples
+
+            output_base = Path(training_config['output_dir'])
+            dataset_dir = output_base
+            examples_dir = output_base / "examples"
+
+            class_names = []
+            task_meta = task.task_metadata or {}
+
+            class_names_from_meta = task_meta.get("class_names")
+            if isinstance(class_names_from_meta, list):
+                class_names = [str(c) for c in class_names_from_meta]
+
+            classes_from_meta = task_meta.get("classes")
+            if not class_names and isinstance(classes_from_meta, list):
+                class_names = [str(c) for c in classes_from_meta]
+
+            if not class_names:
+                data_yaml = training_config.get("data_yaml")
+                if data_yaml and Path(data_yaml).exists():
+                    try:
+                        import yaml
+                        with open(data_yaml, "r") as f:
+                            yaml_data = yaml.safe_load(f) or {}
+                        names = yaml_data.get("names", [])
+                        if isinstance(names, dict):
+                            class_names = [str(v) for _, v in sorted(names.items(), key=lambda kv: int(kv[0]))]
+                        elif isinstance(names, list):
+                            class_names = [str(v) for v in names]
+                    except Exception as yaml_err:
+                        logger.warning(f"RT-DETR task {task_id}: failed reading class names from data.yaml: {yaml_err}")
+
+            if not class_names:
+                logger.warning(f"RT-DETR task {task_id}: skipping examples because class names are unavailable")
+                return
+
+            create_training_examples(
+                dataset_dir=dataset_dir,
+                output_dir=examples_dir,
+                class_names=class_names,
+                num_examples=16,
+                is_segmentation=False,
+                grid_size=(4, 4),
+            )
+
+            example_images = {}
+            for split in ["train", "val", "test"]:
+                example_path = examples_dir / f"{split}_batch.jpg"
+                if example_path.exists():
+                    example_images[split] = f"/tasks/{task_id}/examples/{split}"
+
+            task.task_metadata = {
+                **task_meta,
+                "examples_path": str(examples_dir),
+                "example_images": example_images,
+            }
+            db.commit()
+            logger.info(f"RT-DETR task {task_id}: created training examples in {examples_dir}")
+        except Exception as viz_err:
+            # Keep training running even if visualization fails.
+            logger.warning(f"RT-DETR task {task_id}: failed to create training examples: {viz_err}", exc_info=True)
 
     def _find_last_pt(trainer):
         try:
@@ -244,6 +343,9 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         }
         db.commit()
 
+        # Generate annotated sample previews from the prepared dataset for UI display.
+        _create_rtdetr_training_examples(task)
+
         # Load model — support resume from paused checkpoint
         model_type = training_config.get('model_type', 'rtdetr-l.pt')
         resume_from = training_config.get('resume_from')
@@ -259,6 +361,10 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         # Register epoch callback
         model.add_callback("on_train_epoch_end", on_epoch_end)
 
+        # Train under a container-local writable path to avoid bind-mount EPERM
+        # on repeated writes to best.pt/last.pt.
+        runtime_project = get_runtime_training_project(task_id)
+
         # Training arguments
         train_args = {
             'data': training_config['data_yaml'],
@@ -270,7 +376,7 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
             'optimizer': training_config.get('optimizer', 'AdamW'),
             'lr0': training_config.get('learning_rate', 0.0001),
             'weight_decay': training_config.get('weight_decay', 0.0001),
-            'project': training_config['output_dir'],
+            'project': str(runtime_project),
             'name': 'training',
             'exist_ok': True,
             'verbose': True,
@@ -299,6 +405,36 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         logger.info(f"RT-DETR training completed for task {task_id}")
 
         output_base = Path(training_config['output_dir'])
+        persisted_weights_dir = output_base / "training" / "weights"
+        persisted_weights_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(persisted_weights_dir, 0o777)
+        except OSError:
+            pass
+
+        # Locate actual runtime weights and copy into persisted task dir.
+        runtime_save_dir = None
+        try:
+            if hasattr(model, 'trainer') and hasattr(model.trainer, 'save_dir') and model.trainer.save_dir:
+                runtime_save_dir = Path(model.trainer.save_dir)
+            elif hasattr(results, 'save_dir') and results.save_dir:
+                runtime_save_dir = Path(results.save_dir)
+        except Exception:
+            runtime_save_dir = None
+
+        if runtime_save_dir and runtime_save_dir.exists():
+            runtime_weights_dir = runtime_save_dir / "weights"
+            for name in ("best.pt", "last.pt"):
+                src = runtime_weights_dir / name
+                dst = persisted_weights_dir / name
+                if src.exists():
+                    try:
+                        shutil.copy2(src, dst)
+                        os.chmod(dst, 0o666)
+                        logger.info(f"RT-DETR copied {name} from {src} to {dst}")
+                    except Exception as copy_err:
+                        logger.warning(f"RT-DETR could not copy {name}: {copy_err}")
+
         best_model_path = output_base / "training" / "weights" / "best.pt"
         last_model_path = output_base / "training" / "weights" / "last.pt"
 
@@ -495,29 +631,59 @@ def train_mmyolo_model(self, task_id: int, training_config: dict):
         task.progress = 10
         db.commit()
 
-        config_id: str = f"{arch}_{size}"
+        config_id: str = training_config.get("config_id", f"{arch}_{size}")
         num_classes: int = dataset_info["class_count"]
         train_json: str = dataset_info["train_json"]
         val_json: str = dataset_info.get("val_json", train_json)
         train_images: str = str(dataset_dir / "images" / "train")
         val_images: str = str(dataset_dir / "images" / "val")
 
-        cfg_content = f"""_base_ = ['{config_id}.py']
+        base_cfg = _resolve_mmyolo_base_config(config_id)
+        class_names_py = repr(tuple(dataset_info["class_names"]))
+        cfg_content = f"""_base_ = ['{base_cfg}']
 
-train_batch_size_per_gpu = {batch_size}
-train_num_workers = 4
-val_batch_size_per_gpu = 1
-val_num_workers = 2
 max_epochs = {epochs}
 num_classes = {num_classes}
 img_scale = ({image_size}, {image_size})
-
-train_ann_file = '{train_json}'
-train_data_prefix = '{train_images}/'
-val_ann_file = '{val_json}'
-val_data_prefix = '{val_images}/'
-
 work_dir = '{str(output_base / "training")}'
+
+_train_ann = '{train_json}'
+_val_ann = '{val_json}'
+_train_img = '{train_images}/'
+_val_img = '{val_images}/'
+_classes = {class_names_py}
+
+# Force dataset/evaluator paths so MMYOLO does not fall back to data/coco/*
+train_dataloader = dict(
+    batch_size={batch_size},
+    num_workers=4,
+    dataset=dict(
+        data_root='',
+        ann_file=_train_ann,
+        data_prefix=dict(img=_train_img),
+        metainfo=dict(classes=_classes),
+    ),
+)
+val_dataloader = dict(
+    batch_size=1,
+    num_workers=2,
+    dataset=dict(
+        data_root='',
+        ann_file=_val_ann,
+        data_prefix=dict(img=_val_img),
+        metainfo=dict(classes=_classes),
+    ),
+)
+test_dataloader = val_dataloader
+val_evaluator = dict(ann_file=_val_ann)
+test_evaluator = dict(ann_file=_val_ann)
+
+# Best-effort class-count override across common head layouts.
+if 'model' in globals() and isinstance(model, dict):
+    if isinstance(model.get('bbox_head'), dict):
+        model['bbox_head']['num_classes'] = {num_classes}
+        if isinstance(model['bbox_head'].get('head_module'), dict):
+            model['bbox_head']['head_module']['num_classes'] = {num_classes}
 """
 
         cfg_path = output_base / "mmyolo_config.py"
@@ -528,14 +694,23 @@ work_dir = '{str(output_base / "training")}'
         db.commit()
 
         cmd = [
-            sys.executable, "-m", "mim", "run", "mmyolo", "train",
+            MMYOLO_PYTHON, "-m", "mim", "run", "mmyolo", "train",
             str(cfg_path),
             "--cfg-options", f"train_batch_size_per_gpu={batch_size}",
         ]
         logger.info(f"MMYOLO task {task_id}: running command: {' '.join(cmd)}")
+        logger.info(
+            "MMYOLO task %s: manual test command: cd /app && CUDA_VISIBLE_DEVICES=%s PYTHONPATH= %s -m mim run mmyolo train %s --cfg-options train_batch_size_per_gpu=%s",
+            task_id,
+            device,
+            MMYOLO_PYTHON,
+            str(cfg_path),
+            batch_size,
+        )
 
         import os as _os
         env = {**_os.environ}
+        env.pop("PYTHONPATH", None)
         if device != "cpu":
             env["CUDA_VISIBLE_DEVICES"] = device
 
@@ -692,25 +867,55 @@ work_dir = '{str(output_base / "training")}'
         train_images: str = str(dataset_dir / "images" / "train")
         val_images: str = str(dataset_dir / "images" / "val")
 
-        cfg_content = f"""_base_ = ['{config_id}.py']
+        base_cfg = _resolve_mmyolo_base_config(config_id)
+        class_names_py = repr(tuple(dataset_info["class_names"]))
+        cfg_content = f"""_base_ = ['{base_cfg}']
 
 # Override dataset/training parameters
-train_batch_size_per_gpu = {batch_size}
-train_num_workers = 4
-val_batch_size_per_gpu = 1
-val_num_workers = 2
 max_epochs = {epochs}
 num_classes = {num_classes}
 img_scale = ({image_size}, {image_size})
 
-# Dataset paths
-train_ann_file = '{train_json}'
-train_data_prefix = '{train_images}/'
-val_ann_file = '{val_json}'
-val_data_prefix = '{val_images}/'
+_train_ann = '{train_json}'
+_val_ann = '{val_json}'
+_train_img = '{train_images}/'
+_val_img = '{val_images}/'
+_classes = {class_names_py}
+
+# Force dataset/evaluator paths so MMYOLO does not fall back to data/coco/*
+train_dataloader = dict(
+    batch_size={batch_size},
+    num_workers=4,
+    dataset=dict(
+        data_root='',
+        ann_file=_train_ann,
+        data_prefix=dict(img=_train_img),
+        metainfo=dict(classes=_classes),
+    ),
+)
+val_dataloader = dict(
+    batch_size=1,
+    num_workers=2,
+    dataset=dict(
+        data_root='',
+        ann_file=_val_ann,
+        data_prefix=dict(img=_val_img),
+        metainfo=dict(classes=_classes),
+    ),
+)
+test_dataloader = val_dataloader
+val_evaluator = dict(ann_file=_val_ann)
+test_evaluator = dict(ann_file=_val_ann)
 
 # Work dir (output)
 work_dir = '{str(output_base / "training")}'
+
+# Best-effort class-count override across common head layouts.
+if 'model' in globals() and isinstance(model, dict):
+    if isinstance(model.get('bbox_head'), dict):
+        model['bbox_head']['num_classes'] = {num_classes}
+        if isinstance(model['bbox_head'].get('head_module'), dict):
+            model['bbox_head']['head_module']['num_classes'] = {num_classes}
 """
 
         cfg_path = output_base / "mmyolo_config.py"
@@ -722,13 +927,22 @@ work_dir = '{str(output_base / "training")}'
 
         # 3. Run mim as a subprocess and stream output for progress
         cmd = [
-            sys.executable, "-m", "mim", "run", "mmyolo", "train",
+            MMYOLO_PYTHON, "-m", "mim", "run", "mmyolo", "train",
             str(cfg_path),
             "--cfg-options", f"train_batch_size_per_gpu={batch_size}",
         ]
         logger.info(f"MMYOLO task {task_id}: running command: {' '.join(cmd)}")
+        logger.info(
+            "MMYOLO task %s: manual test command: cd /app && CUDA_VISIBLE_DEVICES=%s PYTHONPATH= %s -m mim run mmyolo train %s --cfg-options train_batch_size_per_gpu=%s",
+            task_id,
+            device,
+            MMYOLO_PYTHON,
+            str(cfg_path),
+            batch_size,
+        )
 
         env = {**__import__('os').environ}
+        env.pop("PYTHONPATH", None)
         if device != "cpu":
             env["CUDA_VISIBLE_DEVICES"] = device
 

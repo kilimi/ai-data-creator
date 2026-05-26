@@ -15,6 +15,8 @@ type GpuStatus = {
   gpus: Array<{ name: string; memory_used_mb: number; memory_total_mb: number; utilization_percent: number }>;
   memory_used_mb: number;
   memory_total_mb: number;
+  source?: string;
+  status?: string;
 };
 
 export function Navbar() {
@@ -135,7 +137,9 @@ export function Navbar() {
                 <p className="text-xs text-muted-foreground">
                   {gpuStatus?.has_gpu
                     ? `${gpuStatus.gpu_count} GPU${gpuStatus.gpu_count > 1 ? "s" : ""} · ${formatMb(gpuStatus.memory_used_mb)} / ${formatMb(gpuStatus.memory_total_mb)} used`
-                    : "No GPU detected"}
+                    : gpuStatus?.status === "unknown"
+                      ? "GPU status unavailable"
+                      : "No GPU detected"}
                 </p>
               </div>
               {gpuStatus?.gpus && gpuStatus.gpus.length > 0 && (

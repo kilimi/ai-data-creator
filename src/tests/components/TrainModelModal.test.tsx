@@ -64,6 +64,12 @@ vi.mock("@/utils/trainingCloneSettings", () => ({
     task: "segmentation",
     modelSize: model,
   })),
+  buildYoloModelSize: vi.fn((version: string, size: string, task: string) => {
+    let stem = `${version}${size}`;
+    if (task === "segmentation") stem += "-seg";
+    else if (task === "classification") stem += "-cls";
+    return `${stem}.pt`;
+  }),
   rtdetrVariantFromStored: vi.fn((model: string) => model),
 }));
 
@@ -919,6 +925,153 @@ describe("TrainModelModal", () => {
 
       const req = mockApi.startYoloTraining.mock.calls[0][0];
       expect(req.remove_images_without_annotations).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Clone-and-retrain: model configurations should be preserved exactly
+  // ---------------------------------------------------------------------------
+
+  describe("clone preserves model configuration (regression: yolov8 → yolo8n.pt bug)", () => {
+    /** Helper: set up getTask to return a task with a given model_type */
+    const cloneTask = (modelType: string) => {
+      mockApi.getTask.mockResolvedValue({
+        success: true,
+        data: {
+          task_metadata: {
+            dataset_configs: [
+              {
+                dataset_id: 1,
+                annotation_file_id: "ann1",
+                image_collection: "col1",
+                split: { train: 80, val: 20, test: 0 },
+              },
+            ],
+            model_type: modelType,
+            training_params: { epochs: 50, batch_size: 8 },
+          },
+        },
+      });
+    };
+
+    beforeEach(() => {
+      mockApi.getImageCollections.mockResolvedValue({
+        success: true,
+        data: [{ name: "col1" }],
+      });
+      mockApi.getAnnotations.mockResolvedValue({
+        success: true,
+        data: [{ id: "ann1", name: "annotations.json", type: "coco" }],
+      });
+      mockApi.startYoloTraining.mockResolvedValue({
+        success: true,
+        data: { task_id: "cloned-task" },
+      });
+    });
+
+    /** Navigate datasets step after clone has populated selections */
+    const navigateAfterClone = async (user: ReturnType<typeof userEvent.setup>) => {
+      await waitFor(() =>
+        expect(mockToast).toHaveBeenCalledWith(
+          expect.objectContaining({ title: "Training form filled" })
+        )
+      );
+      // Step 1: collections + annotations are fetched for the cloned selections
+      await waitFor(() => expect(mockApi.getImageCollections).toHaveBeenCalled());
+      const nextBtn = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn).not.toBeDisabled());
+      await user.click(nextBtn);
+    };
+
+    it("cloning a yolov8n.pt task re-trains with model_type=yolov8n.pt", async () => {
+      cloneTask("yolov8n.pt");
+      // The existing parseYoloPresetFromModelType mock returns { modelSize: model }
+      // so modelSettings.modelSize will be set to "yolov8n.pt" from the clone.
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal({ cloneFromTaskId: 99, resourcesLoading: false });
+
+      await navigateAfterClone(user);
+
+      // Step 2 → 3
+      const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+      await user.click(nextBtn2);
+
+      // Train
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      // Must NOT produce yolo8n.pt or yolo11n.pt — must match the cloned task's model_type
+      expect(req.model_type).toBe("yolov8n.pt");
+    });
+
+    it("cloning a yolov8s-seg.pt task re-trains with model_type=yolov8s-seg.pt", async () => {
+      cloneTask("yolov8s-seg.pt");
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal({ cloneFromTaskId: 100, resourcesLoading: false });
+
+      await navigateAfterClone(user);
+
+      const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+      await user.click(nextBtn2);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      expect(req.model_type).toBe("yolov8s-seg.pt");
+    });
+
+    it("cloning a yolo11n-seg.pt task re-trains with model_type=yolo11n-seg.pt", async () => {
+      cloneTask("yolo11n-seg.pt");
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal({ cloneFromTaskId: 101, resourcesLoading: false });
+
+      await navigateAfterClone(user);
+
+      const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+      await user.click(nextBtn2);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      expect(req.model_type).toBe("yolo11n-seg.pt");
+    });
+
+    it("cloned task epochs and batch_size are preserved in re-training request", async () => {
+      cloneTask("yolov8m.pt");
+      const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+      renderModal({ cloneFromTaskId: 102, resourcesLoading: false });
+
+      await navigateAfterClone(user);
+
+      const nextBtn2 = await screen.findByRole("button", { name: /next/i });
+      await waitFor(() => expect(nextBtn2).not.toBeDisabled());
+      await user.click(nextBtn2);
+
+      const trainBtn = await screen.findByRole("button", { name: /train model/i });
+      await waitFor(() => expect(trainBtn).not.toBeDisabled());
+      await user.click(trainBtn);
+
+      await waitFor(() => expect(mockApi.startYoloTraining).toHaveBeenCalled());
+
+      const req = mockApi.startYoloTraining.mock.calls[0][0];
+      // Cloned task had epochs=50 and batch_size=8
+      expect(req.epochs).toBe(50);
+      expect(req.batch_size).toBe(8);
     });
   });
 });

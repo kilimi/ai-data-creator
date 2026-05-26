@@ -354,9 +354,43 @@ def _prewarm_thumbnails(projects_root: Path, size: int = 300) -> None:
         logger.info("Thumbnail pre-warm complete: %d images scanned, %d new thumbnails generated", count, generated)
 
 
+def _reconcile_pause_requested_tasks_on_startup() -> None:
+    """Mark orphaned running tasks as paused after backend restart.
+
+    If pause was requested but the worker never reached the epoch boundary before restart,
+    tasks can be left as 'running' forever. This reconciles those to 'paused'.
+    """
+    recovered = 0
+    try:
+        with Session(bind=engine) as db:
+            running_tasks = db.query(models.Task).filter(models.Task.status == "running").all()
+            for task in running_tasks:
+                metadata = task.task_metadata or {}
+                if not isinstance(metadata, dict):
+                    continue
+                if not metadata.get("pause_requested_at"):
+                    continue
+
+                task.status = "paused"
+                task.task_metadata = {
+                    **metadata,
+                    "stage": "paused",
+                    "pause_requested_at": None,
+                    "paused_recovered_at": datetime.utcnow().isoformat(),
+                }
+                recovered += 1
+
+            if recovered:
+                db.commit()
+                logger.warning("Recovered %d pause-requested running task(s) to paused on startup", recovered)
+    except Exception as exc:
+        logger.error("Failed startup task reconciliation: %s", exc, exc_info=True)
+
+
 @app.on_event("startup")
 async def startup_prewarm_thumbnails() -> None:
     """Fire-and-forget thumbnail pre-generation so first page loads are fast."""
+    _reconcile_pause_requested_tasks_on_startup()
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, _prewarm_thumbnails, Path("projects"))
 

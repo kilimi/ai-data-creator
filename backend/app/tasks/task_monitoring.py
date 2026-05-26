@@ -22,6 +22,17 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+@celery_app.task(name="app.tasks.task_monitoring.refresh_worker_gpu_status")
+def refresh_worker_gpu_status() -> Dict[str, Any]:
+    """On-demand worker GPU sample for UI/API requests."""
+    from app.celery_app import _collect_worker_gpu_status, _publish_worker_gpu_status, _upsert_worker_gpu_status_db
+
+    status = _collect_worker_gpu_status()
+    _publish_worker_gpu_status()
+    _upsert_worker_gpu_status_db()
+    return status
+
+
 def _parse_iso_dt(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
