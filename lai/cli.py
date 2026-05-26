@@ -202,7 +202,11 @@ def cmd_download_models(ns: argparse.Namespace) -> int:
         return rc
     return _run(
         [
-            *base,
+            "docker", "compose", "exec",
+            "-e", f"LAI_PRETRAINED_MODELS={env_yolo}",
+            "-e", f"LAI_DEPTH_MODELS={env_depth}",
+            "-e", f"LAI_MMYOLO_MODELS={env_mmyolo}",
+            "celery_worker",
             "sh",
             "-lc",
             (
