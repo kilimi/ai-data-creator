@@ -195,6 +195,131 @@ def letterbox_image(img: np.ndarray, target_size: Tuple[int, int], pad_color: Tu
     return canvas
 
 
+def _save_mosaic_grid(
+    annotated_images: List[np.ndarray],
+    output_dir: Path,
+    split: str,
+    class_names: List[str],
+    colors: List[Tuple[int, int, int]],
+    grid_size: Tuple[int, int] = (4, 4),
+) -> None:
+    """Save a titled mosaic grid and individual example thumbnails."""
+    rows, cols = grid_size
+    num_images = min(len(annotated_images), rows * cols)
+    if num_images == 0:
+        return
+
+    target_size = (640, 640)
+    resized_images = [letterbox_image(img, target_size) for img in annotated_images[:num_images]]
+    while len(resized_images) < rows * cols:
+        resized_images.append(np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8))
+
+    grid_rows = []
+    for i in range(rows):
+        row_images = resized_images[i * cols:(i + 1) * cols]
+        if row_images:
+            grid_rows.append(np.hstack(row_images))
+
+    if not grid_rows:
+        return
+
+    grid = np.vstack(grid_rows)
+
+    title_height = 60
+    title_img = np.ones((title_height, grid.shape[1], 3), dtype=np.uint8) * 255
+    title_text = f"{split.upper()} Batch - {len(annotated_images)} samples"
+    cv2.putText(title_img, title_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
+
+    legend_height = 30 + (len(class_names) // 4 + 1) * 25
+    legend_img = np.ones((legend_height, grid.shape[1], 3), dtype=np.uint8) * 240
+    cv2.putText(legend_img, "Classes:", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+
+    for idx, class_name in enumerate(class_names):
+        x = 10 + (idx % 4) * (grid.shape[1] // 4)
+        y = 40 + (idx // 4) * 25
+        color = colors[idx]
+        cv2.rectangle(legend_img, (x, y - 10), (x + 15, y + 5), color, -1)
+        cv2.putText(legend_img, class_name, (x + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+
+    final_img = np.vstack([title_img, grid, legend_img])
+    output_path = output_dir / f"{split}_batch.jpg"
+    cv2.imwrite(str(output_path), final_img)
+    logger.info(f"Saved {split} batch examples to {output_path}")
+
+    individual_dir = output_dir / split
+    individual_dir.mkdir(exist_ok=True)
+    for idx, img in enumerate(annotated_images[: min(4, len(annotated_images))]):
+        cv2.imwrite(str(individual_dir / f"example_{idx + 1}.jpg"), img)
+
+
+def create_coco_training_examples(
+    dataset_dir: Path,
+    output_dir: Path,
+    class_names: List[str],
+    num_examples: int = 16,
+    grid_size: Tuple[int, int] = (4, 4),
+) -> None:
+    """
+    Create annotated training previews from a COCO-format MMYOLO dataset.
+
+    Expects:
+      dataset_dir/annotations/{train,val}.json
+      dataset_dir/images/{train,val}/
+    """
+    import json
+
+    logger.info(f"Creating COCO training examples in {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    colors = generate_color_palette(len(class_names))
+
+    for split in ["train", "val", "test"]:
+        ann_path = dataset_dir / "annotations" / f"{split}.json"
+        images_dir = dataset_dir / "images" / split
+        if not ann_path.exists() or not images_dir.exists():
+            continue
+
+        with open(ann_path, "r") as f:
+            coco = json.load(f)
+
+        anns_by_image: Dict[int, list] = {}
+        for ann in coco.get("annotations", []):
+            anns_by_image.setdefault(ann["image_id"], []).append(ann)
+
+        image_records = [img for img in coco.get("images", []) if anns_by_image.get(img["id"])]
+        if not image_records:
+            logger.warning(f"No annotated images in COCO {split} split")
+            continue
+
+        sampled = random.sample(image_records, min(num_examples, len(image_records)))
+        annotated_images = []
+        for img_info in sampled:
+            img_path = images_dir / img_info["file_name"]
+            if not img_path.exists():
+                logger.warning(f"COCO example image missing: {img_path}")
+                continue
+
+            img = cv2.imread(str(img_path))
+            if img is None:
+                continue
+
+            annotations = []
+            for ann in anns_by_image.get(img_info["id"], []):
+                bbox = ann.get("bbox")
+                if not bbox or len(bbox) != 4:
+                    continue
+                x, y, w, h = bbox
+                x1, y1 = int(x), int(y)
+                x2, y2 = int(x + w), int(y + h)
+                class_id = max(0, int(ann.get("category_id", 1)) - 1)
+                annotations.append(("bbox", class_id, [x1, y1, x2, y2]))
+
+            annotated_images.append(
+                draw_annotations_on_image(img, annotations, class_names, colors, is_segmentation=False)
+            )
+
+        if annotated_images:
+            _save_mosaic_grid(annotated_images, output_dir, split, class_names, colors, grid_size)
+
 def create_training_examples(
     dataset_dir: Path,
     output_dir: Path,
@@ -301,72 +426,6 @@ def create_training_examples(
             continue
 
         logger.info(f"{split}: rendered {total_annotations} annotations across {len(annotated_images)} sampled images")
-        
-        # Create mosaic grid
-        rows, cols = grid_size
-        num_images = min(len(annotated_images), rows * cols)
-        
-        if num_images == 0:
-            continue
-        
-        # Letterbox to same size for grid while preserving aspect ratio
-        target_size = (640, 640)  # Standard size
-        resized_images = []
-        for img in annotated_images[:num_images]:
-            resized = letterbox_image(img, target_size)
-            resized_images.append(resized)
-        
-        # Pad with black images if needed
-        while len(resized_images) < rows * cols:
-            resized_images.append(np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8))
-        
-        # Create grid
-        grid_rows = []
-        for i in range(rows):
-            row_images = resized_images[i*cols:(i+1)*cols]
-            if row_images:
-                grid_row = np.hstack(row_images)
-                grid_rows.append(grid_row)
-        
-        if grid_rows:
-            grid = np.vstack(grid_rows)
-            
-            # Add title
-            title_height = 60
-            title_img = np.ones((title_height, grid.shape[1], 3), dtype=np.uint8) * 255
-            title_text = f"{split.upper()} Batch - {len(annotated_images)} samples"
-            cv2.putText(title_img, title_text, (20, 40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
-            
-            # Add class legend
-            legend_height = 30 + (len(class_names) // 4 + 1) * 25
-            legend_img = np.ones((legend_height, grid.shape[1], 3), dtype=np.uint8) * 240
-            cv2.putText(legend_img, "Classes:", (10, 20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-            
-            for idx, class_name in enumerate(class_names):
-                x = 10 + (idx % 4) * (grid.shape[1] // 4)
-                y = 40 + (idx // 4) * 25
-                color = colors[idx]
-                cv2.rectangle(legend_img, (x, y-10), (x+15, y+5), color, -1)
-                cv2.putText(legend_img, class_name, (x+20, y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
-            
-            # Combine title, grid, and legend
-            final_img = np.vstack([title_img, grid, legend_img])
-            
-            # Save
-            output_path = output_dir / f"{split}_batch.jpg"
-            cv2.imwrite(str(output_path), final_img)
-            logger.info(f"Saved {split} batch examples to {output_path}")
-        
-        # Also save individual examples
-        individual_dir = output_dir / split
-        individual_dir.mkdir(exist_ok=True)
-        for idx, img in enumerate(annotated_images[:min(4, len(annotated_images))]):
-            individual_path = individual_dir / f"example_{idx+1}.jpg"
-            cv2.imwrite(str(individual_path), img)
-        
-        logger.info(f"Saved {min(4, len(annotated_images))} individual examples to {individual_dir}")
-    
+        _save_mosaic_grid(annotated_images, output_dir, split, class_names, colors, grid_size)
+
     logger.info(f"Training examples created successfully in {output_dir}")

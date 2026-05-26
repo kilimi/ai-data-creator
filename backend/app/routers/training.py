@@ -136,6 +136,7 @@ class MMYOLOTrainingRequest(BaseModel):
     save_period: int = -1
     remove_images_without_annotations: bool = True
     dji_patch_path: Optional[str] = None
+    dji_use_widen_factor_025: bool = True
     use_wandb: bool = False
     wandb_project: Optional[str] = None
     wandb_entity: Optional[str] = None
@@ -307,11 +308,24 @@ def prepare_mmyolo_dataset(
                 except OSError:
                     shutil.copy2(src_path, dst_path)
 
+            # Get image dimensions with fallback to actual file reading
+            img_width = image.width
+            img_height = image.height
+            if not img_width or not img_height or img_width <= 0 or img_height <= 0:
+                try:
+                    from PIL import Image as PILImage
+                    with PILImage.open(dst_path) as pil_img:
+                        img_width, img_height = pil_img.size
+                    logger.info(f"Read image dimensions from file {dst_path}: {img_width}x{img_height}")
+                except Exception as dim_err:
+                    logger.warning(f"Could not read image dimensions for {dst_path}: {dim_err}")
+                    img_width, img_height = 640, 640  # Safe fallback
+            
             coco_img = {
                 "id": global_img_id,
                 "file_name": safe_filename,
-                "width": image.width or 0,
-                "height": image.height or 0,
+                "width": img_width,
+                "height": img_height,
             }
             splits_data[split_name]["images"].append(coco_img)
             image_counts[split_name] += 1
@@ -323,14 +337,24 @@ def prepare_mmyolo_dataset(
             ).all()
 
             for ann in anns:
+                # Validate category_id before lookup
+                if ann.category_id is None:
+                    logger.warning(f"Annotation {ann.id} has no category_id, skipping")
+                    continue
+                
                 ann_class = db.query(AnnotationClass).filter(
                     AnnotationClass.annotation_file_id == annotation_file_id,
                     AnnotationClass.category_id == ann.category_id,
                 ).first()
                 if not ann_class:
+                    logger.warning(
+                        f"No AnnotationClass found for annotation {ann.id} "
+                        f"(category_id={ann.category_id}, annotation_file_id={annotation_file_id})"
+                    )
                     continue
                 cat_id = class_mapping.get(ann_class.class_name)
                 if cat_id is None:
+                    logger.warning(f"Class name '{ann_class.class_name}' not in class_mapping")
                     continue
                 coco_cat_id = cat_id + 1  # COCO categories are 1-indexed
 
@@ -353,14 +377,33 @@ def prepare_mmyolo_dataset(
                         float(ann.bbox_height or 0),
                     ]
 
-                # Segmentation polygon
+                # Segmentation polygon with proper validation
                 seg_poly = None
                 if ann.segmentation and len(ann.segmentation) > 0:
-                    raw = ann.segmentation
-                    poly = raw[0] if isinstance(raw[0], list) else raw
-                    if len(poly) >= 6:
-                        seg_poly = [poly]
-                        has_any_segmentation = True
+                    try:
+                        raw = ann.segmentation
+                        # Bounds check before accessing raw[0]
+                        if isinstance(raw, list) and len(raw) > 0:
+                            poly = raw[0] if isinstance(raw[0], list) else raw
+                        else:
+                            poly = raw
+                        
+                        # Validate polygon has enough points and all are numeric
+                        if isinstance(poly, list) and len(poly) >= 6:
+                            # Verify all coordinates are numeric
+                            if all(isinstance(coord, (int, float)) for coord in poly):
+                                seg_poly = [poly]
+                                has_any_segmentation = True
+                            else:
+                                logger.warning(
+                                    f"Annotation {ann.id}: segmentation polygon contains non-numeric values"
+                                )
+                        else:
+                            logger.debug(
+                                f"Annotation {ann.id}: segmentation polygon too short (len={len(poly) if isinstance(poly, list) else 0})"
+                            )
+                    except Exception as seg_err:
+                        logger.warning(f"Annotation {ann.id}: failed to process segmentation: {seg_err}")
 
                 if task == "segment":
                     if seg_poly is None or bbox_coco is None:
@@ -1808,6 +1851,7 @@ async def rerun_training(
                 "save_period": request.save_period,
                 "remove_images_without_annotations": request.remove_images_without_annotations,
                 "dji_patch_path": request.dji_patch_path,
+                "dji_use_widen_factor_025": request.dji_use_widen_factor_025,
                 "use_wandb": request.use_wandb,
                 "wandb_project": request.wandb_project,
                 "wandb_entity": request.wandb_entity,
@@ -2788,27 +2832,46 @@ print(f"Found {len(predictions)} predictions")
 async def upload_mmyolo_dji_patch(file: UploadFile = File(...)):
     """Upload DJI AI Inside patch file used to modify MMYOLO before training."""
     try:
+        logger.info(f"Received DJI patch upload request: filename={file.filename}, content_type={file.content_type}")
+        
         filename = file.filename or ""
         if not filename.lower().endswith(".patch"):
+            logger.warning(f"Invalid file extension for DJI patch: {filename}")
             raise HTTPException(status_code=400, detail="Only .patch files are supported.")
 
         patch_dir = Path(os.environ.get("DJI_PATCH_STORAGE_DIR", "/app/data/dji_patches"))
-        patch_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Using patch storage directory: {patch_dir}")
+        
+        try:
+            patch_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as dir_error:
+            logger.error(f"Failed to create patch directory {patch_dir}: {dir_error}")
+            raise HTTPException(status_code=500, detail=f"Failed to create storage directory: {str(dir_error)}")
 
         safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name)
         stored_name = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{safe_name}"
         stored_path = patch_dir / stored_name
+        
+        logger.info(f"Saving patch to: {stored_path}")
 
-        with open(stored_path, "wb") as out:
-            shutil.copyfileobj(file.file, out)
+        try:
+            with open(stored_path, "wb") as out:
+                content = await file.read()
+                out.write(content)
+                logger.info(f"Successfully wrote {len(content)} bytes to {stored_path}")
+        except Exception as write_error:
+            logger.error(f"Failed to write patch file: {write_error}")
+            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(write_error)}")
 
-        return {
+        result = {
             "success": True,
             "patch_name": safe_name,
             "patch_path": str(stored_path),
             "uploaded_at": datetime.utcnow().isoformat() + "Z",
             "message": "DJI patch uploaded successfully.",
         }
+        logger.info(f"DJI patch upload successful: {result}")
+        return result
     except HTTPException:
         raise
     except Exception as exc:
@@ -2927,6 +2990,7 @@ async def start_mmyolo_training(
             "save_period": request.save_period,
             "remove_images_without_annotations": request.remove_images_without_annotations,
             "dji_patch_path": request.dji_patch_path,
+            "dji_use_widen_factor_025": request.dji_use_widen_factor_025,
             "use_wandb": request.use_wandb,
             "wandb_project": request.wandb_project,
             "wandb_entity": request.wandb_entity,

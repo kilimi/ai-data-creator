@@ -53,6 +53,7 @@ interface TaskDetails {
   id: number;
   name: string;
   status: string;
+  task_type?: string;
   progress: number;
   created_at: string;
   completed_at?: string;
@@ -234,8 +235,41 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   }, [open, taskId, task?.status, fetchTaskDetails]);
 
   const metadata = task?.task_metadata;
-  const latestMetrics = metadata?.latest_metrics;
   const metricsHistory = metadata?.metrics_history || [];
+  const isMmyoloTraining = task?.task_type === 'mmyolo_training';
+
+  const latestMetrics = useMemo(() => {
+    const raw = metadata?.latest_metrics;
+    const lastHist = metricsHistory.length ? metricsHistory[metricsHistory.length - 1] : null;
+    const lastVal = [...metricsHistory]
+      .reverse()
+      .find((m) => m.mAP50 != null || m.mAP50_95 != null);
+
+    const merged: TrainingMetrics = {
+      ...(lastHist || {}),
+      ...(raw || {}),
+    };
+    if (lastVal) {
+      if (lastVal.mAP50 != null) merged.mAP50 = lastVal.mAP50;
+      if (lastVal.mAP50_95 != null) merged.mAP50_95 = lastVal.mAP50_95;
+      if (lastVal.precision != null) merged.precision = lastVal.precision;
+      if (lastVal.recall != null) merged.recall = lastVal.recall;
+    }
+    if (merged.epoch == null) {
+      merged.epoch =
+        raw?.epoch ??
+        metadata?.current_epoch ??
+        lastVal?.epoch ??
+        lastHist?.epoch;
+    }
+    const hasData =
+      merged.epoch != null ||
+      merged.mAP50 != null ||
+      merged.mAP50_95 != null ||
+      merged.box_loss != null ||
+      merged.cls_loss != null;
+    return hasData ? merged : null;
+  }, [metadata, metricsHistory]);
   const statusReason =
     task?.error_message
     || (metadata as any)?.error
@@ -256,7 +290,10 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
 
   const modelName = metadata?.model_config?.model || metadata?.training_params?.model || (metadata as any)?.model_type || '—';
   const epochsTotal = metadata?.total_epochs || metadata?.epochs || metadata?.training_params?.epochs;
-  const currentEpoch = metadata?.current_epoch || 0;
+  const currentEpoch = Math.min(
+    metadata?.current_epoch || 0,
+    Number(epochsTotal) || metadata?.current_epoch || 0,
+  );
   const currentBatch = metadata?.current_batch;
   const totalBatches = metadata?.total_batches;
   const epochProgressPct = metadata?.epoch_progress_pct;
@@ -404,7 +441,7 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 </div>
 
                 {/* Latest metrics breakdown */}
-                {latestMetrics && (
+                {latestMetrics && latestMetrics.epoch != null && (
                   <div>
                     <SectionHeading icon={<TrendingUp className="w-4 h-4" />}>
                       Latest metrics — epoch {latestMetrics.epoch}
@@ -418,6 +455,14 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                       {latestMetrics.seg_loss != null && <MetricTile label="Seg loss" value={latestMetrics.seg_loss} format="decimal" />}
                       {latestMetrics.lr0 != null && <MetricTile label="LR (pg0)" value={latestMetrics.lr0} format="decimal" />}
                     </div>
+                    {isMmyoloTraining &&
+                      latestMetrics.precision == null &&
+                      latestMetrics.recall == null && (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          MMYOLO validation reports mAP during training (see tiles above). Run a project
+                          evaluation for per-class precision and recall.
+                        </p>
+                      )}
                   </div>
                 )}
 

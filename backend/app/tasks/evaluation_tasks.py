@@ -363,6 +363,29 @@ def evaluate_model(
         training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
         if not training_task or training_task.status != 'completed':
             raise ValueError("Training task not found or not completed")
+
+        if training_task.task_type == "mmyolo_training":
+            from app.tasks.mmyolo_evaluation import run_mmyolo_evaluation
+
+            return run_mmyolo_evaluation(
+                self,
+                db,
+                task,
+                training_task,
+                training_task_id=training_task_id,
+                dataset_id=dataset_id,
+                annotation_file_id=annotation_file_id,
+                checkpoint=checkpoint,
+                conf_threshold=conf_threshold,
+                iou_threshold=iou_threshold,
+                nms_iou_threshold=nms_iou_threshold,
+                use_grid=use_grid,
+                grid_size=grid_size,
+                grid_overlap=grid_overlap,
+                collection_id=collection_id,
+                ignored_classes=ignored_classes,
+                image_size=image_size,
+            )
         
         # Get model path from training task metadata
         task_metadata = training_task.task_metadata or {}

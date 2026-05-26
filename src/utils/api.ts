@@ -19,16 +19,28 @@ export class ApiClient {
     
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        // Set default headers if not provided
-        if (!options.headers) {
-          options.headers = {
-            'Accept': 'application/json',
-          };
-        }
+        // Handle headers based on body type
+        const isFormData = options.body instanceof FormData;
         
-        // Don't set Content-Type header for FormData
-        if (!(options.body instanceof FormData)) {
-          (options.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        if (!isFormData) {
+          // For non-FormData requests, set JSON headers
+          if (!options.headers) {
+            options.headers = {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+            };
+          } else if (typeof options.headers === 'object' && !(options.headers instanceof Headers)) {
+            // Ensure Content-Type is set for JSON
+            (options.headers as Record<string, string>)['Content-Type'] = 'application/json';
+          }
+        } else {
+          // For FormData, don't set Content-Type at all (browser will set it with boundary)
+          // Only set Accept header if no headers are provided
+          if (!options.headers) {
+            options.headers = {
+              'Accept': 'application/json',
+            };
+          }
         }
 
         const controller = new AbortController();
@@ -1471,6 +1483,7 @@ export class ApiClient {
     save_period?: number;
     remove_images_without_annotations?: boolean;
     dji_patch_path?: string;
+    dji_use_widen_factor_025?: boolean;
     use_wandb?: boolean;
     wandb_project?: string;
     wandb_entity?: string;

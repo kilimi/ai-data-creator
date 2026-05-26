@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { AlertCircle, Settings } from "lucide-react";
 
 interface MMYOLOSettingsDialogProps {
@@ -44,6 +45,7 @@ export function MMYOLOSettingsDialog({
   const [learningRate, setLearningRate] = useState(0.004);
   const [weightDecay, setWeightDecay] = useState(0.05);
   const [savePeriod, setSavePeriod] = useState(-1);
+  const [djiWidenFactor025, setDjiWidenFactor025] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -52,6 +54,7 @@ export function MMYOLOSettingsDialog({
     if (s.learningRate !== undefined) setLearningRate(Number(s.learningRate));
     if (s.weightDecay !== undefined) setWeightDecay(Number(s.weightDecay));
     if (s.savePeriod !== undefined) setSavePeriod(Number(s.savePeriod));
+    setDjiWidenFactor025(s.djiWidenFactor025 === true);
   }, [open, currentSettings]);
 
   const handleSave = () => {
@@ -61,10 +64,13 @@ export function MMYOLOSettingsDialog({
       learningRate,
       weightDecay,
       savePeriod,
+      djiWidenFactor025,
     };
     onSettingsUpdate(settings);
     onOpenChange(false);
   };
+
+  const isDJIMode = deployTarget === 'edge-drone';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -75,9 +81,50 @@ export function MMYOLOSettingsDialog({
             MMYOLO Advanced Settings
           </DialogTitle>
           <DialogDescription>
-            Tune optimizer and checkpoint behavior. Device selection is automatic.
+            {isDJIMode 
+              ? 'DJI Drone mode: YOLOv8-S configuration enforced for compatibility.'
+              : 'Tune optimizer and checkpoint behavior. Device selection is automatic.'}
           </DialogDescription>
         </DialogHeader>
+
+        {isDJIMode && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div className="text-xs text-amber-900 dark:text-amber-300 space-y-1">
+              <p className="font-medium">DJI Requirements Enforced:</p>
+              <ul className="list-disc list-inside space-y-0.5 pl-2">
+                <li>Architecture: YOLOv8</li>
+                <li>Size: Small (S)</li>
+                <li>Max Classes: 10</li>
+                <li>Task: Detection only</li>
+                <li>MMYolo version: v0.6.0</li>
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {isDJIMode && (
+          <div className="rounded-md border p-3 space-y-2">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="dji-widen-factor"
+                checked={djiWidenFactor025}
+                onCheckedChange={(v) => setDjiWidenFactor025(v === true)}
+                className="mt-0.5"
+              />
+              <div className="space-y-1">
+                <Label htmlFor="dji-widen-factor" className="text-sm font-medium cursor-pointer">
+                  Enable widen_factor=0.25 (4K quantization mode)
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Required for DJI on-device quantization and calibration at 4K resolution.
+                  Disable to train with the default YOLOv8-S width (widen_factor=0.5) — useful
+                  for validating training before enabling quantization-specific settings.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-4 py-4">
 

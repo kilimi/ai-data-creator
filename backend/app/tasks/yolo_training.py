@@ -9,7 +9,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple, Mapping
 
-from app.tasks.training_tasks import TrainingTask, SessionLocal
+from app.tasks.training_common import TrainingTask
+from app.database import SessionLocal
 from app.tasks.yolo_training_helpers import (
     fix_path_permissions_recursive,
     get_runtime_training_project,

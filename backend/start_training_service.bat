@@ -41,7 +41,7 @@ timeout /t 10 /nobreak >nul
 
 echo.
 echo Step 4: Testing environment...
-docker-compose exec training python test_training_env.py
+docker-compose exec training python -c "import torch, ultralytics, cv2, numpy; print('Environment OK')"
 
 echo.
 echo ========================================

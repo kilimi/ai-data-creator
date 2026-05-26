@@ -573,6 +573,10 @@ const ImageAnnotation = () => {
     samPointsRef.current = samPoints;
   }, [samPoints]);
   const [isSamProcessing, setIsSamProcessing] = useState(false);
+  const [isSamModelLoading, setIsSamModelLoading] = useState(false);
+  const samReadyAbortRef = useRef<AbortController | null>(null);
+  const samSegmentAbortRef = useRef<AbortController | null>(null);
+  const isSamInteractionBlocked = isSamModelLoading || isSamProcessing;
   const [segmentModel, setSegmentModel] = useState<'sam2' | 'sam3'>('sam2');
   const [segmentTextPrompt, setSegmentTextPrompt] = useState('');
   const [samMinArea, setSamMinArea] = useState<number>(100);
@@ -591,6 +595,86 @@ const ImageAnnotation = () => {
   useEffect(() => {
     if (!sam3Available && segmentModel === 'sam3') setSegmentModel('sam2');
   }, [sam3Available, segmentModel]);
+
+  const cancelSamInteraction = useCallback(() => {
+    samReadyAbortRef.current?.abort();
+    samReadyAbortRef.current = null;
+    samSegmentAbortRef.current?.abort();
+    samSegmentAbortRef.current = null;
+    setIsSamModelLoading(false);
+    setIsSamProcessing(false);
+    setAutoSegmentPreview(null);
+    setSamPoints([]);
+    samPointsRef.current = [];
+    setActiveTool('select');
+  }, []);
+
+  // Poll SAM backend until the selected model is ready whenever AI Segment is active.
+  useEffect(() => {
+    if (activeTool !== 'auto-segment') {
+      samReadyAbortRef.current?.abort();
+      samReadyAbortRef.current = null;
+      setIsSamModelLoading(false);
+      return;
+    }
+
+    const readyUrl =
+      segmentModel === 'sam3'
+        ? `${API_CONFIG.baseUrl}/segment/ready/sam3`
+        : `${API_CONFIG.baseUrl}/segment/ready`;
+
+    const controller = new AbortController();
+    samReadyAbortRef.current = controller;
+    setIsSamModelLoading(true);
+
+    let cancelled = false;
+    const poll = async (): Promise<boolean> => {
+      while (!controller.signal.aborted && !cancelled) {
+        try {
+          const res = await fetch(readyUrl, { signal: controller.signal });
+          if (res.ok) {
+            return true;
+          }
+        } catch (err) {
+          if (controller.signal.aborted) return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      return false;
+    };
+
+    poll()
+      .then((ready) => {
+        if (controller.signal.aborted || cancelled) return;
+        setIsSamModelLoading(false);
+        if (!ready) {
+          toast({
+            title: 'SAM model unavailable',
+            description: 'The segmentation service is not ready. Try again later.',
+            variant: 'destructive',
+          });
+          setActiveTool('select');
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (samReadyAbortRef.current === controller) {
+        samReadyAbortRef.current = null;
+      }
+    };
+  }, [activeTool, segmentModel, toast]);
+
+  // Leaving AI Segment while a request is in flight should abort it.
+  useEffect(() => {
+    if (activeTool !== 'auto-segment') {
+      samSegmentAbortRef.current?.abort();
+      samSegmentAbortRef.current = null;
+      setIsSamProcessing(false);
+    }
+  }, [activeTool]);
 
   // Panel tab state
   const [activePanelTab, setActivePanelTab] = useState<string>('annotations');
@@ -658,6 +742,7 @@ const ImageAnnotation = () => {
   // label: 1 = add to mask (left-click), 0 = remove from mask (right-click).
   const startAutoSegment = useCallback(async (imgPoint: Point, label: number = 1) => {
     if (!displayImage && !currentImage) return;
+    if (isSamModelLoading || isSamProcessing) return;
     const img = (displayImage || currentImage)!;
     const samPoint = { x: imgPoint.x, y: imgPoint.y, label };
     // Use ref so rapid second click includes first point (avoids stale closure)
@@ -716,7 +801,9 @@ const ImageAnnotation = () => {
       if (segmentModel === 'sam3' && segmentTextPrompt.trim()) {
         body.text = segmentTextPrompt.trim();
       }
+      samSegmentAbortRef.current?.abort();
       const controller = new AbortController();
+      samSegmentAbortRef.current = controller;
       const timeoutId = setTimeout(() => controller.abort(), 14000);
       const res = await fetch(`${apiBase}/segment`, {
         method: 'POST',
@@ -725,6 +812,9 @@ const ImageAnnotation = () => {
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
+      if (samSegmentAbortRef.current === controller) {
+        samSegmentAbortRef.current = null;
+      }
       if (!res.ok) throw new Error(`Segmentation failed: ${res.status}`);
       const json = await res.json();
       const rawPolygons = json.polygons || [];
@@ -761,6 +851,9 @@ const ImageAnnotation = () => {
         });
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
       toast({
         title: 'Segmentation failed',
         description: 'Backend SAM is unavailable or failed. Ensure the SAM service is running.',
@@ -768,8 +861,9 @@ const ImageAnnotation = () => {
       });
     } finally {
       setIsSamProcessing(false);
+      samSegmentAbortRef.current = null;
     }
-  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints, segmentModel, segmentTextPrompt, samMinArea]);
+  }, [displayImage, currentImage, classes, selectedClass, toast, samPoints, segmentModel, segmentTextPrompt, samMinArea, isSamModelLoading, isSamProcessing]);
 
   const acceptAutoSegment = () => {
     if (!autoSegmentPreview || !autoSegmentPreview.polygons || autoSegmentPreview.polygons.length === 0) return;
@@ -2963,6 +3057,11 @@ const ImageAnnotation = () => {
 
     // If Auto tool is active, trigger backend segmentation for the clicked image point
     if (activeTool === 'auto-segment') {
+      if (isSamModelLoading || isSamProcessing) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (classes.length === 0) {
         toast({
           title: 'No classes',
@@ -3029,7 +3128,7 @@ const ImageAnnotation = () => {
       setIsDrawing(true);
       setCurrentPath([imageCoords]);
     }
-  }, [activeTool, selectedClass, classes.length, isDrawing, screenToImageCoords, findAnnotationAtPoint, startAutoSegment, toast]);
+  }, [activeTool, selectedClass, classes.length, isDrawing, screenToImageCoords, findAnnotationAtPoint, startAutoSegment, toast, isSamModelLoading, isSamProcessing]);
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     if (!canvasRef.current || !currentImage) return;
@@ -3291,12 +3390,12 @@ const ImageAnnotation = () => {
       } else if (e.key === 'b' || e.key === 'B') {
         if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('pencil');
       } else if (e.key === 'g' || e.key === 'G') {
-        if (ensureClassForDrawingTools()) setActiveTool('auto-segment');
+        if (!isSamInteractionBlocked && ensureClassForDrawingTools()) setActiveTool('auto-segment');
       } else if ((e.key === 'r' || e.key === 'R') && !isDrawing) {
         resetZoomAndPan();
       }
     }
-  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment, ensureClassForDrawingTools]);
+  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment, ensureClassForDrawingTools, isSamInteractionBlocked]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -5979,17 +6078,19 @@ const ImageAnnotation = () => {
                   setActiveTool('auto-segment');
                   setSamPoints([]);
                 }}
-                disabled={isSamProcessing}
+                disabled={isSamInteractionBlocked}
                 title={
-                  isSamProcessing
+                  isSamModelLoading
+                    ? 'Waiting for SAM model...'
+                    : isSamProcessing
                     ? 'Processing segmentation...'
                     : 'AI Segment — click on image to segment (G)'
                 }
               >
-                {isSamProcessing ? (
+                {isSamInteractionBlocked ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                    <span className="flex-1 text-left">Processing...</span>
+                    <span className="flex-1 text-left">{isSamModelLoading ? 'Loading model...' : 'Processing...'}</span>
                   </>
                 ) : (
                   <>
@@ -6031,7 +6132,7 @@ const ImageAnnotation = () => {
               <Select
                 value={segmentModel}
                 onValueChange={(v: 'sam2' | 'sam3') => setSegmentModel(v)}
-                disabled={classes.length === 0}
+                disabled={classes.length === 0 || isSamInteractionBlocked}
               >
                 <SelectTrigger
                   className="h-8 text-xs bg-muted border-border mt-1"
@@ -6497,7 +6598,7 @@ const ImageAnnotation = () => {
                 />
                 <canvas
                   ref={canvasRef}
-                  className={`absolute w-full h-full ${activeTool === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}
+                  className={`absolute w-full h-full ${activeTool === 'select' ? 'cursor-default' : 'cursor-crosshair'} ${isSamInteractionBlocked && activeTool === 'auto-segment' ? 'pointer-events-none' : ''}`}
                   onMouseDown={handleCanvasMouseDown}
                   onMouseMove={handleCanvasMouseMove}
                   onMouseUp={handleCanvasMouseUp}
@@ -6518,6 +6619,30 @@ const ImageAnnotation = () => {
                     <div className="inline-flex items-center gap-2 rounded-md bg-background/90 text-foreground px-3 py-2 border border-border shadow-lg">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span className="text-sm font-medium">Loading annotations...</span>
+                    </div>
+                  </div>
+                )}
+                {isSamInteractionBlocked && activeTool === 'auto-segment' && (
+                  <div
+                    className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 backdrop-blur-[1px]"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  >
+                    <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-card/95 px-6 py-5 shadow-lg max-w-xs text-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                      <p className="text-sm font-medium">
+                        {isSamModelLoading ? 'Loading SAM model…' : 'Running segmentation…'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {isSamModelLoading
+                          ? 'Waiting for the segmentation service to be ready.'
+                          : 'Please wait while the mask is generated.'}
+                      </p>
+                      <Button size="sm" variant="outline" onClick={cancelSamInteraction}>
+                        Cancel
+                      </Button>
                     </div>
                   </div>
                 )}

@@ -637,6 +637,43 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     return { totalImages: Math.round(totalImages), train, val, test, warnings };
   }, [selectedDatasets]);
 
+  // Count total unique classes across all selected datasets
+  const [totalClassCount, setTotalClassCount] = useState<number | null>(null);
+  const [classCountLoading, setClassCountLoading] = useState(false);
+
+  const countTotalClasses = async () => {
+    if (!api || selectedDatasets.length === 0) return;
+    setClassCountLoading(true);
+    try {
+      const allClasses = new Set<string>();
+      for (const sel of selectedDatasets) {
+        if (!sel.annotation) continue;
+        try {
+          const res = await api.getAnnotationClasses(sel.dataset.id, sel.annotation);
+          const stats = (res && (res as any).success) ? (res as any).data : null;
+          const classes: string[] = stats && stats.classes
+            ? Object.keys(stats.classes)
+            : Array.isArray(stats?.class_names) ? stats.class_names : [];
+          classes.forEach(c => allClasses.add(c));
+        } catch (e) {
+          console.error('Error fetching classes', e);
+        }
+      }
+      setTotalClassCount(allClasses.size);
+    } finally {
+      setClassCountLoading(false);
+    }
+  };
+
+  // Auto-count classes when datasets change
+  useEffect(() => {
+    if (selectedDatasets.length > 0 && deployTarget === 'edge-drone') {
+      countTotalClasses();
+    } else {
+      setTotalClassCount(null);
+    }
+  }, [JSON.stringify(selectedDatasets.map(s => `${s.dataset.id}:${s.annotation}`)), deployTarget]);
+
   const runClassConflictCheck = async () => {
     if (!api) return;
     setConflictLoading(true);
@@ -713,11 +750,17 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       if (modelSettings.mmyoloArch && modelSettings.mmyoloArch !== 'yolov8') {
         reasons.push('DJI Drone mode requires the YOLOv8 architecture.');
       }
+      if (modelSettings.mmyoloSize && modelSettings.mmyoloSize !== 's') {
+        reasons.push('DJI Drone mode requires YOLOv8-S (Small size) model.');
+      }
       if (selectedTask !== 'detect') {
         reasons.push('DJI Drone mode requires the Detection task.');
       }
       if (!djiPatch?.path) {
         reasons.push('Upload DJI AI Inside patch (.patch) for MMYOLO edge-drone training.');
+      }
+      if (totalClassCount !== null && totalClassCount > 10) {
+        reasons.push(`DJI Drone models support maximum 10 classes, but your dataset has ${totalClassCount} classes. Reduce the number of classes.`);
       }
     }
 
@@ -738,18 +781,26 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     }
     setDjiPatchUploading(true);
     try {
+      console.log('Uploading DJI patch:', file.name, 'size:', file.size);
       const res = await api.uploadMMYOLODJIPatch(file);
-      if (!res.success || !res.data) {
-        throw new Error(res.error || 'Failed to upload DJI patch');
+      console.log('Upload response:', res);
+
+      const payload = (res as any)?.data ?? (res as any);
+      if (!res.success || !payload?.patch_name || !payload?.patch_path) {
+        const errorMsg = res.error || 'Failed to upload DJI patch';
+        console.error('Upload failed:', errorMsg);
+        throw new Error(errorMsg);
       }
       setDjiPatch({
-        name: res.data.patch_name,
-        path: res.data.patch_path,
-        uploadedAt: res.data.uploaded_at,
+        name: payload.patch_name,
+        path: payload.patch_path,
+        uploadedAt: payload.uploaded_at,
       });
-      sonnerToast.success('DJI patch uploaded and ready for training.');
+      sonnerToast.success(`DJI patch uploaded: ${payload.patch_name}`);
     } catch (err) {
-      sonnerToast.error(err instanceof Error ? err.message : 'Failed to upload DJI patch');
+      console.error('DJI patch upload error:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to upload DJI patch';
+      sonnerToast.error(`Upload failed: ${errorMessage}`);
     } finally {
       setDjiPatchUploading(false);
     }
@@ -852,6 +903,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           save_period: modelSettings.savePeriod !== undefined ? modelSettings.savePeriod : -1,
           remove_images_without_annotations: removeImagesWithoutAnnotations,
           dji_patch_path: deployTarget === 'edge-drone' ? djiPatch?.path : undefined,
+          dji_use_widen_factor_025: deployTarget === 'edge-drone' ? (modelSettings.djiWidenFactor025 === true) : undefined,
           use_wandb: saveToWandb,
           wandb_project: saveToWandb ? wandbSettings.project : undefined,
           wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
@@ -1462,6 +1514,48 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                 </Card>
               )}
 
+              {/* DJI Class Count Warning */}
+              {deployTarget === 'edge-drone' && selectedDatasets.length > 0 && (
+                <Card className={totalClassCount !== null && totalClassCount > 10 ? "border-red-500/50 bg-red-500/5" : "border-amber-500/30 bg-amber-500/10"}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className={`h-4 w-4 ${totalClassCount !== null && totalClassCount > 10 ? 'text-red-600' : 'text-amber-600'}`} />
+                        <span className="text-sm font-semibold uppercase tracking-wide text-foreground">
+                          DJI Class Limit Check
+                        </span>
+                      </div>
+                      {totalClassCount !== null && (
+                        <Badge variant={totalClassCount > 10 ? "destructive" : "secondary"} className="text-xs">
+                          {totalClassCount} / 10 classes
+                        </Badge>
+                      )}
+                    </div>
+                    <p className={`text-xs ${totalClassCount !== null && totalClassCount > 10 ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                      {classCountLoading ? (
+                        'Counting classes...'
+                      ) : totalClassCount === null ? (
+                        'Checking class count for DJI compatibility...'
+                      ) : totalClassCount > 10 ? (
+                        `⚠️ ERROR: Your dataset has ${totalClassCount} classes, but DJI drone models support a maximum of 10 classes. Please reduce the number of classes before training.`
+                      ) : (
+                        `✓ Your dataset has ${totalClassCount} ${totalClassCount === 1 ? 'class' : 'classes'}, which is within the DJI limit of 10 classes.`
+                      )}
+                    </p>
+                    {totalClassCount !== null && totalClassCount > 10 && (
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <p className="font-medium">Options to fix this:</p>
+                        <ul className="list-disc list-inside space-y-0.5 pl-2">
+                          <li>Merge similar classes into broader categories</li>
+                          <li>Split your dataset into multiple models, each with ≤10 classes</li>
+                          <li>Remove less important classes from your annotation files</li>
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Class conflict checker */}
               {selectedDatasets.length >= 2 && (
                 <Card className="border-border/60">
@@ -1891,14 +1985,20 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Size</Label>
-                          <Select value={modelSettings.mmyoloSize || 's'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloSize: v }))}>
-                            <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
-                            <SelectContent className="bg-background border shadow-md z-[70]">
-                              {MMYOLO_SIZES.map(sz => (
-                                <SelectItem key={sz} value={sz}>{LABEL_FOR_SIZE[sz] ?? sz}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          {deployTarget === 'edge-drone' ? (
+                            <div className="h-8 text-xs bg-muted border rounded-md px-3 flex items-center text-muted-foreground">
+                              Small (DJI Required)
+                            </div>
+                          ) : (
+                            <Select value={modelSettings.mmyoloSize || 's'} onValueChange={(v) => setModelSettings((prev: any) => ({ ...prev, mmyoloSize: v }))}>
+                              <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                              <SelectContent className="bg-background border shadow-md z-[70]">
+                                {MMYOLO_SIZES.map(sz => (
+                                  <SelectItem key={sz} value={sz}>{LABEL_FOR_SIZE[sz] ?? sz}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Epochs</Label>
