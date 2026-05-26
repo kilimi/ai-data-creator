@@ -11,6 +11,24 @@ from lai.paths import _candidate_repo_root, bundle_data_dir, get_bundle_root
 from lai.uninstall import run_uninstall
 from lai.wizard import run_wizard
 
+
+def _guided_setup_done(root: Path) -> bool:
+    """Return True when guided install has created a usable .env."""
+    env_p = root / ".env"
+    if not env_p.is_file():
+        return False
+    try:
+        for line in env_p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith("LAI_DATA_DIR="):
+                value = s.split("=", 1)[1].strip().strip('"').strip("'")
+                return bool(value)
+    except OSError:
+        return False
+    return False
+
 def _hint_guided_install(root: Path) -> None:
     if _guided_setup_done(root):
         return
