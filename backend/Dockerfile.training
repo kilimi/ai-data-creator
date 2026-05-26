@@ -23,10 +23,15 @@ RUN pip install --upgrade pip setuptools wheel \
  && pip install --default-timeout=1000 --retries 5 \
         --prefix=/install -r /tmp/req.txt \
  && pip install --default-timeout=1000 --retries 5 \
-        --prefix=/install 'ultralytics>=8.0.0' 'opencv-python-headless>=4.7.0' \
-     'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' \
+        --prefix=/install 'ultralytics>=8.0.0' --no-deps \
  && pip install --default-timeout=1000 --retries 5 \
-     --prefix=/install 'openmim>=0.3.9'
+        --prefix=/install \
+        'opencv-python-headless>=4.7.0' \
+        'matplotlib>=3.3.0' 'pillow>=7.1.2' 'pyyaml>=5.3.1' 'requests>=2.23.0' \
+        'scipy>=1.4.1' 'psutil' 'polars' 'ultralytics-thop>=2.0.0' \
+        'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' \
+ && pip install --default-timeout=1000 --retries 5 \
+        --prefix=/install 'openmim>=0.3.9'
 
 # ---------- Stage 2: runtime ----------
 FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime AS runtime
@@ -47,6 +52,17 @@ WORKDIR /app
 
 COPY --from=builder /install /opt/lai
 COPY . .
+
+# `pip install ultralytics` (older builds) pulled torch 2.x+cu130 into /opt/lai via PYTHONPATH,
+# shadowing the CUDA 12.1 PyTorch from the base image. nvidia-smi still works, but
+# torch.cuda.is_available() is False and YOLO training silently falls back to CPU.
+RUN rm -rf \
+      /opt/lai/lib/python3.10/site-packages/torch \
+      /opt/lai/lib/python3.10/site-packages/torchvision \
+      /opt/lai/lib/python3.10/site-packages/torchgen \
+      /opt/lai/lib/python3.10/site-packages/functorch \
+      /opt/lai/lib/python3.10/site-packages/torch-*.dist-info \
+      /opt/lai/lib/python3.10/site-packages/torchvision-*.dist-info
 
 ENV PYTHONNOUSERSITE=1
 

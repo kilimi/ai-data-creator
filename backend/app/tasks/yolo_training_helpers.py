@@ -534,11 +534,22 @@ def build_yolo_training_args(
     try:
         import torch
         if device != 'cpu' and not torch.cuda.is_available():
-            device = 'cpu'
+            cuda_err = ""
+            if hasattr(torch.cuda, "get_device_capability"):
+                try:
+                    torch.cuda.is_available()
+                except Exception as exc:
+                    cuda_err = f" ({exc})"
             logger.warning(
-                "CUDA not available (e.g. CUDA_VISIBLE_DEVICES is empty or PyTorch has no GPU). "
-                "Using device='cpu'. Set CUDA_VISIBLE_DEVICES=0 in the celery_worker environment if you expect a GPU."
+                "CUDA not available for YOLO training%s. torch=%s at %s. "
+                "Using device='cpu'. If nvidia-smi works in celery_worker, rebuild the "
+                "training image (Dockerfile.training) so /opt/lai does not shadow the "
+                "base CUDA PyTorch wheel, and set CUDA_VISIBLE_DEVICES=0.",
+                cuda_err,
+                getattr(torch, "__version__", "?"),
+                getattr(torch, "__file__", "?"),
             )
+            device = 'cpu'
     except Exception:
         pass
     train_args = {
