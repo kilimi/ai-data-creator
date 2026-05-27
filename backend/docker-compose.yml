@@ -7,6 +7,9 @@ services:
     image: ${LAI_BACKEND_IMAGE:-lai-backend:local}
     build:
       context: .
+      args:
+        # MMYOLO conda env is copied from this image (build celery_worker first).
+        CELERY_IMAGE: ${LAI_CELERY_IMAGE:-lai-celery:local}
     volumes:
       # Host backend code: optional bind via backend/docker-compose.code-mount.yml + COMPOSE_FILE (see install.sh).
       # Host data root: set LAI_DATA_DIR via scripts/install.sh (default ../.lai-data relative to this file = repo .lai-data)
