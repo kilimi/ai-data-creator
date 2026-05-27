@@ -10,7 +10,7 @@ from app.models import Task as TaskModel
 
 logger = logging.getLogger(__name__)
 
-MMYOLO_PYTHON = os.environ.get("MMYOLO_PYTHON", "/opt/mmyolo-venv/bin/python")
+MMYOLO_PYTHON = os.environ.get("MMYOLO_PYTHON", "/opt/conda/envs/mmyolo/bin/python")
 
 
 def _ultralytics_class(class_name: str, fallback_paths: tuple) -> type:
