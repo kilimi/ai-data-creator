@@ -16,7 +16,6 @@ import zipfile
 
 from ..database import get_db
 from .. import models
-from ultralytics import YOLO
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

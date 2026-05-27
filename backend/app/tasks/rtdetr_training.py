@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 @celery_app.task(base=TrainingTask, bind=True, name="app.tasks.training_tasks.train_rtdetr_model")
 def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
     """Train RT-DETR (Real-Time Detection Transformer) model."""
-    from ultralytics import RTDETR
+    from app.tasks.training_common import get_ultralytics_rtdetr
+    RTDETR = get_ultralytics_rtdetr()
     from sqlalchemy.orm.attributes import flag_modified
 
     from app.tasks.yolo_training_helpers import get_runtime_training_project

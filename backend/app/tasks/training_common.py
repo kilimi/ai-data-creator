@@ -13,6 +13,58 @@ logger = logging.getLogger(__name__)
 MMYOLO_PYTHON = os.environ.get("MMYOLO_PYTHON", "/opt/mmyolo-venv/bin/python")
 
 
+def _ultralytics_class(class_name: str, fallback_paths: tuple) -> type:
+    """
+    Import a named class from the ultralytics package with version-robust fallbacks.
+
+    Tries `from ultralytics import <class_name>` first, then each path in
+    `fallback_paths` as `from <path> import <class_name>`.
+    """
+    import importlib
+    try:
+        mod = importlib.import_module("ultralytics")
+        cls = getattr(mod, class_name, None)
+        if cls is not None:
+            return cls
+    except Exception:
+        pass
+    for mod_path in fallback_paths:
+        try:
+            mod = importlib.import_module(mod_path)
+            cls = getattr(mod, class_name, None)
+            if cls is not None:
+                return cls
+        except Exception:
+            pass
+    raise ImportError(
+        f"Cannot import {class_name} from ultralytics. "
+        "Check that ultralytics is properly installed in this environment."
+    )
+
+
+def get_ultralytics_yolo():
+    """Return the Ultralytics YOLO class, trying multiple import paths."""
+    return _ultralytics_class(
+        "YOLO",
+        (
+            "ultralytics.models.yolo.model",
+            "ultralytics.models.yolo",
+            "ultralytics.models",
+        ),
+    )
+
+
+def get_ultralytics_rtdetr():
+    """Return the Ultralytics RTDETR class, trying multiple import paths."""
+    return _ultralytics_class(
+        "RTDETR",
+        (
+            "ultralytics.models.rtdetr",
+            "ultralytics.models",
+        ),
+    )
+
+
 class TrainingTask(Task):
     """Base task for training with progress tracking."""
 

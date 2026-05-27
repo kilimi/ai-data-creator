@@ -524,7 +524,8 @@ async def _read_import_classes(classes: Optional[UploadFile]) -> List[str]:
 def _extract_ultralytics_model_info(model_path: Path) -> Dict[str, Any]:
     """Extract class names and image size from Ultralytics YOLO model."""
     try:
-        from ultralytics import YOLO
+        from app.tasks.training_common import get_ultralytics_yolo
+        YOLO = get_ultralytics_yolo()
 
         model = YOLO(str(model_path))
         class_names = _normalize_class_names(getattr(model, "names", []))
@@ -1281,9 +1282,10 @@ async def train_yolo_model_task(
         
         # Import ultralytics and train
         try:
-            from ultralytics import YOLO
-        except ImportError:
-            raise Exception("ultralytics package not installed. Install with: pip install ultralytics")
+            from app.tasks.training_common import get_ultralytics_yolo
+            YOLO = get_ultralytics_yolo()
+        except ImportError as _e:
+            raise Exception(f"ultralytics YOLO could not be imported: {_e}")
         
         # Initialize model
         model_type = training_config.get('model_type', 'yolo11n-seg.pt')
@@ -2346,7 +2348,7 @@ async def list_checkpoints(task_id: int, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
     
-    if task.task_type not in ['yolo_training', 'training']:
+    if task.task_type not in ['yolo_training', 'training', 'mmyolo_training']:
         raise HTTPException(status_code=400, detail="Task is not a training task")
     
     task_metadata = task.task_metadata or {}
@@ -2404,7 +2406,7 @@ async def list_checkpoints(task_id: int, db: Session = Depends(get_db)):
         weights_dir = Path(results_dir) / "weights"
         if weights_dir.exists():
             # Look for epoch checkpoints (e.g., epoch10.pt, epoch20.pt)
-            for checkpoint_file in weights_dir.glob("*.pt"):
+            for checkpoint_file in list(weights_dir.glob("*.pt")) + list(weights_dir.glob("*.pth")):
                 if checkpoint_file.name not in checkpoint_names_seen:
                     # Try to extract epoch number from filename
                     epoch_match = re.search(r'epoch(\d+)', checkpoint_file.name, re.IGNORECASE)
@@ -2423,7 +2425,7 @@ async def list_checkpoints(task_id: int, db: Session = Depends(get_db)):
     if yolo_results_dir:
         yolo_weights_dir = Path(yolo_results_dir) / "weights"
         if yolo_weights_dir.exists():
-            for checkpoint_file in yolo_weights_dir.glob("*.pt"):
+            for checkpoint_file in list(yolo_weights_dir.glob("*.pt")) + list(yolo_weights_dir.glob("*.pth")):
                 if checkpoint_file.name not in checkpoint_names_seen:
                     # Try to extract epoch number from filename
                     epoch_match = re.search(r'epoch(\d+)', checkpoint_file.name, re.IGNORECASE)
@@ -2461,7 +2463,7 @@ async def download_checkpoint(
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
     
-    if task.task_type not in ['yolo_training', 'training']:
+    if task.task_type not in ['yolo_training', 'training', 'mmyolo_training']:
         raise HTTPException(status_code=400, detail="Task is not a training task")
     
     task_metadata = task.task_metadata or {}
@@ -2491,25 +2493,29 @@ async def download_checkpoint(
         if weights_dir.exists():
             # Try exact match first
             potential_path = weights_dir / checkpoint
-            if potential_path.exists() and potential_path.suffix == '.pt':
+            if potential_path.exists() and potential_path.suffix in {'.pt', '.pth'}:
                 model_path = potential_path
             else:
-                # Try with .pt extension if not provided
-                potential_path = weights_dir / f"{checkpoint}.pt"
-                if potential_path.exists():
-                    model_path = potential_path
+                # Try with common extensions if not provided
+                for ext in ('.pt', '.pth'):
+                    potential = weights_dir / f"{checkpoint}{ext}"
+                    if potential.exists():
+                        model_path = potential
+                        break
     
     # If not found in expected location, check YOLO location
     if (not model_path or not model_path.exists()) and yolo_results_dir:
         yolo_weights_dir = Path(yolo_results_dir) / "weights"
         if yolo_weights_dir.exists():
             potential_path = yolo_weights_dir / checkpoint
-            if potential_path.exists() and potential_path.suffix == '.pt':
+            if potential_path.exists() and potential_path.suffix in {'.pt', '.pth'}:
                 model_path = potential_path
             else:
-                potential_path = yolo_weights_dir / f"{checkpoint}.pt"
-                if potential_path.exists():
-                    model_path = potential_path
+                for ext in ('.pt', '.pth'):
+                    potential = yolo_weights_dir / f"{checkpoint}{ext}"
+                    if potential.exists():
+                        model_path = potential
+                        break
     
     if not model_path or not model_path.exists():
         raise HTTPException(
@@ -2588,7 +2594,7 @@ async def test_training_model_inference(
         if not task:
             raise HTTPException(status_code=404, detail="Training task not found")
         
-        if task.task_type not in ['yolo_training', 'training']:
+        if task.task_type not in ['yolo_training', 'training', 'mmyolo_training']:
             raise HTTPException(status_code=400, detail="Task is not a training task")
         
         if task.status != 'completed':
@@ -2599,32 +2605,151 @@ async def test_training_model_inference(
         
         # Get model path based on checkpoint
         task_metadata = task.task_metadata or {}
-        model_path = None
-        
-        if checkpoint == "best":
-            model_path = task_metadata.get('best_model')
-        elif checkpoint == "last":
-            model_path = task_metadata.get('last_model')
-        elif task_metadata.get('results_dir'):
-            weights_dir = Path(task_metadata['results_dir']) / "weights"
-            if weights_dir.exists():
-                potential_path = weights_dir / checkpoint
-                if potential_path.exists() and potential_path.suffix == '.pt':
-                    model_path = str(potential_path)
-                else:
-                    potential_path = weights_dir / f"{checkpoint}.pt"
-                    if potential_path.exists():
+        is_mmyolo = task.task_type == 'mmyolo_training'
+
+        # --- MMYOLO: use the dedicated resolver (handles .pth naming conventions) ---
+        if is_mmyolo:
+            from app.tasks.mmyolo_evaluation import resolve_mmyolo_checkpoint
+            model_path = resolve_mmyolo_checkpoint(task_metadata, checkpoint)
+            if not model_path or not Path(model_path).exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model checkpoint '{checkpoint}' not found for task {task_id}. "
+                           f"Looked in results_dir='{task_metadata.get('results_dir')}'. "
+                           f"best_model='{task_metadata.get('best_model')}'"
+                )
+        else:
+            model_path = None
+            if checkpoint == "best":
+                model_path = task_metadata.get('best_model')
+            elif checkpoint == "last":
+                model_path = task_metadata.get('last_model')
+            elif task_metadata.get('results_dir'):
+                weights_dir = Path(task_metadata['results_dir']) / "weights"
+                if weights_dir.exists():
+                    potential_path = weights_dir / checkpoint
+                    if potential_path.exists() and potential_path.suffix in {'.pt', '.pth'}:
                         model_path = str(potential_path)
-        
-        if not model_path or not Path(model_path).exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Model checkpoint '{checkpoint}' not found for task {task_id}"
-            )
+                    else:
+                        for ext in ('.pt', '.pth'):
+                            candidate = weights_dir / f"{checkpoint}{ext}"
+                            if candidate.exists():
+                                model_path = str(candidate)
+                                break
+
+            if not model_path or not Path(model_path).exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model checkpoint '{checkpoint}' not found for task {task_id}"
+                )
         
         # Get class names from task metadata
         class_names = task_metadata.get('class_names', [])
-        
+
+        # ── MMYOLO inference — runs directly in the backend via /opt/mmyolo-venv ──
+        # The backend image now includes a CPU MMYOLO venv so inference is instant
+        # and never blocks behind a training job running in celery_worker.
+        if is_mmyolo:
+            from app.tasks.mmyolo_evaluation import (
+                MMYOLO_INFERENCE_SCRIPT,
+                resolve_mmyolo_config_path,
+                _build_mmyolo_eval_env,
+            )
+            from app.tasks.training_common import MMYOLO_PYTHON
+
+            config_path = resolve_mmyolo_config_path(task_id, task_metadata)
+            if not config_path:
+                raise HTTPException(
+                    status_code=400,
+                    detail="MMYOLO config file not found. Expected at "
+                           f"projects/<project_id>/training/task_{task_id}/mmyolo_config.py"
+                )
+            if not Path(MMYOLO_PYTHON).exists():
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"MMYOLO Python environment not found at {MMYOLO_PYTHON}. "
+                           "Rebuild the backend image to include the MMYOLO venv."
+                )
+
+            content = await image.read()
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_img:
+                tmp_img_path = tmp_img.name
+                tmp_img.write(content)
+
+            try:
+                output_dir = Path(tempfile.gettempdir()) / f"mmyolo_inf_{uuid.uuid4().hex[:8]}"
+                output_dir.mkdir(exist_ok=True)
+                input_json = output_dir / "input.json"
+                output_json_path = output_dir / "output.json"
+
+                input_json.write_text(
+                    json.dumps([{"image_id": 0, "path": tmp_img_path}]), encoding="utf-8"
+                )
+                env = _build_mmyolo_eval_env(
+                    device="cpu",  # backend container is CPU-only
+                    dji_repo_dir=task_metadata.get("dji_repo_dir"),
+                )
+                cmd = [
+                    MMYOLO_PYTHON,
+                    str(MMYOLO_INFERENCE_SCRIPT),
+                    "--config", config_path,
+                    "--checkpoint", model_path,
+                    "--input-json", str(input_json),
+                    "--output-json", str(output_json_path),
+                    "--num-classes", str(len(class_names)),
+                    "--conf", "0.25",
+                    "--device", "cpu",
+                ]
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, env=env, cwd=str(Path.cwd())
+                )
+                if proc.returncode != 0:
+                    err = (proc.stderr or proc.stdout or "").strip()[-1500:]
+                    raise HTTPException(status_code=500, detail=f"MMYOLO inference failed: {err}")
+
+                preds_raw = []
+                if output_json_path.exists():
+                    preds_raw = json.loads(output_json_path.read_text(encoding="utf-8"))
+
+                predictions = []
+                for p in preds_raw:
+                    bbox_xyxy = p.get("bbox", [])
+                    if len(bbox_xyxy) == 4:
+                        x1, y1, x2, y2 = bbox_xyxy
+                        bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
+                    else:
+                        bbox_xywh = []
+                    class_id = p.get("class_id", 0)
+                    class_name = (
+                        class_names[class_id] if class_id < len(class_names)
+                        else f"class_{class_id}"
+                    )
+                    predictions.append({
+                        "bbox": bbox_xywh,
+                        "confidence": float(p.get("confidence", 0)),
+                        "class_id": class_id,
+                        "class": class_name,
+                        "segmentation": p.get("segmentation", []),
+                    })
+
+                static_dir = Path("static/inference_results")
+                static_dir.mkdir(parents=True, exist_ok=True)
+                annotated_filename = f"annotated_{task_id}_{uuid.uuid4().hex[:8]}.jpg"
+                import shutil as _shutil
+                _shutil.copy2(tmp_img_path, str(static_dir / annotated_filename))
+
+                return JSONResponse({
+                    "success": True,
+                    "predictions": predictions,
+                    "image_url": f"/static/inference_results/{annotated_filename}",
+                    "model_path": model_path,
+                })
+            finally:
+                os.unlink(tmp_img_path)
+                import shutil as _shutil
+                _shutil.rmtree(str(output_dir), ignore_errors=True)
+
+        # ── Ultralytics YOLO inference (regular training tasks) ─────────────────
         # Save uploaded image to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image:
             tmp_image_path = tmp_image.name
@@ -2642,10 +2767,21 @@ async def test_training_model_inference(
             annotated_image_path = output_dir / "annotated.jpg"
             
             # Generate the inference script using YOLO
-            inference_script = """from ultralytics import YOLO
+            inference_script = """import importlib, sys
+
+def _load_yolo():
+    for _path in ("ultralytics", "ultralytics.models.yolo.model", "ultralytics.models.yolo", "ultralytics.models"):
+        try:
+            _m = importlib.import_module(_path)
+            return _m.YOLO
+        except Exception:
+            pass
+    raise ImportError("Cannot import YOLO from ultralytics")
+
+YOLO = _load_yolo()
+
 import cv2
 import json
-import sys
 import numpy as np
 
 # Main inference

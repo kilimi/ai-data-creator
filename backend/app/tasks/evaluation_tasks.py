@@ -356,8 +356,8 @@ def evaluate_model(
         }
         db.commit()
         
-        # Import YOLO here to avoid loading it at module level
-        from ultralytics import YOLO
+        from app.tasks.training_common import get_ultralytics_yolo
+        YOLO = get_ultralytics_yolo()
         
         # Get the training task
         training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
@@ -1375,3 +1375,95 @@ def update_parent_task_status(db, parent_task_id: int):
         
     except Exception as e:
         logger.error(f"Error updating parent task {parent_task_id}: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MMYOLO single-image test inference (runs in celery_worker where MMYOLO lives)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.tasks.evaluation_tasks.mmyolo_test_inference", ignore_result=False)
+def mmyolo_test_inference(
+    image_path: str,
+    config_path: str,
+    checkpoint_path: str,
+    class_names: list,
+    device: str = "cpu",
+    dji_repo_dir: Optional[str] = None,
+    conf_threshold: float = 0.25,
+) -> dict:
+    """
+    Run MMYOLO inference on a single image inside the celery_worker container
+    (where /opt/mmyolo-venv/bin/python exists).
+
+    Returns a dict:  {"predictions": [...], "error": None | str}
+    """
+    from app.tasks.mmyolo_evaluation import (
+        MMYOLO_INFERENCE_SCRIPT,
+        _build_mmyolo_eval_env,
+    )
+    from app.tasks.training_common import MMYOLO_PYTHON
+    import json
+    import subprocess
+    import tempfile
+
+    if not Path(MMYOLO_PYTHON).exists():
+        return {"predictions": [], "error": f"MMYOLO Python not found at {MMYOLO_PYTHON}"}
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="mmyolo_test_inf_") as tmp:
+            tmp_path = Path(tmp)
+            input_json = tmp_path / "input.json"
+            output_json = tmp_path / "output.json"
+
+            input_json.write_text(
+                json.dumps([{"image_id": 0, "path": str(image_path)}]),
+                encoding="utf-8",
+            )
+            env = _build_mmyolo_eval_env(device=device, dji_repo_dir=dji_repo_dir)
+            cmd = [
+                MMYOLO_PYTHON,
+                str(MMYOLO_INFERENCE_SCRIPT),
+                "--config", str(config_path),
+                "--checkpoint", str(checkpoint_path),
+                "--input-json", str(input_json),
+                "--output-json", str(output_json),
+                "--num-classes", str(len(class_names)),
+                "--conf", str(conf_threshold),
+                "--device", device if device not in ("", None) else "cpu",
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip()[-2000:]
+                return {"predictions": [], "error": f"MMYOLO subprocess failed: {err}"}
+
+            preds_raw = []
+            if output_json.exists():
+                preds_raw = json.loads(output_json.read_text(encoding="utf-8"))
+
+            predictions = []
+            for p in preds_raw:
+                bbox_xyxy = p.get("bbox", [])
+                if len(bbox_xyxy) == 4:
+                    x1, y1, x2, y2 = bbox_xyxy
+                    bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
+                else:
+                    bbox_xywh = []
+                class_id = p.get("class_id", 0)
+                class_name = (
+                    class_names[class_id]
+                    if class_id < len(class_names)
+                    else f"class_{class_id}"
+                )
+                predictions.append({
+                    "bbox": bbox_xywh,
+                    "confidence": float(p.get("confidence", 0)),
+                    "class_id": class_id,
+                    "class": class_name,
+                    "segmentation": p.get("segmentation", []),
+                })
+
+            return {"predictions": predictions, "error": None}
+
+    except Exception as exc:
+        logger.error("mmyolo_test_inference task error: %s", exc, exc_info=True)
+        return {"predictions": [], "error": str(exc)}

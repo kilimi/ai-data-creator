@@ -2,7 +2,11 @@
 projects/
 data/
 ai_models/
+app/ai_models/
 python_scripts/
+
+# SAM 3 is a separate image (sam_service/Dockerfile); never bake weights into backend
+sam_service/
 
 # Python cache
 __pycache__/
@@ -15,13 +19,17 @@ __pycache__/
 venv/
 env/
 ENV/
+.lai/
+.lai/**
 
-# IDEs
+# IDEs / local shell history
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.bash_history
+.config/
 
 # Git
 .git/
@@ -31,8 +39,9 @@ ENV/
 .pytest_cache/
 .coverage
 htmlcov/
+test_mmyolo_dji_config.py
 
-# Documentation
+# Documentation (keep README if needed at runtime — it is not)
 *.md
 !README.md
 
@@ -46,14 +55,22 @@ htmlcov/
 # Migrations (already in image)
 migrations/versions/*.pyc
 
-# AI Models (should be downloaded separately or mounted)
-ai_models/
+# AI Models (download via `make download-models` or mount LAI_DATA_DIR volumes)
+models/
 *.pt
 *.onnx
 *.pth
 *.h5
+yolov8_test.pth
 
-# Temporary files
+# Generated / runtime artifacts
 tmp/
 temp/
 *.tmp
+backups/
+runs/
+static/inference_results/
+
+# Other Dockerfiles / training-only assets
+Dockerfile.training
+Dockerfile.inpainting.stable

@@ -220,10 +220,40 @@ def _stream_training_output(
 
 
 def _find_best_model(weights_dir: Path) -> Optional[str]:
-    for candidate in [weights_dir / "best.pth", weights_dir / "epoch_last.pth"]:
-        if candidate.exists():
-            return str(candidate)
-    return None
+    # Explicit well-known name
+    if (weights_dir / "best.pth").exists():
+        return str(weights_dir / "best.pth")
+
+    # MMYOLO saves best checkpoint as best_coco_bbox_mAP_epoch_N.pth (or similar best_*.pth)
+    best_candidates = sorted(
+        weights_dir.glob("best_*.pth"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if best_candidates:
+        return str(best_candidates[0])
+
+    # Fallback: use last_checkpoint pointer file (MMEngine standard)
+    last_cp_file = weights_dir / "last_checkpoint"
+    if last_cp_file.exists():
+        try:
+            name = last_cp_file.read_text(encoding="utf-8").strip()
+            candidate = Path(name) if Path(name).is_absolute() else weights_dir / name
+            if candidate.exists():
+                return str(candidate)
+        except Exception:
+            pass
+
+    # Final fallback: epoch_last.pth or most recent epoch_*.pth
+    if (weights_dir / "epoch_last.pth").exists():
+        return str(weights_dir / "epoch_last.pth")
+
+    epoch_candidates = sorted(
+        weights_dir.glob("epoch_*.pth"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return str(epoch_candidates[0]) if epoch_candidates else None
 
 
 def _mark_task_failed(db, task_id: int, exc: Exception) -> None:

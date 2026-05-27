@@ -2514,14 +2514,30 @@ async def get_dataset_annotation_content(
                     }
 
                     # Handle segmentation - coordinates are already stored as pixels.
-                    # COCO format expects list of polygons [[x1,y1,x2,y2,...]]; normalize if stored as flat [x1,y1,...].
+                    # COCO expects either:
+                    #   - polygon list: [[x1,y1,x2,y2,...], ...]
+                    #   - RLE dict
+                    # Stored data may be flat [x1,y1,...] or nested [[...]].
                     seg_raw = ann.get("segmentation")
-                    if seg_raw and isinstance(seg_raw, list) and len(seg_raw) >= 6:
-                        first = seg_raw[0]
-                        if isinstance(first, (int, float)):
-                            coco_ann["segmentation"] = [seg_raw]
-                        else:
+                    if seg_raw:
+                        if isinstance(seg_raw, dict):
+                            # RLE payload
                             coco_ann["segmentation"] = seg_raw
+                        elif isinstance(seg_raw, list):
+                            first = seg_raw[0] if len(seg_raw) > 0 else None
+                            if isinstance(first, (int, float)):
+                                # Flat polygon -> wrap once for COCO polygon format
+                                if len(seg_raw) >= 6:
+                                    coco_ann["segmentation"] = [seg_raw]
+                            else:
+                                # Already polygon list; keep only valid polygons
+                                valid_polys = [
+                                    poly
+                                    for poly in seg_raw
+                                    if isinstance(poly, list) and len(poly) >= 6
+                                ]
+                                if valid_polys:
+                                    coco_ann["segmentation"] = valid_polys
 
                     # Handle bbox - coordinates are stored as pixels, use directly
                     if ann.get("bbox") and len(ann["bbox"]) == 4:
@@ -2532,12 +2548,13 @@ async def get_dataset_annotation_content(
                         # Mask-only: ensure area/iscrowd and bbox from polygon bounds
                         coco_ann["area"] = ann.get("area") or 0
                         coco_ann["iscrowd"] = 0
-                        flat = [x for p in coco_ann["segmentation"] for x in p]
-                        if len(flat) >= 4:
-                            xs, ys = flat[0::2], flat[1::2]
-                            min_x, max_x = min(xs), max(xs)
-                            min_y, max_y = min(ys), max(ys)
-                            coco_ann["bbox"] = [min_x, min_y, max_x - min_x, max_y - min_y]
+                        if isinstance(coco_ann["segmentation"], list):
+                            flat = [x for p in coco_ann["segmentation"] for x in p]
+                            if len(flat) >= 4:
+                                xs, ys = flat[0::2], flat[1::2]
+                                min_x, max_x = min(xs), max(xs)
+                                min_y, max_y = min(ys), max(ys)
+                                coco_ann["bbox"] = [min_x, min_y, max_x - min_x, max_y - min_y]
 
                     coco_data["annotations"].append(coco_ann)
         

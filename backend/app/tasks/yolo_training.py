@@ -263,7 +263,8 @@ class YOLOTrainingTask(TrainingTask):
     
     def _load_model(self):
         """Load YOLO model"""
-        from ultralytics import YOLO
+        from app.tasks.training_common import get_ultralytics_yolo
+        YOLO = get_ultralytics_yolo()
 
         model_type = self.training_config.get('model_type', 'yolo11n-seg.pt')
         resume_from = self.training_config.get('resume_from')
