@@ -34,10 +34,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,  # Only fetch one task at a time
     worker_max_tasks_per_child=1,  # Restart worker after each task (to clear GPU memory)
     
-    # Queue configuration - single queue for sequential processing
+    # Queue configuration — default + per-runtime-profile queues
     task_default_queue='training',
     task_queues=(
         Queue('training', routing_key='training'),
+        Queue('ultralytics', routing_key='ultralytics'),
+        Queue('mmyolo', routing_key='mmyolo'),
     ),
     
     # Result backend settings
@@ -48,7 +50,13 @@ celery_app.conf.update(
     
     # Task routing
     task_routes={
+        'app.tasks.training_tasks.train_yolo_model': {'queue': 'ultralytics'},
+        'app.tasks.training_tasks.train_rtdetr_model': {'queue': 'ultralytics'},
+        'app.tasks.training_tasks.train_mmyolo_model': {'queue': 'mmyolo'},
         'app.tasks.training_tasks.*': {'queue': 'training'},
+        'app.tasks.yolo_training.*': {'queue': 'ultralytics'},
+        'app.tasks.rtdetr_training.*': {'queue': 'ultralytics'},
+        'app.tasks.mmyolo_training.*': {'queue': 'mmyolo'},
         'app.tasks.evaluation_tasks.*': {'queue': 'training'},
         'app.tasks.augmentation_tasks.*': {'queue': 'training'},
         'app.tasks.dataset_tasks.*': {'queue': 'training'},
@@ -209,6 +217,23 @@ def _upsert_worker_gpu_status_db() -> None:
             db.close()
     except Exception as e:
         logger.warning("Failed to persist worker GPU status to DB: %s", e)
+
+
+@worker_process_init.connect
+def register_ml_backends_on_worker_start(sender=None, **kwargs):
+    """Ensure model backend registry is populated (workers do not import main.py)."""
+    try:
+        from app.ml.backends import register_all_backends
+
+        register_all_backends()
+        from app.ml.registry import list_backends
+
+        logger.info(
+            "Registered ML backends: %s",
+            ", ".join(b.id for b in list_backends()) or "(none)",
+        )
+    except Exception as e:
+        logger.error("Failed to register ML backends on worker start: %s", e, exc_info=True)
 
 
 @worker_process_init.connect

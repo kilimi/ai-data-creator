@@ -17,7 +17,7 @@ services:
       context: .
       dockerfile: deploy/Dockerfile.frontend
       args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:9999}
+        VITE_API_URL: ${VITE_API_URL:-SAME_ORIGIN}
     ports:
       - "${WEB_PORT:-8089}:80"
     depends_on:

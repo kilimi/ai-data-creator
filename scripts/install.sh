@@ -87,7 +87,7 @@ echo ""
 # --- Defaults ---
 DEFAULT_DATA="$HOME/lai-data"
 DEFAULT_WEB_PORT="8089"
-DEFAULT_API_URL="http://localhost:9999"
+DEFAULT_API_URL="SAME_ORIGIN"
 
 prompt() {
   local text="$1"

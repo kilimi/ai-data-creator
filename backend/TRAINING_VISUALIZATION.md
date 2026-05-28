@@ -3,6 +3,10 @@
 ## Overview
 
 During model training, the system automatically creates visualization examples of your training data with annotations. This helps verify that:
+
+### MMYOLO note
+
+MMYOLO does **not** use a separate label format. Training reads the same **COCO JSON** files written under `dataset/annotations/` (`train.json`, `val.json`). The **Training examples** panel draws boxes from that COCO export (not from MMYOLO). After training, MMYOLO can also write validation prediction overlays under `training/vis_data/`; the app builds an optional **Val predictions (MMYOLO)** mosaic from those files when present.
 - Images are loaded correctly
 - Annotations are properly formatted
 - Class labels are correct

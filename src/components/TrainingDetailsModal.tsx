@@ -24,6 +24,7 @@ import { useApi } from "@/hooks/use-api";
 const TrainingMetricsCharts = lazy(
   () => import("@/components/TrainingMetricsCharts")
 );
+import { TrainingExamplesGallery } from "@/components/TrainingExamplesGallery";
 import { formatDuration } from "@/utils/formatDuration";
 import { StatusBadge } from "@/components/StatusBadge";
 import { getApiBaseUrl } from "@/config/api";
@@ -184,7 +185,6 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
   const [error, setError] = useState<string | null>(null);
   const [showAllSettings, setShowAllSettings] = useState(false);
   const [showStatusReason, setShowStatusReason] = useState(false);
-  const [expandedExamples, setExpandedExamples] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState("overview");
 
   const fetchTaskDetails = useCallback(async (signal?: AbortSignal) => {
@@ -315,16 +315,6 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
     if (augs.flipud) out.push("Flip UD");
     return out;
   }, [augs]);
-
-  const resolveExampleImageUrl = useCallback((url: string): string => {
-    if (!url) return url;
-    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
-      return url;
-    }
-    const base = getApiBaseUrl().replace(/\/$/, '');
-    const path = url.startsWith('/') ? url : `/${url}`;
-    return `${base}${path}`;
-  }, []);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -698,41 +688,11 @@ export function TrainingDetailsModal({ open, onOpenChange, taskId }: TrainingDet
                 {metadata?.example_images && Object.keys(metadata.example_images).length > 0 && (
                   <Card className="p-4">
                     <SectionHeading icon={<Images className="w-4 h-4" />}>Training examples</SectionHeading>
-                    <div className="space-y-2">
-                      {(['train', 'val', 'test'] as const).map(split => {
-                        const imageUrl = metadata.example_images?.[split];
-                        const resolvedImageUrl = imageUrl ? resolveExampleImageUrl(imageUrl) : null;
-                        if (!imageUrl) return null;
-                        const isExpanded = expandedExamples.has(split);
-                        return (
-                          <div key={split} className="border border-border rounded-md overflow-hidden">
-                            <button
-                              onClick={() => {
-                                const n = new Set(expandedExamples);
-                                if (n.has(split)) n.delete(split); else n.add(split);
-                                setExpandedExamples(n);
-                              }}
-                              className="w-full flex items-center justify-between bg-muted/30 hover:bg-muted/50 px-3 py-2 transition-colors"
-                            >
-                              <div className="flex items-center gap-2 capitalize text-sm font-medium">
-                                {split}
-                                {metadata.image_counts && (
-                                  <span className="text-xs text-muted-foreground">
-                                    ({metadata.image_counts[split]} images)
-                                  </span>
-                                )}
-                              </div>
-                              {isExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
-                            </button>
-                            {isExpanded && (
-                              <div className="p-3 bg-background flex items-center justify-center">
-                                <img src={resolvedImageUrl || imageUrl} alt={`${split} batch`} className="max-w-full h-auto" style={{ maxHeight: 400 }} />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <TrainingExamplesGallery
+                      taskId={taskId}
+                      exampleImages={metadata.example_images}
+                      imageCounts={metadata.image_counts}
+                    />
                   </Card>
                 )}
               </TabsContent>

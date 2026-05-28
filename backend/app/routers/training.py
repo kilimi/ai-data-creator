@@ -21,6 +21,7 @@ from ..models import Task, Dataset, AnnotationFile, Image, Annotation, Annotatio
 from ..model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
 from app.tasks.yolo_training_helpers import generate_safe_output_filename
 from pydantic import BaseModel, field_validator, model_validator
+from app.ml.dataset import prepare_mmyolo_dataset, prepare_yolo_dataset
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -100,22 +101,7 @@ class RTDETRTrainingRequest(BaseModel):
 
 
 # ── MMYOLO (OpenMMLab RTMDet family) ─────────────────────────────────────────
-
-MMYOLO_VALID_ARCHS: frozenset = frozenset({"yolov8", "rtmdet", "rtmdet-ins", "rtmdet-r"})
-MMYOLO_VALID_SIZES: frozenset = frozenset({"tiny", "s", "m", "l", "x"})
-
-
-def mmyolo_config_name(arch: str, size: str) -> str:
-    """Resolve (arch, size) → MMYolo config identifier used with `mim run mmyolo train`."""
-    if arch not in MMYOLO_VALID_ARCHS:
-        raise ValueError(f"Unknown MMYOLO arch '{arch}'. Valid: {sorted(MMYOLO_VALID_ARCHS)}")
-    if size not in MMYOLO_VALID_SIZES:
-        raise ValueError(f"Unknown MMYOLO size '{size}'. Valid: {sorted(MMYOLO_VALID_SIZES)}")
-    if arch == "yolov8":
-        # Official MMYOLO YOLOv8 config ids.
-        return f"yolov8_{size}_syncbn_fast_8xb16-500e_coco"
-    # Existing RTMDet-family short aliases are preserved for backward compatibility.
-    return f"{arch}_{size}"
+from app.ml.mmyolo_catalog import MMYOLO_VALID_ARCHS, MMYOLO_VALID_SIZES, mmyolo_config_name
 
 
 class MMYOLOTrainingRequest(BaseModel):
@@ -169,312 +155,7 @@ class MMYOLOTrainingRequest(BaseModel):
         return self
 
 
-def prepare_mmyolo_dataset(
-    db,
-    dataset_configs: List[Dict[str, Any]],
-    output_dir: Path,
-    task: str = "detect",
-    remove_images_without_annotations: bool = True,
-) -> Dict[str, Any]:
-    """
-    Prepare COCO JSON format dataset for MMYOLO/RTMDet training.
-
-    Unlike YOLO .txt format, MMYOLO expects COCO JSON files:
-      output_dir/annotations/train.json
-      output_dir/annotations/val.json   (if val split > 0)
-      output_dir/images/train/
-      output_dir/images/val/
-
-    Returns dict with keys:
-      train_json, val_json (optional), class_names, class_count, image_counts
-    """
-    from app.models import Dataset, Image, Annotation, AnnotationClass, AnnotationFile, ImageCollection
-    from app.tasks.yolo_training_helpers import generate_safe_output_filename
-
-    annotations_dir = output_dir / "annotations"
-    train_images_dir = output_dir / "images" / "train"
-    val_images_dir = output_dir / "images" / "val"
-    annotations_dir.mkdir(parents=True, exist_ok=True)
-    train_images_dir.mkdir(parents=True, exist_ok=True)
-    val_images_dir.mkdir(parents=True, exist_ok=True)
-
-    # ── 1. Collect unique class names across all configs ──────────────────────
-    all_classes: set = set()
-    for config in dataset_configs:
-        annotation_file_id = config["annotation_file_id"]
-        ann_classes = db.query(AnnotationClass).filter(
-            AnnotationClass.annotation_file_id == annotation_file_id
-        ).all()
-        if not ann_classes:
-            ann_file = db.query(AnnotationFile).filter(
-                AnnotationFile.dataset_id == config["dataset_id"]
-            ).first()
-            if ann_file:
-                ann_classes = db.query(AnnotationClass).filter(
-                    AnnotationClass.annotation_file_id == ann_file.id
-                ).all()
-        for c in ann_classes:
-            all_classes.add(c.class_name)
-
-    sorted_classes = sorted(all_classes)
-    class_mapping = {name: idx for idx, name in enumerate(sorted_classes)}
-    coco_categories = [
-        {"id": idx + 1, "name": name, "supercategory": "object"}
-        for idx, name in enumerate(sorted_classes)
-    ]
-
-    # ── 2. Build per-split COCO structures ────────────────────────────────────
-    splits_data: Dict[str, Dict] = {
-        "train": {"images": [], "annotations": [], "categories": coco_categories},
-        "val": {"images": [], "annotations": [], "categories": coco_categories},
-    }
-    image_counts = {"train": 0, "val": 0}
-    global_img_id = 1
-    global_ann_id = 1
-    has_any_segmentation = False
-
-    for config in dataset_configs:
-        dataset_id = config["dataset_id"]
-        annotation_file_id = config["annotation_file_id"]
-        image_collection = config.get("image_collection")
-        split_pct = config.get("split", {"train": 80, "val": 20, "test": 0})
-
-        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-        if not dataset:
-            logger.warning(f"Dataset {dataset_id} not found, skipping")
-            continue
-
-        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
-        if image_collection:
-            images_query = images_query.join(Image.collection).filter(
-                ImageCollection.name == image_collection
-            )
-        images = images_query.all()
-
-        if not images:
-            logger.warning(f"No images in dataset {dataset_id}, skipping")
-            continue
-
-        # Optionally filter images without valid annotations
-        if remove_images_without_annotations:
-            needs_seg = task in ("segment", "oriented")
-            filtered = []
-            for img in images:
-                anns = db.query(Annotation).filter(
-                    Annotation.image_id == img.id,
-                    Annotation.annotation_file_id == annotation_file_id,
-                ).all()
-                for a in anns:
-                    has_bbox = a.bbox or (a.bbox_x is not None and a.bbox_width is not None)
-                    has_seg = a.segmentation and len(a.segmentation) > 0
-                    if needs_seg and has_seg and has_bbox:
-                        filtered.append(img)
-                        break
-                    if not needs_seg and has_bbox:
-                        filtered.append(img)
-                        break
-            images = filtered
-
-        if not images:
-            logger.warning(f"No images with valid annotations in dataset {dataset_id}, skipping")
-            continue
-
-        total = len(images)
-        train_n = int(total * split_pct.get("train", 80) / 100)
-        val_n = int(total * split_pct.get("val", 20) / 100)
-
-        split_assignments = (
-            [("train", img) for img in images[:train_n]]
-            + [("val", img) for img in images[train_n: train_n + val_n]]
-        )
-
-        for split_name, image in split_assignments:
-            dst_dir = train_images_dir if split_name == "train" else val_images_dir
-
-            # Copy image file
-            if image.url and image.url.startswith("/static/projects/"):
-                src_path = Path("projects") / image.url.replace("/static/projects/", "")
-            elif image.url and image.url.startswith("projects/"):
-                src_path = Path(image.url)
-            else:
-                src_path = Path("projects") / str(dataset_id) / image.file_name
-
-            safe_filename = generate_safe_output_filename(src_path.name, image.dataset_id)
-            dst_path = dst_dir / safe_filename
-
-            if src_path.exists() and not dst_path.exists():
-                try:
-                    os.link(src_path, dst_path)
-                except OSError:
-                    shutil.copy2(src_path, dst_path)
-
-            # Get image dimensions with fallback to actual file reading
-            img_width = image.width
-            img_height = image.height
-            if not img_width or not img_height or img_width <= 0 or img_height <= 0:
-                try:
-                    from PIL import Image as PILImage
-                    with PILImage.open(dst_path) as pil_img:
-                        img_width, img_height = pil_img.size
-                    logger.info(f"Read image dimensions from file {dst_path}: {img_width}x{img_height}")
-                except Exception as dim_err:
-                    logger.warning(f"Could not read image dimensions for {dst_path}: {dim_err}")
-                    img_width, img_height = 640, 640  # Safe fallback
-            
-            coco_img = {
-                "id": global_img_id,
-                "file_name": safe_filename,
-                "width": img_width,
-                "height": img_height,
-            }
-            splits_data[split_name]["images"].append(coco_img)
-            image_counts[split_name] += 1
-
-            # Annotations
-            anns = db.query(Annotation).filter(
-                Annotation.image_id == image.id,
-                Annotation.annotation_file_id == annotation_file_id,
-            ).all()
-
-            for ann in anns:
-                # Validate category_id before lookup
-                if ann.category_id is None:
-                    logger.warning(f"Annotation {ann.id} has no category_id, skipping")
-                    continue
-                
-                ann_class = db.query(AnnotationClass).filter(
-                    AnnotationClass.annotation_file_id == annotation_file_id,
-                    AnnotationClass.category_id == ann.category_id,
-                ).first()
-                if not ann_class:
-                    logger.warning(
-                        f"No AnnotationClass found for annotation {ann.id} "
-                        f"(category_id={ann.category_id}, annotation_file_id={annotation_file_id})"
-                    )
-                    continue
-                cat_id = class_mapping.get(ann_class.class_name)
-                if cat_id is None:
-                    logger.warning(f"Class name '{ann_class.class_name}' not in class_mapping")
-                    continue
-                coco_cat_id = cat_id + 1  # COCO categories are 1-indexed
-
-                # Extract bbox in [x, y, w, h] COCO format
-                bbox_coco = None
-                if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) == 4:
-                    bbox_coco = [float(v) for v in ann.bbox]
-                elif ann.bbox and isinstance(ann.bbox, dict):
-                    bbox_coco = [
-                        float(ann.bbox.get("x", 0)),
-                        float(ann.bbox.get("y", 0)),
-                        float(ann.bbox.get("width", 0)),
-                        float(ann.bbox.get("height", 0)),
-                    ]
-                elif ann.bbox_x is not None and ann.bbox_width is not None:
-                    bbox_coco = [
-                        float(ann.bbox_x),
-                        float(ann.bbox_y or 0),
-                        float(ann.bbox_width),
-                        float(ann.bbox_height or 0),
-                    ]
-
-                # Segmentation polygon with proper validation
-                seg_poly = None
-                if ann.segmentation and len(ann.segmentation) > 0:
-                    try:
-                        raw = ann.segmentation
-                        # Bounds check before accessing raw[0]
-                        if isinstance(raw, list) and len(raw) > 0:
-                            poly = raw[0] if isinstance(raw[0], list) else raw
-                        else:
-                            poly = raw
-                        
-                        # Validate polygon has enough points and all are numeric
-                        if isinstance(poly, list) and len(poly) >= 6:
-                            # Verify all coordinates are numeric
-                            if all(isinstance(coord, (int, float)) for coord in poly):
-                                seg_poly = [poly]
-                                has_any_segmentation = True
-                            else:
-                                logger.warning(
-                                    f"Annotation {ann.id}: segmentation polygon contains non-numeric values"
-                                )
-                        else:
-                            logger.debug(
-                                f"Annotation {ann.id}: segmentation polygon too short (len={len(poly) if isinstance(poly, list) else 0})"
-                            )
-                    except Exception as seg_err:
-                        logger.warning(f"Annotation {ann.id}: failed to process segmentation: {seg_err}")
-
-                if task == "segment":
-                    if seg_poly is None or bbox_coco is None:
-                        continue
-                elif task == "oriented":
-                    if seg_poly is None:
-                        continue
-                else:  # detect
-                    if bbox_coco is None:
-                        continue
-
-                area = (bbox_coco[2] * bbox_coco[3]) if bbox_coco else 0.0
-                coco_ann: Dict[str, Any] = {
-                    "id": global_ann_id,
-                    "image_id": global_img_id,
-                    "category_id": coco_cat_id,
-                    "bbox": bbox_coco or [0, 0, 0, 0],
-                    "area": area,
-                    "iscrowd": 0,
-                }
-                if seg_poly is not None:
-                    coco_ann["segmentation"] = seg_poly
-                else:
-                    coco_ann["segmentation"] = []
-
-                splits_data[split_name]["annotations"].append(coco_ann)
-                global_ann_id += 1
-
-            global_img_id += 1
-
-    # ── 3. Validate ───────────────────────────────────────────────────────────
-    if not sorted_classes:
-        raise ValueError("No annotation classes found. Make sure your datasets have annotations with classes defined.")
-
-    total_train = len(splits_data["train"]["images"])
-    total_val = len(splits_data["val"]["images"])
-    if total_train == 0 and total_val == 0:
-        raise ValueError("No images were processed. Check that your datasets have images with valid annotations.")
-
-    if task == "segment" and not has_any_segmentation:
-        raise ValueError(
-            "Task 'segment' requires segmentation (polygon) annotations, but none were found. "
-            "Add polygon annotations or switch to task 'detect'."
-        )
-
-    # ── 4. Write JSON files ───────────────────────────────────────────────────
-    train_json_path = annotations_dir / "train.json"
-    with open(train_json_path, "w") as f:
-        json.dump(splits_data["train"], f)
-
-    result: Dict[str, Any] = {
-        "train_json": str(train_json_path),
-        "class_names": sorted_classes,
-        "class_count": len(sorted_classes),
-        "image_counts": image_counts,
-    }
-
-    if total_val > 0:
-        val_json_path = annotations_dir / "val.json"
-        with open(val_json_path, "w") as f:
-            json.dump(splits_data["val"], f)
-        result["val_json"] = str(val_json_path)
-
-    logger.info(
-        f"MMYOLO dataset prepared: {total_train} train, {total_val} val images, "
-        f"{len(sorted_classes)} classes, task={task}"
-    )
-    return result
-
-
-# ── End MMYOLO helpers ────────────────────────────────────────────────────────
+# prepare_mmyolo_dataset -> app.ml.dataset (see app/ml/dataset/)
 
 
 def _normalize_class_names(names: Any) -> List[str]:
@@ -710,495 +391,7 @@ async def import_model(
         raise HTTPException(status_code=500, detail=f"Failed to import model: {exc}") from exc
 
 
-def prepare_yolo_dataset(
-    db: Session,
-    dataset_configs: List[Dict[str, Any]],
-    output_dir: Path,
-    model_type: str = "yolo11n-seg.pt",
-    remove_images_without_annotations: bool = True
-) -> Dict[str, Any]:
-    """
-    Prepare YOLO format dataset from database annotations.
-    
-    Args:
-        db: Database session
-        dataset_configs: List of dataset configurations
-        output_dir: Output directory for the dataset
-        model_type: YOLO model type (e.g., 'yolo11n-seg.pt' for segmentation)
-    
-    Returns:
-        Dict with paths and class names
-    """
-    # Determine if this is a segmentation model
-    is_segmentation_model = '-seg' in model_type.lower()
-    
-    # Track skipped annotations
-    skipped_annotations = {'missing_seg': 0, 'missing_bbox': 0, 'missing_both': 0}
-    
-    # Statistics tracking
-    stats = {
-        'total_images': {"train": 0, "val": 0, "test": 0},
-        'total_annotations': {"train": 0, "val": 0, "test": 0},
-        'annotations_per_class': {},  # Will be filled during processing
-        'images_filtered': 0,  # Images removed due to no valid annotations
-        'images_processed': 0,
-    }
-    
-    # Create directory structure
-    train_images_dir = output_dir / "images" / "train"
-    val_images_dir = output_dir / "images" / "val"
-    test_images_dir = output_dir / "images" / "test"
-    train_labels_dir = output_dir / "labels" / "train"
-    val_labels_dir = output_dir / "labels" / "val"
-    test_labels_dir = output_dir / "labels" / "test"
-    
-    for directory in [train_images_dir, val_images_dir, test_images_dir, 
-                     train_labels_dir, val_labels_dir, test_labels_dir]:
-        directory.mkdir(parents=True, exist_ok=True)
-    
-    # Collect all classes across all datasets
-    all_classes = set()
-    class_mapping = {}
-    
-    # Track annotation types for validation
-    has_segmentation = False
-    has_bbox_only = False
-    
-    # First pass: collect all unique classes
-    for config in dataset_configs:
-        dataset_id = config['dataset_id']
-        annotation_file_id = config['annotation_file_id']
-        
-        logger.info(f"Looking for annotation classes - dataset_id: {dataset_id}, annotation_file_id: {annotation_file_id}")
-        
-        # Get annotation classes
-        annotation_classes = db.query(AnnotationClass).filter(
-            AnnotationClass.annotation_file_id == annotation_file_id
-        ).all()
-        
-        logger.info(f"Found {len(annotation_classes)} annotation classes for annotation_file_id: {annotation_file_id}")
-        
-        if not annotation_classes:
-            # Try to find the annotation file first
-            annotation_file = db.query(AnnotationFile).filter(
-                AnnotationFile.dataset_id == dataset_id
-            ).first()
-            
-            if annotation_file:
-                logger.info(f"Found annotation file with id: {annotation_file.id}, name: {annotation_file.name}")
-                # Retry with the correct ID
-                annotation_classes = db.query(AnnotationClass).filter(
-                    AnnotationClass.annotation_file_id == annotation_file.id
-                ).all()
-                logger.info(f"Found {len(annotation_classes)} annotation classes using annotation_file.id")
-        
-        for ann_class in annotation_classes:
-            all_classes.add(ann_class.class_name)
-            logger.info(f"Added class: {ann_class.class_name}")
-    
-    logger.info(f"Total unique classes found: {len(all_classes)} - {sorted(list(all_classes))}")
-    
-    # Create class mapping (sorted for consistency)
-    sorted_classes = sorted(list(all_classes))
-    class_mapping = {class_name: idx for idx, class_name in enumerate(sorted_classes)}
-    
-    # Process each dataset configuration
-    total_images = {"train": 0, "val": 0, "test": 0}
-    
-    for config in dataset_configs:
-        dataset_id = config['dataset_id']
-        annotation_file_id = config['annotation_file_id']
-        image_collection = config.get('image_collection')
-        split = config.get('split', {'train': 80, 'val': 20, 'test': 0})
-        
-        # Get dataset and images
-        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-        if not dataset:
-            logger.warning(f"Dataset {dataset_id} not found, skipping")
-            continue
-        
-        # Query images, optionally filter by collection
-        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
-        if image_collection:
-            # Filter by collection name through the relationship
-            images_query = images_query.join(Image.collection).filter(
-                ImageCollection.name == image_collection
-            )
-        
-        images = images_query.all()
-        
-        if not images:
-            logger.warning(f"No images found for dataset {dataset_id}, skipping")
-            continue
-        
-        # Filter out images without VALID annotations BEFORE splitting (if flag is set)
-        if remove_images_without_annotations:
-            images_with_annotations = []
-            for img in images:
-                # Get annotations for this image
-                annotations = db.query(Annotation).filter(
-                    Annotation.image_id == img.id,
-                    Annotation.annotation_file_id == annotation_file_id
-                ).all()
-                
-                # Check if ANY annotation meets the requirements
-                has_valid_annotation = False
-                for annotation in annotations:
-                    # For segmentation models, annotation must have BOTH segmentation and bbox
-                    if is_segmentation_model:
-                        has_seg = annotation.segmentation and len(annotation.segmentation) > 0
-                        has_bbox = (annotation.bbox or 
-                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
-                        if has_seg and has_bbox:
-                            has_valid_annotation = True
-                            break
-                    else:
-                        # For detection models, just need bbox
-                        has_bbox = (annotation.bbox or 
-                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
-                        if has_bbox:
-                            has_valid_annotation = True
-                            break
-                
-                if has_valid_annotation:
-                    images_with_annotations.append(img)
-            
-            images_before = len(images)
-            images = images_with_annotations
-            images_after = len(images)
-            
-            filtered_count = images_before - images_after
-            stats['images_filtered'] += filtered_count
-            if images_before != images_after:
-                logger.info(f"Filtered dataset {dataset_id}: {images_before} → {images_after} images (removed {filtered_count} without valid annotations)")
-            
-            if not images:
-                logger.warning(f"No images with annotations found for dataset {dataset_id} after filtering, skipping")
-                continue
-        
-        # Calculate split indices
-        total_count = len(images)
-        train_count = int(total_count * split['train'] / 100)
-        val_count = int(total_count * split['val'] / 100)
-        # test gets the remainder
-        
-        # Split images
-        train_images = images[:train_count]
-        val_images = images[train_count:train_count + val_count]
-        test_images = images[train_count + val_count:]
-        
-        # Process each split
-        for split_name, split_images, img_dir, lbl_dir in [
-            ('train', train_images, train_images_dir, train_labels_dir),
-            ('val', val_images, val_images_dir, val_labels_dir),
-            ('test', test_images, test_images_dir, test_labels_dir)
-        ]:
-            for image in split_images:
-                # Construct image file path from URL or file_name
-                # Images are stored in projects/{dataset_id}/ directory
-                if image.url:
-                    # URL format: /static/projects/{dataset_id}/{filename}
-                    # or could be absolute path
-                    if image.url.startswith('/static/projects/'):
-                        # Convert URL to file path
-                        src_image_path = Path('projects') / image.url.replace('/static/projects/', '')
-                    elif image.url.startswith('projects/'):
-                        src_image_path = Path(image.url)
-                    else:
-                        # Assume it's just the dataset_id/filename
-                        src_image_path = Path('projects') / str(dataset_id) / image.file_name
-                else:
-                    # Fallback to constructing from dataset_id and file_name
-                    src_image_path = Path('projects') / str(dataset_id) / image.file_name
-                
-                if not src_image_path.exists():
-                    logger.warning(f"Image file not found: {src_image_path}")
-                    continue
-                
-                # Generate safe filename with dataset_id to prevent collisions
-                safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
-                safe_stem = Path(safe_filename).stem
-                dst_image_path = img_dir / safe_filename
-                
-                # Create hard link or copy
-                try:
-                    if not dst_image_path.exists():
-                        os.link(src_image_path, dst_image_path)
-                except:
-                    shutil.copy2(src_image_path, dst_image_path)
-                
-                # Get annotations for this image
-                annotations = db.query(Annotation).filter(
-                    Annotation.image_id == image.id,
-                    Annotation.annotation_file_id == annotation_file_id
-                ).all()
-                
-                # At this point, images without annotations have already been filtered out
-                # during the pre-split filtering step if remove_images_without_annotations is True
-                if not annotations:
-                    if remove_images_without_annotations:
-                        # This shouldn't happen since we filtered before splitting
-                        logger.warning(f"Image {image.id} has no annotations but wasn't filtered - this is unexpected")
-                        continue
-                    else:
-                        # Create empty label file for images without annotations
-                        label_path = lbl_dir / f"{safe_stem}.txt"
-                        label_path.touch()
-                        total_images[split_name] += 1
-                        continue
-                
-                # Create YOLO format label file
-                label_lines = []
-                for annotation in annotations:
-                    # Get class ID from mapping
-                    ann_class = db.query(AnnotationClass).filter(
-                        AnnotationClass.annotation_file_id == annotation_file_id,
-                        AnnotationClass.category_id == annotation.category_id
-                    ).first()
-                    
-                    if not ann_class:
-                        continue
-                    
-                    class_id = class_mapping.get(ann_class.class_name)
-                    if class_id is None:
-                        continue
-                    
-                    # For segmentation models, skip annotations without both segmentation and bbox
-                    if is_segmentation_model:
-                        has_seg = annotation.segmentation and len(annotation.segmentation) > 0
-                        has_bbox = (annotation.bbox or 
-                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
-                        
-                        if not (has_seg and has_bbox):
-                            # Track which type of data is missing
-                            if not has_seg and not has_bbox:
-                                skipped_annotations['missing_both'] += 1
-                            elif not has_seg:
-                                skipped_annotations['missing_seg'] += 1
-                            else:
-                                skipped_annotations['missing_bbox'] += 1
-                            logger.debug(f"Skipping annotation {annotation.id} - missing seg or bbox (has_seg={has_seg}, has_bbox={has_bbox})")
-                            continue
-                    
-                    # Get image dimensions. Fall back to reading the real image size
-                    # if DB metadata is missing, otherwise normalized labels become invalid.
-                    img_width = image.width
-                    img_height = image.height
-                    if not img_width or not img_height or img_width <= 0 or img_height <= 0:
-                        try:
-                            from PIL import Image as PILImage
-                            with PILImage.open(dst_image_path) as pil_img:
-                                img_width, img_height = pil_img.size
-                        except Exception as dim_err:
-                            logger.warning(
-                                f"Could not read image dimensions for {dst_image_path}: {dim_err}; using 1x1 fallback"
-                            )
-                            img_width, img_height = 1, 1
-                    
-                    # Handle segmentation if present
-                    if annotation.segmentation:
-                        seg = annotation.segmentation
-                        if isinstance(seg, list) and len(seg) > 0:
-                            # Polygon format: [[x1, y1, x2, y2, ...]] or [x1, y1, x2, y2, ...]
-                            if isinstance(seg[0], list):
-                                polygon = seg[0]
-                            else:
-                                polygon = seg
-                            
-                            # Only process if polygon has valid data
-                            if len(polygon) >= 6:  # At least 3 points (6 coordinates)
-                                # Check if coordinates are already normalized (0-1) or in pixel coordinates
-                                # If any value is > 2, assume pixel coordinates that need normalization
-                                needs_normalization = any(abs(val) > 2 for val in polygon)
-                                
-                                normalized_coords = []
-                                if needs_normalization:
-                                    # Pixel coordinates - normalize them
-                                    for i in range(0, len(polygon), 2):
-                                        if i + 1 < len(polygon):
-                                            norm_x = polygon[i] / img_width
-                                            norm_y = polygon[i + 1] / img_height
-                                            normalized_coords.extend([norm_x, norm_y])
-                                else:
-                                    # Already normalized - use as is
-                                    normalized_coords = polygon
-                                
-                                # YOLO segmentation format: class_id x1 y1 x2 y2 ...
-                                if normalized_coords and len(normalized_coords) >= 6:
-                                    coords_str = ' '.join(f"{c:.6f}" for c in normalized_coords)
-                                    label_lines.append(f"{class_id} {coords_str}")
-                                    # Track annotation stats
-                                    class_name = ann_class.class_name
-                                    if class_name not in stats['annotations_per_class']:
-                                        stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
-                                    stats['annotations_per_class'][class_name][split_name] += 1
-                                    stats['total_annotations'][split_name] += 1
-                                    has_segmentation = True
-                                    continue  # Skip bbox processing for this annotation
-                    
-                    # Handle bbox (COCO format: [x, y, width, height])
-                    elif annotation.bbox:
-                        has_bbox_only = True
-                        bbox = annotation.bbox
-                        if isinstance(bbox, list) and len(bbox) == 4:
-                            x, y, w, h = bbox
-                        elif isinstance(bbox, dict):
-                            x = bbox.get('x', 0)
-                            y = bbox.get('y', 0)
-                            w = bbox.get('width', 0)
-                            h = bbox.get('height', 0)
-                        else:
-                            # Try individual fields
-                            x = annotation.bbox_x or 0
-                            y = annotation.bbox_y or 0
-                            w = annotation.bbox_width or 0
-                            h = annotation.bbox_height or 0
-                        
-                        # Convert to YOLO format (normalized center x, center y, width, height)
-                        x_center = (x + w / 2) / img_width
-                        y_center = (y + h / 2) / img_height
-                        norm_w = w / img_width
-                        norm_h = h / img_height
-                        
-                        # YOLO detection format
-                        label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
-                        # Track annotation stats
-                        class_name = ann_class.class_name
-                        if class_name not in stats['annotations_per_class']:
-                            stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
-                        stats['annotations_per_class'][class_name][split_name] += 1
-                        stats['total_annotations'][split_name] += 1
-                    
-                    # Try individual bbox fields if bbox JSON is not present
-                    elif annotation.bbox_x is not None and annotation.bbox_width is not None:
-                        x = annotation.bbox_x
-                        y = annotation.bbox_y or 0
-                        w = annotation.bbox_width
-                        h = annotation.bbox_height or 0
-                        
-                        # Convert to YOLO format (normalized center x, center y, width, height)
-                        x_center = (x + w / 2) / img_width
-                        y_center = (y + h / 2) / img_height
-                        norm_w = w / img_width
-                        norm_h = h / img_height
-                        
-                        # YOLO detection format
-                        label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
-                        # Track annotation stats
-                        class_name = ann_class.class_name
-                        if class_name not in stats['annotations_per_class']:
-                            stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
-                        stats['annotations_per_class'][class_name][split_name] += 1
-                        stats['total_annotations'][split_name] += 1
-                
-                # Write label file (create empty file if no annotations but image is kept)
-                if label_lines:
-                    label_path = lbl_dir / f"{safe_stem}.txt"
-                    with open(label_path, 'w') as f:
-                        f.write('\n'.join(label_lines))
-                    # Track image was processed
-                    stats['total_images'][split_name] += 1
-                    stats['images_processed'] += 1
-                elif not remove_images_without_annotations:
-                    # Create empty label file if we're keeping images without annotations
-                    label_path = lbl_dir / f"{safe_stem}.txt"
-                    label_path.touch()
-                    # Track this image too
-                    stats['total_images'][split_name] += 1
-                    stats['images_processed'] += 1
-                
-                total_images[split_name] += 1
-    
-    # Log annotation type summary
-    logger.info(f"Annotation summary - has_segmentation: {has_segmentation}, has_bbox_only: {has_bbox_only}")
-    logger.info(f"Model type: {model_type}, is_segmentation_model: {is_segmentation_model}")
-    
-    # Log skipped annotations
-    total_skipped = sum(skipped_annotations.values())
-    if total_skipped > 0:
-        logger.warning(f"⚠️ Skipped {total_skipped} annotations during dataset preparation:")
-        if skipped_annotations['missing_seg'] > 0:
-            logger.warning(f"  - {skipped_annotations['missing_seg']} annotations missing segmentation data")
-        if skipped_annotations['missing_bbox'] > 0:
-            logger.warning(f"  - {skipped_annotations['missing_bbox']} annotations missing bounding box data")
-        if skipped_annotations['missing_both'] > 0:
-            logger.warning(f"  - {skipped_annotations['missing_both']} annotations missing both segmentation and bbox data")
-        logger.warning(f"  Reason: Segmentation models require both polygon and bounding box data for each annotation.")
-    
-    # Validate annotation format matches model type
-    if is_segmentation_model and not has_segmentation:
-        if has_bbox_only:
-            raise ValueError(
-                f"ERROR ❌ Model type '{model_type}' requires segmentation annotations (polygons), "
-                f"but only bounding box annotations were found.\n\n"
-                f"To fix this:\n"
-                f"1. Use a detection model (e.g., 'yolo11n.pt' instead of 'yolo11n-seg.pt'), OR\n"
-                f"2. Create segmentation annotations (polygons) for your dataset instead of bounding boxes.\n\n"
-                f"See https://docs.ultralytics.com/datasets/segment/ for segmentation dataset format."
-            )
-        else:
-            raise ValueError(
-                f"ERROR ❌ No valid annotations found for training.\n"
-                f"Model type '{model_type}' requires segmentation annotations (polygons).\n\n"
-                f"Please check:\n"
-                f"1. Your dataset has annotations uploaded\n"
-                f"2. The annotations contain segmentation data (polygons)\n"
-                f"3. The annotation file is properly linked to images"
-            )
-    elif not is_segmentation_model and has_segmentation and not has_bbox_only:
-        logger.warning(
-            f"Model type '{model_type}' is a detection model, but segmentation annotations were found. "
-            f"Consider using a segmentation model (e.g., 'yolo11n-seg.pt') to utilize polygon annotations."
-        )
-    
-    # Create data.yaml file for YOLO
-    if not class_mapping:
-        raise ValueError("No annotation classes found. Make sure your datasets have annotations with classes defined.")
-    
-    if total_images['train'] == 0 and total_images['val'] == 0:
-        raise ValueError("No images were processed. Check that your datasets have images with annotations.")
-    
-    # Get absolute path - ensure it starts with /app in Docker context
-    abs_path = output_dir.absolute()
-    if not str(abs_path).startswith('/app/'):
-        # If path is relative or doesn't start with /app, prepend /app
-        abs_path = Path('/app') / output_dir
-    
-    yaml_content = {
-        'path': str(abs_path),
-        'train': 'images/train',
-        'val': 'images/val',
-        'test': 'images/test' if total_images['test'] > 0 else None,
-        'names': {idx: name for name, idx in class_mapping.items()},
-        'nc': len(class_mapping)
-    }
-    
-    logger.info(f"Dataset summary: {total_images['train']} train, {total_images['val']} val, {total_images['test']} test images")
-    logger.info(f"Classes: {class_mapping}")
-    
-    yaml_path = output_dir / "data.yaml"
-    with open(yaml_path, 'w') as f:
-        # Write YAML manually for better control
-        f.write(f"path: {yaml_content['path']}\n")
-        f.write(f"train: {yaml_content['train']}\n")
-        f.write(f"val: {yaml_content['val']}\n")
-        if yaml_content['test']:
-            f.write(f"test: {yaml_content['test']}\n")
-        # Add task type for segmentation models
-        if is_segmentation_model:
-            f.write("task: segment\n")
-        f.write(f"nc: {yaml_content['nc']}\n")
-        f.write("names:\n")
-        for idx, name in yaml_content['names'].items():
-            f.write(f"  {idx}: {name}\n")
-    
-    return {
-        'yaml_path': str(yaml_path),
-        'class_names': sorted_classes,
-        'class_count': len(sorted_classes),
-        'image_counts': total_images,
-        'dataset_stats': stats  # Include comprehensive statistics
-    }
+# prepare_yolo_dataset -> app.ml.dataset.formats.yolo
 
 
 async def train_yolo_model_task(
@@ -1451,6 +644,7 @@ async def start_yolo_training(
             project_id=request.project_id,
             progress=0,
             task_metadata={
+                "framework_id": "ultralytics.yolo",
                 "model_type": request.model_type,
                 "epochs": request.epochs,
                 "batch_size": request.batch_size,
@@ -1512,7 +706,11 @@ async def start_yolo_training(
         if USE_CELERY:
             # Use Celery for proper task queuing
             logger.info(f"Queuing Celery task for training task {task.id}")
-            celery_task = celery_train_task.delay(task.id, training_config)
+            from app.ml.celery_dispatch import enqueue_training_task
+
+            celery_task = enqueue_training_task(
+                celery_train_task, task.id, training_config, "ultralytics.yolo"
+            )
             logger.info(f"Queued training task {task.id} in Celery (task_id: {celery_task.id})")
             
             # Store Celery task ID in metadata
@@ -1725,7 +923,12 @@ async def rerun_training(
         # Determine model type/family
         model_type_raw = metadata.get('model_type') or metadata.get('model_config', {}).get('model') or 'yolo11n-seg.pt'
         model_variant = metadata.get('model_variant')
-        is_mmyolo = original_task.task_type == 'mmyolo_training' or bool(metadata.get('config_id')) or bool(metadata.get('arch'))
+        from app.ml.dispatch import get_model_backend
+
+        try:
+            is_mmyolo = get_model_backend(original_task).runtime_profile == "mmyolo"
+        except KeyError:
+            is_mmyolo = original_task.task_type == 'mmyolo_training' or bool(metadata.get('config_id')) or bool(metadata.get('arch'))
         is_rtdetr = bool(model_variant) or str(model_type_raw).lower().startswith('rtdetr')
 
         # MMYOLO rerun path
@@ -1860,7 +1063,11 @@ async def rerun_training(
             }
 
             if USE_CELERY and celery_mmyolo_task is not None:
-                celery_task = celery_mmyolo_task.delay(task.id, training_config)
+                from app.ml.celery_dispatch import enqueue_training_task
+
+                celery_task = enqueue_training_task(
+                    celery_mmyolo_task, task.id, training_config, "mmyolo"
+                )
                 logger.info(
                     f"Queued rerun MMYOLO training task {task.id} in Celery (celery_id: {celery_task.id}, rerun of {task_id})"
                 )
@@ -2001,7 +1208,11 @@ async def rerun_training(
             }
 
             if USE_CELERY and celery_rtdetr_task is not None:
-                celery_task = celery_rtdetr_task.delay(task.id, training_config)
+                from app.ml.celery_dispatch import enqueue_training_task
+
+                celery_task = enqueue_training_task(
+                    celery_rtdetr_task, task.id, training_config, "ultralytics.rtdetr"
+                )
                 logger.info(f"Queued rerun RT-DETR training task {task.id} in Celery (task_id: {celery_task.id}, rerun of {task_id})")
                 task.task_metadata = {
                     **task.task_metadata,
@@ -2098,6 +1309,7 @@ async def rerun_training(
             project_id=request.project_id,
             progress=0,
             task_metadata={
+                "framework_id": "ultralytics.yolo",
                 "model_type": request.model_type,
                 "epochs": request.epochs,
                 "batch_size": request.batch_size,
@@ -2154,7 +1366,11 @@ async def rerun_training(
         # Start background task
         if USE_CELERY:
             # Use Celery for proper task queuing
-            celery_task = celery_train_task.delay(task.id, training_config)
+            from app.ml.celery_dispatch import enqueue_training_task
+
+            celery_task = enqueue_training_task(
+                celery_train_task, task.id, training_config, "ultralytics.yolo"
+            )
             logger.info(f"Queued rerun training task {task.id} in Celery (task_id: {celery_task.id}, rerun of {task_id})")
             
             # Store Celery task ID in metadata
@@ -2234,6 +1450,7 @@ async def start_rtdetr_training(
             status="queued",
             progress=0,
             task_metadata={
+                "framework_id": "ultralytics.rtdetr",
                 "model_type": "rtdetr",
                 "model_variant": request.model_type,
                 "training_params": request.dict(exclude={'project_id', 'dataset_configs', 'task_name'}),
@@ -2302,7 +1519,11 @@ async def start_rtdetr_training(
         }
         
         if USE_CELERY:
-            celery_task = celery_rtdetr_task.delay(task.id, training_config)
+            from app.ml.celery_dispatch import enqueue_training_task
+
+            celery_task = enqueue_training_task(
+                celery_rtdetr_task, task.id, training_config, "ultralytics.rtdetr"
+            )
             logger.info(f"Queued RT-DETR training task {task.id} in Celery (task_id: {celery_task.id})")
             
             task.task_metadata = {
@@ -2605,7 +1826,10 @@ async def test_training_model_inference(
         
         # Get model path based on checkpoint
         task_metadata = task.task_metadata or {}
-        is_mmyolo = task.task_type == 'mmyolo_training'
+        from app.ml.dispatch import get_model_backend
+
+        backend = get_model_backend(task)
+        is_mmyolo = backend.runtime_profile == "mmyolo"
 
         # --- MMYOLO: use the dedicated resolver (handles .pth naming conventions) ---
         if is_mmyolo:
@@ -2726,7 +1950,7 @@ async def test_training_model_inference(
                     )
                     predictions.append({
                         "bbox": bbox_xywh,
-                        "confidence": float(p.get("confidence", 0)),
+                        "confidence": float(p.get("confidence", p.get("conf", 0))),
                         "class_id": class_id,
                         "class": class_name,
                         "segmentation": p.get("segmentation", []),
@@ -2738,10 +1962,13 @@ async def test_training_model_inference(
                 import shutil as _shutil
                 _shutil.copy2(tmp_img_path, str(static_dir / annotated_filename))
 
+                # Match Ultralytics test-inference shape: { success, result: { predictions, image_url } }
                 return JSONResponse({
                     "success": True,
-                    "predictions": predictions,
-                    "image_url": f"/static/inference_results/{annotated_filename}",
+                    "result": {
+                        "predictions": predictions,
+                        "image_url": f"/static/inference_results/{annotated_filename}",
+                    },
                     "model_path": model_path,
                 })
             finally:
@@ -2749,212 +1976,31 @@ async def test_training_model_inference(
                 import shutil as _shutil
                 _shutil.rmtree(str(output_dir), ignore_errors=True)
 
-        # ── Ultralytics YOLO inference (regular training tasks) ─────────────────
-        # Save uploaded image to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_image:
-            tmp_image_path = tmp_image.name
-            content = await image.read()
-            tmp_image.write(content)
-        
+        # ── Ultralytics YOLO inference (celery_worker Ultralytics runtime) ──
+        # Use shared data volume so celery_worker can read the upload (not /tmp).
+        shared_upload_dir = Path("data/inference_uploads")
+        shared_upload_dir.mkdir(parents=True, exist_ok=True)
+        tmp_image_path = str(shared_upload_dir / f"test_inf_{task_id}_{uuid.uuid4().hex[:8]}.jpg")
+        content = await image.read()
+        Path(tmp_image_path).write_bytes(content)
+
         try:
-            # Create temporary output directory
-            output_dir = Path(tempfile.gettempdir()) / f"inference_{uuid.uuid4().hex[:8]}"
-            output_dir.mkdir(exist_ok=True)
-            
-            # Create Python script for inference using YOLO
-            script_path = output_dir / "run_inference.py"
-            result_json_path = output_dir / "results.json"
-            annotated_image_path = output_dir / "annotated.jpg"
-            
-            # Generate the inference script using YOLO
-            inference_script = """import importlib, sys
+            from app.ml.yolo_test_inference_dispatch import run_yolo_test_inference_via_celery
 
-def _load_yolo():
-    for _path in ("ultralytics", "ultralytics.models.yolo.model", "ultralytics.models.yolo", "ultralytics.models"):
-        try:
-            _m = importlib.import_module(_path)
-            return _m.YOLO
-        except Exception:
-            pass
-    raise ImportError("Cannot import YOLO from ultralytics")
-
-YOLO = _load_yolo()
-
-import cv2
-import json
-import numpy as np
-
-# Main inference
-model_path = sys.argv[1]
-image_path = sys.argv[2]
-output_json = sys.argv[3]
-output_image = sys.argv[4]
-class_names_json = sys.argv[5] if len(sys.argv) > 5 else '[]'
-
-import json as json_module
-class_names = json_module.loads(class_names_json)
-
-# Load YOLO model
-model = YOLO(model_path)
-
-# Run inference
-results = model(image_path, conf=0.25, iou=0.45)
-
-# Process results
-predictions = []
-annotated_img = None
-
-if results and len(results) > 0:
-    result = results[0]
-    
-    # Get annotated image (this will show masks if available)
-    annotated_img = result.plot()
-    
-    # Extract predictions
-    if result.boxes is not None:
-        boxes = result.boxes
-        has_masks = result.masks is not None
-        
-        for i in range(len(boxes)):
-            # Get box coordinates (xyxy format)
-            box = boxes.xyxy[i].cpu().numpy()
-            x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
-            
-            # Get confidence and class
-            confidence = float(boxes.conf[i].cpu().numpy())
-            class_id = int(boxes.cls[i].cpu().numpy())
-            
-            # Get class name
-            class_name = class_names[class_id] if class_id < len(class_names) else f'Class {class_id}'
-            
-            pred = {
-                'bbox': [x1, y1, x2 - x1, y2 - y1],
-                'confidence': confidence,
-                'class_id': class_id,
-                'class': class_name
-            }
-            
-            # Extract segmentation mask if available
-            if has_masks and result.masks is not None:
-                try:
-                    mask = result.masks.data[i].cpu().numpy()
-                    # Get original image dimensions from result
-                    orig_shape = result.orig_shape  # (height, width)
-                    mask_shape = mask.shape  # (height, width) or (1, height, width)
-                    
-                    # Handle different mask formats
-                    if len(mask_shape) == 3:
-                        mask = mask[0]  # Remove batch dimension if present
-                    
-                    # Resize mask to original image size if needed
-                    if mask.shape != orig_shape[:2]:
-                        mask_resized = cv2.resize(mask, (orig_shape[1], orig_shape[0]), interpolation=cv2.INTER_NEAREST)
-                    else:
-                        mask_resized = mask
-                    
-                    # Convert mask to polygon (contour)
-                    mask_binary = (mask_resized > 0.5).astype(np.uint8) * 255
-                    contours, _ = cv2.findContours(
-                        mask_binary,
-                        cv2.RETR_EXTERNAL,
-                        cv2.CHAIN_APPROX_SIMPLE
-                    )
-                    if len(contours) > 0:
-                        # Get the largest contour
-                        largest_contour = max(contours, key=cv2.contourArea)
-                        # Simplify contour to reduce points (but keep enough detail)
-                        epsilon = 0.001 * cv2.arcLength(largest_contour, True)
-                        approx = cv2.approxPolyDP(largest_contour, epsilon, True)
-                        # Flatten to [x1, y1, x2, y2, ...] format
-                        if len(approx) >= 3:  # Need at least 3 points for a polygon
-                            polygon = approx.reshape(-1, 2).flatten().tolist()
-                            pred['segmentation'] = [polygon]
-                except Exception as e:
-                    # If mask extraction fails, just skip it and use bbox only
-                    import traceback
-                    print(f"Warning: Failed to extract mask for prediction {i}: {e}")
-                    traceback.print_exc()
-            
-            predictions.append(pred)
-
-# Save annotated image
-if annotated_img is not None:
-    cv2.imwrite(output_image, annotated_img)
-
-# Save results
-results_data = {
-    'predictions': predictions,
-    'num_predictions': len(predictions)
-}
-
-with open(output_json, 'w') as f:
-    json.dump(results_data, f, indent=2)
-
-print(f"Found {len(predictions)} predictions")
-"""
-            
-            with open(script_path, 'w') as f:
-                f.write(inference_script)
-            
-            # Run inference script
-            python_executable = sys.executable
-            
-            class_names_json = json.dumps(class_names)
-            cmd = [
-                python_executable,
-                str(script_path),
-                str(model_path),
-                tmp_image_path,
-                str(result_json_path),
-                str(annotated_image_path),
-                class_names_json
-            ]
-            
-            logger.info(f"Running inference with command: {' '.join(cmd)}")
-            
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env=os.environ.copy()
+            return run_yolo_test_inference_via_celery(
+                task_id=task_id,
+                tmp_image_path=tmp_image_path,
+                model_path=model_path,
+                class_names=class_names,
             )
-            
-            if result.returncode != 0:
-                error_msg = result.stderr or result.stdout or "Unknown error"
-                logger.error(f"Inference script error: {error_msg}")
-                raise Exception(f"Inference failed: {error_msg}")
-            
-            # Read results
-            with open(result_json_path, 'r') as f:
-                inference_results = json.load(f)
-            
-            # Copy annotated image to static directory for serving
-            static_dir = Path("static/inference_results")
-            static_dir.mkdir(parents=True, exist_ok=True)
-            annotated_filename = f"annotated_{task_id}_{uuid.uuid4().hex[:8]}.jpg"
-            annotated_static_path = static_dir / annotated_filename
-            shutil.copy2(str(annotated_image_path), str(annotated_static_path))
-            
-            # Cleanup temporary files
-            os.unlink(tmp_image_path)
-            shutil.rmtree(output_dir, ignore_errors=True)
-            
-            return JSONResponse({
-                "success": True,
-                "result": {
-                    "predictions": inference_results.get('predictions', []),
-                    "image_url": f"/static/inference_results/{annotated_filename}"
-                }
-            })
-            
+        except HTTPException:
+            raise
         except Exception as e:
-            # Cleanup on error
             if os.path.exists(tmp_image_path):
                 os.unlink(tmp_image_path)
             logger.error(f"Error running inference: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -3017,6 +2063,7 @@ async def upload_mmyolo_dji_patch(file: UploadFile = File(...)):
 @router.post("/training/mmyolo")
 async def start_mmyolo_training(
     request: MMYOLOTrainingRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -3077,6 +2124,7 @@ async def start_mmyolo_training(
             project_id=request.project_id,
             progress=0,
             task_metadata={
+                "framework_id": "mmyolo",
                 "model_type": f"{request.arch}_{request.size}",
                 "arch": request.arch,
                 "size": request.size,
@@ -3133,7 +2181,11 @@ async def start_mmyolo_training(
         }
 
         if USE_CELERY and celery_mmyolo_task is not None:
-            celery_task = celery_mmyolo_task.delay(task.id, training_config)
+            from app.ml.celery_dispatch import enqueue_training_task
+
+            celery_task = enqueue_training_task(
+                celery_mmyolo_task, task.id, training_config, "mmyolo"
+            )
             logger.info(
                 f"Queued MMYOLO training task {task.id} in Celery (celery_id: {celery_task.id})"
             )

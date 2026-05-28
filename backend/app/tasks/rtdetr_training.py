@@ -17,18 +17,10 @@ logger = logging.getLogger(__name__)
 @celery_app.task(base=TrainingTask, bind=True, name="app.tasks.training_tasks.train_rtdetr_model")
 def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
     """Train RT-DETR (Real-Time Detection Transformer) model."""
-    from app.tasks.training_common import get_ultralytics_rtdetr
-    RTDETR = get_ultralytics_rtdetr()
-    from sqlalchemy.orm.attributes import flag_modified
-
+    from app.ml.ultralytics_subprocess import run_ultralytics_training_subprocess
     from app.tasks.yolo_training_helpers import get_runtime_training_project
 
     db = SessionLocal()
-    state = {
-        "current_epoch": 0,
-        "total_epochs": training_config.get("epochs", 100),
-        "metrics_history": [],
-    }
 
     def _create_rtdetr_training_examples(task: TaskModel) -> None:
         try:
@@ -97,107 +89,6 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
                 exc_info=True,
             )
 
-    def _find_last_pt(trainer):
-        try:
-            if hasattr(trainer, "last") and trainer.last and Path(trainer.last).exists():
-                return Path(trainer.last)
-            if hasattr(trainer, "save_dir") and trainer.save_dir:
-                candidate = Path(trainer.save_dir) / "weights" / "last.pt"
-                if candidate.exists():
-                    return candidate
-        except Exception:
-            pass
-        return None
-
-    def on_epoch_end(trainer):
-        current_epoch = trainer.epoch + 1
-        state["current_epoch"] = current_epoch
-        total = state["total_epochs"]
-        progress = 40 + int((current_epoch / total) * 50)
-
-        metrics = {"epoch": current_epoch}
-        try:
-            if hasattr(trainer, "metrics") and trainer.metrics:
-                for key, val in trainer.metrics.items():
-                    try:
-                        metrics[key] = float(val)
-                    except (TypeError, ValueError):
-                        pass
-            if hasattr(trainer, "loss_items") and trainer.loss_items is not None:
-                for i, name in enumerate(["box_loss", "cls_loss", "dfl_loss"]):
-                    if i < len(trainer.loss_items):
-                        metrics[name] = float(trainer.loss_items[i])
-        except Exception as e:
-            logger.warning(f"RT-DETR: could not extract metrics: {e}")
-
-        state["metrics_history"].append(metrics)
-
-        try:
-            task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
-            if not task:
-                return
-
-            task_meta = task.task_metadata or {}
-            pause_requested = isinstance(task_meta, dict) and bool(task_meta.get("pause_requested_at"))
-            stop_requested = isinstance(task_meta, dict) and bool(task_meta.get("stop_requested_at"))
-
-            if task.status in ("stopped", "paused") or pause_requested or stop_requested:
-                if task.status == "paused" or pause_requested:
-                    final_stage = "paused"
-                    if task.status != "paused":
-                        task.status = "paused"
-                else:
-                    final_stage = "stopped"
-                    if task.status != "stopped":
-                        task.status = "stopped"
-                        task.completed_at = datetime.utcnow()
-                        task.error_message = "Task stopped by user"
-
-                logger.info(f"RT-DETR task {task_id} entering stage='{final_stage}', stopping training loop")
-                last_pt = _find_last_pt(trainer)
-                updated_meta = {
-                    **task_meta,
-                    "current_epoch": current_epoch,
-                    "stage": final_stage,
-                    "latest_metrics": metrics,
-                    "metrics_history": state["metrics_history"],
-                    "pause_requested_at": None,
-                }
-                if last_pt:
-                    updated_meta["resume_from"] = str(last_pt)
-                    updated_meta["paused_epoch"] = current_epoch
-                    logger.info(f"RT-DETR task {task_id}: saved resume_from={last_pt}")
-                task.task_metadata = updated_meta
-                flag_modified(task, "task_metadata")
-                db.commit()
-                trainer.stop = True
-                return
-
-            task.progress = min(progress, 90)
-            task.task_metadata = {
-                **(task.task_metadata or {}),
-                "current_epoch": current_epoch,
-                "stage": "training",
-                "latest_metrics": metrics,
-                "metrics_history": state["metrics_history"],
-            }
-            flag_modified(task, "task_metadata")
-            db.commit()
-
-            self.update_state(
-                state="PROGRESS",
-                meta={
-                    "current": current_epoch,
-                    "total": total,
-                    "progress": progress,
-                    "status": f"Training epoch {current_epoch}/{total}",
-                    "metrics": metrics,
-                },
-            )
-            logger.info(f"RT-DETR task {task_id}: epoch {current_epoch}/{total}")
-        except Exception as e:
-            logger.error(f"RT-DETR epoch callback error: {e}")
-
     try:
         logger.info(f"Starting RT-DETR training for task {task_id}")
 
@@ -220,41 +111,50 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
 
         model_type = training_config.get("model_type", "rtdetr-l.pt")
         resume_from = training_config.get("resume_from")
-        logger.info(f"Loading RT-DETR model: {model_type}, resume_from={resume_from}")
+        logger.info(f"RT-DETR model: {model_type}, resume_from={resume_from}")
 
-        try:
-            model = RTDETR(resume_from if resume_from else model_type)
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            model = RTDETR(model_type.replace(".pt", ""))
+        if resume_from and Path(resume_from).exists():
+            model_path = resume_from
+        else:
+            model_path = model_type
 
-        model.add_callback("on_train_epoch_end", on_epoch_end)
         runtime_project = get_runtime_training_project(task_id)
 
-        train_args = {
-            "data": training_config["data_yaml"],
-            "epochs": training_config.get("epochs", 100),
-            "batch": training_config.get("batch_size", 16),
-            "imgsz": training_config.get("image_size", 640),
-            "device": training_config.get("device", "0"),
-            "patience": training_config.get("patience", 50),
-            "optimizer": training_config.get("optimizer", "AdamW"),
-            "lr0": training_config.get("learning_rate", 0.0001),
-            "weight_decay": training_config.get("weight_decay", 0.0001),
-            "project": str(runtime_project),
-            "name": "training",
-            "exist_ok": True,
-            "verbose": True,
-            "save": True,
-            "save_period": -1,
-            "cache": False,
-            "workers": 8,
-        }
+        from app.tasks.yolo_training_helpers import build_yolo_training_args
+
+        dataset_info = {"yaml_path": training_config["data_yaml"]}
+        train_args = build_yolo_training_args(
+            dataset_info,
+            training_config,
+            runtime_project,
+            task_id,
+        )
+        train_args["cache"] = False
+        train_args["workers"] = 8
         if resume_from:
             train_args["resume"] = True
 
-        logger.info(f"Starting RT-DETR training with args: {train_args}")
-        results = model.train(**train_args)
+        total_epochs = training_config.get("epochs", 100)
+        device = str(training_config.get("device", "0"))
+
+        class _RTDETRTaskRunner:
+            pass
+
+        runner = _RTDETRTaskRunner()
+        runner.db = db
+        runner.task = task
+        runner.request = self.request
+
+        logger.info(f"Starting RT-DETR subprocess training with args: {list(train_args.keys())}")
+        run_ultralytics_training_subprocess(
+            model_class="rtdetr",
+            model_path=model_path,
+            train_args=train_args,
+            task_runner=runner,
+            task_id=task_id,
+            total_epochs=total_epochs,
+            device=device,
+        )
 
         task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
         if not task:
@@ -274,13 +174,8 @@ def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
         except OSError:
             pass
 
-        runtime_save_dir = None
-        try:
-            if hasattr(model, "trainer") and hasattr(model.trainer, "save_dir") and model.trainer.save_dir:
-                runtime_save_dir = Path(model.trainer.save_dir)
-            elif hasattr(results, "save_dir") and results.save_dir:
-                runtime_save_dir = Path(results.save_dir)
-        except Exception:
+        runtime_save_dir = Path(train_args.get("project", "")) / train_args.get("name", "training")
+        if not runtime_save_dir.exists():
             runtime_save_dir = None
 
         if runtime_save_dir and runtime_save_dir.exists():

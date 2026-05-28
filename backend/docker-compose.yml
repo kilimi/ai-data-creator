@@ -8,8 +8,8 @@ services:
     build:
       context: .
       args:
-        # MMYOLO conda env is copied from this image (build celery_worker first).
-        CELERY_IMAGE: ${LAI_CELERY_IMAGE:-lai-celery:local}
+        # MMYOLO stack copied from lai-mmyolo image (build mmyolo_runtime before backend).
+        MMYOLO_IMAGE: ${LAI_MMYOLO_IMAGE:-lai-mmyolo:local}
     volumes:
       # Host backend code: optional bind via backend/docker-compose.code-mount.yml + COMPOSE_FILE (see install.sh).
       # Host data root: set LAI_DATA_DIR via scripts/install.sh (default ../.lai-data relative to this file = repo .lai-data)
@@ -59,14 +59,32 @@ services:
           memory: 1G
           cpus: "1.0"
 
-  # Celery Worker for Training Tasks with GPU support
+  # Build-only ML runtime images (not started on `docker compose up`).
+  ultralytics_runtime:
+    image: ${LAI_ULTRALYTICS_IMAGE:-lai-ultralytics:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.ultralytics.runtime
+    profiles: [build]
+
+  mmyolo_runtime:
+    image: ${LAI_MMYOLO_IMAGE:-lai-mmyolo:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.mmyolo.runtime
+    profiles: [build]
+
+  # Celery Worker for Training Tasks with GPU support (single process, all GPU queues).
   celery_worker:
     image: ${LAI_CELERY_IMAGE:-lai-celery:local}
     build:
       context: .
-      dockerfile: Dockerfile.training
+      dockerfile: Dockerfile.celery
+      args:
+        ULTRALYTICS_IMAGE: ${LAI_ULTRALYTICS_IMAGE:-lai-ultralytics:local}
+        MMYOLO_IMAGE: ${LAI_MMYOLO_IMAGE:-lai-mmyolo:local}
     # Always set CUDA_VISIBLE_DEVICES=0 so PyTorch sees the first GPU (GTX 1070 etc). Empty/unset would hide the GPU.
-    command: sh -c "export CUDA_VISIBLE_DEVICES=0; exec python -m celery -A app.celery_app worker --loglevel=info --concurrency=1 --pool=solo"
+    command: sh -c "export CUDA_VISIBLE_DEVICES=0; exec python -m celery -A app.celery_app worker -Q training,ultralytics,mmyolo --loglevel=info --concurrency=1 --pool=solo"
     volumes:
       # Optional /app bind: backend/docker-compose.code-mount.yml (see install.sh COMPOSE_FILE).
       - ${LAI_DATA_DIR:-../.lai-data}/projects:/app/projects
@@ -82,6 +100,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - XDG_CACHE_HOME=/app/.cache
       - MIM_CACHE_DIR=/app/.cache/mim
+      - ULTRALYTICS_PYTHON=/opt/conda/bin/python
+      - ULTRALYTICS_SITE=/opt/ultralytics-site
+      - MMYOLO_PYTHON=/opt/conda/envs/mmyolo/bin/python
       # Expose GPU to the container; use first GPU. Do not set CUDA_VISIBLE_DEVICES to empty or PyTorch will see no GPU.
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0

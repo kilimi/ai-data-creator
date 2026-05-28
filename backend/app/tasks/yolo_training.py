@@ -65,6 +65,9 @@ class YOLOTrainingTask(TrainingTask):
         self.weights_dir: Optional[Path] = None
         self.model = None
         self.results = None
+        self.model_path: Optional[str] = None
+        self.model_class: str = "yolo"
+        self._last_train_args: Optional[Dict[str, Any]] = None
     
     def execute(self, task_id: int, training_config: Dict[str, Any]):
         """
@@ -262,10 +265,7 @@ class YOLOTrainingTask(TrainingTask):
             logger.warning(f"Failed to create training examples: {e}", exc_info=True)
     
     def _load_model(self):
-        """Load YOLO model"""
-        from app.tasks.training_common import get_ultralytics_yolo
-        YOLO = get_ultralytics_yolo()
-
+        """Resolve model weights path for the Ultralytics subprocess."""
         model_type = self.training_config.get('model_type', 'yolo11n-seg.pt')
         resume_from = self.training_config.get('resume_from')
 
@@ -274,59 +274,25 @@ class YOLOTrainingTask(TrainingTask):
             load_path = resume_from
         else:
             if resume_from:
-                logger.warning(f"resume_from path not found ({resume_from}), loading base model instead")
-            logger.info(f"Loading YOLO model: {model_type}")
+                logger.warning(
+                    f"resume_from path not found ({resume_from}), loading base model instead"
+                )
+            logger.info(f"Preparing YOLO model path: {model_type}")
             model_path = Path(model_type)
             load_path = str(model_path) if model_path.exists() else model_type
-        
-        try:
-            # Check CUDA availability before loading model
-            import torch
-            logger.info(f"PyTorch version: {torch.__version__}")
-            logger.info(f"CUDA available: {torch.cuda.is_available()}")
-            if torch.cuda.is_available():
-                logger.info(f"CUDA device count: {torch.cuda.device_count()}")
-                logger.info(f"Current CUDA device: {torch.cuda.current_device()}")
-                logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
-            else:
-                logger.warning("CUDA is not available - training will use CPU (very slow)")
 
-            logger.info(f"Instantiating YOLO with: {load_path}")
-            self.model = YOLO(str(load_path))
-            logger.info(f"Model loaded successfully: {type(self.model)}")
-            logger.info(f"Model has train method: {hasattr(self.model, 'train')}")
-
-            if self.model is None:
-                raise ValueError("Model object is None after loading")
-            if not callable(getattr(self.model, 'train', None)):
-                raise ValueError("Model.train is not callable")
-
-            logger.info(f"Model validation passed - ready for training")
-
-        except Exception as e:
-            logger.error(f"Failed to load YOLO model: {e}", exc_info=True)
-            raise
-
-        # Add progress callback
+        self.model_path = str(load_path)
+        self.model_class = "yolo"
         total_epochs = self.training_config.get('epochs', 100)
-        progress_callback = self._create_progress_callback(total_epochs)
-        self.model.add_callback("on_train_batch_end", progress_callback.on_train_batch_end)
-        self.model.add_callback("on_train_epoch_end", progress_callback.on_train_epoch_end)
 
         self.task.progress = 40
         self.task.task_metadata = {
             **self.task.task_metadata,
             "stage": "training",
-            "model_loaded": str(load_path),
-            "total_epochs": total_epochs
+            "model_loaded": self.model_path,
+            "total_epochs": total_epochs,
         }
         self.db.commit()
-    
-    def _create_progress_callback(self, total_epochs: int):
-        """Create progress callback for training updates"""
-        from app.tasks.yolo_training_helpers import ProgressCallback
-        
-        return ProgressCallback(self, self.task_id, total_epochs, self.db)
     
     def _build_training_args(self, dataset_info: Dict[str, Any]) -> Dict[str, Any]:
         """Build training arguments dictionary"""
@@ -371,112 +337,51 @@ class YOLOTrainingTask(TrainingTask):
         return train_args
     
     def _train_model(self, train_args: Dict[str, Any]):
-        """Execute YOLO model training"""
-        logger.info(f"=== _train_model() called ===")
-        logger.info(f"Starting YOLO training with project={train_args.get('project')}, name={train_args.get('name')}")
-        logger.info(f"Model type: {type(self.model)}")
-        logger.info(f"Train args keys: {list(train_args.keys())}")
-        train_args_filtered = {k: v for k, v in train_args.items() if k != 'model'}
-        logger.info(f"Train args (without full model): {train_args_filtered}")
-        
-        # Fresh YOLO run dir: remove stale .../training (not dataset/), chmod parents, probe write.
+        """Execute YOLO model training in the Ultralytics venv subprocess."""
+        from app.ml.ultralytics_subprocess import run_ultralytics_training_subprocess
+
+        logger.info(
+            "Starting YOLO subprocess training project=%s name=%s",
+            train_args.get("project"),
+            train_args.get("name"),
+        )
+        self._last_train_args = dict(train_args)
+
         if self.output_base:
             try:
-                logger.info(f"Pre-train weights-dir prepare START: {self.output_base}")
                 prepare_yolo_training_weights_dir(self.output_base)
-                logger.info("Pre-train weights-dir prepare DONE")
             except PermissionError:
                 raise
             except Exception as e:
                 logger.warning(f"prepare_yolo_training_weights_dir failed: {e}")
-        
-        # Verify data.yaml exists before training (double check)
-        data_yaml_path = Path(train_args.get('data', ''))
+
+        data_yaml_path = Path(train_args.get("data", ""))
         if not data_yaml_path.exists():
             raise FileNotFoundError(f"Data YAML file does not exist: {data_yaml_path}")
-        logger.info(f"Final verification: data.yaml exists: {data_yaml_path}")
-        
-        # Set umask to 0 so files are created with 666 permissions
+
+        if not self.model_path:
+            raise ValueError("model_path not set — call _load_model() first")
+
+        total_epochs = self.training_config.get("epochs", 100)
+        device = str(self.training_config.get("device", "0"))
+
         old_umask = os.umask(0)
         try:
-            logger.info(f"=== About to call model.train() ===")
-            logger.info(f"Model: {self.model}, type: {type(self.model)}")
-            logger.info(f"Model has train method: {hasattr(self.model, 'train')}")
-            logger.info(f"Train args: {train_args}")
-            logger.info(f"Data YAML path: {train_args.get('data')} (exists: {Path(train_args.get('data', '')).exists()})")
-            logger.info(f"Project path: {train_args.get('project')} (exists: {Path(train_args.get('project', '')).exists()})")
-            
-            # Flush logs before training to ensure we see them
-            import sys
-            sys.stdout.flush()
-            sys.stderr.flush()
-            
-            logger.info(f"Calling: self.model.train(**train_args)")
-            logger.info(f"This may take a while - training is starting...")
-            
-            # Force log flush to ensure we see this message
-            import sys
-            for handler in logger.handlers:
-                handler.flush()
-            sys.stdout.flush()
-            sys.stderr.flush()
-            
-            # Verify model is still valid before training
-            if self.model is None:
-                raise ValueError("Model is None - cannot train")
-            
-            if not hasattr(self.model, 'train'):
-                raise ValueError("Model does not have train method")
-            
-            # Actually call model.train() - this is the critical line
-            # Wrap in try-except to catch any silent failures
-            try:
-                logger.info(f"EXECUTING: model.train() NOW...")
-                logger.info(f"Model type before train: {type(self.model)}")
-                logger.info(f"Train args data path: {train_args.get('data')}")
-                logger.info(f"Train args project: {train_args.get('project')}")
-                
-                # Double-check data.yaml exists
-                data_path = Path(train_args.get('data', ''))
-                if not data_path.exists():
-                    raise FileNotFoundError(f"Data YAML does not exist at: {data_path}")
-                
-                # Read and log first few lines of data.yaml for debugging
-                try:
-                    with open(data_path, 'r') as f:
-                        yaml_content = f.read()
-                        logger.info(f"Data YAML content (first 500 chars): {yaml_content[:500]}")
-                except Exception as e:
-                    logger.warning(f"Could not read data.yaml: {e}")
-                
-                # Force another log flush
-                sys.stdout.flush()
-                sys.stderr.flush()
-                
-                # THE ACTUAL TRAINING CALL
-                logger.info(f"*** CALLING model.train() NOW - THIS SHOULD START TRAINING ***")
-                self.results = self.model.train(**train_args)
-                logger.info(f"*** model.train() RETURNED - TRAINING COMPLETED ***")
-                logger.info(f"SUCCESS: model.train() completed")
-            except Exception as train_error:
-                logger.error(f"ERROR in model.train(): {train_error}", exc_info=True)
-                logger.error(f"Error type: {type(train_error)}")
-                logger.error(f"Error args: {train_error.args}")
-                raise
-            
-            logger.info(f"=== model.train() returned ===")
-            logger.info(f"Training completed. Results type: {type(self.results)}")
-            logger.info(f"Results: {self.results}")
-            
-            # After training, recursively fix permissions on weights directory and all files
+            run_ultralytics_training_subprocess(
+                model_class=self.model_class,
+                model_path=self.model_path,
+                train_args=train_args,
+                task_runner=self,
+                task_id=self.task_id,
+                total_epochs=total_epochs,
+                device=device,
+            )
             if self.weights_dir and self.weights_dir.exists():
                 try:
                     fix_path_permissions_recursive(self.weights_dir)
-                    # Fix permissions on any weight files that were created
                     for weight_file in self.weights_dir.rglob("*.pt"):
                         try:
                             os.chmod(weight_file, 0o666)
-                            logger.info(f"Fixed permissions on {weight_file}")
                         except Exception as e:
                             logger.warning(f"Could not fix permissions on {weight_file}: {e}")
                 except Exception as e:
@@ -491,14 +396,16 @@ class YOLOTrainingTask(TrainingTask):
             copy_weights_to_expected_location
         )
         
-        logger.info("Training completed. Checking actual image size used...")
-        if hasattr(self.model, 'trainer') and hasattr(self.model.trainer, 'args'):
-            logger.info(f"Trainer args imgsz: {self.model.trainer.args.imgsz}")
-        if hasattr(self.results, 'args'):
-            logger.info(f"Results args imgsz: {self.results.args.imgsz}")
-        
-        # Get actual save directory from YOLO
-        actual_save_dir = get_yolo_save_directory(self.model, self.results)
+        actual_save_dir = None
+        if self._last_train_args:
+            project = self._last_train_args.get("project")
+            name = self._last_train_args.get("name", "training")
+            if project:
+                candidate = Path(project) / name
+                if candidate.exists():
+                    actual_save_dir = candidate
+        if actual_save_dir is None:
+            actual_save_dir = get_yolo_save_directory(self.model, self.results)
         
         self.task.progress = 90
         self.task.task_metadata = {
@@ -519,10 +426,42 @@ class YOLOTrainingTask(TrainingTask):
             self.weights_dir,
             self.output_base
         )
-        
+
+        from app.tasks.yolo_training_helpers import sync_training_run_artifacts
+        from sqlalchemy.orm.attributes import flag_modified
+
+        from app.tasks.yolo_metrics import finalize_yolo_metrics
+
+        persist_training_dir = self.output_base / "training"
+        artifact_info = sync_training_run_artifacts(actual_save_dir, persist_training_dir)
+        results_csv = Path(artifact_info.get("results_csv", ""))
+        if not results_csv.is_file() and actual_save_dir:
+            results_csv = actual_save_dir / "results.csv"
+
+        meta = dict(self.task.task_metadata or {})
+        history = meta.get("metrics_history") if isinstance(meta.get("metrics_history"), list) else []
+        metrics_history, latest_metrics, results_summary = finalize_yolo_metrics(
+            history,
+            results_csv=results_csv if results_csv.is_file() else None,
+        )
+
         # Store weights info in task metadata
         self.task.task_metadata.update(weights_info)
-        
+        self.task.task_metadata.update(artifact_info)
+        if metrics_history:
+            self.task.task_metadata["metrics_history"] = metrics_history
+        if latest_metrics:
+            self.task.task_metadata["latest_metrics"] = latest_metrics
+        if results_summary:
+            self.task.task_metadata["results"] = {"metrics": results_summary}
+        if not self.task.task_metadata.get("device_used"):
+            device = str(self.training_config.get("device", "0"))
+            self.task.task_metadata["device_used"] = (
+                f"cuda:{device}" if device not in ("", "cpu") else "cpu"
+            )
+        flag_modified(self.task, "task_metadata")
+        self.db.commit()
+
         # Copy training results to Windows-accessible location
         self._export_training_results(actual_save_dir)
     
@@ -583,8 +522,7 @@ class YOLOTrainingTask(TrainingTask):
         self.task.status = "completed"
         self.task.completed_at = datetime.utcnow()
         self.task.progress = 100
-        trainer_metrics = _trainer_results_metrics_flat(self.model)
-
+        trainer_metrics = _trainer_results_metrics_flat(self.model) if self.model else {}
         merged_meta = {
             **self.task.task_metadata,
             "stage": "completed",
@@ -595,7 +533,7 @@ class YOLOTrainingTask(TrainingTask):
             "image_counts": dataset_info['image_counts'],
             "results_dir": str(self.output_base / "training"),
         }
-        if trainer_metrics:
+        if trainer_metrics and not merged_meta.get("results"):
             merged_meta["results"] = {"metrics": trainer_metrics}
         self.task.task_metadata = merged_meta
         self.db.commit()

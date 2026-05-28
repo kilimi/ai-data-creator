@@ -155,14 +155,16 @@ describe("TrainingDetailsModal", () => {
     });
   });
 
-  it("resolves relative training example URLs to API base URL", async () => {
+  it("shows up to three clickable training example thumbnails per split", async () => {
     const taskWithExamples = {
       ...mockTask,
       task_metadata: {
         ...mockTask.task_metadata,
         example_images: {
           train: "/tasks/42/examples/train",
+          val: "/tasks/42/examples/val",
         },
+        image_counts: { train: 9, val: 2, test: 0 },
       },
     };
 
@@ -174,13 +176,18 @@ describe("TrainingDetailsModal", () => {
     render(<TrainingDetailsModal open={true} onOpenChange={() => {}} taskId={42} />);
 
     await waitFor(() => {
-      expect(screen.getByText("train")).toBeInTheDocument();
+      expect(screen.getByText("Train")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByText("train"));
+    const thumbs = screen.getAllByAltText(/Train example \d/);
+    expect(thumbs).toHaveLength(3);
+    expect(thumbs[0].getAttribute("src")).toBe(
+      "http://localhost:9999/tasks/42/examples/train/sample/1",
+    );
 
-    const img = await screen.findByAltText("train batch");
-    expect(img.getAttribute("src")).toBe("http://localhost:9999/tasks/42/examples/train");
+    fireEvent.click(thumbs[0]);
+    const enlarged = await screen.findAllByAltText("Train example 1");
+    expect(enlarged.length).toBeGreaterThanOrEqual(2);
   });
 
   it("shows live in-epoch batch progress for running training", async () => {

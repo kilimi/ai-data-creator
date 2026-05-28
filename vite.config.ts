@@ -2,6 +2,28 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import fs from 'fs';
+import { isSpaProjectRoute } from "./deploy/spa-project-routes.mjs";
+
+/** First path segment(s) proxied to the FastAPI backend in dev (see deploy/api-proxy-prefixes.json). */
+const API_PROXY_PREFIXES: string[] = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "deploy/api-proxy-prefixes.json"), "utf8"),
+);
+const BACKEND_PROXY_TARGET =
+  process.env.VITE_BACKEND_PROXY_TARGET || "http://127.0.0.1:9999";
+const devApiProxy = Object.fromEntries(
+  API_PROXY_PREFIXES.map((segment) => [
+    `/${segment}`,
+    {
+      target: BACKEND_PROXY_TARGET,
+      changeOrigin: true,
+      bypass: (req: { url?: string }) => {
+        if (segment === "projects" && isSpaProjectRoute(req.url || "")) {
+          return req.url;
+        }
+      },
+    },
+  ]),
+);
 
 // Serve onnxruntime-web WASM and .mjs/.js from node_modules so workers can load them
 const ONNX_DIST = path.join(process.cwd(), 'node_modules', 'onnxruntime-web', 'dist');
@@ -47,6 +69,7 @@ export default defineConfig(async ({ mode }) => {
     server: {
       host: "::",
       port: 8080,
+      proxy: devApiProxy,
       fs: {
         // Allow serving files from one level up to the project root
         allow: ['..'],

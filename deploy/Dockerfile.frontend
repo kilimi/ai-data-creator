@@ -12,7 +12,7 @@ RUN npm install
 
 COPY . .
 
-ARG VITE_API_URL=http://localhost:9999
+ARG VITE_API_URL=SAME_ORIGIN
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build

@@ -19,7 +19,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
-from app.routers.training import prepare_mmyolo_dataset
+from app.ml.dataset import prepare_mmyolo_dataset
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -159,6 +159,32 @@ class TestPrepareMMYOLODatasetDetect:
         ann = data["annotations"][0]
         # COCO bbox: [x, y, width, height] — stored as-is from DB
         assert ann["bbox"] == [50, 60, 200, 150]
+
+    def test_eighty_twenty_split_includes_all_images(self, tmp_path):
+        """12 images at 80/20 must not drop the 12th (regression: was 9+2 only)."""
+        images = [_make_image(i, f"img{i}.jpg") for i in range(1, 13)]
+        classes = [_make_class(1, "car", category_id=0, annotation_file_id=10)]
+        annotations = [
+            _make_annotation(i, image_id=i, category_id=0, annotation_file_id=10, bbox=[0, 0, 10, 10])
+            for i in range(1, 13)
+        ]
+        db = _make_db(images, annotations, classes, annotation_file_id=10)
+        dataset_configs = [{
+            "dataset_id": 1,
+            "annotation_file_id": 10,
+            "split": {"train": 80, "val": 20, "test": 0},
+        }]
+
+        with patch("app.ml.dataset.formats.coco.os.link", side_effect=OSError), patch(
+            "app.ml.dataset.formats.coco.shutil.copy2"
+        ):
+            result = prepare_mmyolo_dataset(db, dataset_configs, tmp_path, task="detect")
+
+        train_data = json.loads(Path(result["train_json"]).read_text())
+        val_data = json.loads(Path(result["val_json"]).read_text())
+        assert len(train_data["images"]) == 10
+        assert len(val_data["images"]) == 2
+        assert len(train_data["annotations"]) + len(val_data["annotations"]) == 12
 
     def test_class_count_in_result(self, tmp_path):
         images = [_make_image(1, "img1.jpg")]

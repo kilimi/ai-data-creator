@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SharedTestInferenceModal, InferenceResult } from "./SharedTestInferenceModal";
-import { getApiBaseUrl } from "@/config/api";
+import { buildApiUrl, postApiFormData } from "@/config/api";
 
 interface TestTrainingInferenceModalProps {
   open: boolean;
@@ -39,7 +39,11 @@ export function TestTrainingInferenceModal({
   const fetchCheckpoints = async () => {
     setLoadingCheckpoints(true);
     try {
-      const response = await fetch(`${getApiBaseUrl()}/training/${taskId}/checkpoints`);
+      const response = await fetch(buildApiUrl(`/training/${taskId}/checkpoints`), {
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-cache",
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.checkpoints && Array.isArray(data.checkpoints)) {
@@ -67,12 +71,10 @@ export function TestTrainingInferenceModal({
     const formData = new FormData();
     formData.append('image', image);
 
-    const response = await fetch(
-      `${getApiBaseUrl()}/training/${taskId}/test-inference?checkpoint=${encodeURIComponent(selectedCheckpoint)}`,
-      {
-        method: 'POST',
-        body: formData,
-      }
+    const response = await postApiFormData(
+      `/training/${taskId}/test-inference`,
+      formData,
+      { checkpoint: selectedCheckpoint },
     );
 
     const data = await response.json();
@@ -82,10 +84,16 @@ export function TestTrainingInferenceModal({
     }
 
     if (data.success) {
-      return data.result;
-    } else {
-      throw new Error(data.error || 'Inference failed');
+      // Ultralytics/celery wraps payload in result; legacy MMYOLO used top-level predictions.
+      if (data.result) {
+        return data.result;
+      }
+      return {
+        predictions: data.predictions ?? [],
+        image_url: data.image_url,
+      };
     }
+    throw new Error(data.error || 'Inference failed');
   };
 
   const checkpointSelector = (

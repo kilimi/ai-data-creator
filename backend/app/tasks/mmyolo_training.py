@@ -13,13 +13,17 @@ from app.models import Task as TaskModel
 from app.tasks.mmyolo_config import (
     MMYOLOConfigParams,
     build_mmyolo_config_content,
+    mmyolo_cfg_options_list,
     resolve_mmyolo_base_config,
     resolve_mmyolo_split_paths,
 )
 from app.tasks.mmyolo_dji import prepare_dji_mmyolo_repo
 from app.tasks.mmyolo_metrics import merge_epoch_metrics, parse_mmyolo_log_line, pick_latest_display_metrics
 from app.tasks.training_common import MMYOLO_PYTHON, TrainingTask
-from app.tasks.training_visualization import create_coco_training_examples
+from app.tasks.training_visualization import (
+    create_coco_training_examples,
+    create_mmyolo_prediction_preview,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +45,6 @@ def _validate_dji_mode(num_classes: int) -> str:
     return config_id
 
 
-def _mmyolo_cfg_options(*, batch_size: int, epochs: int) -> str:
-    """Build mim --cfg-options string so user epoch count overrides the 500e base config."""
-    val_interval = max(1, min(10, max(1, epochs // 3)))
-    return " ".join(
-        [
-            f"train_batch_size_per_gpu={batch_size}",
-            f"train_cfg.max_epochs={epochs}",
-            f"train_cfg.val_interval={val_interval}",
-            f"default_hooks.param_scheduler.max_epochs={epochs}",
-            f"default_hooks.checkpoint.interval={val_interval}",
-        ]
-    )
-
-
 def _build_training_command(
     *,
     task_id: int,
@@ -64,7 +54,7 @@ def _build_training_command(
     is_dji_mode: bool,
     dji_repo: Optional[str],
 ) -> List[str]:
-    cfg_options = _mmyolo_cfg_options(batch_size=batch_size, epochs=epochs)
+    cfg_options = mmyolo_cfg_options_list(batch_size=batch_size, epochs=epochs)
     if is_dji_mode:
         if not dji_repo or not Path(dji_repo).exists():
             raise RuntimeError(
@@ -87,7 +77,7 @@ def _build_training_command(
             str(train_script),
             str(cfg_path),
             "--cfg-options",
-            cfg_options,
+            *cfg_options,
         ]
 
     return [
@@ -99,19 +89,17 @@ def _build_training_command(
         "train",
         str(cfg_path),
         "--cfg-options",
-        cfg_options,
+        *cfg_options,
     ]
 
 
 def _build_training_env(*, device: str, is_dji_mode: bool, dji_repo: Optional[str]) -> dict:
-    env = {**os.environ}
-    env.pop("PYTHONPATH", None)
-    if is_dji_mode and dji_repo:
-        env["PYTHONPATH"] = str(Path(dji_repo))
-        logger.info(f"DJI mode: PYTHONPATH={env['PYTHONPATH']}")
-    if device != "cpu":
-        env["CUDA_VISIBLE_DEVICES"] = device
-    return env
+    from app.ml.runtime_env import build_mmyolo_subprocess_env
+
+    dji_dir = dji_repo if is_dji_mode and dji_repo else None
+    if dji_dir:
+        logger.info(f"DJI mode: PYTHONPATH={dji_dir}")
+    return build_mmyolo_subprocess_env(device=device, dji_repo_dir=dji_dir)
 
 
 def _create_mmyolo_training_examples(
@@ -366,9 +354,27 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
                 dataset_info.get("image_counts", {}).get("val", 0),
             )
 
+        train_image_count = int(dataset_info.get("image_counts", {}).get("train", 0) or 0)
+        if train_image_count > 0:
+            batch_size = max(1, min(int(batch_size), train_image_count))
+
+        base_cfg = resolve_mmyolo_base_config(config_id)
+        from app.ml.mmyolo_catalog import mmyolo_pretrained_checkpoint
+
+        pretrained_url = mmyolo_pretrained_checkpoint(base_cfg)
+        if pretrained_url:
+            logger.info("MMYOLO task %s: fine-tuning from COCO pretrained %s", task_id, pretrained_url)
+        else:
+            logger.warning(
+                "MMYOLO task %s: no COCO pretrained checkpoint for config %s — training from scratch "
+                "(unlike Ultralytics, which always uses pretrained weights)",
+                task_id,
+                base_cfg,
+            )
+
         cfg_content = build_mmyolo_config_content(
             MMYOLOConfigParams(
-                base_cfg=resolve_mmyolo_base_config(config_id),
+                base_cfg=base_cfg,
                 num_classes=num_classes,
                 class_names_py=repr(tuple(dataset_info["class_names"])),
                 epochs=epochs,
@@ -433,10 +439,14 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
         if not last_model_path.exists() and best_model:
             last_model_path = Path(best_model)
 
+        example_images = dict((final_meta := (task.task_metadata or {})).get("example_images") or {})
+        examples_dir = output_base / "examples"
+        if create_mmyolo_prediction_preview(weights_dir, examples_dir):
+            example_images["val_predictions"] = f"/tasks/{task_id}/examples/val_predictions"
+
         task.status = "completed"
         task.completed_at = datetime.utcnow()
         task.progress = 100
-        final_meta = task.task_metadata or {}
         metrics_history = final_meta.get("metrics_history") or []
         finished_epoch = min(int(final_meta.get("current_epoch") or epochs), epochs)
         task.task_metadata = {
@@ -445,12 +455,14 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
             "best_model": best_model,
             "last_model": str(last_model_path) if last_model_path.exists() else best_model,
             "results_dir": str(weights_dir),
+            "mmyolo_vis_dir": str(weights_dir / "vis_data"),
             "class_names": dataset_info["class_names"],
             "class_count": dataset_info["class_count"],
             "image_counts": dataset_info["image_counts"],
             "current_epoch": finished_epoch,
             "total_epochs": epochs,
             "latest_metrics": pick_latest_display_metrics(metrics_history),
+            "example_images": example_images,
         }
         db.commit()
         logger.info(f"MMYOLO task {task_id} completed. best_model={best_model}")

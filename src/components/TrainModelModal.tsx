@@ -246,6 +246,21 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
     epochs: 0
   });
 
+  const [modelsCatalog, setModelsCatalog] = useState<Array<{ id: string; display_name: string }>>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    api.getModelsCatalog().then((res) => {
+      const data = res.data || res;
+      const backends = (data as { backends?: Array<{ id: string; display_name: string }> }).backends;
+      if (backends?.length) {
+        setModelsCatalog(backends.map((b) => ({ id: b.id, display_name: b.display_name })));
+      }
+    }).catch(() => {
+      /* catalog is optional; UI still uses local model family presets */
+    });
+  }, [open, api]);
+
   const yoloVersion = normalizeYoloVersion(modelSettings.version || 'yolo11');
   const allowedYoloSizes = YOLO_TRAIN_SIZES[yoloVersion] || YOLO_TRAIN_SIZES.yolo11;
   useEffect(() => {
@@ -855,7 +870,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           task_name: customName.trim() || `YOLO Training - ${new Date().toLocaleString()}`
         };
 
-        response = await api.startYoloTraining(trainingRequest);
+        response = await api.startTraining({
+          framework_id: 'ultralytics.yolo',
+          project_id: parseInt(projectId),
+          dataset_configs: datasetConfigs,
+          task_name: trainingRequest.task_name,
+          params: trainingRequest,
+        });
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'rf-detr') {
         // Prepare RT-DETR training request
@@ -879,7 +900,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           task_name: customName.trim() || `RT-DETR Training - ${new Date().toLocaleString()}`
         };
 
-        response = await api.startRTDETRTraining(trainingRequest);
+        response = await api.startTraining({
+          framework_id: 'ultralytics.rtdetr',
+          project_id: parseInt(projectId),
+          dataset_configs: datasetConfigs,
+          task_name: trainingRequest.task_name,
+          params: trainingRequest,
+        });
         modelName = trainingRequest.model_type;
       } else if (selectedModel === 'mmyolo') {
         const arch = modelSettings.mmyoloArch || defaultMmyoloArchForTask(selectedTask as TrainTask, deployTarget);
@@ -909,7 +936,13 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           wandb_entity: saveToWandb ? wandbSettings.entity : undefined,
           task_name: customName.trim() || `MMYOLO ${arch.toUpperCase()} ${size.toUpperCase()} - ${new Date().toLocaleString()}`
         };
-        response = await api.startMMYOLOTraining(trainingRequest);
+        response = await api.startTraining({
+          framework_id: 'mmyolo',
+          project_id: parseInt(projectId),
+          dataset_configs: datasetConfigs,
+          task_name: trainingRequest.task_name,
+          params: trainingRequest,
+        });
         modelName = `${arch}-${size}`;
       }
 

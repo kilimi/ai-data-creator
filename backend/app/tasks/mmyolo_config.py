@@ -2,6 +2,22 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from typing import List
+
+from app.ml.mmyolo_catalog import mmyolo_pretrained_checkpoint
+
+
+def mmyolo_cfg_options_list(*, batch_size: int, epochs: int) -> List[str]:
+    """mim --cfg-options entries (each must be a separate argv token)."""
+    val_interval = max(1, min(10, max(1, epochs // 3)))
+    return [
+        f"train_dataloader.batch_size={batch_size}",
+        f"train_cfg.max_epochs={epochs}",
+        f"train_cfg.val_interval={val_interval}",
+        f"default_hooks.param_scheduler.max_epochs={epochs}",
+        f"default_hooks.checkpoint.interval={val_interval}",
+    ]
+
 
 def resolve_mmyolo_base_config(config_id: str) -> str:
     """Resolve a MMYOLO config id to an existing config file path when possible."""
@@ -134,8 +150,17 @@ def build_mmyolo_config_content(params: MMYOLOConfigParams) -> str:
     )
     image_size = params.image_size
     val_interval = max(1, min(10, max(1, params.epochs // 3)))
+    pretrained = mmyolo_pretrained_checkpoint(params.base_cfg)
+    load_from_line = (
+        f"load_from = '{pretrained}'"
+        if pretrained
+        else "# load_from not set — add a known config id to use COCO pretrained weights"
+    )
 
     return f"""_base_ = ['{params.base_cfg}']
+
+# Ultralytics loads *.pt pretrained weights by default; MMYOLO base runtime uses load_from=None.
+{load_from_line}
 
 # Ensure evaluator registry entries from MMDetection are loaded.
 custom_imports = dict(imports=['mmdet.evaluation.metrics.coco_metric'], allow_failed_imports=False)
@@ -180,6 +205,13 @@ train_cfg = dict(
 default_hooks = dict(
     param_scheduler=dict(max_epochs=max_epochs),
     checkpoint=dict(interval=val_interval),
+    # Save val prediction overlays under work_dir/vis_data/ (draw=False in base config).
+    visualization=dict(
+        type='mmdet.DetVisualizationHook',
+        draw=True,
+        interval=1,
+        score_thr=0.25,
+    ),
 )
 
 # Keep EMA from the base config but do NOT inherit PipelineSwitchHook — it switches to

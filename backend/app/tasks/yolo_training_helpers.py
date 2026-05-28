@@ -543,7 +543,7 @@ def build_yolo_training_args(
             logger.warning(
                 "CUDA not available for YOLO training%s. torch=%s at %s. "
                 "Using device='cpu'. If nvidia-smi works in celery_worker, rebuild the "
-                "training image (Dockerfile.training) so /opt/lai does not shadow the "
+                "training image (Dockerfile.celery / ultralytics venv) so /opt/lai does not shadow the "
                 "base CUDA PyTorch wheel, and set CUDA_VISIBLE_DEVICES=0.",
                 cuda_err,
                 getattr(torch, "__version__", "?"),
@@ -744,6 +744,33 @@ def copy_weights_to_expected_location(
         "yolo_last_model": str(yolo_last_path) if yolo_last_path.exists() else None,
         "weights_copied": weights_copied
     }
+
+
+def sync_training_run_artifacts(
+    source_dir: Optional[Path],
+    dest_dir: Path,
+) -> Dict[str, Any]:
+    """
+    Copy Ultralytics run outputs (results.csv, plots) into the persisted project tree.
+
+    Training runs in /tmp; this syncs metrics artifacts next to weights under projects/.
+    """
+    copied: list[str] = []
+    if not source_dir or not source_dir.exists():
+        return {"artifacts_synced": copied}
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in ("results.csv", "args.yaml", "results.json", "*.png"):
+        for src in source_dir.glob(pattern):
+            if not src.is_file():
+                continue
+            try:
+                shutil.copy2(src, dest_dir / src.name)
+                copied.append(src.name)
+            except OSError as exc:
+                logger.warning("Could not copy training artifact %s: %s", src, exc)
+
+    return {"artifacts_synced": copied, "results_csv": str(dest_dir / "results.csv")}
 
 
 def _copy_weight_file(source: Path, destination: Path, weight_name: str) -> bool:

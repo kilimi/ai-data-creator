@@ -124,13 +124,9 @@ def resolve_mmyolo_checkpoint(task_metadata: dict, checkpoint: str) -> Optional[
 
 def _build_mmyolo_eval_env(*, device: str, dji_repo_dir: Optional[str]) -> dict:
     """Build subprocess env for MMYOLO inference (avoid LAI PYTHONPATH conflicts)."""
-    env = {**os.environ}
-    env.pop("PYTHONPATH", None)
-    if dji_repo_dir and Path(dji_repo_dir).exists():
-        env["PYTHONPATH"] = str(Path(dji_repo_dir))
-    if device not in ("cpu", ""):
-        env["CUDA_VISIBLE_DEVICES"] = device
-    return env
+    from app.ml.runtime_env import build_mmyolo_subprocess_env
+
+    return build_mmyolo_subprocess_env(device=device, dji_repo_dir=dji_repo_dir)
 
 
 def run_mmyolo_inference_subprocess(
