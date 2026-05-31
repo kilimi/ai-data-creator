@@ -14,7 +14,7 @@ test('navigate to create project page', async ({ page }) => {
   console.log('On home page');
   
   // Click the visible "New Project" action in main content (sidebar has another offscreen copy)
-  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
+  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' });
   await expect(newProjectLink).toBeVisible();
   await newProjectLink.click();
   

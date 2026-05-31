@@ -10,12 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { createApiClient } from "@/utils/api";
 import { API_CONFIG } from "@/config/api";
-import * as z from "zod";
-
-const formSchema = z.object({
-  name: z.string().min(2, { message: "Name must be at least 2 characters" }),
-  description: z.string().optional(),  // Make description optional
-});
+import { validateProjectLogoFile } from "@/lib/project-logo-validation";
 
 interface EditProjectDialogProps {
   project: Project;
@@ -40,23 +35,11 @@ export function EditProjectDialog({ project, open, onOpenChange, onProjectUpdate
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      const fileName = file.name.toLowerCase();
-      const isImageType = file.type.startsWith('image/');
-      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
-      
-      if (!isImageType && !isTiffFile) {
+      const validation = validateProjectLogoFile(file);
+      if (!validation.ok) {
         toast({
-          title: "Invalid file type",
-          description: "Please select an image file",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      if (file.size > 25 * 1024 * 1024) {
-        toast({
-          title: "File too large",
-          description: "Image must be less than 25MB",
+          title: validation.title,
+          description: validation.description,
           variant: "destructive",
         });
         return;
@@ -104,10 +87,19 @@ export function EditProjectDialog({ project, open, onOpenChange, onProjectUpdate
   };
 
   const handleSubmit = async () => {
-    if (!name.trim()) {
+    const trimmed = name.trim();
+    if (!trimmed) {
       toast({
         title: "Error",
         description: "Project name is required",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (trimmed.length < 2) {
+      toast({
+        title: "Error",
+        description: "Name must be at least 2 characters",
         variant: "destructive",
       });
       return;

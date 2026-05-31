@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useNavigate, useLocation, Link } from "react-router-dom";
+import { useLocation, Link } from "react-router-dom";
 import { Plus, Search, Settings, Activity, Tag, Filter, Sparkles, RefreshCw, FolderOpen, ChevronRight, FolderPlus, Image as ImageIcon, Brain, BookOpen, Rocket, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,11 +16,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useApi } from "@/hooks/use-api";
 import { useStableLoading } from "@/hooks/useStableLoading";
+import { useProjects } from "@/hooks/use-projects";
+import {
+  collectProjectTags,
+  computeProjectListStats,
+  filterAndSortProjects,
+  type ProjectSortOrder,
+} from "@/lib/projects-list";
 import { cn } from "@/lib/utils";
 
-// Quick project item for sidebar
 interface QuickProjectItemProps {
   project: Project;
 }
@@ -135,26 +140,22 @@ function EmptyOnboarding() {
 }
 
 export default function Index() {
-  const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
-  const { api, isConfigured } = useApi();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "name">("newest");
+  const [sortOrder, setSortOrder] = useState<ProjectSortOrder>("newest");
   const [refetchTrigger, setRefetchTrigger] = useState(0);
   const [sidebarVisible, setSidebarVisible] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const triggerZoneRef = useRef<HTMLDivElement>(null);
-  
-  // Use stable loading to prevent flickering
+
+  const { projects, loading, error, refetch } = useProjects(refetchTrigger);
   const stableLoading = useStableLoading(loading, 250);
 
   const handleRefresh = () => {
-    setRefetchTrigger(prev => prev + 1);
+    setRefetchTrigger((prev) => prev + 1);
+    refetch();
     toast({
       title: "Refreshing projects...",
       description: "Loading latest data",
@@ -162,112 +163,46 @@ export default function Index() {
   };
 
   useEffect(() => {
-    const fetchProjects = async () => {
-      if (!isConfigured || !api) {
-        return;
-      }
-
-      try {
-        setError(null);
-        const response = await api.getProjects();
-
-        if (response.success && response.data) {
-          const transformedProjects = response.data.map((project: any) => ({
-            ...project,
-            datasets: project.datasets || [],
-          }));
-
-          setProjects(transformedProjects);
-        } else {
-          setError(response.error || 'Failed to fetch projects');
-          toast({
-            title: "Error fetching projects",
-            description: response.error || "Check your API connection settings",
-            variant: "destructive",
-          });
-        }
-      } catch (err) {
-        console.error('Error fetching projects:', err);
-        setError(err instanceof Error ? err.message : 'Failed to fetch projects');
-        toast({
-          title: "Error fetching projects",
-          description: "Check your API connection settings",
-          variant: "destructive",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProjects();
-  }, [api, isConfigured, toast, refetchTrigger]);
-
-  useEffect(() => {
     if (location.state?.refetch) {
-      setRefetchTrigger(prev => prev + 1);
+      setRefetchTrigger((prev) => prev + 1);
       window.history.replaceState({}, document.title);
     }
   }, [location.state]);
 
-  const filteredAndSortedProjects = useMemo(() => {
-    let result = [...projects];
-    
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(
-        project => {
-          const nameMatch = project.name.toLowerCase().includes(query);
-          const descMatch = (project.description || '').toLowerCase().includes(query);
-          const tagMatch = project.tags && project.tags.some(tag => tag.toLowerCase().includes(query));
-          
-          return nameMatch || descMatch || tagMatch;
-        }
-      );
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Error fetching projects",
+        description: error || "Check your API connection settings",
+        variant: "destructive",
+      });
     }
-    
-    if (selectedTag) {
-      result = result.filter(project => 
-        project.tags && project.tags.includes(selectedTag)
-      );
-    }
-    
-    switch (sortOrder) {
-      case "newest":
-        return result.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      case "oldest":
-        return result.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-      case "name":
-        return result.sort((a, b) => a.name.localeCompare(b.name));
-      default:
-        return result;
-    }
-  }, [projects, searchQuery, selectedTag, sortOrder]);
+  }, [error, toast]);
 
-  const allTags = Array.from(
-    new Set(
-      projects.flatMap(project => project.tags || [])
-    )
-  ).sort();
+  const filteredAndSortedProjects = useMemo(
+    () =>
+      filterAndSortProjects(projects, {
+        searchQuery,
+        selectedTag,
+        sortOrder,
+      }),
+    [projects, searchQuery, selectedTag, sortOrder],
+  );
 
-  const stats = {
-    totalProjects: projects.length,
-    totalDatasets: projects.reduce((acc, p) => acc + (p.datasets?.length || 0), 0),
-    totalImages: projects.reduce((acc, p) => acc + p.datasets?.reduce((datasetAcc, d) => datasetAcc + (d.image_count || 0), 0), 0)
-  };
+  const allTags = useMemo(() => collectProjectTags(projects), [projects]);
+  const stats = useMemo(() => computeProjectListStats(projects), [projects]);
 
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
       
       <div className="pt-16">
-        {/* Invisible trigger zone on left edge */}
         <div 
           ref={triggerZoneRef}
           className="fixed left-0 top-16 w-4 h-[calc(100vh-4rem)] z-40"
           onMouseEnter={() => setSidebarVisible(true)}
         />
 
-        {/* Auto-hide Sidebar */}
         <aside 
           ref={sidebarRef}
           className={cn(
@@ -278,7 +213,6 @@ export default function Index() {
           onMouseLeave={() => setSidebarVisible(false)}
         >
           <div className="p-4 h-full flex flex-col">
-            {/* Header */}
             <div className="mb-4 pb-4 border-b border-border/50">
               <div className="flex items-center gap-2">
                 <div className="h-8 w-8 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -291,7 +225,6 @@ export default function Index() {
               </div>
             </div>
             
-            {/* Recent Projects */}
             <div className="flex-1 overflow-y-auto">
               <h3 className="text-xs text-muted-foreground uppercase tracking-wider mb-3 px-1">
                 Projects ({stats.totalProjects})
@@ -306,7 +239,6 @@ export default function Index() {
               </div>
             </div>
 
-            {/* Footer Actions */}
             <div className="pt-4 mt-4 border-t border-border/50 space-y-2">
               <Button asChild variant="outline" size="sm" className="w-full justify-start gap-2">
                 <Link to="/projects/new">
@@ -324,10 +256,8 @@ export default function Index() {
           </div>
         </aside>
         
-        {/* Main Content */}
         <main className="flex-1">
           <div className="container max-w-6xl mx-auto px-6 py-6">
-            {/* Page Header */}
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h1 className="text-2xl font-bold text-foreground">Projects</h1>
@@ -339,12 +269,16 @@ export default function Index() {
                   {stats.totalImages.toLocaleString()} images
                 </p>
               </div>
+              <Button asChild>
+                <Link to="/projects/new" className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  New Project
+                </Link>
+              </Button>
             </div>
 
-            {/* Search and Filters */}
             <div className="glass-card rounded-xl p-4 mb-6">
               <div className="flex flex-col lg:flex-row gap-4">
-                {/* Search */}
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -355,8 +289,7 @@ export default function Index() {
                   />
                 </div>
                 
-                {/* Sort Dropdown */}
-                <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as any)}>
+                <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as ProjectSortOrder)}>
                   <SelectTrigger className="w-[160px] h-10 bg-background/50 border-border/50">
                     <Filter className="w-4 h-4 mr-2" />
                     <SelectValue placeholder="Sort by" />
@@ -368,7 +301,6 @@ export default function Index() {
                   </SelectContent>
                 </Select>
                 
-                {/* Refresh Button */}
                 <Button
                   variant="outline"
                   size="icon"
@@ -382,7 +314,6 @@ export default function Index() {
                 </Button>
               </div>
               
-              {/* Tag Filter */}
               {allTags.length > 0 && (
                 <div className="mt-4 pt-4 border-t border-border/50">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -411,7 +342,6 @@ export default function Index() {
               )}
             </div>
 
-            {/* Projects Grid */}
             {stableLoading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {Array(6).fill(0).map((_, i) => (
@@ -456,7 +386,6 @@ export default function Index() {
               )
             ) : (
               <div className="space-y-4">
-                {/* Results Header */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">
@@ -470,7 +399,11 @@ export default function Index() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filteredAndSortedProjects.map((project, index) => (
                     <div key={project.id} className="animate-fade-in" style={{ animationDelay: `${index * 50}ms` }}>
-                      <ProjectCard project={project} />
+                      <ProjectCard
+                        project={project}
+                        onDelete={() => setRefetchTrigger((p) => p + 1)}
+                        onUpdate={() => setRefetchTrigger((p) => p + 1)}
+                      />
                     </div>
                   ))}
                 </div>

@@ -22,7 +22,7 @@ async function globalSetup(_config: FullConfig) {
   try {
     const base = apiUrl();
     console.log('🧹 Clearing test database before running tests...');
-    const clearRes = await page.request.delete(`${base}/database/clear`);
+    const clearRes = await page.request.delete(`${base}/database/clear`, { timeout: 120_000 });
     if (clearRes.ok()) {
       const data = await clearRes.json();
       console.log('✅ Test database cleared successfully');

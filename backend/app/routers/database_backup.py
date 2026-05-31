@@ -8,6 +8,7 @@ import zipfile
 import os
 import shutil
 import tempfile
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
@@ -30,9 +31,33 @@ def serialize_model(obj: Any) -> Dict[str, Any]:
         elif isinstance(value, bytes):
             # Handle binary data (like logos)
             result[column.name] = value.hex() if value else None
+        elif isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            # NaN/Infinity are not valid JSON (json.dumps emits bare NaN)
+            result[column.name] = None
         else:
             result[column.name] = value
     return result
+
+
+def _parse_backup_json(raw: bytes, *, source: str) -> Dict[str, Any]:
+    """Parse backup JSON with actionable errors for truncated/corrupt exports."""
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Backup file is not valid UTF-8 ({source}): {exc}",
+        ) from exc
+    except json.JSONDecodeError as exc:
+        pos = exc.pos
+        hint = (
+            "The backup JSON is corrupted or was cut off during export/download. "
+            "Re-export using the full ZIP archive, or export fewer projects/datasets. "
+            "Do not use a partial download."
+        )
+        if pos is not None:
+            hint += f" Parse failed near byte {pos}."
+        raise HTTPException(status_code=400, detail=f"Invalid backup JSON ({source}): {exc}. {hint}") from exc
 
 def get_all_table_data(db: Session, project_ids: List[int] = None, dataset_ids: List[int] = None) -> Dict[str, List[Dict[str, Any]]]:
     """Export all data from all tables with optional filtering"""
@@ -196,7 +221,12 @@ async def export_database(
                                 
                                 # Serialize and yield record
                                 record_dict = serialize_model(record)
-                                yield json.dumps(record_dict, ensure_ascii=False, default=str).encode('utf-8')
+                                yield json.dumps(
+                                    record_dict,
+                                    ensure_ascii=False,
+                                    allow_nan=False,
+                                    default=str,
+                                ).encode('utf-8')
                                 record_count += 1
                                 
                                 # Log progress every 1000 records
@@ -210,7 +240,8 @@ async def export_database(
                         
                     except Exception as e:
                         logger.error(f"Error streaming table {table_name}: {str(e)}")
-                        yield b'[]'  # Empty array for failed table
+                        # Close the array opened above; yielding '[]' would corrupt JSON.
+                        yield b']'
                 
                 # Close JSON structure
                 yield b'}}'
@@ -375,7 +406,7 @@ async def import_database(file: UploadFile = File(...), db: Session = Depends(ge
                 
                 # Read database.json from ZIP
                 with zip_file.open('database.json') as db_file:
-                    import_data = json.loads(db_file.read().decode('utf-8'))
+                    import_data = _parse_backup_json(db_file.read(), source="database.json in ZIP")
                 
                 # Extract other files
                 extract_dir = Path("temp_restore")
@@ -403,7 +434,7 @@ async def import_database(file: UploadFile = File(...), db: Session = Depends(ge
         
         else:
             # Handle JSON files
-            import_data = json.loads(content.decode('utf-8'))
+            import_data = _parse_backup_json(content, source=file.filename or "uploaded JSON")
         
         # Validate import data structure
         if 'data' not in import_data:

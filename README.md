@@ -45,11 +45,105 @@ docker compose up -d worker-general worker-gpu celery-beat
 
 ## Tests
 
+Run **unit and integration tests on your host** (repo checkout + venv / Node). Do **not** run them inside production Compose images (`backend`, `web`, `worker-*`) — those images omit dev tools (`pytest`, Vitest, Playwright).
+
+**E2E** needs the **API stack in Docker** (`backend`, `db`, `redis`, …). Playwright starts the **Vite dev server on the host** (`:8080`), not the `web` nginx container (`:8089`).
+
+### Prerequisites
+
+| Suite | Host needs | Docker stack (`lai up`) |
+|--------|------------|-------------------------|
+| Frontend unit (Vitest) | Node 18+, `npm ci` | No |
+| Python (`tests/python/`) | Python 3.10+, venv, `pip install -r backend/requirements.txt pytest` | No (most tests); API tests use in-memory SQLite |
+| E2E (Playwright) | Node 18+, `npm ci`, `npx playwright install chromium` | **Yes** — API reachable at `http://localhost:9999` |
+
+From the **repository root** (directory that contains `docker-compose.yml`).
+
+### Python tests (`tests/python/`)
+
+On the **host** (recommended):
+
 ```bash
-pytest tests/python/test_celery_*.py
-npm run test:e2e
+python3 -m venv .venv
+# Windows: .venv\Scripts\activate
+source .venv/bin/activate
+
+pip install -U pip
+pip install -r backend/requirements.txt pytest
+
+# All Python tests
+pytest tests/python/
+
+# Examples
+pytest tests/python/test_projects_api.py
+pytest tests/python/test_celery_*.py -q
 ```
 
+`tests/python/conftest.py` adds `backend/` to `PYTHONPATH`; you do **not** need `docker compose exec` into `lai-backend-1` for these.
+
+Optional — run inside the **backend container** only for debugging (install pytest into the running container; not persisted in the image):
+
+```bash
+docker compose exec backend pip install pytest
+docker compose exec backend pytest /app/../tests/python/   # only if tests are bind-mounted
+```
+
+With `docker-compose.code-mount.yml` enabled, prefer host `pytest` instead.
+
+### Frontend unit tests (Vitest, `npm`)
+
+On the **host**, repo root:
+
+```bash
+npm ci
+
+npm run tests              # single run (CI-style)
+npm run test               # watch mode
+npm run test:coverage
+
+# Scope examples
+npm run tests -- src/lib/projects-list.test.ts
+npm run tests -- src/tests/pages/Index.test.tsx
+```
+
+Config: `vite.config.ts` (`test` section). No container required.
+
+### End-to-end tests (Playwright, `tests/e2e/`)
+
+On the **host**, with the **stack up**:
+
+```bash
+lai up          # or: docker compose up -d db redis backend
+# API must answer: curl http://localhost:9999/health-check
+
+npm ci
+npx playwright install chromium
+
+npm run test:e2e
+
+# Project page flows only
+npx playwright test tests/e2e/projects
+npx playwright test tests/e2e/test-navigation.spec.ts
+```
+
+How it works:
+
+- **Global setup** calls `DELETE http://localhost:9999/database/clear` on the running **backend** service (container `lai-backend-1`, host port **9999**).
+- Playwright’s **webServer** runs `npm run dev` → UI at **`http://localhost:8080`** (proxies `/projects`, `/datasets`, … to the API).
+- Override API URL: `TEST_API_URL=http://127.0.0.1:9999`
+- Override UI URL: `TEST_WEB_URL` or `PLAYWRIGHT_BASE_URL` (if not using the built-in Vite server).
+
+Do **not** point E2E only at the `web` service (`:8089`) unless you set `PLAYWRIGHT_BASE_URL` and skip `webServer`; the default flow expects Vite on **8080** + API on **9999**.
+
+Workers (`worker-general`, `worker-gpu`) are **not** used to run these test commands.
+
+### Run everything (host)
+
+```bash
+pytest tests/python/ && npm run tests && npm run test:e2e
+```
+
+Or: `npm run test:all` (Vitest + Playwright; run `pytest` separately).
 
 ## License
 

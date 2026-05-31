@@ -1326,6 +1326,25 @@ export class ApiClient {
 
       // Create blob directly from chunks (more efficient than combining into one array)
       const blob = new Blob(chunks as BlobPart[], { type: 'application/json' });
+
+      // Streaming export has no Content-Length; verify JSON before saving a broken backup.
+      if (receivedLength > 0 && receivedLength <= 100 * 1024 * 1024) {
+        const text = await blob.text();
+        if (!text.trimEnd().endsWith('}}')) {
+          throw new Error(
+            'Export file appears incomplete (JSON does not end with }}). ' +
+            'Try "Export with files" (ZIP) or export fewer projects/datasets.'
+          );
+        }
+        try {
+          JSON.parse(text);
+        } catch (parseError) {
+          const msg = parseError instanceof Error ? parseError.message : String(parseError);
+          throw new Error(
+            `Export produced invalid JSON (${msg}). Do not import this file — re-export or use the ZIP archive.`
+          );
+        }
+      }
       
       if (onProgress) onProgress(97);
 

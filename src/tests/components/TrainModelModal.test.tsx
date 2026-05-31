@@ -241,7 +241,8 @@ describe("TrainModelModal", () => {
   };
 
   const selectRfdetrModel = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByRole("heading", { name: /ultralytics rt-detr/i }));
+    // Card title only — settings panel adds a second "Ultralytics RT-DETR Configuration" heading.
+    await user.click(screen.getByRole("heading", { name: /^ultralytics rt-detr$/i }));
   };
 
   const clickNext = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -270,8 +271,17 @@ describe("TrainModelModal", () => {
   const addSingleDataset = async (user: ReturnType<typeof userEvent.setup>) => {
     await screen.findByText("Dataset 1");
     const dsButton = getDatasetRowButton("Dataset 1");
+    // One click selects the row; DatasetEvalPicker auto-expands on select (comfortable density).
+    // A second click on the row toggles collapse and hides split presets.
     await user.click(dsButton);
-    await user.click(getDatasetRowButton("Dataset 1"));
+  };
+
+  /** Split presets live in the expanded dataset row (TrainModelModal → DatasetEvalPicker). */
+  const expandFirstSelectedDataset = async (user: ReturnType<typeof userEvent.setup>) => {
+    const expandBtn = screen.queryByRole("button", { name: "Expand" });
+    if (expandBtn) {
+      await user.click(expandBtn);
+    }
   };
 
   /** Model selected, dataset added, on step 2 ready for Next → options. */
@@ -794,7 +804,10 @@ describe("TrainModelModal", () => {
       renderModal();
 
       await navigateToDatasetsWithSelection(user);
-      await user.click(screen.getByRole("button", { name: "70/20/10" }));
+      await expandFirstSelectedDataset(user);
+
+      const preset = await screen.findByRole("button", { name: "70/20/10" });
+      await user.click(preset);
 
       await goToOptionsStep(user);
 
@@ -805,9 +818,7 @@ describe("TrainModelModal", () => {
       await waitFor(() => expect(mockApi.startTraining).toHaveBeenCalled());
 
       const split = startTrainingCall().dataset_configs[0].split;
-      // split should be an object with train/val/test that sum to 100
-      expect(split).toBeDefined();
-      expect(split.train + split.val + split.test).toBe(100);
+      expect(split).toEqual({ train: 70, val: 20, test: 10 });
     });
 
     it("sends custom task name when provided", async () => {

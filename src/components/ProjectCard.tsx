@@ -21,28 +21,13 @@ import { useToast } from "@/hooks/use-toast";
 import { useAnnotationFilesCount } from "@/hooks/useAnnotationFilesCount";
 import { EditProjectDialog } from "./EditProjectDialog";
 import { Badge } from "@/components/ui/badge";
+import { formatRelative } from "@/lib/formatRelative";
 
 interface ProjectCardProps {
   project: Project;
   className?: string;
   onDelete?: () => void;
   onUpdate?: (project: Project) => void;
-}
-
-function formatRelative(dateStr: string): string {
-  const d = new Date(dateStr).getTime();
-  const diff = Date.now() - d;
-  const sec = Math.floor(diff / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return `${Math.floor(days / 365)}y ago`;
 }
 
 function DatasetMosaic({ datasets }: { datasets: Dataset[] }) {
@@ -205,7 +190,13 @@ export function ProjectCard({ project, className, onDelete, onUpdate }: ProjectC
             <div className="absolute top-2 right-2" onClick={(e) => e.stopPropagation()}>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="secondary" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur">
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur"
+                    aria-label="Project actions"
+                    data-testid="project-card-menu"
+                  >
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>

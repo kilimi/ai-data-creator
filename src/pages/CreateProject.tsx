@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Navbar } from '@/components/Navbar';
 import { createApiClient } from '@/utils/api';
 import { API_CONFIG } from '@/config/api';
+import { validateProjectLogoFile } from '@/lib/project-logo-validation';
 
 const CreateProject = () => {
   const navigate = useNavigate();
@@ -31,23 +32,11 @@ const CreateProject = () => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       
-      const fileName = file.name.toLowerCase();
-      const isImageType = file.type.startsWith('image/');
-      const isTiffFile = fileName.endsWith('.tif') || fileName.endsWith('.tiff');
-      
-      if (!isImageType && !isTiffFile) {
+      const validation = validateProjectLogoFile(file);
+      if (!validation.ok) {
         toast({
-          title: "Error",
-          description: "Please upload an image file",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      if (file.size > 25 * 1024 * 1024) {
-        toast({
-          title: "Error",
-          description: "Logo must be less than 25MB",
+          title: validation.title,
+          description: validation.description,
           variant: "destructive",
         });
         return;

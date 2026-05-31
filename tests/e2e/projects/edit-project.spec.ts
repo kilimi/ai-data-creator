@@ -1,103 +1,17 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createProjectViaUi, openProjectCardMenu } from "./helpers";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Helper function to create a test project
-async function createTestProject(page: Page, projectName: string) {
-  await page.goto('/');
-  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
-  await expect(newProjectLink).toBeVisible();
-  await newProjectLink.click();
-  await expect(page).toHaveURL('/projects/new');
-  
-  // Fill minimal project info
-  await page.fill('input#name', projectName);
-  await page.fill('textarea#description', 'Initial description for testing');
-  
-  // Add an initial tag
-  await page.fill('input[placeholder*="Add tags"]', 'initial-tag');
-  await page.click('button:has-text("Add")');
-  
-  // Verify tag was added
-  await expect(page.getByText('initial-tag').first()).toBeVisible();
-  
-  // Submit the form
-  await page.click('button[type="submit"]:has-text("Create")');
-  
-  // Wait for navigation back to home page - use waitForURL for better cross-browser support
-  await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
-  
-  // Wait for network to settle
-  await page.waitForLoadState('networkidle', { timeout: 20000 });
-  
-  // Wait for the project to appear
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
+async function createTestProject(page: import('@playwright/test').Page, projectName: string) {
+  await createProjectViaUi(page, projectName, { description: 'Initial description for testing', tags: ['initial-tag'] });
 }
 
-// Helper function to open edit dialog for a project
-async function openEditDialog(page: Page, projectName: string) {
-  // Navigate to home page to ensure project cards are visible
-  await page.goto('/');
-  await page.waitForLoadState('networkidle');
-  
-  // Wait for project cards to be loaded
-  await page.waitForTimeout(2000); // Give UI more time to settle
-  
-  // Wait for the specific project name to be visible first
-  await expect(page.getByText(projectName).first()).toBeVisible({ timeout: 15000 });
-  
-  // Find all project cards
-  const allCards = page.locator('div.glass-card');
-  await allCards.first().waitFor({ state: 'visible', timeout: 15000 });
-  
-  // Give DOM time to stabilize
-  await page.waitForTimeout(1000);
-  
-  const cardCount = await allCards.count();
-  
-  // Find the card with our project name
-  let targetCard = null;
-  for (let i = 0; i < cardCount; i++) {
-    const card = allCards.nth(i);
-    const text = await card.textContent();
-    if (text?.includes(projectName)) {
-      targetCard = card;
-      break;
-    }
-  }
-  
-  if (!targetCard) {
-    throw new Error(`Could not find project card for: ${projectName}`);
-  }
-  
-  // Wait for card to be stable
-  await page.waitForTimeout(1000);
-  
-  // Find the three-dot menu button in this card and click it
-  // It's a button with no text, just an icon
-  const buttons = targetCard.locator('button');
-  const buttonCount = await buttons.count();
-  
-  // Click the last icon button in the header (usually the dropdown menu)
-  for (let i = buttonCount - 1; i >= 0; i--) {
-    const button = buttons.nth(i);
-    const buttonText = await button.textContent();
-    if (!buttonText || buttonText.trim() === '') {
-      await button.waitFor({ state: 'visible', timeout: 5000 });
-      await button.click({ force: true });
-      break;
-    }
-  }
-  
-  // Wait a bit for dropdown to appear
-  await page.waitForTimeout(1000);
-  
-  // Click Edit option
-  await page.getByText('Edit', { exact: true }).first().click();
-  
-  // Wait for edit dialog to open
+async function openEditDialog(page: import('@playwright/test').Page, projectName: string) {
+  await openProjectCardMenu(page, projectName);
+  await page.getByRole('menuitem', { name: 'Edit' }).click();
   await expect(page.getByText('Edit Project')).toBeVisible({ timeout: 10000 });
 }
 
@@ -372,14 +286,7 @@ test.describe('Edit Project', () => {
   test('should preserve other projects when editing one', async ({ page }) => {
     // Create another project
     const otherProjectName = 'Other Project Should Not Change';
-    await page.goto('/');
-    const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
-    await expect(newProjectLink).toBeVisible();
-    await newProjectLink.click();
-    await page.fill('input#name', otherProjectName);
-    await page.click('button[type="submit"]:has-text("Create")');
-    await expect(page).toHaveURL('/', { timeout: 10000 });
-    await page.waitForLoadState('networkidle');
+    await createProjectViaUi(page, otherProjectName);
     
     // Edit the original project
     await openEditDialog(page, originalProjectName);

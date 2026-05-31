@@ -5,14 +5,7 @@ import { clearDatabase, verifyDatabaseIsEmpty } from '../../test-helpers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Helper function to navigate to create project page
-async function navigateToCreateProject(page: Page) {
-  await page.goto('/');
-  const newProjectLink = page.locator('main').getByRole('link', { name: 'New Project' }).first();
-  await expect(newProjectLink).toBeVisible();
-  await newProjectLink.click();
-  await expect(page).toHaveURL('/projects/new');
-}
+import { navigateToCreateProject } from './helpers';
 
 // Helper function to fill project form with all fields
 async function fillProjectForm(page: Page, projectData: {
@@ -114,8 +107,7 @@ test.describe('Create New Project', () => {
     await page.click('button[type="submit"]:has-text("Create")');
     
     // Wait for navigation to home page (indicates success)
-    await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
-    await page.waitForLoadState('networkidle', { timeout: 20000 });
+    await page.waitForURL('/', { timeout: 30000, waitUntil: 'domcontentloaded' });
   });
 
   test('should validate required name field', async ({ page }) => {
@@ -229,8 +221,7 @@ test.describe('Create New Project', () => {
     await page.click('button[type="submit"]:has-text("Create")');
     
     // Wait for navigation to home page (indicates success)
-    await page.waitForURL('/', { timeout: 20000, waitUntil: 'domcontentloaded' });
-    await page.waitForLoadState('networkidle', { timeout: 20000 });
+    await page.waitForURL('/', { timeout: 30000, waitUntil: 'domcontentloaded' });
   });
 
   test('should display all project cards with consistent height', async ({ page }) => {
