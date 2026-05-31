@@ -14,7 +14,7 @@ from celery import Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.celery_app import celery_app
+from app.celery.general_app import celery_app
 from app.models import Task as TaskModel, Dataset, Image, ImageCollection, AnnotationFile, Annotation, AnnotationClass, AnnotationFileImage
 from app.database import get_db
 

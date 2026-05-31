@@ -1,0 +1,63 @@
+# GPU Celery worker: YOLO train/eval/export, auto-annotate, MMYOLO (subprocess).
+FROM python:3.10-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc g++ git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY requirements-worker-gpu.txt requirements-worker-base.txt constraints-ml-yolo.txt ./
+RUN pip install --upgrade pip setuptools wheel \
+ && pip install --prefix=/install -r requirements-worker-base.txt \
+ && pip install --prefix=/install -r requirements-worker-gpu.txt -c constraints-ml-yolo.txt \
+ && pip install --prefix=/install \
+        'opencv-python-headless>=4.7.0' \
+        'matplotlib>=3.3.0' 'polars' 'ultralytics-thop>=2.0.0'
+
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/opt/lai/lib/python3.10/site-packages \
+    PATH=/opt/lai/bin:$PATH \
+    MMYOLO_PYTHON=/opt/conda/envs/mmyolo/bin/python \
+    PYTHONNOUSERSITE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1 \
+        libfontconfig1 libice6 git curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /install /opt/lai
+COPY . .
+
+RUN rm -rf \
+      /opt/lai/lib/python3.10/site-packages/torch \
+      /opt/lai/lib/python3.10/site-packages/torchvision \
+      /opt/lai/lib/python3.10/site-packages/torchgen \
+      /opt/lai/lib/python3.10/site-packages/functorch \
+      /opt/lai/lib/python3.10/site-packages/torch-*.dist-info \
+      /opt/lai/lib/python3.10/site-packages/torchvision-*.dist-info
+
+RUN PYTHONPATH=/opt/lai/lib/python3.10/site-packages python -c \
+    "from ultralytics import YOLO; print('ultralytics OK')"
+
+RUN pip install --upgrade pip==23.3.1 setuptools==68.2.2 wheel==0.41.2 \
+ && conda create -n mmyolo python=3.8 pytorch==1.10.1 torchvision==0.11.2 cudatoolkit=11.3 -c pytorch -y \
+ && PYTHONPATH= conda run -n mmyolo pip install openmim \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmengine>=0.6.0" \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmcv>=2.0.0rc4,<2.1.0" \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmdet>=3.0.0,<4.0.0" \
+ && git clone --depth 1 https://github.com/open-mmlab/mmyolo.git /opt/mmyolo \
+ && PYTHONPATH= conda run -n mmyolo pip install -r /opt/mmyolo/requirements/albu.txt \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install -v -e /opt/mmyolo
+
+RUN mkdir -p /app/projects /app/data /app/models /app/ai_models /app/runs
+
+CMD ["sh", "-c", "export CUDA_VISIBLE_DEVICES=0; exec python -m celery -A app.celery.gpu_app worker -Q gpu,mmyolo -c 1 --pool=solo --loglevel=info"]

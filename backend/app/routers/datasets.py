@@ -1953,54 +1953,54 @@ async def create_annotation_processing_task(
         
         # Save the task ID before the task object becomes detached
         task_id = task.id
-        
-        # TODO: Here you would normally dispatch the task to a task queue (Celery, RQ, etc.)
-        # For now, we'll simulate immediate background processing
-        from .annotation_db import process_coco_annotation_file_task
-        import threading
-        
-        def process_task():
-            """Run processing in a separate thread with its own DB session."""
-            session = SessionLocal()
-            try:
-                # Reload the task within this session
-                task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
-                if task_db:
-                    task_db.status = 'running'
-                    task_db.started_at = datetime.utcnow()
-                    task_db.progress = 10
-                    session.commit()
-                
-                # Process the annotation file using the same dedicated session
-                process_coco_annotation_file_task(
-                    task_id=task_id,
-                    file_id=file_id,
-                    coco_data=coco_data,
-                    db=session
-                )
-                
-                # Mark as completed
-                task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
-                if task_db:
-                    task_db.status = 'completed'
-                    task_db.completed_at = datetime.utcnow()
-                    task_db.progress = 100
-                    session.commit()
-            except Exception as e:
-                # Mark as failed
-                task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
-                if task_db:
-                    task_db.status = 'failed'
-                    task_db.completed_at = datetime.utcnow()
-                    task_db.error_message = str(e)
-                    session.commit()
-            finally:
-                session.close()
 
-        # Start background processing thread
-        processing_thread = threading.Thread(target=process_task)
-        processing_thread.daemon = True
-        processing_thread.start()
+        use_celery = os.environ.get("USE_CELERY", "true").lower() == "true"
+        if use_celery:
+            from app.tasks.annotation_tasks import process_annotation_file
+
+            celery_job = process_annotation_file.delay(task_id, dataset_id, file_id)
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "celery_task_id": celery_job.id,
+            }
+            db.commit()
+        else:
+            from .annotation_db import process_coco_annotation_file_task
+
+            def process_task():
+                session = SessionLocal()
+                try:
+                    task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
+                    if task_db:
+                        task_db.status = "running"
+                        task_db.started_at = datetime.utcnow()
+                        task_db.progress = 10
+                        session.commit()
+                    process_coco_annotation_file_task(
+                        task_id=task_id,
+                        file_id=file_id,
+                        coco_data=coco_data,
+                        db=session,
+                    )
+                    task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
+                    if task_db:
+                        task_db.status = "completed"
+                        task_db.completed_at = datetime.utcnow()
+                        task_db.progress = 100
+                        session.commit()
+                except Exception as e:
+                    task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
+                    if task_db:
+                        task_db.status = "failed"
+                        task_db.completed_at = datetime.utcnow()
+                        task_db.error_message = str(e)
+                        session.commit()
+                finally:
+                    session.close()
+
+            processing_thread = threading.Thread(target=process_task)
+            processing_thread.daemon = True
+            processing_thread.start()
 
         return {
             "success": True,
@@ -3914,34 +3914,45 @@ async def merge_annotation_files(
         db.commit()
         db.refresh(task)
         
-        # Save the task ID before the task object becomes detached
         task_id = task.id
-        
-        # Start background task
-        def process_merge_task():
-            """Run merge processing in a separate thread with its own DB session."""
-            import threading
-            import asyncio
-            
-            async def run_merge():
-                try:
-                    await merge_annotation_files_task(
-                        task_id=task_id,
-                        dataset_id=dataset_id,
-                        file_ids=request.annotation_file_ids,
-                        merged_filename=merged_filename,
-                        strategy_cfg=(request.strategy.model_dump() if request.strategy else None),
-                    )
-                except Exception as e:
-                    print(f"Error in merge task: {e}")
+        strategy_cfg = request.strategy.model_dump() if request.strategy else None
 
-            # Run the async merge task
-            asyncio.run(run_merge())
+        use_celery = os.environ.get("USE_CELERY", "true").lower() == "true"
+        if use_celery:
+            from app.tasks.annotation_tasks import merge_annotation_files
 
-        # Start background processing thread
-        processing_thread = threading.Thread(target=process_merge_task)
-        processing_thread.daemon = True
-        processing_thread.start()
+            celery_job = merge_annotation_files.delay(
+                task_id,
+                dataset_id,
+                request.annotation_file_ids,
+                merged_filename,
+                strategy_cfg,
+            )
+            task.task_metadata = {
+                **(task.task_metadata or {}),
+                "celery_task_id": celery_job.id,
+            }
+            db.commit()
+        else:
+
+            def process_merge_task():
+                async def run_merge():
+                    try:
+                        await merge_annotation_files_task(
+                            task_id=task_id,
+                            dataset_id=dataset_id,
+                            file_ids=request.annotation_file_ids,
+                            merged_filename=merged_filename,
+                            strategy_cfg=strategy_cfg,
+                        )
+                    except Exception as e:
+                        print(f"Error in merge task: {e}")
+
+                asyncio.run(run_merge())
+
+            processing_thread = threading.Thread(target=process_merge_task)
+            processing_thread.daemon = True
+            processing_thread.start()
         
         return {
             "success": True,

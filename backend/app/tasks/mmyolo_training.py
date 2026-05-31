@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.celery_app import celery_app
+from app.celery.gpu_app import celery_app
 from app.database import SessionLocal
 from app.models import Task as TaskModel
 from app.tasks.mmyolo_config import (

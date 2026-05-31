@@ -15,16 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-COPY requirements.txt .
+COPY requirements-api.txt .
 
-# Install Python deps into a portable prefix. torch/torchvision are provided by
-# the runtime base image, so they are filtered out here to avoid wasted layers.
 RUN pip install --upgrade pip \
- && grep -viE '^(torch|torchvision)([<>=!~ ].*)?$' requirements.txt > /tmp/req.txt \
  && pip install --default-timeout=1000 --retries 5 \
-        --prefix=/install -r /tmp/req.txt \
+        --prefix=/install -r requirements-api.txt \
  && pip install --default-timeout=1000 --retries 5 \
-     --prefix=/install 'celery[redis]>=5.3.0' 'redis>=5.0.0' 'flower>=2.0.0' 'fiftyone>=0.23.0'
+     --prefix=/install 'flower>=2.0.0'
 
 # ---------- Stage 2: runtime ----------
 FROM python:3.10-slim AS runtime

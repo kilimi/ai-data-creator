@@ -206,7 +206,7 @@ def cmd_download_models(ns: argparse.Namespace) -> int:
             "-e", f"LAI_PRETRAINED_MODELS={env_yolo}",
             "-e", f"LAI_DEPTH_MODELS={env_depth}",
             "-e", f"LAI_MMYOLO_MODELS={env_mmyolo}",
-            "celery_worker",
+            "worker-gpu",
             "sh",
             "-lc",
             (

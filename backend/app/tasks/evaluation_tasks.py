@@ -16,7 +16,7 @@ from celery import Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.celery_app import celery_app
+from app.celery.gpu_app import celery_app
 from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.evaluation_artifacts import write_evaluation_blobs
 from app.models import Task as TaskModel, Annotation, AnnotationClass, AnnotationFile, Dataset, Image
@@ -356,9 +356,10 @@ def evaluate_model(
         }
         db.commit()
         
-        # Import YOLO here to avoid loading it at module level
-        from ultralytics import YOLO
-        
+        from app.ml.yolo import load_yolo_class
+
+        YOLO = load_yolo_class()
+
         # Get the training task
         training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
         if not training_task or training_task.status != 'completed':

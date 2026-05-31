@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from app.celery_app import celery_app
+from app.celery.gpu_app import celery_app
 from app.database import SessionLocal
 from app.models import Task as TaskModel
 from app.tasks.training_common import TrainingTask
@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 @celery_app.task(base=TrainingTask, bind=True, name="app.tasks.training_tasks.train_rtdetr_model")
 def train_rtdetr_model(self, task_id: int, training_config: Dict[str, Any]):
     """Train RT-DETR (Real-Time Detection Transformer) model."""
-    from ultralytics import RTDETR
+    from app.ml.yolo import load_rtdetr_class
+
+    RTDETR = load_rtdetr_class()
     from sqlalchemy.orm.attributes import flag_modified
 
     from app.tasks.yolo_training_helpers import get_runtime_training_project

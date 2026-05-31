@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from ..celery_app import celery_app
+from app.celery.general_app import celery_app
 from .. import models
 from ..database import SQLALCHEMY_DATABASE_URL
 

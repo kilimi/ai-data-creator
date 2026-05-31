@@ -1,0 +1,11 @@
+# Pinned Ultralytics stack for reproducible lai-worker-gpu builds
+ultralytics==8.3.75
+opencv-python-headless>=4.8.0,<4.11.0
+matplotlib>=3.3.0,<3.10.0
+pillow>=9.0.0
+pyyaml>=5.3.1
+requests>=2.23.0
+scipy>=1.4.1
+psutil
+polars
+ultralytics-thop>=2.0.0

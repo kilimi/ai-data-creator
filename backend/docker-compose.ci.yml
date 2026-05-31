@@ -5,7 +5,7 @@
 #
 # Differences from the dev compose file:
 #   - No GPU (`runtime: nvidia` and `deploy.resources` GPU reservations removed)
-#   - No celery_worker / flower / sam_service (the marketing tour doesn't need them)
+#   - No worker-general / worker-gpu / flower / sam_service (marketing tour uses USE_CELERY=false)
 #   - Restart policy set to "no" so failures surface immediately
 #
 # Usage:

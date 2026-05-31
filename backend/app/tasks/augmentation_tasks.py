@@ -22,7 +22,7 @@ from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 import uuid
 
-from app.celery_app import celery_app
+from app.celery.general_app import celery_app
 from app.models import Task as TaskModel, Dataset, Image, ImageCollection, Annotation, Augmentation, AnnotationFile, AnnotationClass, AnnotationFileImage
 from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.routers.annotation_db import validate_and_normalize_segmentation

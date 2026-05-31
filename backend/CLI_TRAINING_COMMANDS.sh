@@ -46,10 +46,10 @@ curl -X POST http://localhost:9999/api/training/yolo/start \
   }'
 
 # Option 2: Direct docker exec (NOT RECOMMENDED - bypasses queue)
-docker compose exec celery_worker python -c "
+docker compose exec worker-gpu python -c "
 import sys
 sys.path.insert(0, '/app')
-from app.tasks.training_tasks import train_yolo_model
+from app.tasks.yolo_training import train_yolo_model
 
 # Replace with your actual task ID from database
 task_id = 100
@@ -146,12 +146,12 @@ watch -n 5 'curl -s http://localhost:9999/api/training/task/100/status | jq'
 docker compose ps
 
 # View logs
-docker compose logs -f celery_worker
-docker compose logs -f training
+docker compose logs -f worker-gpu
+docker compose logs -f worker-general
 
 # Restart services
-docker compose restart celery_worker training
+docker compose restart worker-gpu worker-general
 
 # Access container shell
-docker compose exec celery_worker bash
-docker compose exec training bash
+docker compose exec worker-gpu bash
+docker compose exec worker-general bash

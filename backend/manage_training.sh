@@ -1,54 +1,30 @@
 #!/bin/bash
-# Script to manage YOLO training service
+# Manage GPU background worker (YOLO / MMYOLO)
 
 ACTION=$1
 
 case $ACTION in
   start)
-    echo "Starting YOLO training service..."
-    docker-compose up -d training
-    echo "Training service started on port 9998"
-    echo "Check logs with: docker-compose logs -f training"
+    echo "Starting GPU worker..."
+    docker compose up -d worker-gpu
     ;;
   stop)
-    echo "Stopping YOLO training service..."
-    docker-compose stop training
+    docker compose stop worker-gpu
     ;;
   restart)
-    echo "Restarting YOLO training service..."
-    docker-compose restart training
+    docker compose restart worker-gpu
     ;;
   logs)
-    docker-compose logs -f training
+    docker compose logs -f worker-gpu
     ;;
   build)
-    echo "Building YOLO training service..."
-    docker-compose build training
-    ;;
-  rebuild)
-    echo "Rebuilding YOLO training service (no cache)..."
-    docker-compose build --no-cache training
-    ;;
-  shell)
-    echo "Opening shell in training container..."
-    docker-compose exec training /bin/bash
+    docker compose build worker-gpu
     ;;
   status)
-    docker-compose ps training
+    docker compose ps worker-gpu worker-general celery-beat
     ;;
   *)
-    echo "YOLO Training Service Manager"
-    echo ""
-    echo "Usage: ./manage_training.sh [command]"
-    echo ""
-    echo "Commands:"
-    echo "  start    - Start the training service"
-    echo "  stop     - Stop the training service"
-    echo "  restart  - Restart the training service"
-    echo "  logs     - View training service logs"
-    echo "  build    - Build the training service image"
-    echo "  rebuild  - Rebuild without cache"
-    echo "  shell    - Open bash shell in training container"
-    echo "  status   - Show training service status"
+    echo "Usage: $0 {start|stop|restart|logs|build|status}"
+    exit 1
     ;;
 esac

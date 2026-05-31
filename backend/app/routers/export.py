@@ -16,7 +16,6 @@ import zipfile
 
 from ..database import get_db
 from .. import models
-from ultralytics import YOLO
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -25,13 +24,17 @@ logger = logging.getLogger(__name__)
 USE_CELERY = os.environ.get('USE_CELERY', 'true').lower() == 'true'
 celery_export_task = None
 
+def _queue_export_task(export_task_id: int, export_config: dict):
+    """Enqueue export on the GPU worker without importing ultralytics in the API process."""
+    from app.celery.gpu_app import celery_app as gpu_app
+    return gpu_app.send_task(
+        "app.tasks.export_tasks.export_yolo_model",
+        args=[export_task_id, export_config],
+    )
+
+
 if USE_CELERY:
-    try:
-        from app.tasks.export_tasks import export_yolo_model as celery_export_task
-        logger.info("Celery task queue enabled for exports")
-    except ImportError as e:
-        logger.warning(f"Celery not available: {e}. Set USE_CELERY=false to disable.")
-        USE_CELERY = False
+    logger.info("Celery task queue enabled for exports (GPU worker)")
 
 
 class ExportRequest(BaseModel):
@@ -165,7 +168,7 @@ async def start_yolo_export(
         # Start export in background
         if USE_CELERY:
             # Use Celery for proper task queuing
-            celery_task = celery_export_task.delay(export_task.id, export_config)
+            celery_task = _queue_export_task(export_task.id, export_config)
             logger.info(f"Queued export task {export_task.id} in Celery (task_id: {celery_task.id})")
             
             # Store Celery task ID in metadata

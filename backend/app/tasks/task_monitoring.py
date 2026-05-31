@@ -11,7 +11,7 @@ from typing import Any, Dict
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.celery_app import celery_app
+from app.celery.general_app import celery_app
 from app.models import Task as TaskModel
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 @celery_app.task(name="app.tasks.task_monitoring.refresh_worker_gpu_status")
 def refresh_worker_gpu_status() -> Dict[str, Any]:
     """On-demand worker GPU sample for UI/API requests."""
-    from app.celery_app import _collect_worker_gpu_status, _publish_worker_gpu_status, _upsert_worker_gpu_status_db
+    from app.celery.worker_hooks import (
+        collect_worker_gpu_status,
+        publish_worker_gpu_status,
+        upsert_worker_gpu_status_db,
+    )
 
-    status = _collect_worker_gpu_status()
-    _publish_worker_gpu_status()
-    _upsert_worker_gpu_status_db()
+    status = collect_worker_gpu_status()
+    publish_worker_gpu_status()
+    upsert_worker_gpu_status_db()
     return status
 
 

@@ -14,7 +14,7 @@ from celery import Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.celery_app import celery_app
+from app.celery.gpu_app import celery_app
 from app.models import (
     Task as TaskModel, 
     Dataset, 
@@ -137,8 +137,9 @@ def auto_annotate_yolo(
         iou_threshold: IoU threshold for NMS
         use_segmentation: Whether to use segmentation (if model supports it)
     """
-    from ultralytics import YOLO
-    
+    from app.ml.yolo import load_yolo_class
+
+    YOLO = load_yolo_class()
     db = SessionLocal()
     
     try:

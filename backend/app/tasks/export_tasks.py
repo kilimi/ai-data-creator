@@ -14,9 +14,9 @@ from celery import Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.celery_app import celery_app
+from app.celery.gpu_app import celery_app
+from app.ml.yolo import load_yolo_class
 from app.models import Task as TaskModel
-from ultralytics import YOLO
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +434,8 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
         task.progress = 20
         task.task_metadata = {**task.task_metadata, "stage": "loading_model"}
         db.commit()
+
+        YOLO = load_yolo_class()
         
         if model_name:
             # Use pre-downloaded model from /app/models if present (from Docker build)

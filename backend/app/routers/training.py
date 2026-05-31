@@ -33,9 +33,9 @@ celery_mmyolo_task = None
 
 if USE_CELERY:
     try:
-        from app.tasks.training_tasks import train_yolo_model as celery_train_task
-        from app.tasks.training_tasks import train_rtdetr_model as celery_rtdetr_task
-        from app.tasks.training_tasks import train_mmyolo_model as celery_mmyolo_task
+        from app.tasks.yolo_training import train_yolo_model as celery_train_task
+        from app.tasks.rtdetr_training import train_rtdetr_model as celery_rtdetr_task
+        from app.tasks.mmyolo_training import train_mmyolo_model as celery_mmyolo_task
         logger.info("Celery task queue enabled for training")
     except ImportError as e:
         logger.warning(f"Celery not available: {e}. Set USE_CELERY=false to disable.")

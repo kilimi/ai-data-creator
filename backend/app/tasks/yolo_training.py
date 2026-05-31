@@ -17,7 +17,7 @@ from app.tasks.yolo_training_helpers import (
     prepare_yolo_training_weights_dir,
 )
 from app.models import Task as TaskModel
-from app.celery_app import celery_app
+from app.celery.gpu_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -263,8 +263,9 @@ class YOLOTrainingTask(TrainingTask):
     
     def _load_model(self):
         """Load YOLO model"""
-        from ultralytics import YOLO
+        from app.ml.yolo import load_yolo_class
 
+        YOLO = load_yolo_class()
         model_type = self.training_config.get('model_type', 'yolo11n-seg.pt')
         resume_from = self.training_config.get('resume_from')
 

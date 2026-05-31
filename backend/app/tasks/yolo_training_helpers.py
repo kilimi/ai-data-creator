@@ -542,8 +542,8 @@ def build_yolo_training_args(
                     cuda_err = f" ({exc})"
             logger.warning(
                 "CUDA not available for YOLO training%s. torch=%s at %s. "
-                "Using device='cpu'. If nvidia-smi works in celery_worker, rebuild the "
-                "training image (Dockerfile.training) so /opt/lai does not shadow the "
+                "Using device='cpu'. If nvidia-smi works in worker-gpu, rebuild "
+                "lai-worker-gpu (Dockerfile.worker-gpu) so /opt/lai does not shadow the "
                 "base CUDA PyTorch wheel, and set CUDA_VISIBLE_DEVICES=0.",
                 cuda_err,
                 getattr(torch, "__version__", "?"),

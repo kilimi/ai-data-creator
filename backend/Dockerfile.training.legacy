@@ -23,7 +23,7 @@ RUN pip install --upgrade pip setuptools wheel \
  && pip install --default-timeout=1000 --retries 5 \
         --prefix=/install -r /tmp/req.txt \
  && pip install --default-timeout=1000 --retries 5 \
-        --prefix=/install 'ultralytics>=8.0.0' --no-deps \
+        --prefix=/install 'ultralytics>=8.3.0,<8.4.0' --no-deps \
  && pip install --default-timeout=1000 --retries 5 \
         --prefix=/install \
         'opencv-python-headless>=4.7.0' \
@@ -63,6 +63,9 @@ RUN rm -rf \
       /opt/lai/lib/python3.10/site-packages/functorch \
       /opt/lai/lib/python3.10/site-packages/torch-*.dist-info \
       /opt/lai/lib/python3.10/site-packages/torchvision-*.dist-info
+
+# Fail the image build if ultralytics is broken (8.4+ lazy exports break `from ultralytics import YOLO`).
+RUN PYTHONPATH=/opt/lai/lib/python3.10/site-packages python -c "from ultralytics import YOLO; print('ultralytics OK:', YOLO)"
 
 ENV PYTHONNOUSERSITE=1
 

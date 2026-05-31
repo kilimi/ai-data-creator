@@ -12,7 +12,7 @@ import cv2
 from PIL import Image as PILImage
 
 from celery import Task
-from ..celery_app import celery_app
+from app.celery.general_app import celery_app
 from ..database import SessionLocal
 from .. import models
 

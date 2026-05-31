@@ -77,7 +77,7 @@ def _read_worker_gpu_status() -> dict[str, Any] | None:
 
 
 def _trigger_worker_gpu_refresh() -> None:
-    """Request a fresh GPU sample from celery_worker with a short timeout."""
+    """Request a fresh GPU sample from worker-gpu with a short timeout."""
     try:
         async_result = celery_app.send_task("app.tasks.task_monitoring.refresh_worker_gpu_status")
         async_result.get(timeout=GPU_REFRESH_TIMEOUT_SECONDS)
