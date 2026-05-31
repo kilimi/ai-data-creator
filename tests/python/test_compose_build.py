@@ -13,21 +13,31 @@ from lai.compose_build import (
 
 
 def test_is_local_build_tag():
-    assert _is_local_build_tag("lai-celery:local") is True
-    assert _is_local_build_tag("ghcr.io/org/repo-celery-worker:latest") is False
+    assert _is_local_build_tag("lai-worker-gpu:local") is True
+    assert _is_local_build_tag("ghcr.io/org/repo-worker-gpu:latest") is False
 
 
 def test_image_tags_defaults(tmp_path: Path):
     tags = image_tags(tmp_path)
-    assert tags["LAI_CELERY_IMAGE"] == "lai-celery:local"
+    assert tags["LAI_WORKER_GPU_IMAGE"] == "lai-worker-gpu:local"
     assert tags["LAI_MMYOLO_IMAGE"] == "lai-mmyolo:local"
+    # Legacy alias for old .env keys
+    assert tags["LAI_CELERY_IMAGE"] == "lai-worker-gpu:local"
 
 
 def test_image_tags_from_env(tmp_path: Path):
     env = tmp_path / ".env"
+    env.write_text("LAI_WORKER_GPU_IMAGE=ghcr.io/foo/worker-gpu:main\n")
+    tags = image_tags(tmp_path)
+    assert tags["LAI_WORKER_GPU_IMAGE"] == "ghcr.io/foo/worker-gpu:main"
+
+
+def test_image_tags_legacy_celery_env_maps_to_gpu_worker(tmp_path: Path):
+    env = tmp_path / ".env"
     env.write_text("LAI_CELERY_IMAGE=ghcr.io/foo/celery:main\n")
     tags = image_tags(tmp_path)
     assert tags["LAI_CELERY_IMAGE"] == "ghcr.io/foo/celery:main"
+    assert tags["LAI_WORKER_GPU_IMAGE"] == "ghcr.io/foo/celery:main"
 
 
 def test_uses_local_build_with_defaults(tmp_path: Path):
@@ -36,7 +46,7 @@ def test_uses_local_build_with_defaults(tmp_path: Path):
 
 def test_uses_local_build_with_ghcr(tmp_path: Path):
     (tmp_path / ".env").write_text(
-        "LAI_CELERY_IMAGE=ghcr.io/x/celery:latest\n"
+        "LAI_WORKER_GPU_IMAGE=ghcr.io/x/worker-gpu:latest\n"
         "LAI_BACKEND_IMAGE=ghcr.io/x/backend:latest\n"
     )
     assert uses_local_build(tmp_path) is False
@@ -44,7 +54,7 @@ def test_uses_local_build_with_ghcr(tmp_path: Path):
 
 def test_should_build_stack_force_respects_ghcr(tmp_path: Path):
     (tmp_path / ".env").write_text(
-        "LAI_CELERY_IMAGE=ghcr.io/x/celery:latest\n"
+        "LAI_WORKER_GPU_IMAGE=ghcr.io/x/worker-gpu:latest\n"
         "LAI_BACKEND_IMAGE=ghcr.io/x/backend:latest\n"
     )
     assert should_build_stack(tmp_path, force=True) is False

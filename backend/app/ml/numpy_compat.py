@@ -70,7 +70,7 @@ def ensure_numpy_torch_compat() -> None:
     if not _numpy_torch_ok():
         raise RuntimeError(
             f"NumPy is incompatible with PyTorch after reinstall ({_NUMPY_SPEC}). "
-            "Rebuild the celery image: docker compose build celery_worker"
+            "Rebuild the GPU worker: docker compose build worker-gpu"
         )
 
     import numpy as np

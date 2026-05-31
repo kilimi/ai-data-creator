@@ -7,8 +7,8 @@
 #
 # Build order:
 #   docker compose --profile build build ultralytics_runtime mmyolo_runtime
-#   docker compose build celery_worker
-#   docker compose build backend
+#   docker compose --profile build build ultralytics_runtime mmyolo_runtime
+#   docker compose build backend worker-gpu worker-general
 
 # Must be before the first FROM — required for `FROM ${MMYOLO_IMAGE}` in stage 2.
 ARG MMYOLO_IMAGE=lai-mmyolo:local

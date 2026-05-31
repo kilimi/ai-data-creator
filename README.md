@@ -34,9 +34,21 @@ Uses Vite (see `package.json`). The full app runs in Docker via `lai up`.
 - `deploy/` — production frontend image (nginx)
 - `scripts/` — `install.sh`, SAM check helper
 
+## Background workers
+
+CPU tasks (`worker-general`) and GPU tasks (`worker-gpu`) use separate Docker images and Celery queues. See [docs/WORKERS.md](docs/WORKERS.md).
+
+```bash
+docker compose build worker-general worker-gpu
+docker compose up -d worker-general worker-gpu celery-beat
+```
+
 ## Tests
 
+```bash
+pytest tests/python/test_celery_*.py
 npm run test:e2e
+```
 
 
 ## License
