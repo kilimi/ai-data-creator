@@ -829,46 +829,66 @@ async def get_task_logs(task_id: int, db: Session = Depends(get_db)):
     }
 
 
+_EXAMPLE_SPLITS = frozenset({"train", "val", "test", "val_predictions"})
+
+
+def _task_examples_dir(task) -> Path:
+    metadata = task.task_metadata or {}
+    examples_path = metadata.get("examples_path")
+    if not examples_path:
+        raise HTTPException(status_code=404, detail="No training examples found for this task")
+    return Path(examples_path)
+
+
 @router.get("/tasks/{task_id}/examples/{split}")
 async def get_task_example_image(task_id: int, split: str, db: Session = Depends(get_db)):
-    """
-    Get training example batch image for a task.
-    
-    Args:
-        task_id: Task ID
-        split: Dataset split ('train', 'val', or 'test')
-    
-    Returns:
-        Image file (train_batch.jpg, val_batch.jpg, or test_batch.jpg)
-    """
+    """Legacy batch mosaic image (train_batch.jpg, etc.)."""
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
-    # Get examples path from metadata
-    metadata = task.task_metadata or {}
-    examples_path = metadata.get('examples_path')
-    
-    if not examples_path:
-        raise HTTPException(status_code=404, detail="No training examples found for this task")
-    
-    # Validate split name to prevent path traversal
-    if split not in ['train', 'val', 'test']:
-        raise HTTPException(status_code=400, detail="Invalid split. Must be 'train', 'val', or 'test'")
-    
-    # Build the file path
-    file_path = Path(examples_path) / f"{split}_batch.jpg"
-    
-    # Verify file exists
+    if split not in _EXAMPLE_SPLITS:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid split. Must be 'train', 'val', 'test', or 'val_predictions'",
+        )
+
+    examples_path = _task_examples_dir(task)
+    filename = (
+        "val_predictions_batch.jpg" if split == "val_predictions" else f"{split}_batch.jpg"
+    )
+    file_path = examples_path / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Example image for {split} split not found")
+
+    return FileResponse(path=file_path, media_type="image/jpeg", filename=filename)
+
+
+@router.get("/tasks/{task_id}/examples/{split}/sample/{index}")
+async def get_task_example_sample(
+    task_id: int, split: str, index: int, db: Session = Depends(get_db)
+):
+    """Single annotated training sample (example_1.jpg … example_3.jpg) for GUI inspection."""
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if split not in {"train", "val", "test"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Sample index only applies to train, val, or test splits",
+        )
+    if index < 1 or index > 3:
+        raise HTTPException(status_code=400, detail="Sample index must be 1, 2, or 3")
+
+    examples_path = _task_examples_dir(task)
+    file_path = examples_path / split / f"example_{index}.jpg"
     if not file_path.exists():
         raise HTTPException(
             status_code=404,
-            detail=f"Example image for {split} split not found"
+            detail=f"Example sample {index} for {split} not found",
         )
-    
-    # Serve the file
+
     return FileResponse(
         path=file_path,
         media_type="image/jpeg",
-        filename=f"{split}_batch.jpg"
+        filename=f"{split}_example_{index}.jpg",
     )

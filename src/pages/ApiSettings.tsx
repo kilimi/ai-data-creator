@@ -404,7 +404,8 @@ export const ApiSettings = () => {
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Enter the URL where your FastAPI backend is running
+                    Leave empty or use the same host as this page (Docker/Vite proxy).
+                    Do not use <code className="text-xs">localhost:9999</code> when opening the app by LAN IP.
                   </p>
                 </div>
 

@@ -609,7 +609,10 @@ async def evaluate_model(
         # Get model info from training task
         task_metadata = training_task.task_metadata or {}
         model_type = task_metadata.get('model_type', 'Unknown')
-        is_mmyolo = training_task.task_type == "mmyolo_training"
+        from app.ml.dispatch import framework_label_for_task
+
+        framework = framework_label_for_task(training_task)
+        is_mmyolo = framework == "mmyolo"
         
         # Use custom name if provided, otherwise generate default name
         eval_name = request.evaluation_name.strip() if request.evaluation_name else f"Evaluation - {training_task.name} on {dataset.name}"
@@ -643,7 +646,7 @@ async def evaluate_model(
                 "conf_threshold": request.conf_threshold,
                 "iou_threshold": request.iou_threshold,
                 "model_type": model_type,
-                "framework": "mmyolo" if is_mmyolo else "ultralytics",
+                "framework": framework,
                 "has_ground_truth": request.annotation_file_id is not None,
                 "use_grid": request.use_grid,
                 "grid_size": request.grid_size,
@@ -718,7 +721,10 @@ async def evaluate_model_multiple_datasets(
         # Get model info from training task
         task_metadata = training_task.task_metadata or {}
         model_type = task_metadata.get('model_type', 'Unknown')
-        is_mmyolo = training_task.task_type == "mmyolo_training"
+        from app.ml.dispatch import framework_label_for_task
+
+        framework = framework_label_for_task(training_task)
+        is_mmyolo = framework == "mmyolo"
         
         # Get project_id from first dataset
         first_dataset = db.query(Dataset).filter(Dataset.id == request.datasets[0].datasetId).first()
@@ -749,7 +755,7 @@ async def evaluate_model_multiple_datasets(
                 "conf_threshold": request.conf_threshold,
                 "iou_threshold": request.iou_threshold,
                 "model_type": model_type,
-                "framework": "mmyolo" if is_mmyolo else "ultralytics",
+                "framework": framework,
                 "use_grid": request.use_grid,
                 "grid_size": request.grid_size,
                 "grid_overlap": request.grid_overlap,

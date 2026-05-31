@@ -356,16 +356,17 @@ def evaluate_model(
         }
         db.commit()
         
-        from app.ml.yolo import load_yolo_class
-
-        YOLO = load_yolo_class()
-
+        from app.tasks.training_common import get_ultralytics_yolo
+        YOLO = get_ultralytics_yolo()
         # Get the training task
         training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
         if not training_task or training_task.status != 'completed':
             raise ValueError("Training task not found or not completed")
 
-        if training_task.task_type == "mmyolo_training":
+        from app.ml.dispatch import get_model_backend
+
+        eval_backend = get_model_backend(training_task)
+        if eval_backend.runtime_profile == "mmyolo":
             from app.tasks.mmyolo_evaluation import run_mmyolo_evaluation
 
             return run_mmyolo_evaluation(
@@ -1376,3 +1377,218 @@ def update_parent_task_status(db, parent_task_id: int):
         
     except Exception as e:
         logger.error(f"Error updating parent task {parent_task_id}: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MMYOLO single-image test inference (runs in celery_worker where MMYOLO lives)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.tasks.evaluation_tasks.mmyolo_test_inference", ignore_result=False)
+def mmyolo_test_inference(
+    image_path: str,
+    config_path: str,
+    checkpoint_path: str,
+    class_names: list,
+    device: str = "cpu",
+    dji_repo_dir: Optional[str] = None,
+    conf_threshold: float = 0.25,
+) -> dict:
+    """
+    Run MMYOLO inference on a single image inside the celery_worker container
+    (where /opt/mmyolo-venv/bin/python exists).
+
+    Returns a dict:  {"predictions": [...], "error": None | str}
+    """
+    from app.tasks.mmyolo_evaluation import (
+        MMYOLO_INFERENCE_SCRIPT,
+        _build_mmyolo_eval_env,
+    )
+    from app.tasks.training_common import MMYOLO_PYTHON
+    import json
+    import subprocess
+    import tempfile
+
+    if not Path(MMYOLO_PYTHON).exists():
+        return {"predictions": [], "error": f"MMYOLO Python not found at {MMYOLO_PYTHON}"}
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="mmyolo_test_inf_") as tmp:
+            tmp_path = Path(tmp)
+            input_json = tmp_path / "input.json"
+            output_json = tmp_path / "output.json"
+
+            input_json.write_text(
+                json.dumps([{"image_id": 0, "path": str(image_path)}]),
+                encoding="utf-8",
+            )
+            env = _build_mmyolo_eval_env(device=device, dji_repo_dir=dji_repo_dir)
+            cmd = [
+                MMYOLO_PYTHON,
+                str(MMYOLO_INFERENCE_SCRIPT),
+                "--config", str(config_path),
+                "--checkpoint", str(checkpoint_path),
+                "--input-json", str(input_json),
+                "--output-json", str(output_json),
+                "--num-classes", str(len(class_names)),
+                "--conf", str(conf_threshold),
+                "--device", device if device not in ("", None) else "cpu",
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip()[-2000:]
+                return {"predictions": [], "error": f"MMYOLO subprocess failed: {err}"}
+
+            preds_raw = []
+            if output_json.exists():
+                preds_raw = json.loads(output_json.read_text(encoding="utf-8"))
+
+            predictions = []
+            for p in preds_raw:
+                bbox_xyxy = p.get("bbox", [])
+                if len(bbox_xyxy) == 4:
+                    x1, y1, x2, y2 = bbox_xyxy
+                    bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
+                else:
+                    bbox_xywh = []
+                class_id = p.get("class_id", 0)
+                class_name = (
+                    class_names[class_id]
+                    if class_id < len(class_names)
+                    else f"class_{class_id}"
+                )
+                predictions.append({
+                    "bbox": bbox_xywh,
+                    "confidence": float(p.get("confidence", 0)),
+                    "class_id": class_id,
+                    "class": class_name,
+                    "segmentation": p.get("segmentation", []),
+                })
+
+            return {"predictions": predictions, "error": None}
+
+    except Exception as exc:
+        logger.error("mmyolo_test_inference task error: %s", exc, exc_info=True)
+        return {"predictions": [], "error": str(exc)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ultralytics single-image test inference (runs in celery_worker)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.tasks.evaluation_tasks.yolo_test_inference", ignore_result=False)
+def yolo_test_inference(
+    image_path: str,
+    model_path: str,
+    class_names: list,
+    conf_threshold: float = 0.25,
+    device: str = "cpu",
+) -> dict:
+    """
+    Run YOLO / RT-DETR inference on one image inside celery_worker
+    (where /opt/ultralytics-site and PyTorch are available).
+
+    Returns {"predictions": [...], "annotated_jpeg_base64": str|None, "error": str|None}
+    """
+    import base64
+
+    from app.ml.ultralytics_compat import patch_ultralytics_lazy_exports
+    from app.ml.runtime_env import ensure_ultralytics_sys_path
+
+    patch_ultralytics_lazy_exports()
+    ensure_ultralytics_sys_path()
+
+    try:
+        from ultralytics import YOLO
+    except Exception as exc:
+        return {
+            "predictions": [],
+            "annotated_jpeg_base64": None,
+            "error": f"Ultralytics not available in worker: {exc}",
+        }
+
+    try:
+        model = YOLO(model_path)
+        results = model(
+            image_path,
+            conf=conf_threshold,
+            iou=0.45,
+            device=device if device not in ("", None) else "cpu",
+        )
+
+        predictions: List[Dict[str, Any]] = []
+        annotated_b64: Optional[str] = None
+
+        if results and len(results) > 0:
+            result = results[0]
+            annotated_img = result.plot()
+
+            if annotated_img is not None:
+                import cv2
+
+                ok, buf = cv2.imencode(".jpg", annotated_img)
+                if ok:
+                    annotated_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+            if result.boxes is not None:
+                boxes = result.boxes
+                has_masks = result.masks is not None
+                for i in range(len(boxes)):
+                    box = boxes.xyxy[i].cpu().numpy()
+                    x1, y1, x2, y2 = (
+                        float(box[0]),
+                        float(box[1]),
+                        float(box[2]),
+                        float(box[3]),
+                    )
+                    confidence = float(boxes.conf[i].cpu().numpy())
+                    class_id = int(boxes.cls[i].cpu().numpy())
+                    class_name = (
+                        class_names[class_id]
+                        if class_id < len(class_names)
+                        else f"Class {class_id}"
+                    )
+                    pred: Dict[str, Any] = {
+                        "bbox": [x1, y1, x2 - x1, y2 - y1],
+                        "confidence": confidence,
+                        "class_id": class_id,
+                        "class": class_name,
+                    }
+                    if has_masks and result.masks is not None:
+                        try:
+                            mask = result.masks.data[i].cpu().numpy()
+                            orig_shape = result.orig_shape
+                            if len(mask.shape) == 3:
+                                mask = mask[0]
+                            if mask.shape != orig_shape[:2]:
+                                import cv2
+
+                                mask = cv2.resize(
+                                    mask.astype("float32"),
+                                    (orig_shape[1], orig_shape[0]),
+                                )
+                            contours, _ = cv2.findContours(
+                                (mask > 0.5).astype("uint8"),
+                                cv2.RETR_EXTERNAL,
+                                cv2.CHAIN_APPROX_SIMPLE,
+                            )
+                            if contours:
+                                largest = max(contours, key=cv2.contourArea)
+                                pred["segmentation"] = [
+                                    largest.reshape(-1, 2).tolist()
+                                ]
+                        except Exception as mask_exc:
+                            logger.debug("Mask export skipped: %s", mask_exc)
+                    predictions.append(pred)
+
+        return {
+            "predictions": predictions,
+            "annotated_jpeg_base64": annotated_b64,
+            "error": None,
+        }
+    except Exception as exc:
+        logger.error("yolo_test_inference task error: %s", exc, exc_info=True)
+        return {
+            "predictions": [],
+            "annotated_jpeg_base64": None,
+            "error": str(exc),
+        }

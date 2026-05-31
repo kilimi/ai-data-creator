@@ -746,6 +746,33 @@ def copy_weights_to_expected_location(
     }
 
 
+def sync_training_run_artifacts(
+    source_dir: Optional[Path],
+    dest_dir: Path,
+) -> Dict[str, Any]:
+    """
+    Copy Ultralytics run outputs (results.csv, plots) into the persisted project tree.
+
+    Training runs in /tmp; this syncs metrics artifacts next to weights under projects/.
+    """
+    copied: list[str] = []
+    if not source_dir or not source_dir.exists():
+        return {"artifacts_synced": copied}
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in ("results.csv", "args.yaml", "results.json", "*.png"):
+        for src in source_dir.glob(pattern):
+            if not src.is_file():
+                continue
+            try:
+                shutil.copy2(src, dest_dir / src.name)
+                copied.append(src.name)
+            except OSError as exc:
+                logger.warning("Could not copy training artifact %s: %s", src, exc)
+
+    return {"artifacts_synced": copied, "results_csv": str(dest_dir / "results.csv")}
+
+
 def _copy_weight_file(source: Path, destination: Path, weight_name: str) -> bool:
     """Copy a weight file from source to destination"""
     if not source.exists():

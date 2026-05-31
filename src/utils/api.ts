@@ -1367,6 +1367,58 @@ export class ApiClient {
   }
 
   /**
+   * Fetch unified model training catalog (all registered backends).
+   */
+  async getModelsCatalog(): Promise<ApiResponse<{
+    backends: Array<{
+      id: string;
+      display_name: string;
+      runtime_profile: string;
+      supports_export: boolean;
+      supports_pause_resume: boolean;
+      variants: Array<{
+        id: string;
+        display_name: string;
+        task: string;
+        pretrained_filename?: string | null;
+        metadata?: Record<string, unknown>;
+      }>;
+      request_schema?: Record<string, unknown>;
+    }>;
+    pretrained_ultralytics: Record<string, { name: string; type: string; classes: number }>;
+  }>> {
+    return this.request('/models/catalog', { method: 'GET' });
+  }
+
+  /**
+   * Start training via unified API (dispatches to framework-specific handler).
+   */
+  async startTraining(request: {
+    framework_id: string;
+    project_id: number;
+    dataset_configs: Array<{
+      dataset_id: number;
+      annotation_file_id: string;
+      image_collection?: string;
+      split?: { train: number; val: number; test: number };
+    }>;
+    task_name?: string;
+    params?: Record<string, unknown>;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    task_id: number;
+    message: string;
+    task?: { id: number; name: string; status: string; progress: number };
+    weights_download_expected?: boolean;
+    weights_download_notice?: string | null;
+  }>> {
+    return this.request('/training/start', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
    * Start YOLO model training
    */
   async startYoloTraining(request: {

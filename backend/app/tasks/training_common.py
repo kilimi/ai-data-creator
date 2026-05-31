@@ -10,7 +10,63 @@ from app.models import Task as TaskModel
 
 logger = logging.getLogger(__name__)
 
-MMYOLO_PYTHON = os.environ.get("MMYOLO_PYTHON", "/opt/mmyolo-venv/bin/python")
+MMYOLO_PYTHON = os.environ.get("MMYOLO_PYTHON", "/opt/conda/envs/mmyolo/bin/python")
+ULTRALYTICS_PYTHON = os.environ.get("ULTRALYTICS_PYTHON", "/opt/conda/bin/python")
+
+
+def _ultralytics_class(class_name: str, fallback_paths: tuple) -> type:
+    """
+    Import a named class from the ultralytics package with version-robust fallbacks.
+
+    Tries submodule paths first, then top-level (after lazy-export patch).
+    """
+    from app.ml.runtime_env import ensure_ultralytics_sys_path
+    from app.ml.ultralytics_compat import patch_ultralytics_lazy_exports
+
+    ensure_ultralytics_sys_path()
+    patch_ultralytics_lazy_exports()
+
+    import importlib
+
+    all_paths = fallback_paths + ("ultralytics",)
+    last_error: Exception | None = None
+    for mod_path in all_paths:
+        try:
+            mod = importlib.import_module(mod_path)
+            cls = getattr(mod, class_name, None)
+            if cls is not None:
+                return cls
+        except Exception as exc:
+            last_error = exc
+            continue
+    raise ImportError(
+        f"Cannot import {class_name} from ultralytics. "
+        "Check that ultralytics is properly installed in this environment."
+        + (f" Last error: {last_error}" if last_error else "")
+    )
+
+
+def get_ultralytics_yolo():
+    """Return the Ultralytics YOLO class, trying multiple import paths."""
+    return _ultralytics_class(
+        "YOLO",
+        (
+            "ultralytics.models.yolo.model",
+            "ultralytics.models.yolo",
+            "ultralytics.models",
+        ),
+    )
+
+
+def get_ultralytics_rtdetr():
+    """Return the Ultralytics RTDETR class, trying multiple import paths."""
+    return _ultralytics_class(
+        "RTDETR",
+        (
+            "ultralytics.models.rtdetr",
+            "ultralytics.models",
+        ),
+    )
 
 
 class TrainingTask(Task):

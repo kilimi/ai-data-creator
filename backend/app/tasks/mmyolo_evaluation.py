@@ -46,12 +46,32 @@ def resolve_mmyolo_config_path(
 
 
 def _latest_epoch_checkpoint(results_dir: Path) -> Optional[Path]:
+    # MMEngine writes a `last_checkpoint` text file containing the filename of the last saved checkpoint
+    last_cp_file = results_dir / "last_checkpoint"
+    if last_cp_file.exists():
+        try:
+            name = last_cp_file.read_text(encoding="utf-8").strip()
+            # The file may contain an absolute path or just the basename
+            candidate = Path(name) if Path(name).is_absolute() else results_dir / name
+            if candidate.exists():
+                return candidate
+        except Exception:
+            pass
+    # Fallback: most recently modified epoch_*.pth
     epochs = sorted(
         results_dir.glob("epoch_*.pth"),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
     return epochs[0] if epochs else None
+
+
+def _find_best_coco_checkpoint(results_dir: Path) -> Optional[Path]:
+    """Return the best_coco_*.pth checkpoint from results_dir (newest by mtime)."""
+    if not results_dir or not results_dir.exists():
+        return None
+    bests = sorted(results_dir.glob("best_*.pth"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return bests[0] if bests else None
 
 
 def resolve_mmyolo_checkpoint(task_metadata: dict, checkpoint: str) -> Optional[str]:
@@ -64,6 +84,10 @@ def resolve_mmyolo_checkpoint(task_metadata: dict, checkpoint: str) -> Optional[
         if best:
             candidates.append(Path(best))
         if results_dir:
+            # MMYOLO saves best as best_coco_bbox_mAP_epoch_N.pth (or best_*.pth pattern)
+            best_coco = _find_best_coco_checkpoint(results_dir)
+            if best_coco:
+                candidates.append(best_coco)
             candidates.extend(
                 [
                     results_dir / "best.pth",
@@ -85,6 +109,9 @@ def resolve_mmyolo_checkpoint(task_metadata: dict, checkpoint: str) -> Optional[
                     results_dir / "best.pth",
                 ]
             )
+            best_coco = _find_best_coco_checkpoint(results_dir)
+            if best_coco:
+                candidates.append(best_coco)
             latest = _latest_epoch_checkpoint(results_dir)
             if latest:
                 candidates.append(latest)
@@ -97,13 +124,9 @@ def resolve_mmyolo_checkpoint(task_metadata: dict, checkpoint: str) -> Optional[
 
 def _build_mmyolo_eval_env(*, device: str, dji_repo_dir: Optional[str]) -> dict:
     """Build subprocess env for MMYOLO inference (avoid LAI PYTHONPATH conflicts)."""
-    env = {**os.environ}
-    env.pop("PYTHONPATH", None)
-    if dji_repo_dir and Path(dji_repo_dir).exists():
-        env["PYTHONPATH"] = str(Path(dji_repo_dir))
-    if device not in ("cpu", ""):
-        env["CUDA_VISIBLE_DEVICES"] = device
-    return env
+    from app.ml.runtime_env import build_mmyolo_subprocess_env
+
+    return build_mmyolo_subprocess_env(device=device, dji_repo_dir=dji_repo_dir)
 
 
 def run_mmyolo_inference_subprocess(

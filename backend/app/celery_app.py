@@ -16,7 +16,6 @@ from app.celery.worker_hooks import (
     upsert_worker_gpu_status_db,
 )
 
-
 def sync_tasks_with_database():
     """Backward-compatible worker startup sync (uses general app broker)."""
     _sync_tasks_with_database(celery_app)

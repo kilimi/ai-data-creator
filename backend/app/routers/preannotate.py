@@ -86,8 +86,9 @@ def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
     Model file suffix: base name for detect, -seg for segment, -cls for classify.
     Uses pre-downloaded model from /app/models when present (from Docker build).
     """
-    from ultralytics import YOLO
-    
+    from app.tasks.training_common import get_ultralytics_yolo
+    YOLO = get_ultralytics_yolo()
+
     suffix_map = {"detect": "", "segment": "-seg", "classify": "-cls"}
     model_suffix = suffix_map.get(task_type, "")
     full_model_name = f"{model_name}{model_suffix}"

@@ -36,6 +36,12 @@ interface TrainingMetricsChartsProps {
 
 export default function TrainingMetricsCharts({ metricsHistory }: TrainingMetricsChartsProps) {
   const data = [...metricsHistory];
+  const mapPoints = data.filter(
+    (m) => m.mAP50 != null || m.mAP50_95 != null,
+  );
+  const hasNonZeroMap = mapPoints.some(
+    (m) => (m.mAP50 ?? 0) > 0 || (m.mAP50_95 ?? 0) > 0,
+  );
 
   return (
     <div className="space-y-6">
@@ -75,6 +81,17 @@ export default function TrainingMetricsCharts({ metricsHistory }: TrainingMetric
       {/* mAP Metrics Chart */}
       <div className="bg-card border border-border rounded-lg p-4">
         <h4 className="text-sm font-medium text-muted-foreground mb-4">mAP Metrics</h4>
+        {mapPoints.length === 0 ? (
+          <p className="text-sm text-muted-foreground mb-4">
+            mAP is recorded on validation epochs only (every few epochs, not each training step).
+            It will appear after the first MMYOLO validation pass completes.
+          </p>
+        ) : !hasNonZeroMap ? (
+          <p className="text-sm text-amber-600 dark:text-amber-500 mb-4">
+            Validation mAP is 0% on all runs so far. Metrics are being saved, but the model is not
+            scoring detections on the val set — check annotations, class IDs, and the val split.
+          </p>
+        ) : null}
         <ResponsiveContainer width="100%" height={200}>
           <LineChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />

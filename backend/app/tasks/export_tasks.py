@@ -15,8 +15,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.celery.gpu_app import celery_app
-from app.ml.yolo import load_yolo_class
 from app.models import Task as TaskModel
+from app.tasks.training_common import get_ultralytics_yolo
 
 logger = logging.getLogger(__name__)
 
@@ -431,11 +431,10 @@ def export_yolo_model(self, task_id: int, export_config: Dict[str, Any]):
         logger.info(f"Class names to save: {len(class_names)}")
         
         # Load YOLO model (by path for trained, by name for foundation)
+        YOLO = get_ultralytics_yolo()
         task.progress = 20
         task.task_metadata = {**task.task_metadata, "stage": "loading_model"}
         db.commit()
-
-        YOLO = load_yolo_class()
         
         if model_name:
             # Use pre-downloaded model from /app/models if present (from Docker build)

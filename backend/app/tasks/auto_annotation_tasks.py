@@ -137,9 +137,8 @@ def auto_annotate_yolo(
         iou_threshold: IoU threshold for NMS
         use_segmentation: Whether to use segmentation (if model supports it)
     """
-    from app.ml.yolo import load_yolo_class
-
-    YOLO = load_yolo_class()
+    from app.tasks.training_common import get_ultralytics_yolo
+    YOLO = get_ultralytics_yolo()
     db = SessionLocal()
     
     try:

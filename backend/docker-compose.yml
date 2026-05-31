@@ -7,6 +7,9 @@ services:
     image: ${LAI_BACKEND_IMAGE:-lai-backend:local}
     build:
       context: .
+      args:
+        # MMYOLO stack copied from lai-mmyolo image (build mmyolo_runtime before backend).
+        MMYOLO_IMAGE: ${LAI_MMYOLO_IMAGE:-lai-mmyolo:local}
     volumes:
       # Host backend code: optional bind via repo-root docker-compose.code-mount.yml + COMPOSE_FILE (see install.sh).
       # Host data root: set LAI_DATA_DIR via scripts/install.sh (default ../.lai-data relative to this file = repo .lai-data)
@@ -54,6 +57,21 @@ services:
         reservations:
           memory: 1G
           cpus: "1.0"
+
+  # Build-only ML runtime images (not started on `docker compose up`).
+  ultralytics_runtime:
+    image: ${LAI_ULTRALYTICS_IMAGE:-lai-ultralytics:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.ultralytics.runtime
+    profiles: [build]
+
+  mmyolo_runtime:
+    image: ${LAI_MMYOLO_IMAGE:-lai-mmyolo:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.mmyolo.runtime
+    profiles: [build]
 
   # CPU worker: dataset duplicate, augmentation, annotations, depth ONNX, Celery Beat schedules
   worker-general:
@@ -106,6 +124,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - XDG_CACHE_HOME=/app/.cache
       - MIM_CACHE_DIR=/app/.cache/mim
+      - ULTRALYTICS_PYTHON=/opt/conda/bin/python
+      - ULTRALYTICS_SITE=/opt/ultralytics-site
       - MMYOLO_PYTHON=/opt/conda/envs/mmyolo/bin/python
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0

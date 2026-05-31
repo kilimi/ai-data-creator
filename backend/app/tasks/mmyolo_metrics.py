@@ -13,15 +13,14 @@ TRAIN_EPOCH_RE = re.compile(
 )
 
 # Epoch(val) [10][1/1]  coco/bbox_mAP: 0.123  coco/bbox_mAP_50: 0.456  ...
-VAL_METRICS_RE = re.compile(
-    r"Epoch\(val\)\s+\[(\d+)\].*?"
-    r"(?:coco/)?bbox_mAP(?:_50)?:\s*([\d.]+)"
-)
-
-VAL_MAP50_RE = re.compile(r"(?:coco/)?bbox_mAP_50:\s*([\d.]+)")
-VAL_MAP5095_RE = re.compile(r"(?:coco/)?bbox_mAP:\s*([\d.]+)")
-VAL_PRECISION_RE = re.compile(r"(?:coco/)?bbox_precision:\s*([\d.]+)")
-VAL_RECALL_RE = re.compile(r"(?:coco/)?bbox_recall:\s*([\d.]+)")
+# Different MMYOLO/COCO hooks sometimes log keys as:
+#   - coco/bbox_mAP, coco/bbox_mAP_50
+#   - coco/mAP, coco/mAP_50
+# so we accept optional "bbox_" and both forms.
+VAL_MAP50_RE = re.compile(r"(?:coco/)?(?:bbox_)?mAP_50[:\s]*([\d.]+)")
+VAL_MAP5095_RE = re.compile(r"(?:coco/)?(?:bbox_)?mAP(?:_50_95)?[:\s]*([\d.]+)")
+VAL_PRECISION_RE = re.compile(r"(?:coco/)?(?:bbox_)?precision[:\s]*([\d.]+)")
+VAL_RECALL_RE = re.compile(r"(?:coco/)?(?:bbox_)?recall[:\s]*([\d.]+)")
 
 
 def parse_mmyolo_log_line(line: str) -> Optional[Dict[str, Any]]:

@@ -280,7 +280,8 @@ async def start_auto_annotation_from_training(
         if not class_names:
             # Try to load from model
             try:
-                from ultralytics import YOLO
+                from app.tasks.training_common import get_ultralytics_yolo
+                YOLO = get_ultralytics_yolo()
                 temp_model = YOLO(str(model_file))
                 class_names = list(temp_model.names.values())
             except Exception as e:

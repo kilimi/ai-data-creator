@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import lai
+from lai.compose_build import build_stack, missing_runtime_images, should_build_stack
 from lai.paths import _candidate_repo_root, bundle_data_dir, get_bundle_root
 from lai.uninstall import run_uninstall
 from lai.wizard import run_wizard
@@ -121,13 +122,31 @@ def cmd_install_gui(ns: argparse.Namespace) -> int:
     return run_wizard(root, open_browser=not ns.no_browser)
 
 
+def cmd_build(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    return build_stack(root, no_cache=ns.no_cache)
+
+
 def cmd_up(ns: argparse.Namespace) -> int:
     root = get_bundle_root(force_download=ns.refresh)
     _hint_guided_install(root)
     extra = ns.docker_compose_args or []
+
+    if should_build_stack(root, force=ns.build):
+        if ns.build:
+            print("Rebuilding stack images in dependency order...", file=sys.stderr)
+        else:
+            missing = missing_runtime_images(root)
+            print(
+                f"Building missing local images: {', '.join(missing)}",
+                file=sys.stderr,
+            )
+        rc = build_stack(root, no_cache=ns.build)
+        if rc != 0:
+            return rc
+
     cmd = ["docker", "compose", "up", "-d"]
-    if ns.build:
-        cmd.append("--build")
+    # Images already built in order; avoid compose --build (wrong order for ML runtimes).
     cmd.extend(extra)
     return _run(cmd, root)
 
@@ -136,6 +155,12 @@ def cmd_down(ns: argparse.Namespace) -> int:
     root = get_bundle_root(force_download=ns.refresh)
     extra = ns.docker_compose_args or []
     return _run(["docker", "compose", "down", *extra], root)
+
+
+def cmd_status(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    extra = ns.docker_compose_args or []
+    return _run(["docker", "compose", "ps", *extra], root)
 
 
 def cmd_restart(ns: argparse.Namespace) -> int:
@@ -158,7 +183,13 @@ def cmd_remove_images(ns: argparse.Namespace) -> int:
     # reference them), which can make subsequent builds fail with:
     #   "failed to solve: image ... already exists"
     # Force-remove the common local tags (ignore failures).
-    for tag in ("lai-backend:local", "lai-celery:local", "lai-frontend:local"):
+    for tag in (
+        "lai-backend:local",
+        "lai-celery:local",
+        "lai-ultralytics:local",
+        "lai-mmyolo:local",
+        "lai-frontend:local",
+    ):
         try:
             _run(["docker", "image", "rm", "-f", tag], root)
         except Exception:
@@ -253,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         description="LAI stack via Docker Compose (needs Docker + Compose 2.24+). "
         "pip install only adds this CLI — run `lai install` once for guided setup, then `lai up`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Typical first run:\n  pip install -e .   # or: pip install lai\n  lai install-gui  # browser wizard (or: lai install in terminal)\n  lai up\n\nRemove data:  lai uninstall  (type DELETE to confirm)",
+        epilog="Typical first run:\n  pip install -e .   # or: pip install lai\n  lai install-gui  # browser wizard (or: lai install in terminal)\n  lai up           # builds missing images in order, then starts stack\n  lai up --build   # rebuild all local images\n\nRemove data:  lai uninstall  (type DELETE to confirm)",
     )
     p.add_argument("--version", action="version", version=f"lai {lai.__version__}")
 
@@ -302,11 +333,23 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--refresh", action="store_true")
     sp.set_defaults(func=cmd_install_gui)
 
-    sp = sub.add_parser("up", help="docker compose up -d (use --build to rebuild images)")
+    sp = sub.add_parser("build", help="Build Docker images in dependency order (ML runtimes → celery → backend)")
+    sp.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Pass --no-cache to docker compose build",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_build)
+
+    sp = sub.add_parser(
+        "up",
+        help="Start stack (builds missing local images in order; use --build to rebuild all)",
+    )
     sp.add_argument(
         "--build",
         action="store_true",
-        help="Build images before starting containers (docker compose up --build)",
+        help="Rebuild all local images in dependency order before starting",
     )
     sp.add_argument(
         "docker_compose_args",
@@ -328,6 +371,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     sp.add_argument("--refresh", action="store_true")
     sp.set_defaults(func=cmd_down)
+
+    sp = sub.add_parser("status", help="docker compose ps (show running stack services)")
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose ps",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_status)
 
     sp = sub.add_parser("restart", help="docker compose restart (restart all containers)")
     sp.add_argument(

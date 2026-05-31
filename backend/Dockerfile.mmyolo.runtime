@@ -1,0 +1,30 @@
+# MMYOLO GPU runtime (artifact image; merged into lai-celery and copied into lai-backend).
+
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONNOUSERSITE=1 \
+    MMYOLO_PYTHON=/opt/conda/envs/mmyolo/bin/python
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libgomp1 git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN conda create -n mmyolo python=3.8 pytorch==1.10.1 torchvision==0.11.2 cudatoolkit=11.3 -c pytorch -y \
+ && PYTHONPATH= conda run -n mmyolo pip install openmim \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmengine>=0.6.0" \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmcv>=2.0.0rc4,<2.1.0" \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install "mmdet>=3.0.0,<4.0.0" \
+ && git clone --depth 1 https://github.com/open-mmlab/mmyolo.git /opt/mmyolo \
+ && PYTHONPATH= conda run -n mmyolo pip install -r /opt/mmyolo/requirements/albu.txt \
+ && PYTHONPATH= conda run -n mmyolo python -m mim install -v -e /opt/mmyolo
+
+RUN conda run -n mmyolo python -c "import mmyolo; print('mmyolo env ok')"
+
+# Smoke-test torch/mmdet the way API/celery subprocesses run (no host PYTHONPATH).
+RUN env -u PYTHONPATH GLIBC_TUNABLES=glibc.rtld.execstack=2 \
+    conda run -n mmyolo python -c "import torch; from mmdet.apis import init_detector; print('mmyolo torch ok', torch.__version__)"
+
+CMD ["sleep", "infinity"]

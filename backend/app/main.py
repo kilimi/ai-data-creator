@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -32,21 +33,60 @@ logger = logging.getLogger(__name__)
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-_ALLOWED_ORIGINS = {
-    "http://localhost:3000", "http://localhost:8000", "http://localhost:8080",
-    "http://localhost:8081", "http://localhost:8082", "http://127.0.0.1:3000",
-    "http://127.0.0.1:8000", "http://127.0.0.1:8080", "http://127.0.0.1:8081",
-    "http://127.0.0.1:8082",
-}
-
 import re
-_ORIGIN_RE = re.compile(r"https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?$")
+
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://localhost:8080",
+    "http://localhost:8081",
+    "http://localhost:8082",
+    "http://localhost:8089",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:8080",
+    "http://127.0.0.1:8081",
+    "http://127.0.0.1:8082",
+    "http://127.0.0.1:8089",
+]
+
+_ORIGIN_RE = re.compile(
+    r"https?://("
+    r"localhost|127\.0\.0\.1|\[::1\]|"
+    r"192\.168\.\d{1,3}\.\d{1,3}|"
+    r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
+    r"172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r")(:\d+)?$"
+)
+
+
+def _build_cors_origins() -> list[str]:
+    """Merge defaults with ALLOWED_ORIGINS from docker-compose / .env."""
+    origins = list(_DEFAULT_CORS_ORIGINS)
+    extra = os.environ.get("ALLOWED_ORIGINS", "")
+    for item in extra.split(","):
+        origin = item.strip()
+        if origin and origin not in origins:
+            origins.append(origin)
+    return origins
+
+
+_CORS_ORIGINS = _build_cors_origins()
+_ALLOWED_ORIGINS = set(_CORS_ORIGINS)
+
+def _origin_allowed(origin: Optional[str]) -> bool:
+    return bool(origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)))
+
 
 def _add_cors(response: Response, origin: Optional[str]) -> None:
     """Attach CORS headers to an existing response object in-place."""
-    if origin and (origin in _ALLOWED_ORIGINS or _ORIGIN_RE.match(origin)):
-        response.headers["Access-Control-Allow-Origin"] = origin
+    if _origin_allowed(origin):
+        response.headers["Access-Control-Allow-Origin"] = origin  # type: ignore[assignment]
         response.headers["Access-Control-Allow-Credentials"] = "true"
+        # Chromium Private Network Access (SPA on LAN IP → API on localhost)
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
     else:
         response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Expose-Headers"] = "*"
@@ -105,28 +145,84 @@ app = FastAPI()
 Path("data").mkdir(exist_ok=True)
 Path("projects").mkdir(exist_ok=True)
 
-# Add permissive CORS middleware - specify origins when credentials are allowed
+
+def _cors_json_response(
+    request: Request,
+    *,
+    status_code: int,
+    content: dict,
+) -> JSONResponse:
+    response = JSONResponse(status_code=status_code, content=content)
+    _add_cors(response, request.headers.get("origin"))
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_with_cors(request: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if not isinstance(detail, (str, dict, list)):
+        detail = str(detail)
+    return _cors_json_response(request, status_code=exc.status_code, content={"detail": detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_with_cors(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    return _cors_json_response(request, status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_with_cors(request: Request, exc: Exception) -> JSONResponse:
+    logger.error("Unhandled error on %s %s: %s", request.method, request.url.path, exc, exc_info=True)
+    return _cors_json_response(
+        request,
+        status_code=500,
+        content={"detail": "Internal server error"},
+    )
+
+
+# CORS: explicit origins + regex for localhost/LAN dev ports (see ALLOWED_ORIGINS in docker-compose)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://localhost:8080",
-        "http://localhost:8081",
-        "http://localhost:8082",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:8081",
-        "http://127.0.0.1:8082",
-    ],
-    # Vite uses host "::"; browsers may send Origin: http://[::1]:8080 — not in list above
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?",
+    allow_origins=_CORS_ORIGINS,
+    allow_origin_regex=_ORIGIN_RE.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def private_network_access_cors(request: Request, call_next):
+    """
+    Chromium may block cross-origin requests to loopback from a LAN page origin unless
+    the preflight/response includes Access-Control-Allow-Private-Network.
+    """
+    origin = request.headers.get("origin")
+    wants_pna = request.headers.get("access-control-request-private-network", "").lower() == "true"
+
+    if request.method == "OPTIONS" and wants_pna and _origin_allowed(origin):
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Private-Network": "true",
+            "Access-Control-Allow-Methods": request.headers.get(
+                "access-control-request-method", "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            ),
+            "Access-Control-Allow-Headers": request.headers.get(
+                "access-control-request-headers", "*"
+            ),
+            "Access-Control-Max-Age": "600",
+            "Vary": "Origin",
+        }
+        return Response(status_code=204, headers=headers)
+
+    response = await call_next(request)
+    if _origin_allowed(origin):
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 # Add a simple test endpoint for debugging CORS
 @app.get("/test-cors")
@@ -420,7 +516,11 @@ async def health_check(db: Session = Depends(get_db)):
 
 
 # Import routers
-from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines, auto_annotation, preannotate, system, calibration
+from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines, auto_annotation, preannotate, system, calibration, models_api
+
+from app.ml.backends import register_all_backends
+
+register_all_backends()
 
 # Include routers
 app.include_router(system.router)
@@ -434,6 +534,7 @@ app.include_router(image_collections.router)
 app.include_router(segmentation.router)
 app.include_router(database_backup.router)
 app.include_router(training.router)
+app.include_router(models_api.router)
 app.include_router(predictions.router)
 app.include_router(backup.router)
 app.include_router(export.router)

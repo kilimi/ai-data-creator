@@ -248,7 +248,7 @@ def _save_mosaic_grid(
 
     individual_dir = output_dir / split
     individual_dir.mkdir(exist_ok=True)
-    for idx, img in enumerate(annotated_images[: min(4, len(annotated_images))]):
+    for idx, img in enumerate(annotated_images[: min(3, len(annotated_images))]):
         cv2.imwrite(str(individual_dir / f"example_{idx + 1}.jpg"), img)
 
 
@@ -319,6 +319,79 @@ def create_coco_training_examples(
 
         if annotated_images:
             _save_mosaic_grid(annotated_images, output_dir, split, class_names, colors, grid_size)
+
+
+def create_mmyolo_prediction_preview(
+    work_dir: Path,
+    output_dir: Path,
+    max_images: int = 8,
+    grid_size: Tuple[int, int] = (4, 4),
+) -> bool:
+    """
+    Build a mosaic from MMYOLO DetVisualizationHook outputs (work_dir/vis_data/).
+
+    Returns True if at least one preview image was written.
+    """
+    vis_dir = work_dir / "vis_data"
+    if not vis_dir.is_dir():
+        return False
+
+    image_paths = sorted(
+        [
+            p
+            for p in vis_dir.rglob("*")
+            if p.suffix.lower() in {".jpg", ".jpeg", ".png"}
+        ],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not image_paths:
+        return False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    loaded: List[np.ndarray] = []
+    for path in image_paths[: max_images * 2]:
+        img = cv2.imread(str(path))
+        if img is not None:
+            loaded.append(img)
+        if len(loaded) >= max_images:
+            break
+
+    if not loaded:
+        return False
+
+    rows, cols = grid_size
+    target_size = (640, 640)
+    resized = [letterbox_image(img, target_size) for img in loaded[: rows * cols]]
+    while len(resized) < rows * cols:
+        resized.append(np.zeros((target_size[1], target_size[0], 3), dtype=np.uint8))
+
+    grid_rows = []
+    for i in range(rows):
+        row = resized[i * cols : (i + 1) * cols]
+        if row:
+            grid_rows.append(np.hstack(row))
+    if not grid_rows:
+        return False
+
+    grid = np.vstack(grid_rows)
+    title_height = 50
+    title_img = np.ones((title_height, grid.shape[1], 3), dtype=np.uint8) * 255
+    cv2.putText(
+        title_img,
+        "MMYOLO validation predictions (latest val pass)",
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 0, 0),
+        2,
+    )
+    final_img = np.vstack([title_img, grid])
+    out_path = output_dir / "val_predictions_batch.jpg"
+    cv2.imwrite(str(out_path), final_img)
+    logger.info(f"Saved MMYOLO prediction preview to {out_path}")
+    return True
+
 
 def create_training_examples(
     dataset_dir: Path,
