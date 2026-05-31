@@ -7,6 +7,12 @@ services:
   backend:
     volumes:
       - ${LAI_REPO_ROOT}/backend:/app
-  celery_worker:
+  worker-general:
+    volumes:
+      - ${LAI_REPO_ROOT}/backend:/app
+  worker-gpu:
+    volumes:
+      - ${LAI_REPO_ROOT}/backend:/app
+  celery-beat:
     volumes:
       - ${LAI_REPO_ROOT}/backend:/app
