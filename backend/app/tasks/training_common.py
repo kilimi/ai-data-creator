@@ -20,9 +20,11 @@ def _ultralytics_class(class_name: str, fallback_paths: tuple) -> type:
 
     Tries submodule paths first, then top-level (after lazy-export patch).
     """
+    from app.ml.numpy_compat import ensure_numpy_torch_compat
     from app.ml.runtime_env import ensure_ultralytics_sys_path
     from app.ml.ultralytics_compat import patch_ultralytics_lazy_exports
 
+    ensure_numpy_torch_compat()
     ensure_ultralytics_sys_path()
     patch_ultralytics_lazy_exports()
 

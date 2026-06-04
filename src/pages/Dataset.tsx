@@ -9,7 +9,6 @@ import { VideoUploadDialog } from "@/components/VideoUploadDialog";
 import { DatasetHeader } from "@/components/DatasetHeader";
 import { DatasetBreadcrumb } from "@/components/DatasetBreadcrumb";
 import { EditDatasetDialog } from "@/components/EditDatasetDialog";
-import { CalibrationDialog } from "@/components/CalibrationDialog";
 import { AnnotationSample, processCOCOAnnotations } from "@/utils/annotations";
 import { LayoutControls, LayoutType } from "@/components/LayoutControls";
 import { ResizableDatasetLayout } from "@/components/ResizableDatasetLayout";
@@ -57,27 +56,9 @@ export default function Dataset() {
     isDefault?: boolean;
   } | null>(null);
   const [isDeletingCollection, setIsDeletingCollection] = useState(false);
-  const [isCalibrationDialogOpen, setIsCalibrationDialogOpen] = useState(false);
   const [addCollectionDialogOpen, setAddCollectionDialogOpen] = useState(false);
   const [images, setImages] = useState<Image[]>([]);
   const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
-  // Existing calibrations between collections (used to badge calibrated
-  // collection tabs in the dataset view).
-  const [calibrations, setCalibrations] = useState<Array<{
-    id?: number;
-    source_collection_id: number | string;
-    target_collection_id: number | string;
-  }>>([]);
-
-  const refreshCalibrations = async () => {
-    if (!api || !datasetId) return;
-    try {
-      const res = await api.getCalibrations(datasetId);
-      if (res.success && Array.isArray(res.data)) setCalibrations(res.data as any);
-    } catch {
-      /* non-fatal */
-    }
-  };
 
   // Captures which collection tab was active when "Upload Video" was clicked
   // so the backend can drop extracted frames into the same collection.
@@ -237,7 +218,6 @@ export default function Dataset() {
   useEffect(() => {
     if (settingsLoaded && dataset && api) {
       loadImageCollections();
-      refreshCalibrations();
     }
   }, [dataset, settingsLoaded, api, useTabbedImages]);
 
@@ -1271,23 +1251,6 @@ export default function Dataset() {
                 onTabPageChange={handleTabPageChange}
                 onTabDeleteImage={handleTabDeleteImage}
                 onTabUploadImages={handleTabUploadImages}
-                onOpenCalibrationDialog={() => setIsCalibrationDialogOpen(true)}
-                calibrations={calibrations}
-                onDeleteCalibration={async (calibrationId) => {
-                  if (!api || !datasetId) return;
-                  try {
-                    const res = await api.deleteCalibration(datasetId, calibrationId);
-                    if (!res.success) throw new Error((res as any).error || "Failed");
-                    toast({ title: "Calibration deleted" });
-                    await refreshCalibrations();
-                  } catch (err: any) {
-                    toast({
-                      title: "Failed to delete calibration",
-                      description: err?.message || "Unknown error",
-                      variant: "destructive",
-                    });
-                  }
-                }}
                 datasetUiMode={settings.mode}
               />
             </div>
@@ -1324,19 +1287,6 @@ export default function Dataset() {
             open={isEditDialogOpen}
             onOpenChange={setIsEditDialogOpen}
             onDatasetUpdated={handleDatasetUpdated}
-          />
-        )}
-
-        {datasetId && (
-          <CalibrationDialog
-            open={isCalibrationDialogOpen}
-            onOpenChange={setIsCalibrationDialogOpen}
-            datasetId={datasetId}
-            collections={imageCollections}
-            onCalibrationSaved={() => {
-              toast({ title: "Calibration saved", description: "Collections are now calibrated." });
-              refreshCalibrations();
-            }}
           />
         )}
 

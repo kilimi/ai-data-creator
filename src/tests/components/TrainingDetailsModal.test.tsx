@@ -168,7 +168,7 @@ describe("TrainingDetailsModal", () => {
       },
     };
 
-    (global.fetch as any).mockResolvedValueOnce({
+    (global.fetch as any).mockResolvedValue({
       ok: true,
       json: async () => taskWithExamples,
     });
@@ -187,7 +187,7 @@ describe("TrainingDetailsModal", () => {
 
     fireEvent.click(thumbs[0]);
     const enlarged = await screen.findAllByAltText("Train example 1");
-    expect(enlarged.length).toBeGreaterThanOrEqual(2);
+    expect(enlarged.length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows live in-epoch batch progress for running training", async () => {

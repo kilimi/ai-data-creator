@@ -1559,6 +1559,47 @@ async def start_rtdetr_training(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _is_mmyolo_training_task(task: Task) -> bool:
+    if task.task_type == "mmyolo_training":
+        return True
+    metadata = task.task_metadata or {}
+    if metadata.get("dji_patch_path") or metadata.get("config_id") or metadata.get("arch"):
+        return True
+    try:
+        from app.ml.dispatch import get_model_backend
+
+        return get_model_backend(task).runtime_profile == "mmyolo"
+    except Exception:
+        return False
+
+
+def _checkpoint_stem(checkpoint: str) -> str:
+    for ext in (".pth", ".pt"):
+        if checkpoint.lower().endswith(ext):
+            return checkpoint[: -len(ext)]
+    return checkpoint
+
+
+def _weights_search_dir(results_dir: str | Path) -> Optional[Path]:
+    """Ultralytics uses results_dir/weights; MMYOLO writes checkpoints in work_dir directly."""
+    root = Path(results_dir)
+    weights_sub = root / "weights"
+    if weights_sub.is_dir():
+        return weights_sub
+    return root if root.is_dir() else None
+
+
+def _model_download_arcname(model_path: Path, checkpoint: str, task: Task) -> str:
+    """Use .pth for MMYOLO/DJI deliverables; .pt for Ultralytics."""
+    if _is_mmyolo_training_task(task):
+        if model_path.suffix.lower() == ".pth":
+            return model_path.name
+        return f"{_checkpoint_stem(checkpoint)}.pth"
+    if model_path.suffix.lower() == ".pt":
+        return model_path.name
+    return f"{_checkpoint_stem(checkpoint)}.pt"
+
+
 @router.get("/training/{task_id}/checkpoints")
 async def list_checkpoints(task_id: int, db: Session = Depends(get_db)):
     """
@@ -1624,9 +1665,9 @@ async def list_checkpoints(task_id: int, db: Session = Depends(get_db)):
     
     # Look for additional checkpoints in weights directory (expected location)
     if results_dir:
-        weights_dir = Path(results_dir) / "weights"
-        if weights_dir.exists():
-            # Look for epoch checkpoints (e.g., epoch10.pt, epoch20.pt)
+        weights_dir = _weights_search_dir(results_dir)
+        if weights_dir:
+            # Look for epoch checkpoints (e.g., epoch10.pt, epoch_10.pth)
             for checkpoint_file in list(weights_dir.glob("*.pt")) + list(weights_dir.glob("*.pth")):
                 if checkpoint_file.name not in checkpoint_names_seen:
                     # Try to extract epoch number from filename
@@ -1696,22 +1737,29 @@ async def download_checkpoint(
     yolo_results_dir = task_metadata.get('yolo_results_dir')
     
     model_path = None
-    
+
+    if _is_mmyolo_training_task(task) and checkpoint in ("best", "last"):
+        from app.tasks.mmyolo_evaluation import resolve_mmyolo_checkpoint
+
+        resolved = resolve_mmyolo_checkpoint(task_metadata, checkpoint)
+        if resolved and Path(resolved).exists():
+            model_path = Path(resolved)
+
     # Check for best/last models (prefer expected location, fallback to YOLO location)
-    if checkpoint == 'best':
+    if model_path is None and checkpoint == 'best':
         if best_model:
             model_path = Path(best_model)
         elif yolo_best_model:
             model_path = Path(yolo_best_model)
-    elif checkpoint == 'last':
+    elif model_path is None and checkpoint == 'last':
         if last_model:
             model_path = Path(last_model)
         elif yolo_last_model:
             model_path = Path(yolo_last_model)
-    elif results_dir:
-        # Look in weights directory
-        weights_dir = Path(results_dir) / "weights"
-        if weights_dir.exists():
+    elif model_path is None and results_dir:
+        # Look in weights directory (or MMYOLO work_dir)
+        weights_dir = _weights_search_dir(results_dir)
+        if weights_dir:
             # Try exact match first
             potential_path = weights_dir / checkpoint
             if potential_path.exists() and potential_path.suffix in {'.pt', '.pth'}:
@@ -1751,7 +1799,7 @@ async def download_checkpoint(
         safe_filename = f"model_{task_id}"
     
     # Add checkpoint name to filename
-    checkpoint_name = checkpoint.replace('.pt', '')
+    checkpoint_name = _checkpoint_stem(checkpoint)
     download_filename = f"{safe_filename}_{checkpoint_name}.zip"
 
     # Collect class names from task metadata (best-effort fallbacks)
@@ -1763,10 +1811,10 @@ async def download_checkpoint(
         if isinstance(ds_info.get("class_names"), list):
             class_names = [str(c) for c in ds_info.get("class_names", [])]
 
-    # Build zip in-memory: selected .pt + class names text/json
+    # Build zip in-memory: checkpoint weights + class names text/json
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        model_filename = model_path.name if model_path.suffix.lower() == ".pt" else f"{checkpoint_name}.pt"
+        model_filename = _model_download_arcname(model_path, checkpoint, task)
         zf.write(str(model_path), arcname=model_filename)
 
         if class_names:
@@ -1937,10 +1985,13 @@ async def test_training_model_inference(
 
                 predictions = []
                 for p in preds_raw:
-                    bbox_xyxy = p.get("bbox", [])
-                    if len(bbox_xyxy) == 4:
-                        x1, y1, x2, y2 = bbox_xyxy
+                    # mmyolo_eval_inference.py emits COCO xywh in "bbox" and corners in "bbox_xyxy"
+                    raw_xyxy = p.get("bbox_xyxy")
+                    if isinstance(raw_xyxy, list) and len(raw_xyxy) == 4:
+                        x1, y1, x2, y2 = (float(v) for v in raw_xyxy[:4])
                         bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
+                    elif isinstance(p.get("bbox"), list) and len(p["bbox"]) == 4:
+                        bbox_xywh = [float(v) for v in p["bbox"][:4]]
                     else:
                         bbox_xywh = []
                     class_id = p.get("class_id", 0)

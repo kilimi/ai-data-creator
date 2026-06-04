@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from string import Template
 
+from lai.compose_files import compose_file_env_value, ensure_compose_env
 from lai.docker_preflight import check_docker_stack
 
 # Use string.Template so CSS { ... } is not parsed as str.format fields.
@@ -211,14 +212,12 @@ def _apply_setup(
     _upsert_env_line(env_file, "LAI_DEPTH_MODELS", lai_depth_models.strip())
     root = (Path(lai_repo_root).expanduser().resolve() if lai_repo_root else bundle_root.resolve())
     _upsert_env_line(env_file, "LAI_REPO_ROOT", str(root))
-    if bind_host_backend:
-        _upsert_env_line(
-            env_file,
-            "COMPOSE_FILE",
-            "docker-compose.code-mount.yml:docker-compose.yml",
-        )
-    else:
-        _upsert_env_line(env_file, "COMPOSE_FILE", "docker-compose.yml")
+    _upsert_env_line(
+        env_file,
+        "COMPOSE_FILE",
+        compose_file_env_value(bind_code=bind_host_backend),
+    )
+    ensure_compose_env(bundle_root)
 
 
 def _pick_port() -> int:

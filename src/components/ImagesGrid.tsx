@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Card, CardContent } from "@/components/ui/card";
 import { Image } from "@/types";
+import { resolveBackendMediaUrl } from "@/config/api";
 import { AnnotationSample } from "@/utils/annotations";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
 
@@ -340,7 +341,12 @@ export function ImagesGrid({
                           </div>
                         )}
                         <img
-                          src={image.thumbnailUrl || image.url}
+                          src={
+                            resolveBackendMediaUrl(image.thumbnailUrl) ||
+                            resolveBackendMediaUrl(image.url) ||
+                            image.thumbnailUrl ||
+                            image.url
+                          }
                           alt={image.fileName}
                           className={`w-full h-full object-contain ${imageIsLoaded ? 'opacity-100' : 'opacity-0'}`}
                           loading="lazy"

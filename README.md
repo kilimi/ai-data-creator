@@ -29,9 +29,10 @@ Uses Vite (see `package.json`). The full app runs in Docker via `lai up`.
 ## Repo layout
 
 - `src/` — React frontend
-- `backend/` — API, workers, database migrations, `docker-compose` fragment
+- `backend/` — API, workers, database migrations
+- `dockers/` — Dockerfiles and Compose stack (`docker-compose.yml` at repo root includes `dockers/`)
 - `lai/` — Python CLI (`pip install -e .`)
-- `deploy/` — production frontend image (nginx)
+- `deploy/` — nginx config for the frontend image
 - `scripts/` — `install.sh`, SAM check helper
 
 ## Background workers
@@ -54,7 +55,7 @@ Run **unit and integration tests on your host** (repo checkout + venv / Node). D
 | Suite | Host needs | Docker stack (`lai up`) |
 |--------|------------|-------------------------|
 | Frontend unit (Vitest) | Node 18+, `npm ci` | No |
-| Python (`tests/python/`) | Python 3.10+, venv, `pip install -r backend/requirements.txt pytest` | No (most tests); API tests use in-memory SQLite |
+| Python (`tests/python/`) | Python 3.10+, venv, `pip install -r backend/requirements-backend.txt pytest` | No (most tests); API tests use in-memory SQLite |
 | E2E (Playwright) | Node 18+, `npm ci`, `npx playwright install chromium` | **Yes** — API reachable at `http://localhost:9999` |
 
 From the **repository root** (directory that contains `docker-compose.yml`).
@@ -69,15 +70,23 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 pip install -U pip
-pip install -r backend/requirements.txt pytest
+pip install -r backend/requirements-backend.txt pytest
 
 # All Python tests
 pytest tests/python/
 
+# GPU training smoke (5 epochs on tests/python/test_dataset/car_dataset):
+# worker-gpu: backend is /app; tests are mounted at /tests (see dockers/backend/docker-compose.yml).
+# Recreate worker after compose changes: docker compose up -d worker-gpu
+#
+# PowerShell (exec does NOT support -v; volume is in compose):
+#   docker compose exec -e LAI_RUN_TRAINING_SMOKE=1 -e LAI_BACKEND_DIR=/app worker-gpu bash -lc 'pip install -q pytest && pytest /tests/python/test_training_smoke_all_models.py -m training_smoke -v'
+# MMYOLO only:
+#   docker compose exec -e LAI_RUN_TRAINING_SMOKE=1 -e LAI_BACKEND_DIR=/app -e LAI_TRAINING_SMOKE_MODELS=mmyolo/rtmdet_s worker-gpu bash -lc 'pip install -q pytest && pytest /tests/python/test_training_smoke_all_models.py -m training_smoke -v'
+
 # Examples
 pytest tests/python/test_projects_api.py
 pytest tests/python/test_celery_*.py -q
-```
 
 `tests/python/conftest.py` adds `backend/` to `PYTHONPATH`; you do **not** need `docker compose exec` into `lai-backend-1` for these.
 
@@ -144,6 +153,9 @@ pytest tests/python/ && npm run tests && npm run test:e2e
 ```
 
 Or: `npm run test:all` (Vitest + Playwright; run `pytest` separately).
+
+
+See **GPU training smoke** under [Tests](#tests) above.
 
 ## License
 

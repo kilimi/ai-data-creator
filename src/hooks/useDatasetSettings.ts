@@ -9,7 +9,7 @@ interface DatasetSettings {
   imageSize: number;
   layout: LayoutType;
   sliderPosition: number; // Add slider position (0-100)
-  /** default: simplified UI (e.g. hide collection calibration). advanced: full tools. */
+  /** default: simplified UI. advanced: full tools. */
   mode: DatasetUiMode;
 }
 

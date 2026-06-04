@@ -81,17 +81,30 @@ def parse_yolo_label(label_path: Path, img_width: int, img_height: int, is_segme
                 annotations.append(('segmentation', class_id, pixel_coords))
             else:
                 # Detection: class_id x_center y_center width height
-                if len(values) != 4:
+                if len(values) == 4:
+                    x_center, y_center, width, height = values
+                    x1 = int((x_center - width / 2) * img_width)
+                    y1 = int((y_center - height / 2) * img_height)
+                    x2 = int((x_center + width / 2) * img_width)
+                    y2 = int((y_center + height / 2) * img_height)
+                elif len(values) >= 6 and len(values) % 2 == 0:
+                    # Legacy exports wrote seg polygons for detection jobs — derive a bbox for preview.
+                    needs_normalization = max((abs(v) for v in values), default=0.0) <= 1.5
+                    xs, ys = [], []
+                    for i in range(0, len(values), 2):
+                        if needs_normalization:
+                            xs.append(values[i] * img_width)
+                            ys.append(values[i + 1] * img_height)
+                        else:
+                            xs.append(values[i])
+                            ys.append(values[i + 1])
+                    if not xs or not ys:
+                        continue
+                    x1, y1 = int(min(xs)), int(min(ys))
+                    x2, y2 = int(max(xs)), int(max(ys))
+                else:
                     continue
-                x_center, y_center, width, height = values
-                
-                # Convert normalized YOLO format to pixel coordinates (xyxy)
-                x1 = int((x_center - width/2) * img_width)
-                y1 = int((y_center - height/2) * img_height)
-                x2 = int((x_center + width/2) * img_width)
-                y2 = int((y_center + height/2) * img_height)
 
-                # Clamp so slightly-invalid labels still render a visible box.
                 x1 = max(0, min(img_width - 1, x1))
                 y1 = max(0, min(img_height - 1, y1))
                 x2 = max(0, min(img_width - 1, x2))
@@ -100,8 +113,8 @@ def parse_yolo_label(label_path: Path, img_width: int, img_height: int, is_segme
                     x2 = min(img_width - 1, x1 + 1)
                 if y2 <= y1:
                     y2 = min(img_height - 1, y1 + 1)
-                
-                annotations.append(('bbox', class_id, [x1, y1, x2, y2]))
+
+                annotations.append(("bbox", class_id, [x1, y1, x2, y2]))
     
     return annotations
 
@@ -174,6 +187,125 @@ def draw_annotations_on_image(img: np.ndarray, annotations: List,
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     return img_annotated
+
+
+def draw_classification_label_on_image(
+    img: np.ndarray,
+    class_name: str,
+    color: Tuple[int, int, int],
+) -> np.ndarray:
+    """Draw a prominent class name banner on an image (YOLO classify layout)."""
+    img_annotated = img.copy()
+    h, w = img_annotated.shape[:2]
+    label = class_name or "unknown"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = max(0.55, min(w, h) / 420.0)
+    thickness = max(1, int(round(scale * 2)))
+    (tw, th), baseline = cv2.getTextSize(label, font, scale, thickness)
+    band_h = th + baseline + 20
+    y0 = max(0, h - band_h)
+    cv2.rectangle(img_annotated, (0, y0), (w, h), color, -1)
+    x = max(10, (w - tw) // 2)
+    y = h - max(10, (band_h - th) // 2)
+    cv2.putText(
+        img_annotated,
+        label,
+        (x, y),
+        font,
+        scale,
+        (255, 255, 255),
+        thickness,
+        cv2.LINE_AA,
+    )
+    return img_annotated
+
+
+def create_classification_training_examples(
+    dataset_dir: Path,
+    output_dir: Path,
+    class_names: List[str],
+    num_examples: int = 16,
+    grid_size: Tuple[int, int] = (4, 4),
+) -> None:
+    """
+    Create preview mosaics for Ultralytics YOLO classification datasets.
+
+    Expects dataset_dir/{train,val,test}/<class_name>/*.jpg
+    """
+    logger.info(f"Creating classification training examples in {output_dir}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    colors = generate_color_palette(max(len(class_names), 1))
+    name_to_id = {name: idx for idx, name in enumerate(class_names)}
+
+    for split in ("train", "val", "test"):
+        split_dir = dataset_dir / split
+        if not split_dir.is_dir():
+            continue
+
+        class_dirs = sorted(p for p in split_dir.iterdir() if p.is_dir())
+        if not class_dirs:
+            logger.warning(f"No class folders in classification {split} split: {split_dir}")
+            continue
+
+        candidates: List[Tuple[Path, str]] = []
+        for class_dir in class_dirs:
+            class_name = class_dir.name
+            for img_path in class_dir.iterdir():
+                if img_path.is_file() and img_path.suffix.lower() in {
+                    ".jpg", ".jpeg", ".png", ".bmp", ".webp"
+                }:
+                    candidates.append((img_path, class_name))
+
+        if not candidates:
+            logger.warning(f"No images in classification {split} split")
+            continue
+
+        random.shuffle(candidates)
+        per_class: Dict[str, List[Tuple[Path, str]]] = {}
+        for item in candidates:
+            per_class.setdefault(item[1], []).append(item)
+
+        sampled: List[Tuple[Path, str]] = []
+        if per_class:
+            per_class_quota = max(1, num_examples // len(per_class))
+            for class_name, items in per_class.items():
+                sampled.extend(random.sample(items, min(per_class_quota, len(items))))
+        remaining = num_examples - len(sampled)
+        if remaining > 0:
+            pool = [c for c in candidates if c not in sampled]
+            if pool:
+                sampled.extend(random.sample(pool, min(remaining, len(pool))))
+        sampled = sampled[:num_examples]
+
+        annotated_images: List[np.ndarray] = []
+        for img_path, class_name in sampled:
+            img = cv2.imread(str(img_path))
+            if img is None:
+                logger.warning(f"Could not read classification image: {img_path}")
+                continue
+            class_id = name_to_id.get(class_name)
+            if class_id is None:
+                class_id = len(name_to_id)
+                name_to_id[class_name] = class_id
+                if class_id >= len(colors):
+                    colors = generate_color_palette(class_id + 1)
+            color = colors[class_id % len(colors)]
+            annotated_images.append(
+                draw_classification_label_on_image(img, class_name, color)
+            )
+
+        if annotated_images:
+            legend_names = [name for name, _ in sorted(name_to_id.items(), key=lambda x: x[1])]
+            _save_mosaic_grid(
+                annotated_images,
+                output_dir,
+                split,
+                legend_names,
+                colors,
+                grid_size,
+            )
+
+    logger.info(f"Classification training examples created in {output_dir}")
 
 
 def letterbox_image(img: np.ndarray, target_size: Tuple[int, int], pad_color: Tuple[int, int, int] = (114, 114, 114)) -> np.ndarray:

@@ -25,6 +25,7 @@ import numpy as np
 
 from .. import models, schemas
 from ..database import get_db, SessionLocal
+from ..http_utils import public_request_base_url
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -447,7 +448,7 @@ def read_dataset(dataset_id: int, request: Request, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="Dataset not found")
     
     # Set random image as logo if no logo is set and images exist
-    base_url = str(request.base_url).rstrip('/')
+    base_url = public_request_base_url(request)
     _set_random_image_as_logo(dataset, db, base_url)
     # Refresh to get updated logo
     db.refresh(dataset)
@@ -700,29 +701,9 @@ async def delete_dataset(
             except Exception as file_error:
                 print(f"Warning: Could not delete some physical files for dataset {ds_id}: {file_error}")
             
-            # Remove from dataset groups
-            groups = db.query(models.DatasetGroup).all()
-            for group in groups:
-                if group.datasets_list and ds_id in group.datasets_list:
-                    updated_ids = [id for id in group.datasets_list if id != ds_id]
-                    group.datasets_list = updated_ids
-            
-            # Delete augmentations where this is the target dataset
-            target_augmentations = db.query(models.Augmentation).filter(
-                models.Augmentation.target_dataset_id == ds_id
-            ).all()
-            for aug in target_augmentations:
-                db.delete(aug)
-            
-            # Update augmentations that have this dataset in source_dataset_ids
-            all_augmentations = db.query(models.Augmentation).all()
-            for aug in all_augmentations:
-                if aug.source_dataset_ids and ds_id in aug.source_dataset_ids:
-                    updated_source_ids = [id for id in aug.source_dataset_ids if id != ds_id]
-                    aug.source_dataset_ids = updated_source_ids
-            
-            # Delete the dataset record
-            db.delete(ds)
+            from ..db_cleanup import delete_dataset_record
+
+            delete_dataset_record(db, ds)
         
         db.commit()
         
@@ -922,7 +903,7 @@ async def upload_images(
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
         
-        base_url = str(request.base_url).rstrip('/')
+        base_url = public_request_base_url(request)
         
         # Use projects/{project_id}/{dataset_id}/images/ directory structure
         project_id = dataset.project_id
@@ -1250,7 +1231,7 @@ async def extract_frames_from_video(
         if max_frames < 0:
             raise HTTPException(status_code=400, detail="max_frames must be >= 0")
 
-        base_url = str(request.base_url).rstrip("/")
+        base_url = public_request_base_url(request)
         project_id = dataset.project_id
         dataset_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
         dataset_dir.mkdir(parents=True, exist_ok=True)
@@ -1522,7 +1503,7 @@ def get_dataset_images(request: Request, dataset_id: int, db: Session = Depends(
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        base_url = str(request.base_url).rstrip('/')
+        base_url = public_request_base_url(request)
         images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
         response_images = []
         for img in images:
@@ -1968,6 +1949,8 @@ async def create_annotation_processing_task(
             from .annotation_db import process_coco_annotation_file_task
 
             def process_task():
+                from app.task_stop import TaskStopped, run_annotation_file_processing, handle_task_failure_status
+
                 session = SessionLocal()
                 try:
                     task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
@@ -1976,25 +1959,16 @@ async def create_annotation_processing_task(
                         task_db.started_at = datetime.utcnow()
                         task_db.progress = 10
                         session.commit()
-                    process_coco_annotation_file_task(
+                    run_annotation_file_processing(
+                        session,
                         task_id=task_id,
                         file_id=file_id,
                         coco_data=coco_data,
-                        db=session,
                     )
-                    task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
-                    if task_db:
-                        task_db.status = "completed"
-                        task_db.completed_at = datetime.utcnow()
-                        task_db.progress = 100
-                        session.commit()
+                except TaskStopped:
+                    pass
                 except Exception as e:
-                    task_db = session.query(models.Task).filter(models.Task.id == task_id).first()
-                    if task_db:
-                        task_db.status = "failed"
-                        task_db.completed_at = datetime.utcnow()
-                        task_db.error_message = str(e)
-                        session.commit()
+                    handle_task_failure_status(session, task_id, e)
                 finally:
                     session.close()
 
@@ -2077,7 +2051,16 @@ async def get_dataset_annotations(
         db_annotation_files = db.query(models.AnnotationFile).filter(
             models.AnnotationFile.dataset_id == dataset_id
         ).order_by(models.AnnotationFile.created_at.desc()).all()
-        
+
+        from .annotation_db import (
+            get_live_annotation_counts_by_file_id,
+            resolve_annotation_count,
+        )
+
+        file_ids = [f.id for f in db_annotation_files if f.id]
+        live_counts_by_file = get_live_annotation_counts_by_file_id(db, file_ids)
+        needs_count_sync = False
+
         annotation_files = []
         for db_file in db_annotation_files:
             # Calculate correct image coverage from AnnotationFileImage table
@@ -2087,7 +2070,13 @@ async def get_dataset_annotations(
             total_referenced_images = len(afi_list)
             present_count = sum(1 for afi in afi_list if afi.dataset_image_id is not None)
             missing_count = total_referenced_images - present_count
-            
+
+            live_count = int(live_counts_by_file.get(db_file.id, 0))
+            effective_count = resolve_annotation_count(db_file.annotation_count, live_count)
+            if live_count > 0 and live_count != int(db_file.annotation_count or 0):
+                db_file.annotation_count = live_count
+                needs_count_sync = True
+
             file_info = {
                 "id": db_file.id,
                 "name": db_file.name,
@@ -2095,7 +2084,7 @@ async def get_dataset_annotations(
                 "type": db_file.type,
                 "tags": db_file.tags,
                 "size": db_file.file_size or 0,
-                "annotation_count": db_file.annotation_count,
+                "annotation_count": effective_count,
                 "image_count": total_referenced_images,  # Total images referenced in annotation file
                 "image_coverage": {
                     "total_referenced": total_referenced_images,
@@ -2110,7 +2099,10 @@ async def get_dataset_annotations(
                 "modified_at": db_file.updated_at.isoformat(),
             }
             annotation_files.append(file_info)
-        
+
+        if needs_count_sync:
+            db.commit()
+
         return {
             "success": True,
             "data": annotation_files
@@ -3226,8 +3218,11 @@ async def merge_annotation_files_task(
     strategy_cfg: Optional[dict] = None,
 ):
     """Background task to merge annotation files and create a new merged file"""
+    from ..task_stop import TaskStopped, check_task_stop, finalize_running_task, task_stop_requested
+
     # Use a fresh session inside background task
     db = SessionLocal()
+    task = None
     try:
         def _segmentation_polygons(seg_raw):
             """Return segmentation as list-of-polygons (flat coordinate arrays)."""
@@ -3308,6 +3303,7 @@ async def merge_annotation_files_task(
 
         task.progress = 10
         db.commit()
+        check_task_stop(db, task_id)
 
         # Get all dataset images for mapping (load once, reuse)
         dataset_images = db.query(models.Image).filter(models.Image.dataset_id == dataset_id).all()
@@ -3358,6 +3354,7 @@ async def merge_annotation_files_task(
 
         # Process files in batches to avoid memory issues
         for file_idx, annotation_file in enumerate(annotation_files):
+            check_task_stop(db, task_id)
             try:
                 print(f"Processing annotation file: {annotation_file.name} ({annotation_file.annotation_count} annotations)")
                 
@@ -3381,6 +3378,7 @@ async def merge_annotation_files_task(
                 annotation_count = annotation_file.annotation_count or 0
                 
                 for offset in range(0, annotation_count, batch_size):
+                    check_task_stop(db, task_id)
                     # Load annotations in batches
                     annotations_batch = db.query(models.Annotation).filter(
                         models.Annotation.annotation_file_id == annotation_file.id
@@ -3543,6 +3541,7 @@ async def merge_annotation_files_task(
 
         task.progress = 82
         db.commit()
+        check_task_stop(db, task_id)
 
         # ----- Strategy-aware resolution on bboxes -----
         # Bbox IoU helper (COCO format [x, y, w, h])
@@ -3682,6 +3681,7 @@ async def merge_annotation_files_task(
 
         task.progress = 85
         db.commit()
+        check_task_stop(db, task_id)
 
         # Create the merged annotation file record
         import uuid
@@ -3728,32 +3728,37 @@ async def merge_annotation_files_task(
             from .annotation_db import process_coco_annotation_file
             await process_coco_annotation_file(merged_file_id, merged_data)
 
-        # Mark task as completed
-        task.status = "completed"
-        task.completed_at = datetime.utcnow()
-        task.progress = 100
         task.task_metadata = {
-            **task.task_metadata,
+            **(task.task_metadata or {}),
             "merged_file_id": merged_file_id,
             "total_images": final_image_count,
             "total_annotations": final_annotation_count,
             "total_categories": final_category_count,
             "source_files": [f.name for f in annotation_files],
-            "duplicates_removed": total_annotations - final_annotation_count
+            "duplicates_removed": total_annotations - final_annotation_count,
         }
         db.commit()
+        finalize_running_task(db, task_id)
 
         print(f"Annotation merge completed: {final_annotation_count} annotations, {final_image_count} images, {final_category_count} categories")
 
+    except TaskStopped:
+        if task is not None:
+            db.refresh(task)
+            if task.status != "stopped":
+                task.status = "stopped"
+            if not task.completed_at:
+                task.completed_at = datetime.utcnow()
+            db.commit()
+        print(f"Annotation merge stopped for task {task_id}")
     except Exception as e:
-        # Mark task as failed
-        if 'task' in locals():
+        if task is not None and not task_stop_requested(task):
             task.status = "failed"
             task.completed_at = datetime.utcnow()
             task.error_message = str(e)
             task.progress = 0
             db.commit()
-        
+
         print(f"Error in merge_annotation_files_task: {e}")
         raise
     finally:

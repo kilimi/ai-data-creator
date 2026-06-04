@@ -90,3 +90,23 @@ def build_mmyolo_subprocess_env(
     if device not in ("", "cpu"):
         env["CUDA_VISIBLE_DEVICES"] = str(device)
     return env
+
+
+def build_mmyolo_pip_install_env() -> Dict[str, str]:
+    """
+    Environment for ``MMYOLO_PYTHON -m pip`` (e.g. DJI editable install).
+
+    Must not inherit Celery worker PYTHONPATH (/opt/lai); pip would read broken
+    worker site-packages (e.g. corrupt typing_extensions dist-info).
+    """
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    env["PYTHONNOUSERSITE"] = "1"
+    env["MMYOLO_PYTHON"] = MMYOLO_PYTHON
+    env.setdefault("MKL_SERVICE_FORCE_INTEL", "1")
+    env["MKL_THREADING_LAYER"] = "GNU"
+    env.setdefault("MKL_INTERFACE_LAYER", "GNU,LP64")
+    env.setdefault(
+        "GLIBC_TUNABLES",
+        os.environ.get("GLIBC_TUNABLES", "glibc.rtld.execstack=2"),
+    )
+    return env

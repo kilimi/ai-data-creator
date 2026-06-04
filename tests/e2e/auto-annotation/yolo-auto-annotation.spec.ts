@@ -44,11 +44,16 @@ test.describe('YOLO Auto-Annotation', () => {
         // Modal should appear
         await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5000 });
         
-        // Select YOLO
-        const yoloButton = page.locator('button:has-text("YOLO")').first();
+        // Select YOLO11 Medium
+        const yoloButton = page.locator('button:has-text("YOLO11 Medium")').first();
         await expect(yoloButton).toBeVisible({ timeout: 3000 });
         await yoloButton.click();
-        await page.waitForTimeout(1000);
+        await page.waitForTimeout(500);
+
+        // Pick detection task (default)
+        const detectButton = page.locator('button:has-text("Detection")').first();
+        await expect(detectButton).toBeVisible({ timeout: 3000 });
+        await detectButton.click();
         
         // Start button should be enabled
         const startButton = page.locator('button:has-text("Start Annotation")');
@@ -114,8 +119,9 @@ test.describe('YOLO Auto-Annotation', () => {
           'Content-Type': 'application/json',
         },
         data: {
-          model_name: 'yolo11n',
+          model_name: 'yolo11m',
           dataset_id: testDataset.id,
+          task_type: 'detect',
           annotation_file_name: `Test_Auto_${Date.now()}`
         }
       });
@@ -128,7 +134,7 @@ test.describe('YOLO Auto-Annotation', () => {
       expect(responseData).toHaveProperty('task_id');
       expect(responseData.task_id).toBeGreaterThan(0);
       expect(responseData).toHaveProperty('message');
-      expect(responseData.message).toContain('yolo11n');
+      expect(responseData.message).toContain('yolo11m');
       
       // Verify task was created
       const taskResponse = await request.get(`http://localhost:9999/tasks/${responseData.task_id}`);
@@ -137,7 +143,7 @@ test.describe('YOLO Auto-Annotation', () => {
       const taskData = await taskResponse.json();
       expect(taskData.task_type).toBe('preannotate');
       expect(taskData.project_id).toBe(testDataset.project_id);
-      expect(taskData.task_metadata).toHaveProperty('model_name', 'yolo11n');
+      expect(taskData.task_metadata).toHaveProperty('model_name', 'yolo11m');
       expect(taskData.task_metadata).toHaveProperty('dataset_id', testDataset.id);
       expect(taskData.status).toMatch(/pending|running|completed/);
     } else {
@@ -158,8 +164,9 @@ test.describe('YOLO Auto-Annotation', () => {
       const createResponse = await request.post('http://localhost:9999/preannotate', {
         headers: { 'Content-Type': 'application/json' },
         data: {
-          model_name: 'yolo11s',
+          model_name: 'yolo11m',
           dataset_id: testDataset.id,
+          task_type: 'segment',
           annotation_file_name: `Test_Active_${Date.now()}`
         }
       });
@@ -192,11 +199,11 @@ test.describe('YOLO Auto-Annotation', () => {
         const foundTask = activeTasks.find((task: any) => task.id === taskId);
         
         expect(foundTask).toBeDefined();
-        expect(foundTask.name).toContain('yolo11s');
+        expect(foundTask.name).toContain('yolo11m');
       } else {
         // Task completed/failed too quickly, just verify it exists
         console.log(`Task ${taskId} is already ${taskData.status}, not in active list`);
-        expect(taskData.name).toContain('yolo11s');
+        expect(taskData.name).toContain('yolo11m');
       }
     } else {
       console.log('No datasets found, skipping test');

@@ -516,7 +516,7 @@ async def health_check(db: Session = Depends(get_db)):
 
 
 # Import routers
-from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines, auto_annotation, preannotate, system, calibration, models_api
+from .routers import projects, datasets, tasks, augmentations, dataset_groups, annotation_db, image_collections, segmentation, database_backup, training, predictions, backup, export, pipelines, auto_annotation, preannotate, system, models_api
 
 from app.ml.backends import register_all_backends
 
@@ -541,4 +541,3 @@ app.include_router(export.router)
 app.include_router(pipelines.router)
 app.include_router(auto_annotation.router)
 app.include_router(preannotate.router)
-app.include_router(calibration.router)

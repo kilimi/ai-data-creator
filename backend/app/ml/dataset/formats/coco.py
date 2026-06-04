@@ -6,11 +6,136 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
-from app.ml.dataset.builder import generate_safe_output_filename
+from app.ml.dataset.builder import (
+    copy_image_file,
+    generate_safe_output_filename,
+    read_image_dimensions,
+    resolve_source_image_path,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _annotation_has_bbox(ann: Any) -> bool:
+    if isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+        return True
+    if isinstance(ann.bbox, dict):
+        return True
+    return ann.bbox_x is not None and ann.bbox_width is not None
+
+
+def _annotation_has_segmentation(ann: Any) -> bool:
+    seg = ann.segmentation
+    if not seg or not isinstance(seg, list) or len(seg) == 0:
+        return False
+    try:
+        raw = seg[0] if isinstance(seg[0], list) else seg
+        return isinstance(raw, list) and len(raw) >= 6
+    except (TypeError, IndexError):
+        return False
+
+
+def _extract_segmentation_polygon(ann: Any) -> Optional[List[float]]:
+    if not _annotation_has_segmentation(ann):
+        return None
+    raw = ann.segmentation
+    poly = raw[0] if isinstance(raw[0], list) else raw
+    if not isinstance(poly, list) or len(poly) < 6:
+        return None
+    try:
+        return [float(v) for v in poly]
+    except (TypeError, ValueError):
+        return None
+
+
+def _bbox_xywh_from_polygon(
+    poly: List[float], img_width: int, img_height: int
+) -> List[float]:
+    """COCO pixel bbox [x, y, w, h] from polygon (pixel or normalized coords)."""
+    needs_norm = max((abs(v) for v in poly), default=0.0) <= 1.5
+    xs, ys = [], []
+    for i in range(0, len(poly) - 1, 2):
+        x, y = float(poly[i]), float(poly[i + 1])
+        if needs_norm:
+            x *= img_width
+            y *= img_height
+        xs.append(x)
+        ys.append(y)
+    x1, y1, x2, y2 = min(xs), min(ys), max(xs), max(ys)
+    return [x1, y1, max(1.0, x2 - x1), max(1.0, y2 - y1)]
+
+
+def _coco_bbox_from_annotation(
+    ann: Any, img_width: int, img_height: int
+) -> Optional[List[float]]:
+    """Return COCO [x, y, w, h] in pixel coordinates."""
+    w = float(img_width) or 1.0
+    h = float(img_height) or 1.0
+
+    if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+        x, y, bw, bh = (float(v) for v in ann.bbox[:4])
+        if max(abs(x), abs(y), abs(bw), abs(bh)) <= 1.5:
+            return [x * w, y * h, bw * w, bh * h]
+        return [x, y, bw, bh]
+    if ann.bbox and isinstance(ann.bbox, dict):
+        x = float(ann.bbox.get("x", 0))
+        y = float(ann.bbox.get("y", 0))
+        bw = float(ann.bbox.get("width", 0))
+        bh = float(ann.bbox.get("height", 0))
+        if max(abs(x), abs(y), abs(bw), abs(bh)) <= 1.5:
+            return [x * w, y * h, bw * w, bh * h]
+        return [x, y, bw, bh]
+    if ann.bbox_x is not None and ann.bbox_width is not None:
+        return [
+            float(ann.bbox_x) * w,
+            float(ann.bbox_y or 0) * h,
+            float(ann.bbox_width) * w,
+            float(ann.bbox_height or 0) * h,
+        ]
+    poly = _extract_segmentation_polygon(ann)
+    if poly is not None:
+        return _bbox_xywh_from_polygon(poly, img_width, img_height)
+    return None
+
+
+def _resolve_annotation_class(db, ann: Any, annotation_file_id: str, class_mapping: Dict[str, int]):
+    from app.models import AnnotationClass
+
+    if ann.category_id is not None:
+        ann_class = (
+            db.query(AnnotationClass)
+            .filter(
+                AnnotationClass.annotation_file_id == annotation_file_id,
+                AnnotationClass.category_id == ann.category_id,
+            )
+            .first()
+        )
+        if ann_class:
+            return ann_class
+    if ann.category:
+        ann_class = (
+            db.query(AnnotationClass)
+            .filter(
+                AnnotationClass.annotation_file_id == annotation_file_id,
+                AnnotationClass.class_name == ann.category,
+            )
+            .first()
+        )
+        if ann_class:
+            return ann_class
+    return None
+
+
+def _image_passes_task_filter(ann: Any, task: str) -> bool:
+    has_bbox = _annotation_has_bbox(ann)
+    has_seg = _annotation_has_segmentation(ann)
+    if task == "segment":
+        return has_seg
+    if task == "oriented":
+        return has_seg
+    return has_bbox or has_seg
 
 
 def prepare_coco_dataset(
@@ -99,24 +224,16 @@ def prepare_coco_dataset(
             logger.warning(f"No images in dataset {dataset_id}, skipping")
             continue
 
-        # Optionally filter images without valid annotations
+        # Optionally filter images without valid annotations for this MMYOLO task
         if remove_images_without_annotations:
-            needs_seg = task in ("segment", "oriented")
             filtered = []
             for img in images:
                 anns = db.query(Annotation).filter(
                     Annotation.image_id == img.id,
                     Annotation.annotation_file_id == annotation_file_id,
                 ).all()
-                for a in anns:
-                    has_bbox = a.bbox or (a.bbox_x is not None and a.bbox_width is not None)
-                    has_seg = a.segmentation and len(a.segmentation) > 0
-                    if needs_seg and has_seg and has_bbox:
-                        filtered.append(img)
-                        break
-                    if not needs_seg and has_bbox:
-                        filtered.append(img)
-                        break
+                if any(_image_passes_task_filter(a, task) for a in anns):
+                    filtered.append(img)
             images = filtered
 
         if not images:
@@ -137,35 +254,14 @@ def prepare_coco_dataset(
         for split_name, image in split_assignments:
             dst_dir = train_images_dir if split_name == "train" else val_images_dir
 
-            # Copy image file
-            if image.url and image.url.startswith("/static/projects/"):
-                src_path = Path("projects") / image.url.replace("/static/projects/", "")
-            elif image.url and image.url.startswith("projects/"):
-                src_path = Path(image.url)
-            else:
-                src_path = Path("projects") / str(dataset_id) / image.file_name
-
+            src_path = resolve_source_image_path(image, dataset_id)
             safe_filename = generate_safe_output_filename(src_path.name, image.dataset_id)
             dst_path = dst_dir / safe_filename
+            copy_image_file(src_path, dst_path)
 
-            if src_path.exists() and not dst_path.exists():
-                try:
-                    os.link(src_path, dst_path)
-                except OSError:
-                    shutil.copy2(src_path, dst_path)
-
-            # Get image dimensions with fallback to actual file reading
-            img_width = image.width
-            img_height = image.height
-            if not img_width or not img_height or img_width <= 0 or img_height <= 0:
-                try:
-                    from PIL import Image as PILImage
-                    with PILImage.open(dst_path) as pil_img:
-                        img_width, img_height = pil_img.size
-                    logger.info(f"Read image dimensions from file {dst_path}: {img_width}x{img_height}")
-                except Exception as dim_err:
-                    logger.warning(f"Could not read image dimensions for {dst_path}: {dim_err}")
-                    img_width, img_height = 640, 640  # Safe fallback
+            img_width, img_height = read_image_dimensions(
+                image, dst_path if dst_path.exists() else src_path
+            )
             
             coco_img = {
                 "id": global_img_id,
@@ -183,19 +279,15 @@ def prepare_coco_dataset(
             ).all()
 
             for ann in anns:
-                # Validate category_id before lookup
-                if ann.category_id is None:
-                    logger.warning(f"Annotation {ann.id} has no category_id, skipping")
-                    continue
-                
-                ann_class = db.query(AnnotationClass).filter(
-                    AnnotationClass.annotation_file_id == annotation_file_id,
-                    AnnotationClass.category_id == ann.category_id,
-                ).first()
+                ann_class = _resolve_annotation_class(
+                    db, ann, annotation_file_id, class_mapping
+                )
                 if not ann_class:
                     logger.warning(
-                        f"No AnnotationClass found for annotation {ann.id} "
-                        f"(category_id={ann.category_id}, annotation_file_id={annotation_file_id})"
+                        "No AnnotationClass for annotation %s (category_id=%s, category=%s)",
+                        ann.id,
+                        ann.category_id,
+                        ann.category,
                     )
                     continue
                 cat_id = class_mapping.get(ann_class.class_name)
@@ -204,60 +296,25 @@ def prepare_coco_dataset(
                     continue
                 coco_cat_id = cat_id + 1  # COCO categories are 1-indexed
 
-                # Extract bbox in [x, y, w, h] COCO format
-                bbox_coco = None
-                if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) == 4:
-                    bbox_coco = [float(v) for v in ann.bbox]
-                elif ann.bbox and isinstance(ann.bbox, dict):
-                    bbox_coco = [
-                        float(ann.bbox.get("x", 0)),
-                        float(ann.bbox.get("y", 0)),
-                        float(ann.bbox.get("width", 0)),
-                        float(ann.bbox.get("height", 0)),
-                    ]
-                elif ann.bbox_x is not None and ann.bbox_width is not None:
-                    bbox_coco = [
-                        float(ann.bbox_x),
-                        float(ann.bbox_y or 0),
-                        float(ann.bbox_width),
-                        float(ann.bbox_height or 0),
-                    ]
+                bbox_coco = _coco_bbox_from_annotation(ann, img_width, img_height)
 
-                # Segmentation polygon with proper validation
                 seg_poly = None
-                if ann.segmentation and len(ann.segmentation) > 0:
-                    try:
-                        raw = ann.segmentation
-                        # Bounds check before accessing raw[0]
-                        if isinstance(raw, list) and len(raw) > 0:
-                            poly = raw[0] if isinstance(raw[0], list) else raw
-                        else:
-                            poly = raw
-                        
-                        # Validate polygon has enough points and all are numeric
-                        if isinstance(poly, list) and len(poly) >= 6:
-                            # Verify all coordinates are numeric
-                            if all(isinstance(coord, (int, float)) for coord in poly):
-                                seg_poly = [poly]
-                                has_any_segmentation = True
-                            else:
-                                logger.warning(
-                                    f"Annotation {ann.id}: segmentation polygon contains non-numeric values"
-                                )
-                        else:
-                            logger.debug(
-                                f"Annotation {ann.id}: segmentation polygon too short (len={len(poly) if isinstance(poly, list) else 0})"
-                            )
-                    except Exception as seg_err:
-                        logger.warning(f"Annotation {ann.id}: failed to process segmentation: {seg_err}")
+                poly = _extract_segmentation_polygon(ann)
+                if poly is not None:
+                    seg_poly = [poly]
+                    has_any_segmentation = True
 
                 if task == "segment":
-                    if seg_poly is None or bbox_coco is None:
+                    if seg_poly is None:
                         continue
+                    if bbox_coco is None:
+                        bbox_coco = _bbox_xywh_from_polygon(poly, img_width, img_height)
                 elif task == "oriented":
                     if seg_poly is None:
                         continue
-                else:  # detect
+                    if bbox_coco is None:
+                        bbox_coco = _bbox_xywh_from_polygon(poly, img_width, img_height)
+                else:
                     if bbox_coco is None:
                         continue
 
@@ -287,7 +344,19 @@ def prepare_coco_dataset(
     total_train = len(splits_data["train"]["images"])
     total_val = len(splits_data["val"]["images"])
     if total_train == 0 and total_val == 0:
-        raise ValueError("No images were processed. Check that your datasets have images with valid annotations.")
+        if task == "segment":
+            hint = (
+                "RTMDet-Ins / segment task requires polygon (instance segmentation) annotations. "
+                "BBox-only datasets cannot be used — add masks or train with RTMDet / YOLOv8 detection."
+            )
+        elif task == "oriented":
+            hint = (
+                "RTMDet-R / oriented task requires polygon annotations (used as rotated boxes). "
+                "BBox-only datasets cannot be used — add polygons or use RTMDet detection."
+            )
+        else:
+            hint = "Check that images exist on disk and annotations have valid bounding boxes."
+        raise ValueError(f"No images were processed. {hint}")
 
     if task == "segment" and not has_any_segmentation:
         raise ValueError(

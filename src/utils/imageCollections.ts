@@ -1,5 +1,5 @@
 import { ImageCollection } from '@/types';
-import { getApiBaseUrl } from '@/config/api';
+import { getApiBaseUrl, normalizeImageMedia } from '@/config/api';
 
 export interface ImageCollectionData {
   id: number;
@@ -189,19 +189,21 @@ export function convertToFrontendImageCollection(
   backendCollection: ImageCollectionData,
   imagesPerPage: number = 12
 ): ImageCollection {
-  const images = backendCollection.images.map(img => ({
-    id: String(img.id),
-    datasetId: String(img.datasetId),
-    fileName: img.fileName,
-    fileSize: img.fileSize,
-    width: img.width,
-    height: img.height,
-    url: img.url,
-    thumbnailUrl: img.thumbnailUrl,
-    uploadedAt: img.uploadedAt,
-    annotationsCount: img.annotationsCount,
-    groupId: img.groupId,
-  }));
+  const images = backendCollection.images.map((img) =>
+    normalizeImageMedia({
+      id: String(img.id),
+      datasetId: String(img.datasetId),
+      fileName: img.fileName,
+      fileSize: img.fileSize,
+      width: img.width,
+      height: img.height,
+      url: img.url,
+      thumbnailUrl: img.thumbnailUrl,
+      uploadedAt: img.uploadedAt,
+      annotationsCount: img.annotationsCount,
+      groupId: img.groupId,
+    }),
+  );
 
   const totalPages = Math.ceil(images.length / imagesPerPage);
   const currentPage = 1;

@@ -62,7 +62,6 @@ class Dataset(Base):
     annotations = relationship("Annotation", cascade="all, delete-orphan", back_populates="dataset")
     annotation_files = relationship("AnnotationFile", cascade="all, delete-orphan", back_populates="dataset")
     image_collections = relationship("ImageCollection", cascade="all, delete-orphan", back_populates="dataset")
-    calibrations = relationship("CollectionCalibration", cascade="all, delete-orphan", back_populates="dataset")
 
     @property
     def tags(self):
@@ -424,29 +423,3 @@ class Pipeline(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     project = relationship("Project")
-
-
-class CollectionCalibration(Base):
-    """Stores homography-based calibration between two image collections in a dataset."""
-    __tablename__ = "collection_calibrations"
-    __table_args__ = (
-        Index('idx_cal_dataset_src_tgt', 'dataset_id', 'source_collection_id', 'target_collection_id', unique=True),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
-    dataset_id = Column(Integer, ForeignKey("datasets.id"), index=True)
-    source_collection_id = Column(Integer, ForeignKey("image_collections.id"), index=True)
-    target_collection_id = Column(Integer, ForeignKey("image_collections.id"), index=True)
-    # 3x3 homography matrix as list-of-lists (H maps source → target pixel coords)
-    homography = Column(JSON, nullable=False)
-    # Inverse (target → source), pre-computed for display performance
-    homography_inv = Column(JSON, nullable=False)
-    # Raw point pairs used for computation — stored for inspection / re-compute
-    point_pairs = Column(JSON, nullable=False)  # [{src_x, src_y, tgt_x, tgt_y}, ...]
-    point_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    dataset = relationship("Dataset", back_populates="calibrations")
-    source_collection = relationship("ImageCollection", foreign_keys=[source_collection_id])
-    target_collection = relationship("ImageCollection", foreign_keys=[target_collection_id])

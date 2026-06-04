@@ -38,9 +38,6 @@ interface ResizableDatasetLayoutProps {
   onAddImageTab?: (tabName: string) => void; // NEW: for adding new tabs
   onRemoveImageTab?: (tabId: string) => void; // NEW: for removing tabs
   onReorderImageTabs?: (orderedTabIds: string[]) => Promise<void>; // NEW: for drag-and-drop tab ordering
-  onOpenCalibrationDialog?: () => void; // NEW: for calibration dialog
-  calibrations?: Array<{ id?: number; source_collection_id: number | string; target_collection_id: number | string }>;
-  onDeleteCalibration?: (calibrationId: number) => Promise<void> | void;
   datasetUiMode?: DatasetUiMode;
   paginatedImages: Image[];
   totalPages: number;
@@ -76,9 +73,6 @@ export function ResizableDatasetLayout({
   onAddImageTab,
   onRemoveImageTab,
   onReorderImageTabs,
-  onOpenCalibrationDialog,
-  calibrations = [],
-  onDeleteCalibration,
   datasetUiMode = 'default',
   paginatedImages,
   totalPages,
@@ -142,9 +136,6 @@ export function ResizableDatasetLayout({
             onRemoveTab={onRemoveImageTab || (() => {})}
             onReorderTabs={onReorderImageTabs || (async () => {})}
             onOpenVideoUploadDialog={onOpenVideoUploadDialog}
-            onOpenCalibrationDialog={onOpenCalibrationDialog}
-            calibrations={calibrations}
-            onDeleteCalibration={onDeleteCalibration}
             datasetUiMode={datasetUiMode}
             annotations={annotations}
             annotationFiles={annotationFiles}

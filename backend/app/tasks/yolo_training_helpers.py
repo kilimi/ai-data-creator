@@ -529,6 +529,16 @@ def build_yolo_training_args(
         raise FileNotFoundError(f"Data YAML file not found: {yaml_path}")
     
     logger.info(f"Using data.yaml path: {yaml_path} (exists: {Path(yaml_path).exists()})")
+
+    is_classification = dataset_info.get("dataset_format") == "classify"
+    if is_classification:
+        data_root = Path(yaml_path)
+        if not (data_root / "train").is_dir():
+            raise FileNotFoundError(
+                f"Classification dataset missing train/ folder: {data_root}"
+            )
+        yaml_path = str(data_root)
+        logger.info(f"Using classification dataset root: {yaml_path}")
     
     device = training_config.get('device', '0')
     try:

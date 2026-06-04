@@ -79,7 +79,12 @@ def _read_worker_gpu_status() -> dict[str, Any] | None:
 def _trigger_worker_gpu_refresh() -> None:
     """Request a fresh GPU sample from worker-gpu with a short timeout."""
     try:
-        async_result = celery_app.send_task("app.tasks.task_monitoring.refresh_worker_gpu_status")
+        from app.ml.celery_dispatch import GPU_QUEUE, send_gpu_task
+
+        async_result = send_gpu_task(
+            "app.tasks.task_monitoring.refresh_worker_gpu_status",
+            queue=GPU_QUEUE,
+        )
         async_result.get(timeout=GPU_REFRESH_TIMEOUT_SECONDS)
     except CeleryTimeoutError:
         logger.debug("worker gpu refresh request timed out")
@@ -380,7 +385,7 @@ async def list_foundation_models() -> dict[str, Any]:
             "minimal": "lai download-models",
             "single_yolo": "lai download-models --yolo yolo11n-seg.pt",
             "single_depth": "lai download-models --depth depth_anything_v2_vitb_outdoor_dynamic.onnx",
-            "direct": "docker compose exec backend python scripts/download_ultralytics_models.py",
+            "direct": "docker compose exec worker-gpu python scripts/download_ultralytics_models.py",
         },
         "notice": (
             "Models live on a host volume — drop your own .pt files into the yolo_dir to use them. "

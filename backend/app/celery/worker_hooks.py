@@ -186,6 +186,9 @@ def register_gpu_worker_hooks(celery_app) -> None:
     @worker_process_init.connect
     def _on_gpu_worker_start(sender=None, **kwargs):
         try:
+            from app.ml.numpy_compat import ensure_numpy_torch_compat
+
+            ensure_numpy_torch_compat()
             sync_tasks_with_database(celery_app)
         finally:
             publish_worker_gpu_status()

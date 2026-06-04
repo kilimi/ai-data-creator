@@ -1,20 +1,21 @@
 /**
  * CompanionLayersPanel
  *
- * Read-only side-by-side companion view for the segmentation annotation page.
+ * Side-by-side companion view for the annotation page.
  *
- * Concept:
+ * Concept (simplified — no calibration):
  *  - User annotates ONCE on the main canvas (the "primary" collection).
  *  - This panel shows the SAME logical image (matched by filename / groupId)
- *    from one or more OTHER collections, with the same annotations overlaid.
- *  - Annotations are drawn directly in image-pixel space; the canvas is sized
- *    to the companion image's natural dimensions and scaled with `object-contain`.
- *  - If the companion image's resolution differs from the primary image,
- *    we surface a short notice so the user understands overlays may not match
- *    visually unless calibration is enabled. We do NOT silently distort coordinates.
+ *    from one or more OTHER collections in a small per-layer window.
+ *  - Annotations are drawn directly in image-pixel space (identity mapping).
  *
- * The user picks which collections appear via a multi-select checkbox menu in
- * the header, and can drag the divider between panels to resize.
+ * Copy rule:
+ *  - A layer can mirror the primary's annotations ("Copy annotations" ON) ONLY
+ *    when its image has the SAME resolution as the primary image. In that case
+ *    drawing on the primary is shown live on that layer and saves are mirrored.
+ *  - If the resolution differs, copying is NOT allowed: the Copy toggle is
+ *    disabled and a warning is shown. Such a layer only displays its own
+ *    previously-saved annotations.
  */
 import * as React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -26,13 +27,11 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Crosshair,
   X,
   Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
   Popover,
   PopoverContent,
@@ -46,10 +45,18 @@ import {
 import { cn } from "@/lib/utils";
 import { Image, ImageCollection } from "@/types";
 import type { AnnotationShape } from "@/pages/ImageAnnotation";
+import { pointsToTightBbox } from "@/utils/annotations";
+import {
+  COMPANION_DUPLICATE_STORAGE_KEY,
+  readCompanionDuplicateIds,
+  readCopyOffCollectionIds,
+  writeCompanionDuplicateIds,
+  setCollectionCopyEnabled,
+  isCollectionCopyEnabled,
+} from "@/components/annotation/companionDuplicatePrefs";
 
 // ---------------------------------------------------------------------------
-// Helpers — duplicated locally so the panel stays self-contained. They mirror
-// the same logic used in ImageAnnotation.tsx so matching behaves identically.
+// Helpers — mirror the matching logic used in ImageAnnotation.tsx.
 // ---------------------------------------------------------------------------
 
 function baseNameNoExt(fileName: string): string {
@@ -79,48 +86,11 @@ function findCorrespondingImage(
   return null;
 }
 
-function hasCalibrationBetween(
-  calibrations: any[],
-  aId: string | number,
-  bId: string | number,
-): boolean {
-  const a = String(aId);
-  const b = String(bId);
-  return calibrations.some((c) => {
-    const src = String(c.source_collection_id ?? c.sourceCollectionId ?? "");
-    const tgt = String(c.target_collection_id ?? c.targetCollectionId ?? "");
-    return (src === a && tgt === b) || (src === b && tgt === a);
-  });
-}
-
-/** Return the calibration entry between two collections, or null if none exists. */
-function getCalibrationEntry(
-  calibrations: any[],
-  aId: string | number,
-  bId: string | number,
-): any | null {
-  const a = String(aId);
-  const b = String(bId);
-  return (
-    calibrations.find((c) => {
-      const src = String(c.source_collection_id ?? c.sourceCollectionId ?? "");
-      const tgt = String(c.target_collection_id ?? c.targetCollectionId ?? "");
-      return (src === a && tgt === b) || (src === b && tgt === a);
-    }) ?? null
-  );
-}
-
-/** Apply a 3×3 homography matrix H (row-major nested array) to a point. */
-function applyHomography(
-  H: number[][],
-  x: number,
-  y: number,
-): { x: number; y: number } {
-  const w = H[2][0] * x + H[2][1] * y + H[2][2];
-  return {
-    x: (H[0][0] * x + H[0][1] * y + H[0][2]) / w,
-    y: (H[1][0] * x + H[1][1] * y + H[1][2]) / w,
-  };
+/** True when both images have known, positive, identical pixel dimensions. */
+function sameResolution(a: Image | null, b: Image | null): boolean {
+  if (!a || !b) return false;
+  if (!a.width || !a.height || !b.width || !b.height) return false;
+  return a.width === b.width && a.height === b.height;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,20 +104,16 @@ interface CompanionCanvasProps {
   annotations: AnnotationShape[];
   /** Primary image's natural dimensions, used to detect resolution mismatch. */
   primaryDims: { width: number; height: number } | null;
-  hasCalibration: boolean;
-  /** Full calibration entry between the primary collection and this companion. */
-  calibrationEntry: any | null;
-  /** ID of the primary (annotating) collection, used to determine homography direction. */
-  primaryCollectionId: string;
   /**
    * COCO image dimensions for the current image in the primary collection.
    * When annotation points were loaded from an API annotation file they are in
-   * COCO pixel-space (imageWidth × imageHeight).  We must scale them back to
-   * primary-image natural-pixel-space before applying the calibration homography.
-   * If null / equal to primary natural dims, no scaling is needed.
+   * COCO pixel-space (imageWidth × imageHeight). We scale them to primary
+   * natural-pixel-space before drawing. If null / equal to primary natural
+   * dims, no scaling is needed.
    */
   primaryCocoDims: { width: number; height: number } | null;
-  projectId?: string | null;
+  /** Whether this layer mirrors live primary annotations (Copy ON + same res). */
+  isCopying: boolean;
 }
 
 function CompanionCanvas({
@@ -156,11 +122,8 @@ function CompanionCanvas({
   imageName,
   annotations,
   primaryDims,
-  hasCalibration,
-  calibrationEntry,
-  primaryCollectionId,
   primaryCocoDims,
-  projectId,
+  isCopying,
 }: CompanionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -168,13 +131,6 @@ function CompanionCanvas({
     null,
   );
   const [imgLoadError, setImgLoadError] = useState(false);
-  // User-toggleable calibration state for this companion. Defaults to ON
-  // whenever a calibration entry exists between the two collections.
-  const [calibrationOn, setCalibrationOn] = useState<boolean>(hasCalibration);
-  // Re-sync if the underlying calibration availability changes.
-  useEffect(() => {
-    setCalibrationOn(hasCalibration);
-  }, [hasCalibration]);
 
   const corresponding = useMemo(
     () => findCorrespondingImage(collection, imageName, primaryImage),
@@ -187,7 +143,7 @@ function CompanionCanvas({
     setImgLoadError(false);
   }, [corresponding?.url]);
 
-  // Draw annotations in image-pixel space, applying homography when calibration is on.
+  // Draw annotations in image-pixel space (identity mapping).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !imgDims) return;
@@ -197,86 +153,9 @@ function CompanionCanvas({
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Build a point transformer: when calibration is active, project primary-space
-    // coordinates into companion-image-space using the stored homography.
-    const shouldTransform = calibrationOn && !!calibrationEntry;
-    let H: number[][] | null = null;
-    if (shouldTransform) {
-      // Determine which direction the homography maps.
-      // homography       = maps source_collection → target_collection
-      // homography_inv   = maps target_collection → source_collection
-      // We want:         primary_collection → companion_collection
-      const srcId = String(
-        calibrationEntry.source_collection_id ??
-          calibrationEntry.sourceCollectionId ??
-          "",
-      );
-      H =
-        srcId === primaryCollectionId
-          ? (calibrationEntry.homography ?? null)      // primary IS source → H maps primary→companion
-          : (calibrationEntry.homography_inv ?? null);  // primary IS target → H_inv maps primary→companion
-
-      if (!H) {
-        console.warn(
-          "[CompanionCanvas] calibrationEntry present but homography matrix missing – falling back to no-transform",
-          calibrationEntry,
-        );
-      } else {
-        console.debug(
-          "[CompanionCanvas] using",
-          srcId === primaryCollectionId ? "homography" : "homography_inv",
-          "for primary=", primaryCollectionId, "companion.id=", String(collection.id),
-          "calibration src=", srcId, "tgt=", String(calibrationEntry.target_collection_id ?? ""),
-        );
-      }
-    }
-
-    // COCO→natural-pixel scaling for the primary image.
-    // Annotations loaded from API are stored in COCO image space (imageWidth × imageHeight).
-    // When that differs from the image's natural pixel dimensions (primaryDims), we need
-    // to scale the stored coords to natural-pixel space before applying the homography.
-    let cocoScaleX = 1;
-    let cocoScaleY = 1;
-    if (primaryCocoDims && primaryDims) {
-      if (
-        primaryCocoDims.width > 0 &&
-        primaryCocoDims.height > 0 &&
-        primaryDims.width > 0 &&
-        primaryDims.height > 0 &&
-        (primaryCocoDims.width !== primaryDims.width ||
-          primaryCocoDims.height !== primaryDims.height)
-      ) {
-        cocoScaleX = primaryDims.width / primaryCocoDims.width;
-        cocoScaleY = primaryDims.height / primaryCocoDims.height;
-      }
-    }
-
-    /**
-     * Transform a point from annotation-storage space (primary collection pixel space,
-     * potentially COCO-scaled) to companion-image pixel space.
-     * Returns null only if H is present but the computation produces NaN/Infinity.
-     */
-    const transformPt = (
-      pt: { x: number; y: number },
-    ): { x: number; y: number } | null => {
-      // Step 1: COCO→natural-pixel scaling
-      const nx = pt.x * cocoScaleX;
-      const ny = pt.y * cocoScaleY;
-      // Step 2: homography to companion space (when calibration active)
-      if (!H) return { x: nx, y: ny };
-      const result = applyHomography(H, nx, ny);
-      if (!isFinite(result.x) || !isFinite(result.y)) return null;
-      return result;
-    };
-
-    /** True if a point is within the companion image boundaries (with a small margin). */
-    const MARGIN = 2;
-    const inBounds = (pt: { x: number; y: number }): boolean =>
-      pt.x >= -MARGIN &&
-      pt.y >= -MARGIN &&
-      pt.x <= imgDims.width + MARGIN &&
-      pt.y <= imgDims.height + MARGIN;
-
+    // Coords are stored in the primary bitmap's natural pixel space (same as the
+    // main canvas). Do not remap via DB metadata dimensions — that often disagrees
+    // with decoded naturalWidth/Height and pushes boxes off-canvas on companion layers.
     annotations.forEach((ann) => {
       if (!ann.visible) return;
       ctx.strokeStyle = ann.color || "#22d3ee";
@@ -284,54 +163,29 @@ function CompanionCanvas({
       ctx.lineWidth = Math.max(1.5, imgDims.width / 600);
 
       if (ann.type === "rectangle" && ann.points.length >= 2) {
-        const [a, b] = ann.points;
-        // Compute all 4 corners so we can draw a proper quadrilateral after
-        // the homography (which won't preserve the rectangle shape).
-        const corners = [
-          { x: a.x, y: a.y },
-          { x: b.x, y: a.y },
-          { x: b.x, y: b.y },
-          { x: a.x, y: b.y },
-        ];
-        const tCorners = corners.map(transformPt);
-        if (tCorners.some((p) => p === null)) return;
-        const pts = tCorners as { x: number; y: number }[];
-        // Skip only when ALL transformed corners are outside the image.
-        if (!pts.some(inBounds)) return;
+        const [x, y, w, h] = pointsToTightBbox(ann.points);
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.fill();
+        ctx.stroke();
+      } else if (ann.type === "circle" && ann.points.length >= 2) {
+        const [c, edge] = ann.points;
+        const r = Math.hypot(edge.x - c.x, edge.y - c.y);
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (ann.type === "polygon" && ann.points.length >= 3) {
+        const pts = ann.points;
         ctx.beginPath();
         ctx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
-      } else if (ann.type === "circle" && ann.points.length >= 2) {
-        const [c, edge] = ann.points;
-        const tC = transformPt(c);
-        const tEdge = transformPt(edge);
-        if (!tC || !tEdge) return;
-        const r = Math.hypot(tEdge.x - tC.x, tEdge.y - tC.y);
-        if (!inBounds(tC)) return; // skip if centre is completely off-screen
-        ctx.beginPath();
-        ctx.arc(tC.x, tC.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      } else if (ann.type === "polygon" && ann.points.length >= 3) {
-        const transformed = ann.points.map(transformPt);
-        if (transformed.some((p) => p === null)) return;
-        const pts = transformed as { x: number; y: number }[];
-        // Skip only when every transformed vertex is outside the image.
-        if (!pts.some(inBounds)) return;
-        ctx.beginPath();
-        ctx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) {
-          ctx.lineTo(pts[i].x, pts[i].y);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
       }
     });
-  }, [annotations, imgDims, calibrationOn, calibrationEntry, primaryCollectionId, primaryCocoDims, primaryDims, collection.id]);
+  }, [annotations, imgDims]);
 
   const dimsMismatch =
     !!imgDims &&
@@ -358,33 +212,20 @@ function CompanionCanvas({
 
   return (
     <div className="h-full flex flex-col bg-muted/20">
-      <CompanionHeader
-        name={collection.name}
-        count={collection.images.length}
-        hasCalibration={hasCalibration}
-        calibrationOn={calibrationOn}
-        onToggleCalibration={
-          hasCalibration ? () => setCalibrationOn((v) => !v) : undefined
-        }
-      />
+      <CompanionHeader name={collection.name} count={collection.images.length} isCopying={isCopying} />
 
-      {/* Resolution-mismatch warning — shown whenever dims differ AND calibration
-          is not actively compensating (either no calibration available, or user
-          toggled it off via the header chip). */}
-      {dimsMismatch && !(hasCalibration && calibrationOn) && (
+      {/* Resolution-mismatch warning — copying is not possible at different resolutions. */}
+      {dimsMismatch && (
         <div className="m-2 p-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 text-xs flex items-start gap-2">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 text-yellow-600 dark:text-yellow-400 shrink-0" />
           <div className="space-y-1">
             <div className="font-medium text-foreground">
-              Resolution differs from main image
+              Different resolution — copy disabled
             </div>
             <div className="text-muted-foreground">
-              Main image size {primaryDims!.width}×{primaryDims!.height}; this layer is{" "}
-              {imgDims!.width}×{imgDims!.height}. Annotation coordinates use the main image pixel
-              space, so overlays may not line up exactly when resolutions differ between collections.
-              {hasCalibration
-                ? " You can enable calibration mapping from the Calibration toggle above when available."
-                : null}
+              Main image is {primaryDims!.width}×{primaryDims!.height}; this layer is{" "}
+              {imgDims!.width}×{imgDims!.height}. Annotations can only be copied between
+              layers of the same resolution.
             </div>
           </div>
         </div>
@@ -428,15 +269,11 @@ function CompanionCanvas({
 function CompanionHeader({
   name,
   count,
-  hasCalibration,
-  calibrationOn,
-  onToggleCalibration,
+  isCopying,
 }: {
   name: string;
   count?: number;
-  hasCalibration?: boolean;
-  calibrationOn?: boolean;
-  onToggleCalibration?: () => void;
+  isCopying?: boolean;
 }) {
   return (
     <div className="px-3 py-2 border-b bg-card/60 flex items-center justify-between gap-2">
@@ -445,24 +282,14 @@ function CompanionHeader({
         <span className="text-sm font-semibold truncate">{name}</span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {hasCalibration && onToggleCalibration && (
-          <button
-            type="button"
-            onClick={onToggleCalibration}
-            className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
-              calibrationOn
-                ? "text-primary bg-primary/10 border-primary/30 hover:bg-primary/20"
-                : "text-muted-foreground bg-muted border-border hover:bg-muted/80"
-            }`}
-            title={
-              calibrationOn
-                ? "Calibration is ON — click to disable"
-                : "Calibration is OFF — click to enable"
-            }
+        {isCopying && (
+          <span
+            className="inline-flex items-center gap-1 text-[10px] font-medium rounded-md px-2 py-0.5 whitespace-nowrap border text-primary bg-primary/10 border-primary/30"
+            title="Annotations from the main image are copied onto this layer"
           >
-            <Crosshair className="h-3 w-3" />
-            {calibrationOn ? "Calibration ON" : "Calibration OFF"}
-          </button>
+            <Copy className="h-3 w-3" />
+            Copying
+          </span>
         )}
         {typeof count === "number" && (
           <span className="text-[10px] text-muted-foreground">
@@ -481,7 +308,7 @@ function CompanionHeader({
 interface CompanionLayersPanelProps {
   /** All collections in the dataset. */
   collections: ImageCollection[];
-  /** The collection the user is annotating in (excluded from companions). */
+  /** The collection the user is annotating in. */
   primaryCollectionId: string;
   /** The image currently open in the main editor. */
   primaryImage: Image | null;
@@ -489,42 +316,31 @@ interface CompanionLayersPanelProps {
   imageName: string;
   /**
    * Dataset id used to scope the per-collection annotation storage keys
-   * (`annotations_${datasetId}_${collectionId}_${imageName}`). Required for
-   * resolving what annotations to render per companion when "duplicate
-   * annotations" is OFF (otherwise we'd default to live primary annotations).
+   * (`annotations_${datasetId}_${collectionId}_${imageName}`).
    */
   datasetId?: string | number | null;
   /** Shared annotations from the main editor. */
   annotations: AnnotationShape[];
-  /** Calibration entries from the backend. */
-  calibrations: any[];
   /**
-   * COCO image dimensions for the currently-shown image in the primary collection.
-   * Annotations loaded from an annotation file are stored in COCO pixel-space;
-   * this is needed to scale them back to natural-pixel-space before applying the
-   * calibration homography.
+   * COCO image dimensions for the currently-shown image in the primary
+   * collection. Used to scale stored coords to natural-pixel-space.
    */
   primaryCocoDims?: { width: number; height: number } | null;
-  projectId?: string | null;
   /** Called when the user clicks the X to close the entire companion panel. */
   onClose?: () => void;
-  /** Navigate the main image — these drive both primary canvas and companions. */
+  /** Navigate the main image. */
   onPrev?: () => void;
   onNext?: () => void;
   canPrev?: boolean;
   canNext?: boolean;
   /**
-   * Notifies the parent which collections should receive a *copy* of every
-   * annotation save, so e.g. drawing on RGB also persists annotations under
-   * the thermal collection's storage. Toggled per-collection in the picker.
-   * The parent handles the actual mirroring (the panel only surfaces the UI
-   * + persists the selection).
+   * Notifies the parent which collections should receive a copy of every
+   * annotation save. Only same-resolution layers are eligible.
    */
   onDuplicateChange?: (collectionIds: string[]) => void;
 }
 
 const STORAGE_KEY = "annotation-companion-selected-v1";
-const DUPLICATE_STORAGE_KEY = "annotation-companion-duplicate-v1";
 
 export function CompanionLayersPanel({
   collections,
@@ -533,9 +349,7 @@ export function CompanionLayersPanel({
   imageName,
   datasetId,
   annotations,
-  calibrations,
   primaryCocoDims,
-  projectId,
   onClose,
   onPrev,
   onNext,
@@ -543,13 +357,7 @@ export function CompanionLayersPanel({
   canNext,
   onDuplicateChange,
 }: CompanionLayersPanelProps) {
-  // All collections are toggleable in the picker — including the primary,
-  // which the user may want to also see in the companion view alongside
-  // other layers (e.g. keep RGB visible while editing on RGB).
-  const available = useMemo(
-    () => collections,
-    [collections],
-  );
+  const available = useMemo(() => collections, [collections]);
 
   // Persist selection across navigations within a session
   const [selectedIds, setSelectedIds] = useState<string[]>(() => {
@@ -561,18 +369,41 @@ export function CompanionLayersPanel({
   });
 
   /**
-   * Collections that should receive a mirrored copy of every saved annotation
-   * (write-side only — overlays already render via the shared `annotations`
-   * prop regardless of this list). Persisted in sessionStorage and pushed up
-   * via `onDuplicateChange` so the parent can do the actual mirroring.
+   * Collections that should receive a mirrored copy of every saved annotation.
+   * Default: copy ON for every same-resolution non-primary layer until the user
+   * toggles copy off (persisted in sessionStorage).
    */
-  const [duplicateIds, setDuplicateIds] = useState<string[]>(() => {
-    try {
-      const raw = sessionStorage.getItem(DUPLICATE_STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return [];
-  });
+  const [duplicateIds, setDuplicateIds] = useState<string[]>([]);
+  const duplicateDefaultsAppliedRef = useRef(false);
+  /** After first hydrate, never re-read sessionStorage (would undo user toggles). */
+  const duplicateHydratedRef = useRef(false);
+
+  const datasetIdStr =
+    datasetId === null || datasetId === undefined ? "" : String(datasetId);
+
+  const clearCompanionLayerStorage = useCallback(
+    (collectionId: string, forImageName: string) => {
+      if (!datasetIdStr || !forImageName) return;
+      try {
+        localStorage.removeItem(
+          `annotations_${datasetIdStr}_${collectionId}_${forImageName}`,
+        );
+        localStorage.removeItem(
+          `annotations_${datasetIdStr}_${collectionId}_${forImageName}_dims`,
+        );
+      } catch {}
+    },
+    [datasetIdStr],
+  );
+
+  const notifyDuplicateIds = useCallback(
+    (ids: string[]) => {
+      const written = writeCompanionDuplicateIds(ids);
+      onDuplicateChange?.(written);
+      return written;
+    },
+    [onDuplicateChange],
+  );
 
   useEffect(() => {
     try {
@@ -580,26 +411,81 @@ export function CompanionLayersPanel({
     } catch {}
   }, [selectedIds]);
 
+  // Keep session in sync when duplicateIds changes from React state (e.g. prune effect).
   useEffect(() => {
     try {
-      sessionStorage.setItem(DUPLICATE_STORAGE_KEY, JSON.stringify(duplicateIds));
+      const existing = sessionStorage.getItem(COMPANION_DUPLICATE_STORAGE_KEY);
+      if (existing === null && duplicateIds.length === 0) return;
+      const serialized = JSON.stringify(duplicateIds);
+      if (existing === serialized) return;
+      writeCompanionDuplicateIds(duplicateIds);
     } catch {}
-    onDuplicateChange?.(duplicateIds);
+    onDuplicateChange?.(readCompanionDuplicateIds());
   }, [duplicateIds, onDuplicateChange]);
 
-  // Drop selections that no longer exist
+  /** True when this collection's matching image has the same resolution as primary. */
+  const isSameResolution = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const c of available) {
+      const cid = String(c.id);
+      if (cid === String(primaryCollectionId)) {
+        map.set(cid, true);
+        continue;
+      }
+      const img = findCorrespondingImage(c, imageName, primaryImage);
+      map.set(cid, sameResolution(primaryImage, img));
+    }
+    return map;
+  }, [available, primaryCollectionId, primaryImage, imageName]);
+
+  const sameResolutionEligibleIds = useMemo(() => {
+    const primaryStr = String(primaryCollectionId);
+    return available
+      .map((c) => String(c.id))
+      .filter(
+        (id) => id !== primaryStr && isSameResolution.get(id) === true,
+      );
+  }, [available, primaryCollectionId, isSameResolution]);
+
+  // Drop invalid selections; hydrate duplicate prefs once, then only prune ineligible.
   useEffect(() => {
     setSelectedIds((prev) =>
       prev.filter((id) => available.some((c) => String(c.id) === id)),
     );
+
+    if (!duplicateHydratedRef.current) {
+      if (sameResolutionEligibleIds.length === 0) return;
+
+      duplicateHydratedRef.current = true;
+      const hasStoredPref = (() => {
+        try {
+          return sessionStorage.getItem(COMPANION_DUPLICATE_STORAGE_KEY) !== null;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (hasStoredPref) {
+        const filtered = readCompanionDuplicateIds().filter((cid) =>
+          sameResolutionEligibleIds.includes(cid),
+        );
+        setDuplicateIds(filtered);
+        notifyDuplicateIds(filtered);
+      } else {
+        duplicateDefaultsAppliedRef.current = true;
+        const copyOff = readCopyOffCollectionIds();
+        const defaults = sameResolutionEligibleIds.filter((cid) => !copyOff.has(cid));
+        writeCompanionDuplicateIds(defaults);
+        setDuplicateIds(defaults);
+        notifyDuplicateIds(defaults);
+      }
+      return;
+    }
+
     setDuplicateIds((prev) =>
-      prev.filter(
-        (id) =>
-          available.some((c) => String(c.id) === id) &&
-          String(primaryCollectionId) !== id,
-      ),
+      prev.filter((id) => sameResolutionEligibleIds.includes(id)),
     );
-  }, [available, primaryCollectionId]);
+  }, [available, primaryCollectionId, sameResolutionEligibleIds, notifyDuplicateIds]);
 
   const selected = useMemo(
     () => available.filter((c) => selectedIds.includes(String(c.id))),
@@ -608,30 +494,20 @@ export function CompanionLayersPanel({
 
   /**
    * Per-companion annotation resolver.
-   *
-   * The semantics are:
-   *  - The PRIMARY collection (the one being edited) always shows the live
-   *    `annotations` from the editor.
-   *  - A companion with "duplicate annotations" ON also shows the live
-   *    `annotations`, since every save is mirrored into its storage anyway.
-   *  - A companion with "duplicate annotations" OFF shows ONLY whatever was
-   *    previously persisted for that collection+image. In particular, while
-   *    the user annotates on a different primary collection, those edits
-   *    must NOT bleed into this companion's overlay.
-   *
-   * We re-read storage on image / selection / duplicate-toggle changes;
-   * within a session the relevant changes either come through the live
-   * `annotations` prop (duplicate ON) or are static for this image
-   * (duplicate OFF), so we don't need a storage event listener.
+   *  - PRIMARY collection → live `annotations`.
+   *  - Copy ON + same resolution → live `annotations` (mirrored on save).
+   *  - Otherwise → that collection's own previously-saved annotations.
    */
-  const datasetIdStr =
-    datasetId === null || datasetId === undefined ? "" : String(datasetId);
   const companionAnnotationsByCollection = useMemo(() => {
     const result: Record<string, AnnotationShape[]> = {};
     const primaryStr = String(primaryCollectionId);
     for (const c of selected) {
       const cid = String(c.id);
-      if (cid === primaryStr || duplicateIds.includes(cid)) {
+      const copying =
+        cid !== String(primaryCollectionId)
+        && isSameResolution.get(cid) === true
+        && isCollectionCopyEnabled(cid);
+      if (cid === primaryStr || copying) {
         result[cid] = annotations;
         continue;
       }
@@ -652,7 +528,7 @@ export function CompanionLayersPanel({
   }, [
     selected,
     primaryCollectionId,
-    duplicateIds,
+    isSameResolution,
     annotations,
     datasetIdStr,
     imageName,
@@ -662,9 +538,11 @@ export function CompanionLayersPanel({
   if (available.length === 0) return null;
 
   const primaryDims =
-    primaryImage && primaryImage.width && primaryImage.height
-      ? { width: primaryImage.width, height: primaryImage.height }
-      : null;
+    primaryCocoDims && primaryCocoDims.width > 0 && primaryCocoDims.height > 0
+      ? primaryCocoDims
+      : primaryImage && primaryImage.width && primaryImage.height
+        ? { width: primaryImage.width, height: primaryImage.height }
+        : null;
 
   const toggle = (id: string) => {
     setSelectedIds((prev) =>
@@ -673,10 +551,15 @@ export function CompanionLayersPanel({
   };
 
   const toggleDuplicate = (id: string) => {
-    if (String(primaryCollectionId) === id) return; // never mirror onto self
-    setDuplicateIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+    if (String(primaryCollectionId) === id) return;
+    if (isSameResolution.get(id) !== true) return;
+    const enabling = !isCollectionCopyEnabled(id);
+    if (!enabling) {
+      clearCompanionLayerStorage(id, imageName);
+    }
+    const next = setCollectionCopyEnabled(id, enabling);
+    setDuplicateIds(next);
+    onDuplicateChange?.(next);
   };
 
   return (
@@ -729,15 +612,16 @@ export function CompanionLayersPanel({
             </div>
             <div className="text-[10px] text-muted-foreground px-2 pb-2">
               Pick which collections to show alongside the primary canvas. Use the
-              copy icon to also save annotations under that collection (e.g. mirror
-              RGB drawings onto the thermal collection).
+              copy icon to also copy annotations onto a layer — only available for
+              layers with the same resolution.
             </div>
             <div className="space-y-1 max-h-72 overflow-auto">
               {collections.map((c) => {
                 const id = String(c.id);
                 const isPrimary = String(primaryCollectionId) === id;
                 const checked = selectedIds.includes(id);
-                const isDuplicating = duplicateIds.includes(id);
+                const isDuplicating = isCollectionCopyEnabled(id);
+                const canCopy = isSameResolution.get(id) === true;
                 return (
                   <div
                     key={id}
@@ -758,15 +642,19 @@ export function CompanionLayersPanel({
                       )}
                     </label>
                     {isPrimary ? (
-                      // Duplicate doesn't apply to the collection you're already
-                      // annotating in — annotations always save under the primary
-                      // collection by definition. Showing a disabled icon here
-                      // confused users into thinking they could turn it off.
                       <span
                         className="inline-flex items-center justify-center h-6 px-1.5 rounded text-[10px] font-medium text-primary bg-primary/10 border border-primary/30"
                         title="You are annotating in this collection — saves always go here"
                       >
                         Active
+                      </span>
+                    ) : !canCopy ? (
+                      <span
+                        className="inline-flex items-center gap-1 h-6 px-1.5 rounded text-[10px] font-medium text-yellow-700 dark:text-yellow-400 bg-yellow-500/10 border border-yellow-500/30"
+                        title="Different resolution from the main image — annotations cannot be copied"
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        Diff. size
                       </span>
                     ) : (
                       <button
@@ -781,10 +669,10 @@ export function CompanionLayersPanel({
                         )}
                         title={
                           isDuplicating
-                            ? "Duplicate ON — annotations are also being saved under this collection. Click to disable."
-                            : "Duplicate OFF — annotations are not saved under this collection. Click to mirror saves here."
+                            ? "Copy ON — annotations are also saved onto this layer. Click to disable."
+                            : "Copy OFF — click to also copy annotations onto this layer."
                         }
-                        aria-label="Toggle annotation duplication"
+                        aria-label="Toggle annotation copy"
                       >
                         <Copy className="h-3 w-3" />
                       </button>
@@ -839,8 +727,7 @@ export function CompanionLayersPanel({
             <Layers className="h-8 w-8 mx-auto mb-2 opacity-40" />
             <div className="font-medium">No image collections shown</div>
             <div className="text-xs mt-1">
-              Pick collections above to view them side-by-side with shared
-              annotations.
+              Pick collections above to view them side-by-side.
             </div>
           </div>
         </div>
@@ -850,33 +737,23 @@ export function CompanionLayersPanel({
           className="flex-1"
         >
           {selected.map((c, i) => {
-            const calibrated = hasCalibrationBetween(
-              calibrations,
-              primaryCollectionId,
-              c.id,
-            );
-            const calibEntry = getCalibrationEntry(
-              calibrations,
-              primaryCollectionId,
-              c.id,
-            );
+            const cid = String(c.id);
+            const isCopying =
+              cid !== String(primaryCollectionId)
+              && isCollectionCopyEnabled(cid)
+              && isSameResolution.get(cid) === true;
             return (
-              <React.Fragment key={String(c.id)}>
+              <React.Fragment key={cid}>
                 {i > 0 && <ResizableHandle withHandle />}
                 <ResizablePanel defaultSize={100 / selected.length} minSize={15}>
                   <CompanionCanvas
                     collection={c}
                     primaryImage={primaryImage}
                     imageName={imageName}
-                    annotations={
-                      companionAnnotationsByCollection[String(c.id)] ?? []
-                    }
+                    annotations={companionAnnotationsByCollection[cid] ?? []}
                     primaryDims={primaryDims}
-                    hasCalibration={calibrated}
-                    calibrationEntry={calibEntry}
-                    primaryCollectionId={String(primaryCollectionId)}
                     primaryCocoDims={primaryCocoDims ?? null}
-                    projectId={projectId}
+                    isCopying={isCopying}
                   />
                 </ResizablePanel>
               </React.Fragment>

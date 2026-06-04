@@ -7,7 +7,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Select,
   SelectContent,
@@ -36,45 +35,22 @@ function defaultAutoAnnotateCollectionId(collections: ImageCollection[]): string
 
 type Family = "yolo" | "depth_anything";
 
-const YOLO_ARCHS = [
-  { value: "yolo11", label: "YOLO11", desc: "Latest generation" },
-  { value: "yolo26", label: "YOLO26", desc: "Newest release" },
-  { value: "rtdetr", label: "RT-DETR", desc: "Transformer-based" },
-];
+/** Fixed Auto-Annotate YOLO model (ONNX, medium). */
+const YOLO_MODEL = "yolo11m";
 
-const YOLO_SIZES: Record<string, { value: string; label: string }[]> = {
-  yolo11: [
-    { value: "n", label: "Nano" },
-    { value: "s", label: "Small" },
-    { value: "m", label: "Medium" },
-    { value: "l", label: "Large" },
-    { value: "x", label: "X-Large" },
-  ],
-  yolo26: [
-    { value: "n", label: "Nano" },
-    { value: "s", label: "Small" },
-    { value: "m", label: "Medium" },
-    { value: "l", label: "Large" },
-    { value: "x", label: "X-Large" },
-  ],
-  rtdetr: [
-    { value: "l", label: "Large" },
-    { value: "x", label: "X-Large" },
-  ],
+type YoloTask = "detect" | "segment" | "classify";
+
+const YOLO_ONNX_BY_TASK: Record<YoloTask, string> = {
+  detect: "yolo11m.onnx",
+  segment: "yolo11m-seg.onnx",
+  classify: "yolo11m-cls.onnx",
 };
-
-type YoloTask = "segment" | "classify";
 
 const YOLO_TASKS: { value: YoloTask; label: string; desc: string }[] = [
-  { value: "segment", label: "Segmentation", desc: "Instance masks" },
-  { value: "classify", label: "Classification", desc: "Image-level labels" },
+  { value: "detect", label: "Detection", desc: "Bounding boxes (COCO)" },
+  { value: "segment", label: "Segmentation", desc: "Instance masks (COCO)" },
+  { value: "classify", label: "Classification", desc: "Image-level labels (ImageNet)" },
 ];
-
-const ARCH_SUPPORTED_TASKS: Record<string, YoloTask[]> = {
-  yolo11: ["segment", "classify"],
-  yolo26: ["segment", "classify"],
-  rtdetr: ["segment"],
-};
 
 const DEPTH_SIZES = [
   { value: "vits", label: "Small (ViT-S)" },
@@ -104,32 +80,39 @@ export function AutoAnnotateModal({
 }: AutoAnnotateModalProps) {
   const { toast } = useToast();
   const [selectedFamily, setSelectedFamily] = React.useState<Family | null>(null);
-  const [selectedYoloArch, setSelectedYoloArch] = React.useState("yolo11");
-  const [selectedSize, setSelectedSize] = React.useState("n");
-  const [selectedTask, setSelectedTask] = React.useState<YoloTask>("segment");
+  const [selectedTask, setSelectedTask] = React.useState<YoloTask>("detect");
   const [annotationFileName, setAnnotationFileName] = React.useState("");
   const [saveAsNew, setSaveAsNew] = React.useState(false);
-  const [saveTarget, setSaveTarget] = React.useState<"dataset" | "collection">("dataset");
   const [newDatasetName, setNewDatasetName] = React.useState("");
   const [showClasses, setShowClasses] = React.useState(false);
   const [confThreshold, setConfThreshold] = React.useState(0.25);
   const [depthEnvironment, setDepthEnvironment] = React.useState<"indoor" | "outdoor">("outdoor");
+  const [selectedSize, setSelectedSize] = React.useState("vitb");
   const [selectedCollectionId, setSelectedCollectionId] = React.useState("");
 
   React.useEffect(() => {
     if (!open) return;
     setSelectedCollectionId(defaultAutoAnnotateCollectionId(imageCollections));
+    setSelectedFamily(null);
+    setSelectedTask("detect");
+    setAnnotationFileName("");
+    setConfThreshold(0.25);
+    setShowClasses(false);
+    setSaveAsNew(false);
+    setNewDatasetName("");
+    setDepthEnvironment("outdoor");
+    setSelectedSize("vitb");
   }, [open, imageCollections]);
 
   const selectedModel = selectedFamily === "yolo"
-    ? `${selectedYoloArch}${selectedSize}`
+    ? YOLO_MODEL
     : selectedFamily === "depth_anything"
     ? `depth_anything_v2_${selectedSize}_${depthEnvironment}`
     : "";
 
   const handleSubmit = async () => {
     try {
-      const body: Record<string, any> = {
+      const body: Record<string, unknown> = {
         model_name: selectedModel,
         dataset_id: datasetId,
       };
@@ -137,14 +120,12 @@ export function AutoAnnotateModal({
       const collIdStr =
         selectedCollectionId || defaultAutoAnnotateCollectionId(imageCollections);
       const cid = parseInt(collIdStr, 10);
-      // Send when we have a concrete id; if collections are still loading (empty UI list),
-      // the backend resolves the dataset default collection.
       if (!Number.isNaN(cid)) {
         body.collection_id = cid;
       }
 
       if (selectedFamily === "yolo") {
-        body.annotation_file_name = annotationFileName || `Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`;
+        body.annotation_file_name = annotationFileName || `Auto_${selectedModel}_${new Date().toISOString().split("T")[0]}`;
         body.conf_threshold = confThreshold;
         body.task_type = selectedTask;
       } else if (selectedFamily === "depth_anything") {
@@ -156,21 +137,19 @@ export function AutoAnnotateModal({
         }
       }
 
-      console.log('Starting auto-annotation with:', body);
       const apiBase = getApiBaseUrl();
       const response = await fetch(`${apiBase}/preannotate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const result = await response.json();
-      console.log('Auto-annotation response:', result);
 
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
       const baseDesc = `Running ${selectedModel} on ${datasetName}. Check tasks for progress.`;
       const downloadNote =
         result.weights_download_expected && result.weights_download_notice
@@ -182,10 +161,10 @@ export function AutoAnnotateModal({
         description: `${baseDesc}${downloadNote}`,
       });
     } catch (error) {
-      console.error('Auto-annotation error:', error);
+      console.error("Auto-annotation error:", error);
       toast({
         title: "Error",
-        description: "Failed to start auto-annotation",
+        description: error instanceof Error ? error.message : "Failed to start auto-annotation",
         variant: "destructive",
       });
     }
@@ -227,7 +206,7 @@ export function AutoAnnotateModal({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Run Auto-Annotate only on images in this collection (default matches your primary dataset collection).
+                Run Auto-Annotate only on images in this collection.
               </p>
             </div>
           )}
@@ -235,7 +214,7 @@ export function AutoAnnotateModal({
           <span className="block font-medium text-sm">Choose a model family</span>
           <div className="grid grid-cols-2 gap-2">
             {([
-              { key: "yolo" as Family, icon: Crosshair, label: "YOLO", desc: "Object detection & segmentation" },
+              { key: "yolo" as Family, icon: Crosshair, label: "YOLO11 Medium", desc: "Detection, segmentation & classification (ONNX)" },
               { key: "depth_anything" as Family, icon: Layers, label: "Depth Anything V2", desc: "Monocular depth estimation" },
             ]).map(({ key, icon: Icon, label, desc }) => (
               <button
@@ -243,8 +222,12 @@ export function AutoAnnotateModal({
                 type="button"
                 onClick={() => {
                   setSelectedFamily(key);
-                  if (key === "yolo") { setSelectedYoloArch("yolo11"); setSelectedSize("n"); setSelectedTask("segment"); }
-                  else { setSelectedSize("vitb"); setDepthEnvironment("outdoor"); }
+                  if (key === "yolo") {
+                    setSelectedTask("detect");
+                  } else {
+                    setSelectedSize("vitb");
+                    setDepthEnvironment("outdoor");
+                  }
                   setSaveAsNew(false);
                   setNewDatasetName("");
                 }}
@@ -269,62 +252,21 @@ export function AutoAnnotateModal({
             ))}
           </div>
 
-          {/* YOLO: architecture + size */}
           {selectedFamily === "yolo" && (
             <>
-              <div className="space-y-2">
-                <span className="block font-medium text-sm">Architecture</span>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {YOLO_ARCHS.map(({ value, label, desc }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => {
-                        setSelectedYoloArch(value);
-                        const sizes = YOLO_SIZES[value];
-                        setSelectedSize(sizes[0].value);
-                        const supported = ARCH_SUPPORTED_TASKS[value] || ["segment"];
-                        if (!supported.includes(selectedTask)) setSelectedTask(supported[0]);
-                      }}
-                      className={cn(
-                        "flex flex-col rounded-md border px-3 py-2 text-left text-sm transition-all",
-                        selectedYoloArch === value
-                          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                          : "border-border hover:bg-muted/40"
-                      )}
-                    >
-                      <span className="font-medium">{label}</span>
-                      <span className="text-xs text-muted-foreground">{desc}</span>
-                    </button>
-                  ))}
+              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm space-y-1">
+                <div>
+                  Model: <span className="font-medium">YOLO11 Medium</span> (pretrained, ONNX)
                 </div>
-              </div>
-              <div className="space-y-2">
-                <span className="block font-medium text-sm">Model size</span>
-                <div className="flex gap-1.5 flex-wrap">
-                  {(YOLO_SIZES[selectedYoloArch] || []).map(({ value, label }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => setSelectedSize(value)}
-                      className={cn(
-                        "rounded-md border px-3 py-1.5 text-sm font-medium transition-all",
-                        selectedSize === value
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border hover:bg-muted/40"
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                <div className="text-xs text-muted-foreground">
+                  Weights: <span className="font-mono">{YOLO_ONNX_BY_TASK[selectedTask]}</span>
                 </div>
               </div>
 
-              {/* Task type */}
               <div className="space-y-2">
                 <span className="block font-medium text-sm">Task</span>
                 <div className="flex gap-1.5 flex-wrap">
-                  {YOLO_TASKS.filter(t => (ARCH_SUPPORTED_TASKS[selectedYoloArch] || ["segment"]).includes(t.value)).map(({ value, label, desc }) => (
+                  {YOLO_TASKS.map(({ value, label, desc }) => (
                     <button
                       key={value}
                       type="button"
@@ -343,70 +285,68 @@ export function AutoAnnotateModal({
                 </div>
               </div>
 
-              {/* Confidence threshold */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">Confidence Threshold</Label>
-                  <span className="text-sm font-mono text-muted-foreground">{confThreshold.toFixed(2)}</span>
-                </div>
-                <Slider
-                  min={0.05}
-                  max={0.95}
-                  step={0.05}
-                  value={[confThreshold]}
-                  onValueChange={([v]) => setConfThreshold(v)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Lower values detect more objects but may include false positives
-                </p>
-              </div>
-
-              {/* Detectable classes info */}
-              <div className="rounded-lg border border-border">
-                <button
-                  type="button"
-                  onClick={() => setShowClasses(!showClasses)}
-                  className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-muted/40 transition-colors rounded-lg"
-                >
-                  <span className="text-muted-foreground">
-                    Pretrained on <span className="font-medium text-foreground">COCO</span> — {COCO_CLASSES.length} detectable classes
-                  </span>
-                  <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", showClasses && "rotate-180")} />
-                </button>
-                {showClasses && (
-                  <div className="px-3 pb-3 flex flex-wrap gap-1">
-                    {COCO_CLASSES.map((cls) => (
-                      <span
-                        key={cls}
-                        className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-                      >
-                        {cls}
-                      </span>
-                    ))}
+              {selectedTask !== "classify" && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium">Confidence Threshold</Label>
+                    <span className="text-sm font-mono text-muted-foreground">{confThreshold.toFixed(2)}</span>
                   </div>
-                )}
-              </div>
+                  <Slider
+                    min={0.05}
+                    max={0.95}
+                    step={0.05}
+                    value={[confThreshold]}
+                    onValueChange={([v]) => setConfThreshold(v)}
+                  />
+                </div>
+              )}
 
-              {/* Annotation file name */}
+              {selectedTask === "detect" || selectedTask === "segment" ? (
+                <div className="rounded-lg border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setShowClasses(!showClasses)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-muted/40 transition-colors rounded-lg"
+                  >
+                    <span className="text-muted-foreground">
+                      Pretrained on <span className="font-medium text-foreground">COCO</span> — {COCO_CLASSES.length} classes
+                    </span>
+                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", showClasses && "rotate-180")} />
+                  </button>
+                  {showClasses && (
+                    <div className="px-3 pb-3 flex flex-wrap gap-1">
+                      {COCO_CLASSES.map((cls) => (
+                        <span
+                          key={cls}
+                          className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                        >
+                          {cls}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Classification uses ImageNet-1k labels (1000 classes). Class names are loaded from the exported ONNX sidecar.
+                </p>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="annotation-file-name" className="text-sm font-medium">
                   Annotation File Name
                 </Label>
                 <Input
                   id="annotation-file-name"
-                  placeholder={`Auto_${selectedModel}_${new Date().toISOString().split('T')[0]}`}
+                  placeholder={`Auto_${selectedModel}_${new Date().toISOString().split("T")[0]}`}
                   value={annotationFileName}
                   onChange={(e) => setAnnotationFileName(e.target.value)}
                   className="text-sm"
                 />
-                <p className="text-xs text-muted-foreground">
-                  Results will be saved as a new annotation file in this dataset
-                </p>
               </div>
             </>
           )}
 
-          {/* Depth Anything V2: environment + size + save options */}
           {selectedFamily === "depth_anything" && (
             <>
               <div className="space-y-2">
@@ -451,7 +391,6 @@ export function AutoAnnotateModal({
                 </div>
               </div>
 
-              {/* Save output options */}
               <div className="space-y-3 rounded-lg border border-border p-3">
                 <p className="text-sm text-muted-foreground">
                   Output will be saved as a <span className="font-medium text-foreground">New Image Collection</span>.

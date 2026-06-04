@@ -1,7 +1,5 @@
-import { Link, useNavigate } from "react-router-dom";
-import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical, Target, Trash2 } from "lucide-react";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { HelpHint } from "@/components/ui/help-hint";
+import { useNavigate } from "react-router-dom";
+import { Pencil, Upload, Video, Plus, X, FolderOpen, Search, ChevronDown, ImageIcon, GripVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -13,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Image, ImageCollection } from "@/types";
-import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { ImagesGrid } from "@/components/ImagesGrid";
 import { PaginationControls } from "@/components/PaginationControls";
@@ -22,7 +19,7 @@ import { ImageDetailModal } from "@/components/ImageDetailModal";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AddImageTabDialog } from "@/components/AddImageTabDialog";
 import { ChunkedImageCollectionUploadDialog } from "@/components/ChunkedImageCollectionUploadDialog";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import type { DatasetUiMode } from "@/hooks/useDatasetSettings";
 
 interface TabbedImagesContentProps {
@@ -40,11 +37,6 @@ interface TabbedImagesContentProps {
   onRemoveTab: (tabId: string) => void;
   onReorderTabs: (orderedTabIds: string[]) => Promise<void>;
   onOpenVideoUploadDialog?: (collectionId?: string | number) => void;
-  onOpenCalibrationDialog?: () => void;
-  /** Existing calibrations between collection pairs — used to badge
-   *  collection tabs that participate in a calibration. */
-  calibrations?: Array<{ id?: number; source_collection_id: number | string; target_collection_id: number | string }>;
-  onDeleteCalibration?: (calibrationId: number) => Promise<void> | void;
   datasetUiMode?: DatasetUiMode;
   annotations?: AnnotationSample[];
   annotationFiles?: any[];
@@ -75,9 +67,6 @@ export function TabbedImagesContent({
   onRemoveTab,
   onReorderTabs,
   onOpenVideoUploadDialog,
-  onOpenCalibrationDialog,
-  calibrations = [],
-  onDeleteCalibration,
   datasetUiMode = 'default',
   annotations = [],
   annotationFiles = [],
@@ -97,7 +86,6 @@ export function TabbedImagesContent({
   const [currentChunk, setCurrentChunk] = useState(0);
   const [totalChunks, setTotalChunks] = useState(0);
   const [uploadedCount, setUploadedCount] = useState(0);
-  const [calibrationToDelete, setCalibrationToDelete] = useState<{ id: number; label: string } | null>(null);
   const [imageSearchQuery, setImageSearchQuery] = useState("");
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -113,22 +101,6 @@ export function TabbedImagesContent({
   const allImages = imageCollections.flatMap(c => c.images);
   // Images used for modal navigation: only images in the active collection
   const activeCollectionImages = activeCollection ? activeCollection.images : allImages;
-
-  // Map: collection id → list of partner collection names it's calibrated with.
-  const calibrationPartners = useMemo(() => {
-    const map = new Map<string, string[]>();
-    const nameOf = (cid: string) =>
-      imageCollections.find(c => String(c.id) === cid)?.name || `#${cid}`;
-    for (const cal of calibrations) {
-      const a = String(cal.source_collection_id);
-      const b = String(cal.target_collection_id);
-      if (!map.has(a)) map.set(a, []);
-      if (!map.has(b)) map.set(b, []);
-      map.get(a)!.push(nameOf(b));
-      map.get(b)!.push(nameOf(a));
-    }
-    return map;
-  }, [calibrations, imageCollections]);
 
   // Filter paginated images by search query
   const getFilteredPaginatedImages = (collection: ImageCollection) => {
@@ -333,26 +305,12 @@ export function TabbedImagesContent({
                       data-[state=inactive]:hover:bg-accent/50
                       flex items-center gap-2 min-w-0
                     "
-                    title={
-                      datasetUiMode === 'advanced' && calibrationPartners.get(String(collection.id))?.length
-                        ? `Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`
-                        : undefined
-                    }
                   >
                     <FolderOpen className="w-4 h-4 flex-shrink-0" />
                     <span className="truncate">{collection.name}</span>
                     <span className="text-xs px-1.5 py-0.5 rounded-full bg-background/20">
                       {collection.images.length}
                     </span>
-                    {datasetUiMode === 'advanced' && calibrationPartners.get(String(collection.id))?.length ? (
-                      <span
-                        className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 data-[state=active]:bg-emerald-500/25"
-                        title={`Calibrated with: ${calibrationPartners.get(String(collection.id))!.join(", ")}`}
-                      >
-                        <Target className="w-2.5 h-2.5" />
-                        {calibrationPartners.get(String(collection.id))!.length}
-                      </span>
-                    ) : null}
                   </TabsTrigger>
                   {imageCollections.length > 1 && (
                     <Button
@@ -377,99 +335,6 @@ export function TabbedImagesContent({
               <Plus className="w-4 h-4" />
               <span className="text-sm font-medium">Add Collection</span>
             </Button>
-            {datasetUiMode === 'advanced' && imageCollections.length >= 2 && onOpenCalibrationDialog && (
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  onClick={onOpenCalibrationDialog}
-                  className="px-4 py-2.5 rounded-lg transition-all duration-200 flex items-center gap-2"
-                  title={
-                    calibrations.length > 0
-                      ? `${calibrations.length} calibration${calibrations.length === 1 ? '' : 's'} saved — click to add another`
-                      : "Calibrate image collections for alignment"
-                  }
-                >
-                  <Target className="w-4 h-4" />
-                  <span className="text-sm font-medium">Calibrate Collections</span>
-                  {calibrations.length > 0 && (
-                    <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 text-[10px] font-semibold border border-emerald-500/30">
-                      {calibrations.length}
-                    </span>
-                  )}
-                </Button>
-                {calibrations.length > 0 && (
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9"
-                        title="Manage saved calibrations"
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="w-80 p-2">
-                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                        Saved calibrations
-                      </div>
-                      <div className="max-h-72 overflow-y-auto">
-                        {calibrations.map((cal) => {
-                          const nameOf = (cid: string | number) =>
-                            imageCollections.find(c => String(c.id) === String(cid))?.name || `#${cid}`;
-                          return (
-                            <div
-                              key={cal.id ?? `${cal.source_collection_id}-${cal.target_collection_id}`}
-                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-muted/60"
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0 text-sm">
-                                <Target className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span className="truncate">
-                                  {nameOf(cal.source_collection_id)} ↔ {nameOf(cal.target_collection_id)}
-                                </span>
-                              </div>
-                              {onDeleteCalibration && cal.id !== undefined && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10 shrink-0"
-                                  title="Delete this calibration"
-                                  onClick={() => {
-                                    setCalibrationToDelete({
-                                      id: cal.id!,
-                                      label: `${nameOf(cal.source_collection_id)} ↔ ${nameOf(cal.target_collection_id)}`,
-                                    });
-                                  }}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                )}
-                <HelpHint ariaLabel="What is Collection Calibration?" popover>
-                  <div className="space-y-2 text-sm">
-                    <p className="font-semibold text-foreground">Collection Calibration</p>
-                    <p>
-                      Aligns two image collections of the same scene captured by
-                      different sensors (e.g. RGB ↔ Thermal). Mark matching point
-                      pairs to project annotations from one collection onto the
-                      other.
-                    </p>
-                    <Link
-                      to="/help/collection-calibration"
-                      className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
-                    >
-                      Read the full guide →
-                    </Link>
-                  </div>
-                </HelpHint>
-              </div>
-            )}
           </div>
 
           {imageCollections.map((collection) => {
@@ -491,19 +356,6 @@ export function TabbedImagesContent({
                       <span className="text-sm text-muted-foreground px-2.5 py-1 bg-muted/50 rounded-full border border-border/40">
                         {collection.images.length} {collection.images.length === 1 ? 'image' : 'images'}
                       </span>
-                      {datasetUiMode === 'advanced' &&
-                      calibrationPartners.get(String(collection.id))?.length &&
-                      onOpenCalibrationDialog ? (
-                        <button
-                          type="button"
-                          onClick={onOpenCalibrationDialog}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors"
-                          title="Open Collection Calibration"
-                        >
-                          <Target className="w-3 h-3" />
-                          Calibrated with {calibrationPartners.get(String(collection.id))!.join(", ")}
-                        </button>
-                      ) : null}
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -683,19 +535,6 @@ export function TabbedImagesContent({
           </div>
         </div>
       )}
-
-      <ConfirmDeleteDialog
-        open={!!calibrationToDelete}
-        onOpenChange={(o) => !o && setCalibrationToDelete(null)}
-        entity="calibration"
-        itemName={calibrationToDelete?.label ?? null}
-        confirmLabel="Delete calibration"
-        onConfirm={async () => {
-          const c = calibrationToDelete;
-          setCalibrationToDelete(null);
-          if (c && onDeleteCalibration) await onDeleteCalibration(c.id);
-        }}
-      />
     </div>
   );
 }

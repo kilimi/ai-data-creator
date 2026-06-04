@@ -2,6 +2,7 @@
 import logging
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -75,7 +76,7 @@ def _build_training_command(
         return [
             MMYOLO_PYTHON,
             str(train_script),
-            str(cfg_path),
+            str(cfg_path.resolve()),
             "--cfg-options",
             *cfg_options,
         ]
@@ -87,7 +88,7 @@ def _build_training_command(
         "run",
         "mmyolo",
         "train",
-        str(cfg_path),
+        str(cfg_path.resolve()),
         "--cfg-options",
         *cfg_options,
     ]
@@ -305,7 +306,7 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
             }
             db.commit()
 
-        from app.routers.training import prepare_mmyolo_dataset
+        from app.ml.dataset import prepare_mmyolo_dataset
 
         dataset_info = prepare_mmyolo_dataset(
             db,
@@ -340,6 +341,7 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
 
         config_id = training_config.get("config_id", f"{arch}_{training_config.get('size', 's')}")
         num_classes = dataset_info["class_count"]
+        dji_repo = task.task_metadata.get("dji_repo_dir") if is_dji_mode else None
         if is_dji_mode:
             config_id = _validate_dji_mode(num_classes)
 
@@ -358,16 +360,21 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
         if train_image_count > 0:
             batch_size = max(1, min(int(batch_size), train_image_count))
 
-        base_cfg = resolve_mmyolo_base_config(config_id)
+        base_cfg = resolve_mmyolo_base_config(config_id, dji_repo_dir=dji_repo)
         from app.ml.mmyolo_catalog import mmyolo_pretrained_checkpoint
 
-        pretrained_url = mmyolo_pretrained_checkpoint(base_cfg)
+        pretrained_url = None if (is_dji_mode and dji_use_widen_factor_025) else mmyolo_pretrained_checkpoint(base_cfg)
         if pretrained_url:
             logger.info("MMYOLO task %s: fine-tuning from COCO pretrained %s", task_id, pretrained_url)
+        elif is_dji_mode and dji_use_widen_factor_025:
+            logger.info(
+                "MMYOLO task %s: DJI widen_factor=0.25 — training without COCO load_from "
+                "(YOLOv8-S checkpoint is incompatible)",
+                task_id,
+            )
         else:
             logger.warning(
-                "MMYOLO task %s: no COCO pretrained checkpoint for config %s — training from scratch "
-                "(unlike Ultralytics, which always uses pretrained weights)",
+                "MMYOLO task %s: no COCO pretrained checkpoint for config %s — training from scratch",
                 task_id,
                 base_cfg,
             )
@@ -397,10 +404,10 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
         task.progress = 15
         db.commit()
 
-        dji_repo = task.task_metadata.get("dji_repo_dir") if is_dji_mode else None
         if is_dji_mode:
             logger.info(
-                "DJI config: widen_factor=%s, num_classes=%s, image_size=%s",
+                "DJI config: base=%s, widen_factor=%s, num_classes=%s, image_size=%s",
+                base_cfg,
                 "0.25" if dji_use_widen_factor_025 else "0.5 (default)",
                 num_classes,
                 image_size,
@@ -435,6 +442,15 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
 
         weights_dir = output_base / "training"
         best_model = _find_best_model(weights_dir)
+        if is_dji_mode and best_model:
+            canonical_best = weights_dir / "best.pth"
+            best_path = Path(best_model)
+            if best_path.exists() and best_path.resolve() != canonical_best.resolve():
+                shutil.copy2(best_path, canonical_best)
+                logger.info("DJI mode: copied best checkpoint to %s", canonical_best)
+                best_model = str(canonical_best)
+            elif canonical_best.exists():
+                best_model = str(canonical_best)
         last_model_path = weights_dir / "epoch_last.pth"
         if not last_model_path.exists() and best_model:
             last_model_path = Path(best_model)

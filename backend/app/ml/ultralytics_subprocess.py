@@ -113,8 +113,12 @@ def run_ultralytics_training_subprocess(
         )
 
         current_epoch = 0
+        output_log: List[str] = []
 
         for line in process.stdout or []:
+            output_log.append(line)
+            if len(output_log) > 80:
+                output_log.pop(0)
             line = line.rstrip()
             logger.info("Ultralytics[%s]: %s", task_id, line)
 
@@ -215,4 +219,8 @@ def run_ultralytics_training_subprocess(
 
         return_code = process.wait()
         if return_code != 0:
-            raise RuntimeError(f"Ultralytics training subprocess failed (exit {return_code})")
+            error_tail = "\n".join(output_log[-30:]).strip()
+            detail = f"\n{error_tail}" if error_tail else ""
+            raise RuntimeError(
+                f"Ultralytics training subprocess failed (exit {return_code}){detail}"
+            )

@@ -1444,10 +1444,12 @@ def mmyolo_test_inference(
 
             predictions = []
             for p in preds_raw:
-                bbox_xyxy = p.get("bbox", [])
-                if len(bbox_xyxy) == 4:
-                    x1, y1, x2, y2 = bbox_xyxy
+                raw_xyxy = p.get("bbox_xyxy")
+                if isinstance(raw_xyxy, list) and len(raw_xyxy) == 4:
+                    x1, y1, x2, y2 = (float(v) for v in raw_xyxy[:4])
                     bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
+                elif isinstance(p.get("bbox"), list) and len(p["bbox"]) == 4:
+                    bbox_xywh = [float(v) for v in p["bbox"][:4]]
                 else:
                     bbox_xywh = []
                 class_id = p.get("class_id", 0)
@@ -1458,7 +1460,7 @@ def mmyolo_test_inference(
                 )
                 predictions.append({
                     "bbox": bbox_xywh,
-                    "confidence": float(p.get("confidence", 0)),
+                    "confidence": float(p.get("confidence", p.get("conf", 0))),
                     "class_id": class_id,
                     "class": class_name,
                     "segmentation": p.get("segmentation", []),

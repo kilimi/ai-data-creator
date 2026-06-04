@@ -8,6 +8,7 @@ from pathlib import Path
 
 import lai
 from lai.compose_build import build_stack, missing_runtime_images, should_build_stack
+from lai.compose_files import ensure_compose_env
 from lai.paths import _candidate_repo_root, bundle_data_dir, get_bundle_root
 from lai.uninstall import run_uninstall
 from lai.wizard import run_wizard
@@ -43,6 +44,9 @@ def _hint_guided_install(root: Path) -> None:
 
 
 def _run(cmd: list[str], cwd: Path) -> int:
+    # Windows: COMPOSE_FILE must use ';' between files (':' is a drive letter).
+    if cmd[:2] == ["docker", "compose"]:
+        ensure_compose_env(cwd)
     print(f"+ cd {cwd} && {' '.join(cmd)}", file=sys.stderr)
     p = subprocess.run(cmd, cwd=cwd)
     return p.returncode
@@ -134,11 +138,20 @@ def cmd_up(ns: argparse.Namespace) -> int:
 
     if should_build_stack(root, force=ns.build):
         if ns.build:
-            print("Rebuilding stack images in dependency order...", file=sys.stderr)
+            print(
+                "Rebuilding all local stack images (ML runtimes first, then backend/workers/web)...",
+                file=sys.stderr,
+            )
         else:
             missing = missing_runtime_images(root)
             print(
-                f"Building missing local images: {', '.join(missing)}",
+                f"Some local images are missing ({', '.join(missing)}).",
+                file=sys.stderr,
+            )
+            print(
+                "Build order: ultralytics + mmyolo runtimes (if needed), then backend, "
+                "worker-gpu, worker-general, web, sam_service. "
+                "Let the first step finish — do not interrupt.",
                 file=sys.stderr,
             )
         rc = build_stack(root, no_cache=ns.build)
@@ -208,27 +221,36 @@ def cmd_compose(ns: argparse.Namespace) -> int:
 
 
 def cmd_download_models(ns: argparse.Namespace) -> int:
-    """Pre-download foundation weights into the host volume via the running backend."""
+    """Pre-download foundation weights into the host volume (YOLO ONNX via worker-gpu)."""
     root = get_bundle_root(force_download=ns.refresh)
     _hint_guided_install(root)
     env_yolo = ns.yolo or "minimal"
     env_depth = ns.depth or "minimal"
     env_mmyolo = ns.mmyolo or "minimal"
-    base = [
-        "docker", "compose", "exec",
-        "-e", f"LAI_PRETRAINED_MODELS={env_yolo}",
-        "-e", f"LAI_DEPTH_MODELS={env_depth}",
-        "-e", f"LAI_MMYOLO_MODELS={env_mmyolo}",
-        "backend",
-    ]
     print(
         f"Downloading models  yolo={env_yolo!r}  depth={env_depth!r}  mmyolo={env_mmyolo!r}",
         file=sys.stderr,
     )
-    rc = _run([*base, "python", "scripts/download_ultralytics_models.py"], root)
+    rc = _run(
+        [
+            "docker", "compose", "exec",
+            "-e", f"LAI_PRETRAINED_MODELS={env_yolo}",
+            "worker-gpu",
+            "python", "scripts/download_ultralytics_models.py",
+        ],
+        root,
+    )
     if rc != 0:
         return rc
-    rc = _run([*base, "python", "scripts/download_depth_anything_models.py"], root)
+    rc = _run(
+        [
+            "docker", "compose", "exec",
+            "-e", f"LAI_DEPTH_MODELS={env_depth}",
+            "backend",
+            "python", "scripts/download_depth_anything_models.py",
+        ],
+        root,
+    )
     if rc != 0:
         return rc
     return _run(

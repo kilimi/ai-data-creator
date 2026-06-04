@@ -14,6 +14,7 @@ import io
 
 from .. import models, schemas
 from ..database import get_db
+from ..db_cleanup import delete_project_record
 
 router = APIRouter()
 
@@ -268,6 +269,7 @@ def list_project_datasets(
                 models.Dataset.project_id,
                 models.Dataset.image_count,
                 models.Dataset.thumbnailUrl,
+                models.Dataset.logo_url,
                 models.Dataset.url,
                 models.Dataset.created_at,
                 models.Dataset.updated_at,
@@ -301,7 +303,7 @@ def list_project_datasets(
     result = []
     for dataset in datasets:
         thumb = resolve_dataset_list_thumbnail(
-            dataset.thumbnailUrl,
+            dataset.thumbnailUrl or dataset.logo_url,
             preview_by_ds.get(dataset.id),
             include_base64_thumbnails=include_thumbnails,
         )
@@ -346,22 +348,15 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
     # AnnotationFile even though rows exist in `annotations`. Compute live
     # counts once and use them as a fallback so UI selectors (e.g. augmentation
     # source picker) don't incorrectly show "0 annotations".
+    from .annotation_db import get_live_annotation_counts_by_file_id, resolve_annotation_count
+
     file_ids = [f.id for f in annotation_files if f.id]
-    live_counts_by_file = {}
-    if file_ids:
-        live_counts_rows = (
-            db.query(models.Annotation.annotation_file_id, func.count(models.Annotation.id))
-            .filter(models.Annotation.annotation_file_id.in_(file_ids))
-            .group_by(models.Annotation.annotation_file_id)
-            .all()
-        )
-        live_counts_by_file = {file_id: int(count or 0) for file_id, count in live_counts_rows}
-    
+    live_counts_by_file = get_live_annotation_counts_by_file_id(db, file_ids)
+
     result = []
     for ann_file in annotation_files:
-        stored_count = int(ann_file.annotation_count or 0)
         live_count = int(live_counts_by_file.get(ann_file.id, 0))
-        effective_count = live_count if live_count > 0 else stored_count
+        effective_count = resolve_annotation_count(ann_file.annotation_count, live_count)
         result.append({
             "id": ann_file.id,
             "name": ann_file.name,
@@ -715,15 +710,9 @@ async def delete_project(project_id: int, db: Session = Depends(get_db)):
         except Exception as file_error:
             print(f"Warning: Could not delete some physical files: {file_error}")
             # Continue with database deletion even if file deletion fails
-        
-        # Delete datasets first (foreign key constraint)
-        db.query(models.Dataset).filter(models.Dataset.project_id == project_id).delete()
-        
-        # Delete the project record
-        result = db.query(models.Project).filter(models.Project.id == project_id).delete()
-        if result == 0:
-            raise HTTPException(status_code=404, detail="Project not found")
-            
+
+        # ORM delete per dataset (bulk DELETE skips cascades → FK violations).
+        delete_project_record(db, project_id)
         db.commit()
         
         return {

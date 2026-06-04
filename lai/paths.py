@@ -26,7 +26,7 @@ def bundle_data_dir() -> Path:
 
 def get_bundle_root(*, force_download: bool = False) -> Path:
     """
-    Directory that contains docker-compose.yml and backend/.
+    Directory that contains docker-compose.yml, backend/, and dockers/.
 
     - Editable / from-source install: repository root next to this package.
     - PyPI wheel: cached copy under ~/.local/share/lai/app (or XDG_DATA_HOME).

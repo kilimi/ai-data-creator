@@ -13,6 +13,276 @@ from app.ml.dataset.builder import generate_safe_output_filename, resolve_source
 logger = logging.getLogger(__name__)
 
 
+def _yolo_detection_line_from_bbox(
+    class_id: int,
+    *,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    coords_are_normalized: bool,
+    img_width: int,
+    img_height: int,
+) -> str:
+    """Format one YOLO detection label line (class + normalized xywh center)."""
+    if coords_are_normalized:
+        x_center = x + w / 2
+        y_center = y + h / 2
+        norm_w, norm_h = w, h
+    else:
+        x_center = (x + w / 2) / img_width
+        y_center = (y + h / 2) / img_height
+        norm_w = w / img_width
+        norm_h = h / img_height
+    return f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}"
+
+
+def _append_yolo_detection_bbox(
+    label_lines: List[str],
+    annotation: Annotation,
+    *,
+    class_id: int,
+    img_width: int,
+    img_height: int,
+    stats: Dict[str, Any],
+    split_name: str,
+    class_name: str,
+) -> bool:
+    """Append a detection label from COCO pixel bbox or normalized bbox_* columns."""
+    x = y = w = h = None
+    coords_are_normalized = False
+
+    if annotation.bbox and isinstance(annotation.bbox, list) and len(annotation.bbox) >= 4:
+        x, y, w, h = annotation.bbox[0], annotation.bbox[1], annotation.bbox[2], annotation.bbox[3]
+        coords_are_normalized = False
+    elif annotation.bbox_x is not None and annotation.bbox_width is not None:
+        x = annotation.bbox_x
+        y = annotation.bbox_y or 0
+        w = annotation.bbox_width
+        h = annotation.bbox_height or 0
+        coords_are_normalized = True
+
+    if x is None or y is None or w is None or h is None:
+        return False
+
+    label_lines.append(
+        _yolo_detection_line_from_bbox(
+            class_id,
+            x=float(x),
+            y=float(y),
+            w=float(w),
+            h=float(h),
+            coords_are_normalized=coords_are_normalized,
+            img_width=img_width,
+            img_height=img_height,
+        )
+    )
+    if class_name not in stats["annotations_per_class"]:
+        stats["annotations_per_class"][class_name] = {"train": 0, "val": 0, "test": 0}
+    stats["annotations_per_class"][class_name][split_name] += 1
+    stats["total_annotations"][split_name] += 1
+    return True
+
+
+def _annotation_has_bbox(annotation: Annotation) -> bool:
+    if annotation.bbox and isinstance(annotation.bbox, list) and len(annotation.bbox) >= 4:
+        return any(float(v) > 0 for v in annotation.bbox[:4])
+    return (
+        annotation.bbox_x is not None
+        and annotation.bbox_width is not None
+        and float(annotation.bbox_width or 0) > 0
+        and float(annotation.bbox_height or 0) > 0
+    )
+
+
+def _annotation_has_segmentation(annotation: Annotation) -> bool:
+    seg = annotation.segmentation
+    return bool(seg and isinstance(seg, list) and len(seg) > 0)
+
+
+def _is_classification_label_annotation(annotation: Annotation) -> bool:
+    """Image-level class label without spatial geometry."""
+    if _annotation_has_bbox(annotation) or _annotation_has_segmentation(annotation):
+        return False
+    return annotation.category_id is not None or bool(annotation.category)
+
+
+def _safe_class_dirname(class_name: str) -> str:
+    safe = "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in class_name.strip())
+    return safe or "unknown_class"
+
+
+def _prepare_yolo_classification_dataset(
+    db,
+    dataset_configs: List[Dict[str, Any]],
+    output_dir: Path,
+    *,
+    remove_images_without_annotations: bool = True,
+) -> Dict[str, Any]:
+    """
+    Build Ultralytics classification layout: train/<class>/img.jpg, val/<class>/img.jpg.
+    """
+    stats = {
+        "total_images": {"train": 0, "val": 0, "test": 0},
+        "total_annotations": {"train": 0, "val": 0, "test": 0},
+        "annotations_per_class": {},
+        "images_filtered": 0,
+        "images_processed": 0,
+    }
+    total_images = {"train": 0, "val": 0, "test": 0}
+
+    for split in ("train", "val", "test"):
+        (output_dir / split).mkdir(parents=True, exist_ok=True)
+
+    all_classes: set[str] = set()
+    for config in dataset_configs:
+        annotation_file_id = config["annotation_file_id"]
+        annotation_classes = db.query(AnnotationClass).filter(
+            AnnotationClass.annotation_file_id == annotation_file_id
+        ).all()
+        for ann_class in annotation_classes:
+            all_classes.add(ann_class.class_name)
+
+    sorted_classes = sorted(all_classes)
+    if not sorted_classes:
+        raise ValueError(
+            "No annotation classes found. Make sure your classification dataset has class labels defined."
+        )
+
+    for config in dataset_configs:
+        dataset_id = config["dataset_id"]
+        annotation_file_id = config["annotation_file_id"]
+        image_collection = config.get("image_collection")
+        split = config.get("split", {"train": 80, "val": 20, "test": 0})
+
+        dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+        if not dataset:
+            logger.warning(f"Dataset {dataset_id} not found, skipping")
+            continue
+
+        images_query = db.query(Image).filter(Image.dataset_id == dataset_id)
+        if image_collection:
+            images_query = images_query.join(Image.collection).filter(
+                ImageCollection.name == image_collection
+            )
+        images = images_query.all()
+        if not images:
+            logger.warning(f"No images found for dataset {dataset_id}, skipping")
+            continue
+
+        if remove_images_without_annotations:
+            filtered: list[Image] = []
+            for img in images:
+                annotations = db.query(Annotation).filter(
+                    Annotation.image_id == img.id,
+                    Annotation.annotation_file_id == annotation_file_id,
+                ).all()
+                if any(_is_classification_label_annotation(a) for a in annotations):
+                    filtered.append(img)
+            stats["images_filtered"] += len(images) - len(filtered)
+            images = filtered
+            if not images:
+                logger.warning(
+                    f"No classification labels for dataset {dataset_id} after filtering, skipping"
+                )
+                continue
+
+        total_count = len(images)
+        train_count = int(total_count * split["train"] / 100)
+        val_count = int(total_count * split["val"] / 100)
+        train_images = images[:train_count]
+        val_images = images[train_count : train_count + val_count]
+        test_images = images[train_count + val_count :]
+
+        for split_name, split_images in (
+            ("train", train_images),
+            ("val", val_images),
+            ("test", test_images),
+        ):
+            for image in split_images:
+                src_image_path = resolve_source_image_path(image, dataset_id)
+                if src_image_path is None or not src_image_path.exists():
+                    logger.warning(f"Image file not found for image {image.id}")
+                    continue
+
+                annotations = db.query(Annotation).filter(
+                    Annotation.image_id == image.id,
+                    Annotation.annotation_file_id == annotation_file_id,
+                ).all()
+                class_labels: list[str] = []
+                for annotation in annotations:
+                    if not _is_classification_label_annotation(annotation):
+                        continue
+                    ann_class = db.query(AnnotationClass).filter(
+                        AnnotationClass.annotation_file_id == annotation_file_id,
+                        AnnotationClass.category_id == annotation.category_id,
+                    ).first()
+                    label = (
+                        ann_class.class_name
+                        if ann_class
+                        else (annotation.category or "").strip()
+                    )
+                    if label and label not in class_labels:
+                        class_labels.append(label)
+
+                if not class_labels:
+                    continue
+
+                class_name = class_labels[0]
+                if len(class_labels) > 1:
+                    logger.warning(
+                        "Image %s has multiple classification labels %s; using %s",
+                        image.id,
+                        class_labels,
+                        class_name,
+                    )
+
+                class_dir = output_dir / split_name / _safe_class_dirname(class_name)
+                class_dir.mkdir(parents=True, exist_ok=True)
+                safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
+                dst_image_path = class_dir / safe_filename
+                try:
+                    if not dst_image_path.exists():
+                        os.link(src_image_path, dst_image_path)
+                except OSError:
+                    shutil.copy2(src_image_path, dst_image_path)
+
+                stats["total_images"][split_name] += 1
+                stats["images_processed"] += 1
+                stats["total_annotations"][split_name] += 1
+                if class_name not in stats["annotations_per_class"]:
+                    stats["annotations_per_class"][class_name] = {"train": 0, "val": 0, "test": 0}
+                stats["annotations_per_class"][class_name][split_name] += 1
+                total_images[split_name] += 1
+
+    if total_images["train"] == 0 and total_images["val"] == 0:
+        raise ValueError(
+            "No images were processed. Classification training requires image-level class labels "
+            "(no bounding boxes or polygons). Check that your annotation file is a classification export."
+        )
+
+    abs_path = output_dir.absolute()
+    if not str(abs_path).startswith("/app/"):
+        abs_path = Path("/app") / output_dir
+
+    logger.info(
+        "Classification dataset: %s train, %s val, %s test images; classes=%s",
+        total_images["train"],
+        total_images["val"],
+        total_images["test"],
+        sorted_classes,
+    )
+
+    return {
+        "yaml_path": str(abs_path),
+        "dataset_format": "classify",
+        "class_names": sorted_classes,
+        "class_count": len(sorted_classes),
+        "image_counts": total_images,
+        "dataset_stats": stats,
+    }
+
+
 def prepare_yolo_dataset(
     db,
     dataset_configs: List[Dict[str, Any]],
@@ -32,6 +302,14 @@ def prepare_yolo_dataset(
     Returns:
         Dict with paths and class names
     """
+    if "-cls" in model_type.lower():
+        return _prepare_yolo_classification_dataset(
+            db,
+            dataset_configs,
+            output_dir,
+            remove_images_without_annotations=remove_images_without_annotations,
+        )
+
     # Determine if this is a segmentation model
     is_segmentation_model = '-seg' in model_type.lower()
     
@@ -298,8 +576,10 @@ def prepare_yolo_dataset(
                             )
                             img_width, img_height = 1, 1
                     
-                    # Handle segmentation if present
-                    if annotation.segmentation:
+                    class_name = ann_class.class_name
+
+                    # Segmentation labels only for -seg models; detection models use bboxes.
+                    if is_segmentation_model and annotation.segmentation:
                         seg = annotation.segmentation
                         if isinstance(seg, list) and len(seg) > 0:
                             # Polygon format: [[x1, y1, x2, y2, ...]] or [x1, y1, x2, y2, ...]
@@ -307,92 +587,47 @@ def prepare_yolo_dataset(
                                 polygon = seg[0]
                             else:
                                 polygon = seg
-                            
-                            # Only process if polygon has valid data
-                            if len(polygon) >= 6:  # At least 3 points (6 coordinates)
-                                # Check if coordinates are already normalized (0-1) or in pixel coordinates
-                                # If any value is > 2, assume pixel coordinates that need normalization
+
+                            if len(polygon) >= 6:
                                 needs_normalization = any(abs(val) > 2 for val in polygon)
-                                
                                 normalized_coords = []
                                 if needs_normalization:
-                                    # Pixel coordinates - normalize them
                                     for i in range(0, len(polygon), 2):
                                         if i + 1 < len(polygon):
-                                            norm_x = polygon[i] / img_width
-                                            norm_y = polygon[i + 1] / img_height
-                                            normalized_coords.extend([norm_x, norm_y])
+                                            normalized_coords.extend(
+                                                [
+                                                    polygon[i] / img_width,
+                                                    polygon[i + 1] / img_height,
+                                                ]
+                                            )
                                 else:
-                                    # Already normalized - use as is
                                     normalized_coords = polygon
-                                
-                                # YOLO segmentation format: class_id x1 y1 x2 y2 ...
+
                                 if normalized_coords and len(normalized_coords) >= 6:
-                                    coords_str = ' '.join(f"{c:.6f}" for c in normalized_coords)
+                                    coords_str = " ".join(f"{c:.6f}" for c in normalized_coords)
                                     label_lines.append(f"{class_id} {coords_str}")
-                                    # Track annotation stats
-                                    class_name = ann_class.class_name
-                                    if class_name not in stats['annotations_per_class']:
-                                        stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
-                                    stats['annotations_per_class'][class_name][split_name] += 1
-                                    stats['total_annotations'][split_name] += 1
+                                    if class_name not in stats["annotations_per_class"]:
+                                        stats["annotations_per_class"][class_name] = {
+                                            "train": 0,
+                                            "val": 0,
+                                            "test": 0,
+                                        }
+                                    stats["annotations_per_class"][class_name][split_name] += 1
+                                    stats["total_annotations"][split_name] += 1
                                     has_segmentation = True
-                                    continue  # Skip bbox processing for this annotation
-                    
-                    # Handle bbox (COCO format: [x, y, width, height])
-                    elif annotation.bbox:
+                                    continue
+
+                    if _append_yolo_detection_bbox(
+                        label_lines,
+                        annotation,
+                        class_id=class_id,
+                        img_width=img_width,
+                        img_height=img_height,
+                        stats=stats,
+                        split_name=split_name,
+                        class_name=class_name,
+                    ):
                         has_bbox_only = True
-                        bbox = annotation.bbox
-                        if isinstance(bbox, list) and len(bbox) == 4:
-                            x, y, w, h = bbox
-                        elif isinstance(bbox, dict):
-                            x = bbox.get('x', 0)
-                            y = bbox.get('y', 0)
-                            w = bbox.get('width', 0)
-                            h = bbox.get('height', 0)
-                        else:
-                            # Try individual fields
-                            x = annotation.bbox_x or 0
-                            y = annotation.bbox_y or 0
-                            w = annotation.bbox_width or 0
-                            h = annotation.bbox_height or 0
-                        
-                        # Convert to YOLO format (normalized center x, center y, width, height)
-                        x_center = (x + w / 2) / img_width
-                        y_center = (y + h / 2) / img_height
-                        norm_w = w / img_width
-                        norm_h = h / img_height
-                        
-                        # YOLO detection format
-                        label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
-                        # Track annotation stats
-                        class_name = ann_class.class_name
-                        if class_name not in stats['annotations_per_class']:
-                            stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
-                        stats['annotations_per_class'][class_name][split_name] += 1
-                        stats['total_annotations'][split_name] += 1
-                    
-                    # Try individual bbox fields if bbox JSON is not present
-                    elif annotation.bbox_x is not None and annotation.bbox_width is not None:
-                        x = annotation.bbox_x
-                        y = annotation.bbox_y or 0
-                        w = annotation.bbox_width
-                        h = annotation.bbox_height or 0
-                        
-                        # Convert to YOLO format (normalized center x, center y, width, height)
-                        x_center = (x + w / 2) / img_width
-                        y_center = (y + h / 2) / img_height
-                        norm_w = w / img_width
-                        norm_h = h / img_height
-                        
-                        # YOLO detection format
-                        label_lines.append(f"{class_id} {x_center:.6f} {y_center:.6f} {norm_w:.6f} {norm_h:.6f}")
-                        # Track annotation stats
-                        class_name = ann_class.class_name
-                        if class_name not in stats['annotations_per_class']:
-                            stats['annotations_per_class'][class_name] = {"train": 0, "val": 0, "test": 0}
-                        stats['annotations_per_class'][class_name][split_name] += 1
-                        stats['total_annotations'][split_name] += 1
                 
                 # Write label file (create empty file if no annotations but image is kept)
                 if label_lines:

@@ -38,6 +38,18 @@ def test_build_mmyolo_subprocess_env_strips_pythonpath_and_sets_glibc():
     assert env.get("PYTHONNOUSERSITE") == "1"
 
 
+def test_build_mmyolo_pip_install_env_strips_pythonpath():
+    import os
+
+    from app.ml.runtime_env import build_mmyolo_pip_install_env
+
+    os.environ["PYTHONPATH"] = "/opt/lai/lib/python3.10/site-packages"
+    env = build_mmyolo_pip_install_env()
+    assert "PYTHONPATH" not in env
+    assert env.get("PYTHONNOUSERSITE") == "1"
+    assert env.get("MKL_THREADING_LAYER") == "GNU"
+
+
 def test_build_mmyolo_subprocess_env_preserves_existing_glibc_tunables():
     import os
 

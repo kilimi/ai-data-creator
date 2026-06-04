@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { Image } from '@/types';
+import { resolveBackendMediaUrl } from '@/config/api';
 import { AnnotationVisualizer } from '@/components/AnnotationVisualizer';
 import { AnnotationSample } from '@/utils/annotations';
 
@@ -45,8 +46,12 @@ export const ImageViewport = ({
   const imageRef = useRef<HTMLImageElement>(null);
 
   // When showing full-size: start with thumbnail for instant display, then load original
-  const placeholderUrl = image?.thumbnailUrl || image?.url;
-  const fullUrl = image?.url;
+  const placeholderUrl =
+    resolveBackendMediaUrl(image?.thumbnailUrl) ||
+    resolveBackendMediaUrl(image?.url) ||
+    image?.thumbnailUrl ||
+    image?.url;
+  const fullUrl = resolveBackendMediaUrl(image?.url) || image?.url;
   const startWithPlaceholder = useFullSize && fullUrl && placeholderUrl && fullUrl !== placeholderUrl;
   const expectingFullLoadRef = useRef(false);
 

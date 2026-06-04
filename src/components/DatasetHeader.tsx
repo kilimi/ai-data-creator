@@ -36,7 +36,7 @@ interface DatasetHeaderProps {
   imageCount?: number;
   /** When set (tabbed/multi-collection datasets), Auto-Annotate can target one collection */
   imageCollections?: ImageCollection[];
-  /** When true, dataset uses collections UI (Calibration / Mode apply) */
+  /** When true, dataset uses collections UI (Mode apply) */
   useTabbedImages?: boolean;
   datasetUiMode?: DatasetUiMode;
   onDatasetUiModeChange?: (mode: DatasetUiMode) => void;

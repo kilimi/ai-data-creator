@@ -1,9 +1,8 @@
-from pathlib import Path
 import sys
 
+from path_utils import resolve_backend_dir
 
-ROOT = Path(__file__).resolve().parents[2]
-BACKEND_DIR = ROOT / "backend"
+BACKEND_DIR = resolve_backend_dir()
 
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))

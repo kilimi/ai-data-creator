@@ -6,7 +6,7 @@
  */
 import { Images, LayoutGrid, Bot, Search, Settings2, Lightbulb } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { ArticleSection, ArticleStep, ArticleCallout } from "../components/ArticleParts";
+import { ArticleSection, ArticleStep } from "../components/ArticleParts";
 
 export function DatasetViewArticle() {
   return (
@@ -28,7 +28,7 @@ export function DatasetViewArticle() {
           <li>Browse and search the images in your dataset.</li>
           <li>Switch layouts (grid, split, single image) to suit your task.</li>
           <li>Group images into <strong>collections</strong> (e.g. RGB, Thermal).</li>
-          <li>Run <strong>Auto-Annotate</strong> with YOLO, RT-DETR or Depth models.</li>
+          <li>Run <strong>Auto-Annotate</strong> with YOLO11 Medium (ONNX) or Depth Anything V2.</li>
           <li>Calibrate two collections so annotations transfer between them.</li>
           <li>Edit, duplicate or delete the dataset from the Actions menu.</li>
         </ul>
@@ -48,27 +48,21 @@ export function DatasetViewArticle() {
         </ArticleStep>
       </ArticleSection>
 
-      <ArticleSection id="collections" title="Collections & calibration" icon={Search}>
+      <ArticleSection id="collections" title="Collections" icon={Search}>
         <p>
-          Collections let you group images by sensor or capture session. Once
-          you have at least two collections you can open{" "}
-          <strong>Collection Calibration</strong> from the tabbed images panel
-          to align them with point pairs.
+          Collections let you group images by sensor or capture session. When a
+          dataset has multiple collections of the same resolution, you can copy
+          annotations between layers while annotating.
         </p>
-        <ArticleCallout tone="info">
-          Need details? See the dedicated{" "}
-          <a href="/help/collection-calibration" className="text-primary hover:underline font-medium">
-            Collection Calibration guide
-          </a>.
-        </ArticleCallout>
       </ArticleSection>
 
       <ArticleSection id="auto-annotate" title="Auto-Annotate" icon={Bot}>
         <p>
           The <strong>Auto-Annotate</strong> button in the header runs a
-          pre-trained model over your images. Pick a model family (YOLO,
-          RT-DETR, Depth Anything V2), a size and a task; results are written
-          back as annotations you can review.
+          pre-trained model over your images. Choose <strong>YOLO11 Medium</strong>{" "}
+          (detection, segmentation, or classification — ONNX) or{" "}
+          <strong>Depth Anything V2</strong> for depth maps; results are written
+          back as annotations or a new image collection you can review.
         </p>
       </ArticleSection>
 

@@ -43,6 +43,7 @@ import { YoloSettingsDialog } from "./YoloSettingsDialog";
 import { RFDETRSettingsDialog } from "./RFDETRSettingsDialog";
 import { MMYOLOSettingsDialog } from "./MMYOLOSettingsDialog";
 import { TrainingStartedDialog } from "./TrainingStartedDialog";
+import { resolveBackendMediaUrl } from "@/config/api";
 import { useApi } from '@/hooks/use-api';
 import { useToast } from "@/hooks/use-toast";
 import { toast as sonnerToast } from 'sonner';
@@ -547,7 +548,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         description: d.description || undefined,
         imageCount: d.image_count ?? 0,
         annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
-        thumbnailUrl: d.thumbnailUrl,
+        thumbnailUrl: resolveBackendMediaUrl(d.thumbnailUrl) ?? d.thumbnailUrl,
         annotationFiles,
         collections,
         tags: d.tags,
@@ -841,11 +842,25 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       let modelName = '';
 
       if (selectedModel === 'yolo') {
-        // Always derive model_type from current UI selections so cloned stale modelSize
-        // cannot override user changes to version/size/task.
+        // Always derive model_type from the active task selection in this modal.
+        // Do not let previously cloned/stored task values force a detect model
+        // when user is currently training segmentation.
         const ver = normalizeYoloVersion(modelSettings.version || 'yolo11');
         const sz = modelSettings.size || 'n';
-        const task = modelSettings.task || (selectedTask === 'classify' ? 'classification' : selectedTask === 'segment' ? 'segmentation' : 'detection');
+        const selectedTaskKind =
+          selectedTask === 'classify'
+            ? 'classification'
+            : selectedTask === 'segment'
+            ? 'segmentation'
+            : 'detection';
+        // If user entered from a generic detect flow but cloned settings carry
+        // a specific task (e.g. segmentation), preserve the cloned task.
+        const clonedTaskKind = modelSettings.task;
+        const task =
+          selectedTaskKind === 'detection' &&
+          (clonedTaskKind === 'segmentation' || clonedTaskKind === 'classification')
+            ? clonedTaskKind
+            : selectedTaskKind;
         const modelType = buildYoloModelSize(ver, sz, task);
         // Prepare YOLO training request
         const trainingRequest = {

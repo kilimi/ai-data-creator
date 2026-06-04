@@ -7,6 +7,30 @@ from typing import Optional
 MMYOLO_VALID_ARCHS: frozenset = frozenset({"yolov8", "rtmdet", "rtmdet-ins", "rtmdet-r"})
 MMYOLO_VALID_SIZES: frozenset = frozenset({"tiny", "s", "m", "l", "x"})
 
+# UI alias (arch_size) → official OpenMMLab config stem (no .py suffix).
+# rtmdet-ins configs ship with MMDetection; rtmdet / rtmdet-r / yolov8 with MMYOLO.
+MMYOLO_OFFICIAL_CONFIG_STEMS: dict[str, str] = {
+    "yolov8_n": "yolov8_n_syncbn_fast_8xb16-500e_coco",
+    "yolov8_s": "yolov8_s_syncbn_fast_8xb16-500e_coco",
+    "yolov8_m": "yolov8_m_syncbn_fast_8xb16-500e_coco",
+    "yolov8_l": "yolov8_l_syncbn_fast_8xb16-500e_coco",
+    "yolov8_x": "yolov8_x_syncbn_fast_8xb16-500e_coco",
+    "rtmdet_tiny": "rtmdet_tiny_syncbn_fast_8xb32-300e_coco",
+    "rtmdet_s": "rtmdet_s_syncbn_fast_8xb32-300e_coco",
+    "rtmdet_m": "rtmdet_m_syncbn_fast_8xb32-300e_coco",
+    "rtmdet_l": "rtmdet_l_syncbn_fast_8xb32-300e_coco",
+    "rtmdet_x": "rtmdet_x_syncbn_fast_8xb32-300e_coco",
+    "rtmdet-ins_tiny": "rtmdet-ins_tiny_8xb32-300e_coco",
+    "rtmdet-ins_s": "rtmdet-ins_s_8xb32-300e_coco",
+    "rtmdet-ins_m": "rtmdet-ins_m_8xb32-300e_coco",
+    "rtmdet-ins_l": "rtmdet-ins_l_8xb32-300e_coco",
+    "rtmdet-ins_x": "rtmdet-ins_x_8xb16-300e_coco",
+    "rtmdet-r_tiny": "rtmdet-r_tiny_fast_1xb8-36e_dota",
+    "rtmdet-r_s": "rtmdet-r_s_fast_1xb8-36e_dota",
+    "rtmdet-r_m": "rtmdet-r_m_syncbn_fast_2xb4-36e_dota",
+    "rtmdet-r_l": "rtmdet-r_l_syncbn_fast_2xb4-36e_dota",
+}
+
 # OpenMMLab COCO checkpoints (see configs/*/metafile.yml). Base runtime sets load_from=None;
 # Ultralytics always starts from pretrained weights — we must set this explicitly for MMYOLO.
 MMYOLO_PRETRAINED_WEIGHTS: dict[str, str] = {
@@ -50,6 +74,18 @@ MMYOLO_PRETRAINED_WEIGHTS: dict[str, str] = {
         "https://download.openmmlab.com/mmyolo/v0/rtmdet/rtmdet_x_syncbn_fast_8xb32-300e_coco/"
         "rtmdet_x_syncbn_fast_8xb32-300e_coco_20221231_100345-b85cd476.pth"
     ),
+    "rtmdet-ins_s_8xb32-300e_coco": (
+        "https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_s_8xb32-300e_coco/"
+        "rtmdet-ins_s_8xb32-300e_coco_20221121_212604-fdc5d7ec.pth"
+    ),
+    "rtmdet-ins_m_8xb32-300e_coco": (
+        "https://download.openmmlab.com/mmdetection/v3.0/rtmdet/rtmdet-ins_m_8xb32-300e_coco/"
+        "rtmdet-ins_m_8xb32-300e_coco_20221122_100039-788b9e81.pth"
+    ),
+    "rtmdet-r_s_fast_1xb8-36e_dota": (
+        "https://download.openmmlab.com/mmyolo/v0/rtmdet-r/rtmdet-r_s_fast_1xb8-36e_dota/"
+        "rtmdet-r_s_fast_1xb8-36e_dota_20230120_133028-bb8aee09.pth"
+    ),
 }
 
 
@@ -79,6 +115,5 @@ def mmyolo_config_name(arch: str, size: str) -> str:
         raise ValueError(f"Unknown MMYOLO arch '{arch}'. Valid: {sorted(MMYOLO_VALID_ARCHS)}")
     if size not in MMYOLO_VALID_SIZES:
         raise ValueError(f"Unknown MMYOLO size '{size}'. Valid: {sorted(MMYOLO_VALID_SIZES)}")
-    if arch == "yolov8":
-        return f"yolov8_{size}_syncbn_fast_8xb16-500e_coco"
-    return f"{arch}_{size}"
+    alias = f"{arch}_{size}"
+    return MMYOLO_OFFICIAL_CONFIG_STEMS.get(alias, alias)

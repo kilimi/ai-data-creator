@@ -12,6 +12,7 @@ interface AnnotationStatusBarProps {
   hasUnsavedChanges: boolean;
   isAutoSaving: boolean;
   activeTool: string;
+  annotationMode?: 'mask' | 'bbox';
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -32,6 +33,7 @@ export const AnnotationStatusBar = ({
   hasUnsavedChanges,
   isAutoSaving,
   activeTool,
+  annotationMode = 'mask',
 }: AnnotationStatusBarProps) => {
   return (
     <div className="flex items-center justify-between px-4 py-1.5 bg-card border-t border-border text-xs text-muted-foreground select-none">
@@ -41,6 +43,12 @@ export const AnnotationStatusBar = ({
         <div className="flex items-center gap-1.5">
           <MousePointer2 className="w-3 h-3" />
           <span>{TOOL_LABELS[activeTool] || activeTool}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-foreground/60">Mode:</span>
+          <span className={annotationMode === 'bbox' ? 'text-primary font-medium' : 'font-medium'}>
+            {annotationMode === 'bbox' ? 'BBox' : 'Mask'}
+          </span>
         </div>
 
         {/* Cursor position */}

@@ -4,10 +4,26 @@ Single source of truth for Ultralytics foundation (.pt) names used by:
 - install.sh / LAI_PRETRAINED_MODELS
 - API validation (auto-annotate pretrained list)
 
-Must stay aligned with AutoAnnotateModal / ExportModelModal (YOLO_ARCHS + sizes + detect/seg/cls).
+Auto-Annotate (YOLO): fixed YOLO11 medium × detect / segment / classify, served as ONNX
+under /app/models (see auto_annotate_yolo_onnx_names).
 """
 from __future__ import annotations
 
+# Auto-Annotate uses only YOLO11 medium (COCO pretrained) in ONNX form.
+AUTO_ANNOTATE_YOLO_BASE = "yolo11m"
+AUTO_ANNOTATE_YOLO_TASKS: tuple[str, ...] = ("detect", "segment", "classify")
+
+AUTO_ANNOTATE_YOLO_PT: tuple[str, ...] = (
+    "yolo11m.pt",
+    "yolo11m-seg.pt",
+    "yolo11m-cls.pt",
+)
+
+AUTO_ANNOTATE_YOLO_ONNX: tuple[str, ...] = (
+    "yolo11m.onnx",
+    "yolo11m-seg.onnx",
+    "yolo11m-cls.onnx",
+)
 # (architecture id, size letter) — same matrix as scripts/download_ultralytics_models.py
 ARCH_SIZES: tuple[tuple[str, str], ...] = (
     ("yolov8", "n"),
@@ -144,20 +160,61 @@ def resolve_depth_models_spec(spec: str | None) -> list[str]:
     return resolved
 
 
-def pretrained_yolo_catalog() -> dict[str, dict]:
-    """Metadata for legacy /auto-annotate/pretrained-models API (COCO)."""
+def yolo_task_suffix(task_type: str) -> str:
+    return {"detect": "", "segment": "-seg", "classify": "-cls"}.get(
+        (task_type or "detect").lower(), ""
+    )
+
+
+def auto_annotate_yolo_pt_name(task_type: str) -> str:
+    return f"{AUTO_ANNOTATE_YOLO_BASE}{yolo_task_suffix(task_type)}.pt"
+
+
+def auto_annotate_yolo_onnx_name(task_type: str) -> str:
+    return f"{AUTO_ANNOTATE_YOLO_BASE}{yolo_task_suffix(task_type)}.onnx"
+
+
+def validate_auto_annotate_yolo_model(model_name: str, task_type: str) -> None:
+    """Raise ValueError when UI/API sends a non–YOLO11m auto-annotate request."""
+    base = (model_name or "").strip().lower()
+    if base != AUTO_ANNOTATE_YOLO_BASE:
+        raise ValueError(
+            f"Auto-Annotate supports only {AUTO_ANNOTATE_YOLO_BASE} "
+            f"(got {model_name!r})."
+        )
+    task = (task_type or "detect").lower()
+    if task not in AUTO_ANNOTATE_YOLO_TASKS:
+        raise ValueError(
+            f"Invalid task_type {task_type!r}. "
+            f"Use one of: {', '.join(AUTO_ANNOTATE_YOLO_TASKS)}"
+        )
+
+
+def auto_annotate_yolo_catalog() -> dict[str, dict]:
+    """ONNX models exposed to Auto-Annotate UI/API."""
     catalog: dict[str, dict] = {}
-    for name in ultralytics_foundation_pt_names():
-        stem = name[:-3]
-        if stem.endswith("-seg"):
-            mtype = "segmentation"
-        elif stem.endswith("-cls"):
-            mtype = "classification"
-        else:
-            mtype = "detection"
-        catalog[name] = {
-            "name": stem,
+    for task in AUTO_ANNOTATE_YOLO_TASKS:
+        onnx_name = auto_annotate_yolo_onnx_name(task)
+        mtype = {
+            "detect": "detection",
+            "segment": "segmentation",
+            "classify": "classification",
+        }[task]
+        catalog[onnx_name] = {
+            "name": AUTO_ANNOTATE_YOLO_BASE,
             "type": mtype,
-            "classes": 80,
+            "task_type": task,
+            "classes": 80 if task != "classify" else 1000,
+            "format": "onnx",
         }
     return catalog
+
+
+def resolve_auto_annotate_onnx_download() -> list[str]:
+    """PT files to fetch/export for Auto-Annotate (always the three YOLO11m variants)."""
+    return list(AUTO_ANNOTATE_YOLO_PT)
+
+
+def pretrained_yolo_catalog() -> dict[str, dict]:
+    """Metadata for /auto-annotate/pretrained-models (YOLO11m ONNX only)."""
+    return auto_annotate_yolo_catalog()

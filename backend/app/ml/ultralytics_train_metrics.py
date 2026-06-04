@@ -8,30 +8,55 @@ from typing import Any, Dict, Optional
 LAI_METRICS_PREFIX = "LAI_METRICS "
 
 
+def _loss_values_sequence(loss_items) -> list[float]:
+    """Normalize trainer.loss_items (list, 1-d tensor, or 0-d scalar for classify)."""
+    if loss_items is None:
+        return []
+    try:
+        import torch
+
+        if isinstance(loss_items, torch.Tensor):
+            if loss_items.dim() == 0:
+                return [float(loss_items.item())]
+            flat = loss_items.detach().flatten()
+            return [float(x) for x in flat.tolist()]
+    except ImportError:
+        pass
+    if isinstance(loss_items, (int, float)):
+        return [float(loss_items)]
+    try:
+        return [float(x) for x in loss_items]
+    except TypeError:
+        return []
+
+
 def extract_trainer_epoch_metrics(trainer) -> Dict[str, Any]:
     """Build a JSON-serializable metrics dict from the Ultralytics trainer."""
     epoch = int(getattr(trainer, "epoch", 0)) + 1
     metrics: Dict[str, Any] = {"epoch": epoch}
 
     loss_items = getattr(trainer, "loss_items", None)
-    if loss_items is not None:
+    loss_values = _loss_values_sequence(loss_items)
+    if loss_values:
         names = list(getattr(trainer, "loss_names", None) or [])
         if not names:
             model_arg = ""
             args = getattr(trainer, "args", None)
             if args is not None:
                 model_arg = str(getattr(args, "model", "") or "").lower()
-            names = (
-                ["box_loss", "seg_loss", "cls_loss", "dfl_loss"]
-                if "seg" in model_arg
-                else ["box_loss", "cls_loss", "dfl_loss"]
-            )
+            task = str(getattr(args, "task", "") or "").lower() if args is not None else ""
+            if task == "classify" or "-cls" in model_arg or loss_values and len(loss_values) == 1:
+                names = ["loss"]
+            elif "seg" in model_arg:
+                names = ["box_loss", "seg_loss", "cls_loss", "dfl_loss"]
+            else:
+                names = ["box_loss", "cls_loss", "dfl_loss"]
         for i, raw_name in enumerate(names):
-            if i >= len(loss_items):
+            if i >= len(loss_values):
                 break
             key = _normalize_loss_key(str(raw_name))
             try:
-                val = float(loss_items[i])
+                val = loss_values[i]
                 if val == val and abs(val) != float("inf"):
                     metrics[key] = val
             except (TypeError, ValueError):
@@ -113,6 +138,10 @@ def _map_results_dict_key(key: str) -> Optional[str]:
         return "precision"
     if "recall" in k:
         return "recall"
+    if "top1" in k:
+        return "top1_acc"
+    if "top5" in k:
+        return "top5_acc"
     if re.search(r"train[/_.]box", k):
         return "box_loss"
     if re.search(r"train[/_.]cls", k):

@@ -1,5 +1,6 @@
 import { ApiConfig, ApiResponse } from '@/types/api';
 import { Dataset, Project, Image, ImageCollection } from '@/types';
+import { normalizeImageMedia } from '@/config/api';
 
 /**
  * Simple API client for interacting with FastAPI backend
@@ -620,11 +621,27 @@ export class ApiClient {
   }
 
   async getImages(datasetId: string | number): Promise<ApiResponse<Image[]>> {
-    return this.request<Image[]>(`/datasets/${datasetId}/images`);
+    const response = await this.request<Image[]>(`/datasets/${datasetId}/images`);
+    if (response.success && response.data) {
+      response.data = response.data.map((img) => normalizeImageMedia(img));
+    }
+    return response;
   }
 
   async getImageCollections(datasetId: string | number): Promise<ApiResponse<ImageCollection[]>> {
-    return this.request<ImageCollection[]>(`/datasets/${datasetId}/image-collections`);
+    const response = await this.request<ImageCollection[]>(
+      `/datasets/${datasetId}/image-collections`,
+    );
+    if (response.success && response.data) {
+      response.data = response.data.map((collection) => ({
+        ...collection,
+        images: (collection.images ?? []).map((img) => normalizeImageMedia(img)),
+        paginatedImages: (collection.paginatedImages ?? []).map((img) =>
+          normalizeImageMedia(img),
+        ),
+      }));
+    }
+    return response;
   }
 
   async deleteImage(datasetId: string | number, imageId: string): Promise<ApiResponse<any>> {
@@ -1826,36 +1843,6 @@ export class ApiClient {
     memory_total_mb: number;
   }>> {
     return this.request('/system/gpu', { method: 'GET' });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Calibration endpoints
-  // ---------------------------------------------------------------------------
-
-  async getCalibrations(datasetId: string | number): Promise<ApiResponse<any[]>> {
-    return this.request<any[]>(`/datasets/${datasetId}/calibrations`);
-  }
-
-  async saveCalibration(
-    datasetId: string | number,
-    sourceCollectionId: number,
-    targetCollectionId: number,
-    pointPairs: Array<{ src_x: number; src_y: number; tgt_x: number; tgt_y: number }>,
-  ): Promise<ApiResponse<any>> {
-    return this.request(`/datasets/${datasetId}/calibrations`, {
-      method: 'POST',
-      body: JSON.stringify({
-        source_collection_id: sourceCollectionId,
-        target_collection_id: targetCollectionId,
-        point_pairs: pointPairs,
-      }),
-    });
-  }
-
-  async deleteCalibration(datasetId: string | number, calibrationId: number): Promise<ApiResponse<any>> {
-    return this.request(`/datasets/${datasetId}/calibrations/${calibrationId}`, {
-      method: 'DELETE',
-    });
   }
 }
 

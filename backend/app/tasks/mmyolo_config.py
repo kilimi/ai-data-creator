@@ -4,7 +4,74 @@ from pathlib import Path
 
 from typing import List
 
-from app.ml.mmyolo_catalog import mmyolo_pretrained_checkpoint
+from app.ml.mmyolo_catalog import MMYOLO_OFFICIAL_CONFIG_STEMS, mmyolo_pretrained_checkpoint
+
+
+_MMYOLO_CONFIG_ROOTS = (
+    Path("/opt/mmyolo/configs"),
+    Path("/app/models/mmyolo"),
+)
+
+
+def _mmyolo_config_search_roots() -> List[Path]:
+    roots: List[Path] = [p for p in _MMYOLO_CONFIG_ROOTS if p.is_dir()]
+    try:
+        import mmdet
+
+        mmdet_root = Path(mmdet.__file__).resolve().parent
+        for sub in (".mim/configs", "configs"):
+            candidate = mmdet_root / sub
+            if candidate.is_dir():
+                roots.append(candidate)
+    except Exception:
+        pass
+    return roots
+
+
+def _normalize_config_stem(config_id: str) -> str:
+    cfg = (config_id or "").strip().replace("\\", "/")
+    if not cfg:
+        return MMYOLO_OFFICIAL_CONFIG_STEMS["rtmdet_s"]
+    stem = Path(cfg).stem if cfg.endswith(".py") else cfg.split("/")[-1]
+    return MMYOLO_OFFICIAL_CONFIG_STEMS.get(stem, stem)
+
+
+def resolve_mmyolo_base_config(config_id: str, *, dji_repo_dir: str | Path | None = None) -> str:
+    """
+    Resolve a MMYOLO config id to an absolute config file path.
+
+    DJI mode must use configs from the patched clone (not /opt/mmyolo), because the
+    AI Inside patch modifies training/export code in that repo.
+    """
+    if dji_repo_dir:
+        from app.tasks.mmyolo_dji import resolve_dji_base_config
+
+        return resolve_dji_base_config(Path(dji_repo_dir), config_id)
+    cfg = (config_id or "").strip()
+    if not cfg:
+        cfg = "rtmdet_s"
+
+    direct = Path(cfg)
+    if direct.is_file():
+        return str(direct.resolve())
+
+    stem = _normalize_config_stem(cfg)
+    filename = f"{stem}.py"
+
+    for root in _mmyolo_config_search_roots():
+        exact = root / filename
+        if exact.is_file():
+            return str(exact.resolve())
+        matches = sorted(root.glob(f"**/{filename}"))
+        if matches:
+            return str(matches[0].resolve())
+
+    searched = ", ".join(str(r) for r in _mmyolo_config_search_roots()) or "(no config roots found)"
+    raise FileNotFoundError(
+        f"MMYOLO base config not found for {config_id!r} (stem={stem!r}). "
+        f"Searched: {searched}. "
+        "Ensure mmyolo/mmdet are installed in the worker image or run mim download for this variant."
+    )
 
 
 def mmyolo_cfg_options_list(*, batch_size: int, epochs: int) -> List[str]:
@@ -17,34 +84,6 @@ def mmyolo_cfg_options_list(*, batch_size: int, epochs: int) -> List[str]:
         f"default_hooks.param_scheduler.max_epochs={epochs}",
         f"default_hooks.checkpoint.interval={val_interval}",
     ]
-
-
-def resolve_mmyolo_base_config(config_id: str) -> str:
-    """Resolve a MMYOLO config id to an existing config file path when possible."""
-    cfg = (config_id or "").strip()
-    if not cfg:
-        return "rtmdet_s_syncbn_fast_8xb32-300e_coco.py"
-
-    p = Path(cfg)
-    if p.exists():
-        return str(p)
-
-    if cfg.endswith(".py"):
-        direct = Path("/opt/mmyolo/configs") / cfg
-        if direct.exists():
-            return str(direct)
-        stem = Path(cfg).stem
-    else:
-        direct = Path("/opt/mmyolo/configs") / f"{cfg}.py"
-        if direct.exists():
-            return str(direct)
-        stem = cfg.replace("\\", "/").split("/")[-1]
-
-    matches = sorted(Path("/opt/mmyolo/configs").glob(f"**/{stem}.py"))
-    if matches:
-        return str(matches[0])
-
-    return cfg if cfg.endswith(".py") else f"{cfg}.py"
 
 
 def build_model_override(
@@ -151,11 +190,16 @@ def build_mmyolo_config_content(params: MMYOLOConfigParams) -> str:
     image_size = params.image_size
     val_interval = max(1, min(10, max(1, params.epochs // 3)))
     pretrained = mmyolo_pretrained_checkpoint(params.base_cfg)
-    load_from_line = (
-        f"load_from = '{pretrained}'"
-        if pretrained
-        else "# load_from not set — add a known config id to use COCO pretrained weights"
-    )
+    skip_pretrained = params.is_dji_mode and params.dji_use_widen_factor_025
+    if skip_pretrained:
+        load_from_line = (
+            "# load_from disabled for DJI widen_factor=0.25 "
+            "(COCO YOLOv8-S checkpoint uses widen_factor=0.5 and is incompatible)"
+        )
+    elif pretrained:
+        load_from_line = f"load_from = '{pretrained}'"
+    else:
+        load_from_line = "# load_from not set — add a known config id to use COCO pretrained weights"
 
     return f"""_base_ = ['{params.base_cfg}']
 

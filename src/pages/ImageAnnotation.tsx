@@ -66,19 +66,34 @@ import {
 import { AnnotationMinimap } from '@/components/AnnotationMinimap';
 import { AnnotationStatusBar } from '@/components/AnnotationStatusBar';
 import { CompanionLayersPanel } from '@/components/annotation/CompanionLayersPanel';
+import {
+  readCompanionDuplicateIds,
+  readCopyOffCollectionIds,
+} from '@/components/annotation/companionDuplicatePrefs';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
-import { API_CONFIG } from '@/config/api';
+import { API_CONFIG, resolveBackendMediaUrl } from '@/config/api';
+import {
+  clearSamModelReadyCache,
+  isSamModelCachedReady,
+  setSamModelCachedReady,
+  type SamSegmentModelKey,
+} from '@/utils/samReadyCache';
+
+/** Show full-screen SAM wait UI only if readiness check exceeds this (first load). */
+const SAM_MODEL_WAIT_OVERLAY_MS = 500;
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
 import { applyClassColorsToAnnotations, resolveAnnotationDisplayColor } from '@/utils/annotationColorConsistency';
 import { shouldScheduleAnnotationRedraw } from '@/utils/annotationRenderVisibility';
+import { detectSegmentationModeCapabilities, pointsToTightBbox } from '@/utils/annotations';
 
 // Annotation types
 export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'pencil' | 'auto-segment';
+type AnnotationMode = 'mask' | 'bbox';
 
 export interface Point {
   x: number;
@@ -94,6 +109,20 @@ export interface AnnotationShape {
   visible: boolean;
   confidence?: number;
 }
+
+const pointsToBbox = (points: Point[]): [number, number, number, number] => pointsToTightBbox(points);
+
+const bboxToRectPoints = (bbox: number[]): Point[] => {
+  if (!Array.isArray(bbox) || bbox.length < 4) return [];
+  const [x, y, w, h] = bbox.map((v) => Number(v) || 0);
+  return [
+    { x, y },
+    { x: x + w, y },
+    { x: x + w, y: y + h },
+    { x, y: y + h },
+  ];
+};
+
 
 export interface AnnotationClass {
   id: string;
@@ -258,17 +287,6 @@ function findCocoImageForDatasetName(
   return cocoImages.find((img) => baseNoExt(img.file_name || '').toLowerCase() === dsBase);
 }
 
-/**
- * Apply a 3×3 homography matrix H to a 2D point.
- * H is stored row-major as [[h00,h01,h02],[h10,h11,h12],[h20,h21,h22]].
- */
-function applyHomography(H: number[][], x: number, y: number): { x: number; y: number } {
-  const w = H[2][0] * x + H[2][1] * y + H[2][2];
-  return {
-    x: (H[0][0] * x + H[0][1] * y + H[0][2]) / w,
-    y: (H[1][0] * x + H[1][1] * y + H[1][2]) / w,
-  };
-}
 
 const ImageAnnotation = () => {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
@@ -280,6 +298,7 @@ const ImageAnnotation = () => {
 
   // Get annotation ID from URL params if editing existing annotation
   const annotationId = searchParams.get('annotationId');
+  const modeHint = searchParams.get('modeHint');
   /** Set `?debugAnnot=1` on the URL or `sessionStorage.setItem('debugAnnotFirst','1')` then reload — logs first-image / load races in the console (filter: AnnotDebug). */
   const debugAnnotFirst =
     typeof window !== 'undefined' &&
@@ -295,11 +314,14 @@ const ImageAnnotation = () => {
     let cancelled = false;
     api.getDataset(id).then((res) => {
       if (cancelled || !res.success || !res.data?.project_id) return;
-      const q = annotationId ? `?annotationId=${annotationId}` : '';
+      const qs = new URLSearchParams();
+      if (annotationId) qs.set('annotationId', annotationId);
+      if (modeHint) qs.set('modeHint', modeHint);
+      const q = qs.toString() ? `?${qs.toString()}` : '';
       navigate(`/projects/${res.data.project_id}/datasets/${id}/annotate/segmentation${q}`, { replace: true });
     });
     return () => { cancelled = true; };
-  }, [id, projectId, api, navigate, annotationId]);
+  }, [id, projectId, api, navigate, annotationId, modeHint]);
 
   // Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -324,13 +346,6 @@ const ImageAnnotation = () => {
   // coordinates are stored in that layer's pixel space and remapped for display/input.
   // Empty string = off (default — no cross-layer scaling).
   const [annotationLayerId, setAnnotationLayerId] = useState<string>('');
-  // true only when the display layer is the *target* of a calibration and annotation coords
-  // are being remapped via homography from source (annotation) space → display (target) space.
-  const [calibrationIsActive, setCalibrationIsActive] = useState(false);
-  // User-controlled toggle to enable/disable calibration transform
-  const [calibrationEnabled, setCalibrationEnabled] = useState(true);
-  // Calibrations loaded from backend (homography-based collection pairs)
-  const [calibrations, setCalibrations] = useState<any[]>([]);
   const [allImageNames, setAllImageNames] = useState<string[]>([]);
   const [currentLayerImageNames, setCurrentLayerImageNames] = useState<string[]>([]);
   const [mainLayer, setMainLayer] = useState<string>(''); // The primary layer that drives navigation
@@ -351,11 +366,16 @@ const ImageAnnotation = () => {
    * a ref alongside state so save callbacks always see the latest selection
    * even from stale closures.
    */
-  const [duplicateCollectionIds, setDuplicateCollectionIds] = useState<string[]>([]);
-  const duplicateCollectionIdsRef = useRef<string[]>([]);
-  useEffect(() => {
-    duplicateCollectionIdsRef.current = duplicateCollectionIds;
-  }, [duplicateCollectionIds]);
+  const [duplicateCollectionIds, setDuplicateCollectionIds] = useState<string[]>(() =>
+    readCompanionDuplicateIds(),
+  );
+  const duplicateCollectionIdsRef = useRef<string[]>(duplicateCollectionIds);
+  duplicateCollectionIdsRef.current = duplicateCollectionIds;
+
+  const handleDuplicateCollectionIdsChange = useCallback((ids: string[]) => {
+    duplicateCollectionIdsRef.current = ids;
+    setDuplicateCollectionIds(ids);
+  }, []);
 
   /**
    * Refs that mirror displayLayer / mainLayer so callbacks (createAnnotation,
@@ -382,6 +402,10 @@ const ImageAnnotation = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent flickering
   const [activeTool, setActiveTool] = useState<AnnotationTool>('select');
+  const [annotationMode, setAnnotationMode] = useState<AnnotationMode>('mask');
+  const [modeLocked, setModeLocked] = useState(false);
+  const [bboxSwitchAllowed, setBboxSwitchAllowed] = useState(true);
+  const [modeLockReason, setModeLockReason] = useState<string | null>(null);
   // Display adjustments applied to the primary canvas image (does NOT
   // alter the source pixels — only the on-screen rendering via ctx.filter).
   const [imageBrightness, setImageBrightness] = useState(100); // %
@@ -494,8 +518,9 @@ const ImageAnnotation = () => {
   const leftResizingRef = useRef(false);
   const leftStartXRef = useRef(0);
   const leftStartWidthRef = useRef(0);
-  const lastLoadedImageRef = useRef<string>(''); // Use ref instead of state to avoid re-renders
-  /** Last annotation file we opened (for invalidating lastLoadedImageRef when switching files). */
+  /** `${collectionId}::${imageName}` — skip guard must include collection so layer switches reload. */
+  const lastLoadedAnnotationKeyRef = useRef<string>('');
+  /** Last annotation file we opened (for invalidating lastLoadedAnnotationKeyRef when switching files). */
   const lastOpenedAnnotationFileIdRef = useRef<string | null>(null);
   /** Bumped when the annotation-file load effect cleans up or re-runs so in-flight loads don't clear caches / wipe polygons (Strict Mode + overlapping effects). */
   const annotationFileLoadGenerationRef = useRef(0);
@@ -574,12 +599,49 @@ const ImageAnnotation = () => {
   }, [samPoints]);
   const [isSamProcessing, setIsSamProcessing] = useState(false);
   const [isSamModelLoading, setIsSamModelLoading] = useState(false);
+  /** Full-screen wait modal only after slow first load (see SAM_MODEL_WAIT_OVERLAY_MS). */
+  const [showSamModelWaitOverlay, setShowSamModelWaitOverlay] = useState(false);
   const samReadyAbortRef = useRef<AbortController | null>(null);
   const samSegmentAbortRef = useRef<AbortController | null>(null);
+  const samReadyOverlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSamInteractionBlocked = isSamModelLoading || isSamProcessing;
+  const showSamBlockingOverlay =
+    activeTool === 'auto-segment' &&
+    (isSamProcessing || (isSamModelLoading && showSamModelWaitOverlay));
   const [segmentModel, setSegmentModel] = useState<'sam2' | 'sam3'>('sam2');
   const [segmentTextPrompt, setSegmentTextPrompt] = useState('');
   const [samMinArea, setSamMinArea] = useState<number>(100);
+
+  useEffect(() => {
+    if (annotationMode === 'bbox' && (activeTool === 'polygon' || activeTool === 'pencil')) {
+      setActiveTool('rectangle');
+    }
+  }, [annotationMode, activeTool]);
+
+  useEffect(() => {
+    if (!modeLocked && annotations.length > 0) {
+      setModeLocked(true);
+      setBboxSwitchAllowed(false);
+      if (annotationMode === 'bbox') {
+        setModeLockReason('BBox mode locked after first annotation.');
+      }
+    }
+  }, [annotations.length, modeLocked, annotationMode]);
+
+  useEffect(() => {
+    if (!annotationId) {
+      setAnnotationMode(modeHint === 'bbox' ? 'bbox' : 'mask');
+      setModeLocked(false);
+      if (modeHint === 'bbox') {
+        setBboxSwitchAllowed(false);
+        setModeLocked(true);
+        setModeLockReason('BBox mode selected for this new session.');
+      } else {
+        setBboxSwitchAllowed(true);
+        setModeLockReason(null);
+      }
+    }
+  }, [annotationId, id, modeHint]);
 
   const { data: sam3Available = false } = useQuery({
     queryKey: ['sam3-available'],
@@ -596,46 +658,73 @@ const ImageAnnotation = () => {
     if (!sam3Available && segmentModel === 'sam3') setSegmentModel('sam2');
   }, [sam3Available, segmentModel]);
 
+  const clearSamReadyOverlayTimer = useCallback(() => {
+    if (samReadyOverlayTimerRef.current) {
+      clearTimeout(samReadyOverlayTimerRef.current);
+      samReadyOverlayTimerRef.current = null;
+    }
+    setShowSamModelWaitOverlay(false);
+  }, []);
+
   const cancelSamInteraction = useCallback(() => {
     samReadyAbortRef.current?.abort();
     samReadyAbortRef.current = null;
     samSegmentAbortRef.current?.abort();
     samSegmentAbortRef.current = null;
+    clearSamReadyOverlayTimer();
     setIsSamModelLoading(false);
     setIsSamProcessing(false);
     setAutoSegmentPreview(null);
     setSamPoints([]);
     samPointsRef.current = [];
     setActiveTool('select');
-  }, []);
+  }, [clearSamReadyOverlayTimer]);
 
-  // Poll SAM backend until the selected model is ready whenever AI Segment is active.
+  // Ensure SAM is ready when AI Segment is active (session cache skips repeat full-screen wait).
   useEffect(() => {
     if (activeTool !== 'auto-segment') {
       samReadyAbortRef.current?.abort();
       samReadyAbortRef.current = null;
+      clearSamReadyOverlayTimer();
       setIsSamModelLoading(false);
       return;
     }
 
+    const modelKey = segmentModel as SamSegmentModelKey;
     const readyUrl =
-      segmentModel === 'sam3'
+      modelKey === 'sam3'
         ? `${API_CONFIG.baseUrl}/segment/ready/sam3`
         : `${API_CONFIG.baseUrl}/segment/ready`;
 
     const controller = new AbortController();
     samReadyAbortRef.current = controller;
-    setIsSamModelLoading(true);
-
     let cancelled = false;
-    const poll = async (): Promise<boolean> => {
+
+    const finishLoading = (ready: boolean) => {
+      if (controller.signal.aborted || cancelled) return;
+      clearSamReadyOverlayTimer();
+      setIsSamModelLoading(false);
+      if (ready) {
+        setSamModelCachedReady(modelKey, true);
+        return;
+      }
+      setSamModelCachedReady(modelKey, false);
+      toast({
+        title: 'SAM model unavailable',
+        description: 'The segmentation service is not ready. Try again later.',
+        variant: 'destructive',
+      });
+      setActiveTool('select');
+    };
+
+    const pollUntilReady = async (): Promise<boolean> => {
       while (!controller.signal.aborted && !cancelled) {
         try {
           const res = await fetch(readyUrl, { signal: controller.signal });
           if (res.ok) {
             return true;
           }
-        } catch (err) {
+        } catch {
           if (controller.signal.aborted) return false;
         }
         await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -643,29 +732,49 @@ const ImageAnnotation = () => {
       return false;
     };
 
-    poll()
-      .then((ready) => {
-        if (controller.signal.aborted || cancelled) return;
-        setIsSamModelLoading(false);
-        if (!ready) {
-          toast({
-            title: 'SAM model unavailable',
-            description: 'The segmentation service is not ready. Try again later.',
-            variant: 'destructive',
-          });
-          setActiveTool('select');
+    const startPollWithOptionalOverlay = () => {
+      setIsSamModelLoading(true);
+      setShowSamModelWaitOverlay(false);
+      samReadyOverlayTimerRef.current = setTimeout(() => {
+        if (!controller.signal.aborted && !cancelled) {
+          setShowSamModelWaitOverlay(true);
         }
-      })
-      .catch(() => undefined);
+      }, SAM_MODEL_WAIT_OVERLAY_MS);
+      pollUntilReady()
+        .then(finishLoading)
+        .catch(() => undefined);
+    };
+
+    if (isSamModelCachedReady(modelKey)) {
+      setIsSamModelLoading(false);
+      setShowSamModelWaitOverlay(false);
+      fetch(readyUrl, { signal: controller.signal })
+        .then((res) => {
+          if (controller.signal.aborted || cancelled) return;
+          if (!res.ok) {
+            clearSamModelReadyCache(modelKey);
+            startPollWithOptionalOverlay();
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted && !cancelled) {
+            clearSamModelReadyCache(modelKey);
+            startPollWithOptionalOverlay();
+          }
+        });
+    } else {
+      startPollWithOptionalOverlay();
+    }
 
     return () => {
       cancelled = true;
       controller.abort();
+      clearSamReadyOverlayTimer();
       if (samReadyAbortRef.current === controller) {
         samReadyAbortRef.current = null;
       }
     };
-  }, [activeTool, segmentModel, toast]);
+  }, [activeTool, segmentModel, toast, clearSamReadyOverlayTimer]);
 
   // Leaving AI Segment while a request is in flight should abort it.
   useEffect(() => {
@@ -879,19 +988,20 @@ const ImageAnnotation = () => {
     }
 
     const sa = annotScaleToAnnotRef.current;
-    const newAnns: AnnotationShape[] = autoSegmentPreview.polygons.map(poly => ({
-      id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
-      type: 'polygon',
-      // SAM polygons arrive in display-image pixel space — convert to annotation space.
-      points: calibHDisplayToAnnotRef.current
-        ? poly.map(p => applyHomography(calibHDisplayToAnnotRef.current!, p.x, p.y))
-        : (sa.x !== 1 || sa.y !== 1)
-          ? poly.map(p => ({ x: p.x * sa.x, y: p.y * sa.y }))
-          : poly,
-      label: classObj.name,
-      color: classObj.color,
-      visible: true
-    }));
+    const newAnns: AnnotationShape[] = autoSegmentPreview.polygons.map(poly => {
+      const scaledPoly = (sa.x !== 1 || sa.y !== 1)
+        ? poly.map(p => ({ x: p.x * sa.x, y: p.y * sa.y }))
+        : poly;
+      const points = annotationMode === 'bbox' ? bboxToRectPoints(pointsToBbox(scaledPoly)) : scaledPoly;
+      return {
+        id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
+        type: annotationMode === 'bbox' ? 'rectangle' : 'polygon',
+        points,
+        label: classObj.name,
+        color: classObj.color,
+        visible: true
+      };
+    });
 
     setAnnotations(prev => {
       const updated = [...prev, ...newAnns];
@@ -912,14 +1022,14 @@ const ImageAnnotation = () => {
 
     // update counts
     setClasses(prev => {
-      const updated = prev.map(c => c.id === classObj!.id ? { ...c, count: c.count + autoSegmentPreview.polygons.length } : c);
+      const updated = prev.map(c => c.id === classObj!.id ? { ...c, count: c.count + newAnns.length } : c);
       saveGlobalClasses(updated);
       return updated;
     });
 
     setAutoSegmentPreview(null);
     setSamPoints([]); // Clear points so next click starts fresh for a new object
-    toast({ title: 'Auto-segment accepted', description: `Created ${newAnns.length} annotations` });
+    toast({ title: 'Auto-segment accepted', description: `Created ${newAnns.length} ${annotationMode === 'bbox' ? 'bounding boxes' : 'annotations'}` });
     computeGlobalStatsDebounced();
   };
 
@@ -1031,11 +1141,6 @@ const ImageAnnotation = () => {
   // annotScaleToAnnotRef: multiply display-space coords × these to get annotation-space coords.
   const annotLayerDimsRef = useRef<{ width: number; height: number } | null>(null);
   const annotScaleToAnnotRef = useRef({ x: 1, y: 1 });
-  // Homography refs — populated when a calibration is active.
-  // calibHDisplayToAnnotRef: H maps display-image pixel → annotation-storage pixel (display→annot).
-  // calibHAnnotToDisplayRef: H^-1 maps annotation-storage pixel → display-image pixel (annot→display).
-  const calibHDisplayToAnnotRef = useRef<number[][] | null>(null);
-  const calibHAnnotToDisplayRef = useRef<number[][] | null>(null);
 
   useEffect(() => {
     if (!annotationLayerId || !displayImage) {
@@ -1362,84 +1467,6 @@ const ImageAnnotation = () => {
     loadImagesEffect();
   }, [id, api, toast, annotationId]);
 
-  // Fetch calibrations for this dataset once api + id are ready
-  useEffect(() => {
-    if (!id || !api) return;
-    api.getCalibrations(id).then(res => {
-      if (res.success && res.data) {
-        setCalibrations(res.data);
-      }
-    }).catch(() => { /* non-fatal */ });
-  }, [id, api]);
-
-  // Auto-set annotationLayerId + homography refs when displayLayer or calibrations change.
-  // Annotations coordinate space tracking: when annotations are created/saved, we store
-  // which collection they were created in. When switching display layers, we check if
-  // annotations exist for the current image and determine correct transformation.
-  useEffect(() => {
-    if (!displayLayer || calibrations.length === 0 || !calibrationEnabled) {
-      calibHDisplayToAnnotRef.current = null;
-      calibHAnnotToDisplayRef.current = null;
-      setCalibrationIsActive(false);
-      // Don't reset annotationLayerId - it might be set from stored annotations
-      return;
-    }
-
-    // Check if annotations exist for current image and which collection they're from
-    const storageKey = `annotations_${id}_${currentImageName}_collection`;
-    const storedAnnotationLayerId = localStorage.getItem(storageKey);
-    
-    // If we have stored annotation layer and it's different from display layer,
-    // we need to apply calibration transform
-    const annotCollectionId = storedAnnotationLayerId || annotationLayerId;
-    
-    if (!annotCollectionId || annotCollectionId === displayLayer) {
-      // No calibration needed - viewing same layer as annotations, or no annotations
-      calibHDisplayToAnnotRef.current = null;
-      calibHAnnotToDisplayRef.current = null;
-      setCalibrationIsActive(false);
-      if (storedAnnotationLayerId) {
-        setAnnotationLayerId(storedAnnotationLayerId);
-      }
-      return;
-    }
-
-    // Find calibration between annotation layer and display layer
-    const cal = calibrations.find(
-      c => (String(c.source_collection_id) === annotCollectionId && String(c.target_collection_id) === displayLayer) ||
-           (String(c.target_collection_id) === annotCollectionId && String(c.source_collection_id) === displayLayer),
-    );
-
-    if (!cal) {
-      // No calibration exists between these layers
-      calibHDisplayToAnnotRef.current = null;
-      calibHAnnotToDisplayRef.current = null;
-      setCalibrationIsActive(false);
-      if (storedAnnotationLayerId) {
-        setAnnotationLayerId(storedAnnotationLayerId);
-      }
-      return;
-    }
-
-    // Determine correct homography direction: annotCollection → displayLayer
-    const annotIsSource = String(cal.source_collection_id) === annotCollectionId;
-    
-    if (annotIsSource) {
-      // Annotations are in source space, displaying target
-      // H maps source(annot) → target(display); H_inv maps target(display) → source(annot)
-      calibHAnnotToDisplayRef.current = cal.homography;      // annot(source) → display(target)
-      calibHDisplayToAnnotRef.current = cal.homography_inv;  // display(target) → annot(source)
-    } else {
-      // Annotations are in target space, displaying source
-      // Need to use inverse mapping
-      calibHAnnotToDisplayRef.current = cal.homography_inv;  // annot(target) → display(source)
-      calibHDisplayToAnnotRef.current = cal.homography;      // display(source) → annot(target)
-    }
-    
-    setCalibrationIsActive(true);
-    setAnnotationLayerId(annotCollectionId);
-  }, [displayLayer, calibrations, id, currentImageName, annotationLayerId, calibrationEnabled]);
-
   // Update images when index or layer changes (including display layer only — must refresh display bitmap)
   useEffect(() => {
     // Skip during initial load to prevent flickering
@@ -1470,7 +1497,7 @@ const ImageAnnotation = () => {
       currentImageName,
       annotRefLen: annotationsRef.current.length,
     });
-    lastLoadedImageRef.current = '';
+    lastLoadedAnnotationKeyRef.current = '';
     loadAnnotationsForImageRef.current?.(currentImageName, displayLayer || mainLayer || 'default');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayLayer]);
@@ -1561,13 +1588,97 @@ const ImageAnnotation = () => {
     setDisplayImage(displayPixel);
   };
 
+  /** Collection ids that may hold mirrored copies when `activeCollId` is a copy target. */
+  const getMirrorSourceCollectionIds = useCallback((targetCollId: string): string[] => {
+    if (!readCompanionDuplicateIds().includes(targetCollId)) return [];
+    const sources = new Set<string>();
+    const main = mainLayerRef.current;
+    if (main && main !== targetCollId) sources.add(main);
+    const preferred = pickPreferredRgbCollection(imageCollections);
+    if (preferred && String(preferred.id) !== targetCollId) sources.add(String(preferred.id));
+    const display = displayLayerRef.current;
+    if (display && display !== targetCollId) sources.add(display);
+    return [...sources];
+  }, [imageCollections]);
+
+  const readStoredAnnotationsForCollection = useCallback((
+    imageName: string,
+    collId: string,
+  ): { annotations: AnnotationShape[]; dims?: { width: number; height: number } } | null => {
+    if (!id) return null;
+    const storageKey = `annotations_${id}_${collId}_${imageName}`;
+    const cached = localStorage.getItem(storageKey);
+    if (!cached) return null;
+    try {
+      const parsed = JSON.parse(cached) as AnnotationShape[];
+      if (!parsed.length) return null;
+      let dims: { width: number; height: number } | undefined;
+      const dimsKey = `annotations_${id}_${collId}_${imageName}_dims`;
+      const savedDims = localStorage.getItem(dimsKey);
+      if (savedDims) {
+        try {
+          const d = JSON.parse(savedDims) as { width: number; height: number };
+          if (d.width > 0 && d.height > 0) dims = d;
+        } catch { /* ignore */ }
+      }
+      return { annotations: parsed, dims };
+    } catch {
+      return null;
+    }
+  }, [id]);
+
+  const loadStoredAnnotationsWithMirrorFallback = useCallback((
+    imageName: string,
+    activeCollId: string,
+  ): { annotations: AnnotationShape[]; dims?: { width: number; height: number }; fromCollId: string } | null => {
+    const direct = readStoredAnnotationsForCollection(imageName, activeCollId);
+    if (direct) return { ...direct, fromCollId: activeCollId };
+    for (const sourceId of getMirrorSourceCollectionIds(activeCollId)) {
+      const mirrored = readStoredAnnotationsForCollection(imageName, sourceId);
+      if (mirrored) return { ...mirrored, fromCollId: sourceId };
+    }
+    return null;
+  }, [readStoredAnnotationsForCollection, getMirrorSourceCollectionIds]);
+
+  const commitLoadedAnnotations = useCallback((
+    imageName: string,
+    activeCollId: string,
+    parsed: AnnotationShape[],
+    dims?: { width: number; height: number },
+    persistToCollId?: string,
+  ) => {
+    const mapped = applyClassColorsToAnnotations(parsed, classes);
+    annotationsRef.current = mapped;
+    setAnnotations(mapped);
+    if (dims && dims.width > 0 && dims.height > 0) {
+      cocoImageDimensionsRef.current[imageName] = dims;
+    }
+    const persistId = persistToCollId ?? activeCollId;
+    if (id && mapped.length > 0) {
+      const mayPersistMirror =
+        persistId === activeCollId
+        || readCompanionDuplicateIds().includes(persistId);
+      if (mayPersistMirror) {
+        safeLocalStorageSet(`annotations_${id}_${persistId}_${imageName}`, JSON.stringify(mapped));
+        if (dims && dims.width > 0 && dims.height > 0) {
+          safeLocalStorageSet(
+            `annotations_${id}_${persistId}_${imageName}_dims`,
+            JSON.stringify(dims),
+          );
+        }
+      }
+    }
+    return mapped;
+  }, [classes, id]);
+
   const loadAnnotationsForImage = async (imageName: string, forceCollectionId?: string) => {
     const activeCollId = forceCollectionId ?? displayLayer ?? mainLayer ?? 'default';
-    console.log('[loadAnnotations] image:', imageName, 'last:', lastLoadedImageRef.current);
+    const loadKey = `${activeCollId}::${imageName}`;
+    console.log('[loadAnnotations] image:', imageName, 'collection:', activeCollId, 'last:', lastLoadedAnnotationKeyRef.current);
 
-    if (imageName === lastLoadedImageRef.current && annotationsRef.current.length > 0) {
+    if (loadKey === lastLoadedAnnotationKeyRef.current && annotationsRef.current.length > 0) {
       setAnnotationsLoadingForImage(null);
-      logAnnotDebug('loadAnnotationsForImage SKIP (already have polygons for this image)', {
+      logAnnotDebug('loadAnnotationsForImage SKIP (already have annotations for this image+layer)', {
         imageName,
         activeCollId,
         count: annotationsRef.current.length,
@@ -1579,7 +1690,7 @@ const ImageAnnotation = () => {
     logAnnotDebug('loadAnnotationsForImage START', {
       imageName,
       activeCollId,
-      lastLoaded: lastLoadedImageRef.current,
+      lastLoaded: lastLoadedAnnotationKeyRef.current,
       annotRefLen: annotationsRef.current.length,
       annotationId: !!annotationId,
     });
@@ -1589,36 +1700,49 @@ const ImageAnnotation = () => {
     setAnnotationsLoadingForImage(imageName);
 
     try {
-      lastLoadedImageRef.current = imageName;
+      lastLoadedAnnotationKeyRef.current = loadKey;
 
       // --- PATH A: Editing an existing annotation file → load from DB API ---
       if (annotationId && api && id) {
         try {
-          const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
-          const cached = localStorage.getItem(storageKey);
-          if (cached) {
-            try {
-              const parsed = JSON.parse(cached) as AnnotationShape[];
-              if (parsed.length > 0) {
-                if (!stillFresh()) return;
-                const mappedCache = applyClassColorsToAnnotations(parsed, classes);
-                annotationsRef.current = mappedCache;
-                setAnnotations(mappedCache);
-                logAnnotDebug('loadAnnotationsForImage CACHE hit', { imageName, activeCollId, count: mappedCache.length });
-                const dimsKeyCache = `annotations_${id}_${activeCollId}_${imageName}_dims`;
-                const savedDimsCache = localStorage.getItem(dimsKeyCache);
-                if (savedDimsCache) {
-                  try {
-                    const dims = JSON.parse(savedDimsCache) as { width: number; height: number };
-                    if (dims.width > 0 && dims.height > 0) {
-                      cocoImageDimensionsRef.current[imageName] = { width: dims.width, height: dims.height };
-                    }
-                  } catch { /* ignore */ }
-                }
-                console.log(`[loadAnnotations] ${parsed.length} from localStorage cache`);
-                return;
-              }
-            } catch { /* fall through */ }
+          const stored = loadStoredAnnotationsWithMirrorFallback(imageName, activeCollId);
+          if (stored) {
+            if (!stillFresh()) return;
+            const mappedCache = commitLoadedAnnotations(
+              imageName,
+              activeCollId,
+              stored.annotations,
+              stored.dims,
+              stored.fromCollId !== activeCollId ? activeCollId : undefined,
+            );
+            logAnnotDebug('loadAnnotationsForImage CACHE hit', {
+              imageName,
+              activeCollId,
+              fromCollId: stored.fromCollId,
+              count: mappedCache.length,
+            });
+            console.log(`[loadAnnotations] ${mappedCache.length} from localStorage cache`);
+            return;
+          }
+
+          // Copy-target layer switch: keep live annotations already on canvas (from primary)
+          // instead of clearing while the per-layer API round-trip runs.
+          if (
+            readCompanionDuplicateIds().includes(activeCollId)
+            && annotationsRef.current.length > 0
+          ) {
+            if (!stillFresh()) return;
+            const dims = cocoImageDimensionsRef.current[imageName]
+              ?? (imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+                ? { width: imageRef.current.naturalWidth, height: imageRef.current.naturalHeight }
+                : undefined);
+            commitLoadedAnnotations(imageName, activeCollId, annotationsRef.current, dims);
+            logAnnotDebug('loadAnnotationsForImage KEEP in-memory mirror', {
+              imageName,
+              activeCollId,
+              count: annotationsRef.current.length,
+            });
+            return;
           }
 
           // Prevent prior image polygons from lingering while the API round-trip completes
@@ -1645,17 +1769,26 @@ const ImageAnnotation = () => {
             const imageAnnotations: AnnotationShape[] = [];
             for (const ann of apiAnns) {
               const seg = ann.segmentation;
-              if (!seg || seg.length < 6) continue;
               const points: Point[] = [];
-              for (let i = 0; i < seg.length; i += 2) {
-                const x = seg[i], y = seg[i + 1];
-                if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) continue;
-                points.push({ x: Math.max(0, Math.min(x, imageWidth - 1)), y: Math.max(0, Math.min(y, imageHeight - 1)) });
+              if (seg && seg.length >= 6) {
+                for (let i = 0; i < seg.length; i += 2) {
+                  const x = seg[i], y = seg[i + 1];
+                  if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) continue;
+                  points.push({ x: Math.max(0, Math.min(x, imageWidth - 1)), y: Math.max(0, Math.min(y, imageHeight - 1)) });
+                }
+              } else if (Array.isArray(ann.bbox) && ann.bbox.length >= 4) {
+                const rect = bboxToRectPoints(ann.bbox);
+                rect.forEach((p) => {
+                  points.push({
+                    x: Math.max(0, Math.min(p.x, imageWidth - 1)),
+                    y: Math.max(0, Math.min(p.y, imageHeight - 1)),
+                  });
+                });
               }
               if (points.length >= 3) {
                 imageAnnotations.push({
                   id: `annotation_${ann.id}`,
-                  type: 'polygon',
+                  type: seg && seg.length >= 6 ? 'polygon' : 'rectangle',
                   points,
                   label: ann.className,
                   color: ann.color || DEFAULT_COLORS[0],
@@ -1676,12 +1809,31 @@ const ImageAnnotation = () => {
             console.log(`[loadAnnotations] ${mappedFromApi.length} from API for ${imageName}`);
 
             if (mappedFromApi.length > 0) {
-              safeLocalStorageSet(storageKey, JSON.stringify(mappedFromApi));
+              safeLocalStorageSet(`annotations_${id}_${activeCollId}_${imageName}`, JSON.stringify(mappedFromApi));
               safeLocalStorageSet(
                 `annotations_${id}_${activeCollId}_${imageName}_dims`,
                 JSON.stringify({ width: imageWidth, height: imageHeight }),
               );
             }
+            return;
+          }
+
+          // API returned nothing for this layer — try mirrored primary storage before staying empty
+          const mirroredAfterApi = loadStoredAnnotationsWithMirrorFallback(imageName, activeCollId);
+          if (mirroredAfterApi) {
+            if (!stillFresh()) return;
+            commitLoadedAnnotations(
+              imageName,
+              activeCollId,
+              mirroredAfterApi.annotations,
+              mirroredAfterApi.dims,
+              mirroredAfterApi.fromCollId !== activeCollId ? activeCollId : undefined,
+            );
+            logAnnotDebug('loadAnnotationsForImage mirror fallback after empty API', {
+              imageName,
+              activeCollId,
+              fromCollId: mirroredAfterApi.fromCollId,
+            });
             return;
           }
         } catch (err) {
@@ -1691,26 +1843,23 @@ const ImageAnnotation = () => {
 
       // --- PATH B: New annotation session (no annotationId) → localStorage only ---
       try {
-        const storageKey = `annotations_${id}_${activeCollId}_${imageName}`;
-        const saved = localStorage.getItem(storageKey);
-        if (saved) {
-          const parsed = JSON.parse(saved) as AnnotationShape[];
-          if (parsed.length > 0) {
-            if (!stillFresh()) return;
-            const mappedLs = applyClassColorsToAnnotations(parsed, classes);
-            annotationsRef.current = mappedLs;
-            setAnnotations(mappedLs);
-            logAnnotDebug('loadAnnotationsForImage PATH B localStorage', { imageName, count: mappedLs.length });
-            const dimsKey = `annotations_${id}_${activeCollId}_${imageName}_dims`;
-            const savedDims = localStorage.getItem(dimsKey);
-            if (savedDims) {
-              try {
-                const dims = JSON.parse(savedDims);
-                if (dims.width > 0 && dims.height > 0) cocoImageDimensionsRef.current[imageName] = dims;
-              } catch { /* ignore */ }
-            }
-            return;
-          }
+        const stored = loadStoredAnnotationsWithMirrorFallback(imageName, activeCollId);
+        if (stored) {
+          if (!stillFresh()) return;
+          commitLoadedAnnotations(
+            imageName,
+            activeCollId,
+            stored.annotations,
+            stored.dims,
+            stored.fromCollId !== activeCollId ? activeCollId : undefined,
+          );
+          logAnnotDebug('loadAnnotationsForImage PATH B localStorage', {
+            imageName,
+            activeCollId,
+            fromCollId: stored.fromCollId,
+            count: stored.annotations.length,
+          });
+          return;
         }
         if (!stillFresh()) return;
         logAnnotDebug('loadAnnotationsForImage CLEAR (path B empty / no saved)', { imageName, activeCollId });
@@ -1755,7 +1904,7 @@ const ImageAnnotation = () => {
     const activeCollId =
       displayLayerRef.current || mainLayerRef.current || 'default';
     const targets = new Set<string>([activeCollId]);
-    for (const dupId of duplicateCollectionIdsRef.current) {
+    for (const dupId of readCompanionDuplicateIds()) {
       if (dupId && dupId !== activeCollId) targets.add(dupId);
     }
 
@@ -1769,7 +1918,32 @@ const ImageAnnotation = () => {
         safeLocalStorageSet(`annotations_${id}_${collId}_${imageName}_dims`, dimsPayload);
       }
     }
-  }, [id]);
+
+    // Copy-off layers must never retain mirrored data for this image.
+    for (const cid of readCopyOffCollectionIds()) {
+      if (targets.has(cid)) continue;
+      try {
+        localStorage.removeItem(`annotations_${id}_${cid}_${imageName}`);
+        localStorage.removeItem(`annotations_${id}_${cid}_${imageName}_dims`);
+      } catch { /* ignore */ }
+    }
+
+    // Drop any other non-target layer cache that still matches this payload (stale mirror).
+    for (const collection of imageCollections) {
+      const cid = String(collection.id);
+      if (targets.has(cid)) continue;
+      if (readCopyOffCollectionIds().has(cid)) continue;
+      if (readCompanionDuplicateIds().includes(cid)) continue;
+      const key = `annotations_${id}_${cid}_${imageName}`;
+      try {
+        const existing = localStorage.getItem(key);
+        if (existing && existing === payload) {
+          localStorage.removeItem(key);
+          localStorage.removeItem(`${key}_dims`);
+        }
+      } catch { /* ignore */ }
+    }
+  }, [id, imageCollections]);
 
   /** Must match the collection segment in saveAnnotationsToLocalStorage keys: annotations_${id}_${this}_${fileName} */
   const annotationStorageCollId = displayLayer || mainLayer || 'default';
@@ -2310,7 +2484,7 @@ const ImageAnnotation = () => {
 
     const prevFileId = lastOpenedAnnotationFileIdRef.current;
     if (prevFileId != null && prevFileId !== annotationFileId) {
-      lastLoadedImageRef.current = '';
+      lastLoadedAnnotationKeyRef.current = '';
       annotationsRef.current = [];
       setAnnotations([]);
       logAnnotDebug('loadFromAnnotationFile switched annotation file → cleared polygons', {
@@ -2529,6 +2703,25 @@ const ImageAnnotation = () => {
         throw new Error('Missing or invalid annotations in COCO data');
       }
 
+      const { hasMasks, hasBboxesOnly } = detectSegmentationModeCapabilities(cocoData);
+      if (hasMasks) {
+        setAnnotationMode('mask');
+        setModeLocked(true);
+        setBboxSwitchAllowed(false);
+        setModeLockReason('This annotation file contains masks and must stay in mask mode.');
+      } else if (hasBboxesOnly) {
+        setAnnotationMode('bbox');
+        setModeLocked(true);
+        setBboxSwitchAllowed(false);
+        setModeLockReason('BBox-only file: editing is locked to bounding box mode.');
+      } else {
+        // New/empty file: allow one-way switch to bbox mode.
+        setAnnotationMode('mask');
+        setModeLocked(false);
+        setBboxSwitchAllowed(true);
+        setModeLockReason(null);
+      }
+
       // If COCO has no categories (e.g. after rename/save race), load from backend so classes are not lost
       if (cocoData.categories.length === 0 && api && fileId) {
         try {
@@ -2552,7 +2745,7 @@ const ImageAnnotation = () => {
         }
       }
       
-      // Do not clear lastLoadedImageRef here: the debounced AnnotationLoader often finishes first
+      // Do not clear lastLoadedAnnotationKeyRef here: the debounced AnnotationLoader often finishes first
       // and sets lastLoaded + polygons; nulling this ref made the follow-up loadAnnotationsForImage
       // skip the early-return and run setAnnotations([]), so masks flashed then disappeared.
 
@@ -2712,6 +2905,18 @@ const ImageAnnotation = () => {
                   visible: true
                 });
               }
+            } else if (className && Array.isArray(annotation.bbox) && annotation.bbox.length >= 4) {
+              const points = bboxToRectPoints(annotation.bbox);
+              if (points.length >= 4) {
+                imageAnnotations.push({
+                  id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  type: 'rectangle',
+                  points,
+                  label: className,
+                  color: classColorMap[className] || DEFAULT_COLORS[0],
+                  visible: true
+                });
+              }
             }
           }
         });
@@ -2846,7 +3051,7 @@ const ImageAnnotation = () => {
   const attemptedLoadRef = useRef<string | null>(null);
   useEffect(() => {
     if (!annotationId || !currentImageName || isLoading) return;
-    if (annotationsRef.current.length > 0 && lastLoadedImageRef.current === currentImageName) return;
+    if (annotationsRef.current.length > 0 && lastLoadedAnnotationKeyRef.current === `${displayLayerRef.current || mainLayerRef.current || 'default'}::${currentImageName}`) return;
     if (attemptedLoadRef.current === currentImageName) return;
     attemptedLoadRef.current = currentImageName;
 
@@ -2854,7 +3059,7 @@ const ImageAnnotation = () => {
       logAnnotDebug('AnnotationLoader timeout → loadAnnotationsForImage', {
         currentImageName,
         annotRefLen: annotationsRef.current.length,
-        lastLoaded: lastLoadedImageRef.current,
+        lastLoaded: lastLoadedAnnotationKeyRef.current,
       });
       console.log('[AnnotationLoader] loading from API for:', currentImageName);
       loadAnnotationsForImageRef.current?.(currentImageName);
@@ -2952,11 +3157,7 @@ const ImageAnnotation = () => {
     // Convert click coords from display space to annotation storage space
     let qx = x, qy = y;
     const sa = annotScaleToAnnotRef.current;
-    if (calibHDisplayToAnnotRef.current) {
-      const pt = applyHomography(calibHDisplayToAnnotRef.current, x, y);
-      qx = pt.x;
-      qy = pt.y;
-    } else if (sa.x !== 1 || sa.y !== 1) {
+    if (sa.x !== 1 || sa.y !== 1) {
       // Annotation layer is set — use its scale factor
       qx = x * sa.x;
       qy = y * sa.y;
@@ -2977,6 +3178,11 @@ const ImageAnnotation = () => {
         if (isPointInPolygon({ x: qx, y: qy }, annotation.points)) {
           return annotation;
         }
+      } else if (annotation.type === 'rectangle' && annotation.points.length >= 2) {
+        const [x, y, w, h] = pointsToBbox(annotation.points);
+        if (qx >= x && qx <= x + w && qy >= y && qy <= y + h) {
+          return annotation;
+        }
       }
     }
     return null;
@@ -2989,14 +3195,12 @@ const ImageAnnotation = () => {
     const classObj = classes.find(c => c.id === selectedClass);
     if (!classObj) return;
 
-    // Convert display-space points to annotation-storage space.
-    // Prefer homography when calibration is active, fall back to uniform scale.
+    // Convert display-space points to annotation-storage space using the
+    // annotation-layer scale factor (identity when annotating in place).
     const sa = annotScaleToAnnotRef.current;
-    const finalPoints = calibHDisplayToAnnotRef.current
-      ? points.map(p => applyHomography(calibHDisplayToAnnotRef.current!, p.x, p.y))
-      : (sa.x !== 1 || sa.y !== 1)
-        ? points.map(p => ({ x: p.x * sa.x, y: p.y * sa.y }))
-        : points;
+    const finalPoints = (sa.x !== 1 || sa.y !== 1)
+      ? points.map(p => ({ x: p.x * sa.x, y: p.y * sa.y }))
+      : points;
 
     const newAnnotation: AnnotationShape = {
       id: `annotation_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -3127,6 +3331,17 @@ const ImageAnnotation = () => {
       // the stroke will be committed as a polygon on mouse up.
       setIsDrawing(true);
       setCurrentPath([imageCoords]);
+    } else if (activeTool === 'rectangle') {
+      if (!selectedClass) {
+        toast({
+          title: 'No class selected',
+          description: 'Please select a class before drawing annotations',
+          variant: 'destructive'
+        });
+        return;
+      }
+      setIsDrawing(true);
+      setCurrentPath([imageCoords, imageCoords]);
     }
   }, [activeTool, selectedClass, classes.length, isDrawing, screenToImageCoords, findAnnotationAtPoint, startAutoSegment, toast, isSamModelLoading, isSamProcessing]);
 
@@ -3148,6 +3363,14 @@ const ImageAnnotation = () => {
         const dy = imageCoords.y - last.y;
         if (dx * dx + dy * dy < 4) return prev; // ~2px min spacing in image coords
         return [...prev, imageCoords];
+      });
+      return;
+    }
+
+    if (isDrawing && activeTool === 'rectangle') {
+      setCurrentPath((prev) => {
+        if (prev.length === 0) return [imageCoords, imageCoords];
+        return [prev[0], imageCoords];
       });
       return;
     }
@@ -3176,19 +3399,8 @@ const ImageAnnotation = () => {
       let deltaX = imageCoords.x - moveOffset.x;
       let deltaY = imageCoords.y - moveOffset.y;
       // Scale delta to annotation storage space.
-      // When calibration is active, approximate using the local scale at image centre.
       const sa = annotScaleToAnnotRef.current;
-      if (calibHDisplayToAnnotRef.current) {
-        const H = calibHDisplayToAnnotRef.current;
-        const nw = imageRef.current?.naturalWidth ?? 500;
-        const nh = imageRef.current?.naturalHeight ?? 400;
-        const cx = nw / 2, cy = nh / 2;
-        const p1 = applyHomography(H, cx, cy);
-        const p2 = applyHomography(H, cx + 1, cy);
-        const p3 = applyHomography(H, cx, cy + 1);
-        deltaX *= (p2.x - p1.x);
-        deltaY *= (p3.y - p1.y);
-      } else if (sa.x !== 1 || sa.y !== 1) {
+      if (sa.x !== 1 || sa.y !== 1) {
         // Annotation layer set — use its scale factor
         deltaX *= sa.x;
         deltaY *= sa.y;
@@ -3266,6 +3478,18 @@ const ImageAnnotation = () => {
           description: 'Drag to draw a longer shape (need at least 3 points).',
           variant: 'destructive',
         });
+      }
+      setIsDrawing(false);
+      setCurrentPath([]);
+      return;
+    }
+
+    // Finalize rectangle into a bbox annotation.
+    if (isDrawing && activeTool === 'rectangle') {
+      if (currentPath.length >= 2) {
+        const [p1, p2] = currentPath;
+        const rectPoints = bboxToRectPoints(pointsToBbox([p1, p2]));
+        createAnnotation('rectangle', rectPoints);
       }
       setIsDrawing(false);
       setCurrentPath([]);
@@ -3362,6 +3586,32 @@ const ImageAnnotation = () => {
     return true;
   }, [classes.length]);
 
+  const enableBboxModeOnce = useCallback(() => {
+    if (!bboxSwitchAllowed || modeLocked) return;
+    const hasMaskAnnotations = annotations.some(
+      (a) => a.type === 'polygon' && a.points && a.points.length >= 3,
+    );
+    if (hasMaskAnnotations) {
+      toast({
+        title: 'Cannot switch to bbox mode',
+        description: 'Mask annotations already exist in this session/file.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setAnnotationMode('bbox');
+    setModeLocked(true);
+    setBboxSwitchAllowed(false);
+    setModeLockReason('BBox mode selected for this session. Mask tools are disabled.');
+    setActiveTool('rectangle');
+    setAutoSegmentPreview(null);
+    setSamPoints([]);
+    toast({
+      title: 'Bounding box mode enabled',
+      description: 'Mode is now locked. Only bbox annotations will be saved.',
+    });
+  }, [bboxSwitchAllowed, modeLocked, annotations, toast]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
     const isInputFocused = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
@@ -3386,16 +3636,20 @@ const ImageAnnotation = () => {
       if (e.key === 'v' || e.key === 'V') {
         setActiveTool('select');
       } else if (e.key === 'p' || e.key === 'P') {
-        if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('polygon');
+        if (!isDrawing && ensureClassForDrawingTools()) {
+          setActiveTool(annotationMode === 'bbox' ? 'rectangle' : 'polygon');
+        }
       } else if (e.key === 'b' || e.key === 'B') {
-        if (!isDrawing && ensureClassForDrawingTools()) setActiveTool('pencil');
+        if (!isDrawing && ensureClassForDrawingTools()) {
+          setActiveTool(annotationMode === 'bbox' ? 'rectangle' : 'pencil');
+        }
       } else if (e.key === 'g' || e.key === 'G') {
         if (!isSamInteractionBlocked && ensureClassForDrawingTools()) setActiveTool('auto-segment');
       } else if ((e.key === 'r' || e.key === 'R') && !isDrawing) {
         resetZoomAndPan();
       }
     }
-  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment, ensureClassForDrawingTools, isSamInteractionBlocked]);
+  }, [isDrawing, activeTool, currentPath, createAnnotation, toast, resetZoomAndPan, autoSegmentPreview, acceptAutoSegment, ensureClassForDrawingTools, isSamInteractionBlocked, annotationMode]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -3458,18 +3712,13 @@ const ImageAnnotation = () => {
       }
     }
 
-    // Annotation coordinate transform: when calibration is active, annotation points are in
-    // the annotation-storage collection space and must be mapped back to display image space
-    // via the inverse homography before being projected to screen coordinates.
-    // Without calibration, fall back to uniform scale or COCO dimension remapping.
+    // Annotation coordinate transform: map annotation-storage pixels to display
+    // image pixels via uniform scale or COCO dimension remapping.
     const naturalW = imageRef.current?.naturalWidth ?? 0;
     const naturalH = imageRef.current?.naturalHeight ?? 0;
 
     // annot-storage pixel → display image pixel
     const annotToDisplayPx = (px: number, py: number): { x: number; y: number } => {
-      if (calibHAnnotToDisplayRef.current) {
-        return applyHomography(calibHAnnotToDisplayRef.current, px, py);
-      }
       if (annotationLayerId && naturalW > 0 && naturalH > 0) {
         const annotColl = imageCollections.find(c => String(c.id) === annotationLayerId);
         const annotImg = annotColl?.images.find(i => i.fileName === currentImage?.fileName);
@@ -3525,23 +3774,36 @@ const ImageAnnotation = () => {
       ctx.fillStyle = drawColor + '30'; // Semi-transparent fill
       ctx.lineWidth = 2;
 
-      if (annotation.type === 'polygon' && annotation.points.length > 2) {
+      if (annotation.type === 'rectangle' && annotation.points.length >= 2) {
+        const [bx, by, bw, bh] = pointsToBbox(annotation.points);
+        const topLeft = annotationToScreen(bx, by);
+        const bottomRight = annotationToScreen(bx + bw, by + bh);
+        const drawW = bottomRight.x - topLeft.x;
+        const drawH = bottomRight.y - topLeft.y;
+        ctx.fillRect(topLeft.x, topLeft.y, drawW, drawH);
+        ctx.strokeRect(topLeft.x, topLeft.y, drawW, drawH);
+        drawnVisibleAnnotations += 1;
+
+        ctx.fillStyle = drawColor;
+        ctx.font = '12px Arial';
+        const centerScreen = annotationToScreen(bx + bw / 2, by + bh / 2);
+        ctx.fillText(annotation.label, centerScreen.x, centerScreen.y);
+      } else if (annotation.type === 'polygon' && annotation.points.length > 2) {
         ctx.beginPath();
-        
+
         const firstPoint = annotationToScreen(annotation.points[0].x, annotation.points[0].y);
         ctx.moveTo(firstPoint.x, firstPoint.y);
-        
+
         for (let i = 1; i < annotation.points.length; i++) {
           const point = annotationToScreen(annotation.points[i].x, annotation.points[i].y);
           ctx.lineTo(point.x, point.y);
         }
-        
+
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
         drawnVisibleAnnotations += 1;
-        
-        // Draw label
+
         ctx.fillStyle = drawColor;
         ctx.font = '12px Arial';
         const centerX = annotation.points.reduce((sum, p) => sum + p.x, 0) / annotation.points.length;
@@ -3555,7 +3817,12 @@ const ImageAnnotation = () => {
         ctx.strokeStyle = '#FFD700';
         ctx.lineWidth = 3;
         
-        if (annotation.type === 'polygon') {
+        if (annotation.type === 'rectangle' && annotation.points.length >= 2) {
+          const [bx, by, bw, bh] = pointsToBbox(annotation.points);
+          const topLeft = annotationToScreen(bx, by);
+          const bottomRight = annotationToScreen(bx + bw, by + bh);
+          ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+        } else if (annotation.type === 'polygon') {
           ctx.beginPath();
           const firstPoint = annotationToScreen(annotation.points[0].x, annotation.points[0].y);
           ctx.moveTo(firstPoint.x, firstPoint.y);
@@ -3621,6 +3888,15 @@ const ImageAnnotation = () => {
           ctx.fill();
         }
         ctx.stroke();
+      } else if (activeTool === 'rectangle' && currentPath.length >= 2) {
+        const [a, b] = currentPath;
+        const [x, y, w, h] = pointsToBbox([a, b]);
+        const topLeft = imageToScreenCoords(x, y);
+        const bottomRight = imageToScreenCoords(x + w, y + h);
+        const drawW = bottomRight.x - topLeft.x;
+        const drawH = bottomRight.y - topLeft.y;
+        ctx.fillRect(topLeft.x, topLeft.y, drawW, drawH);
+        ctx.strokeRect(topLeft.x, topLeft.y, drawW, drawH);
       }
     }
 
@@ -4103,9 +4379,9 @@ const ImageAnnotation = () => {
   ]);
 
   // When annotation loading finishes, force a few redraw attempts.
-  // The loading spinner only reflects data fetch; canvas/image readiness and
-  // calibration refs may settle slightly later. Without this, polygons can stay
-  // invisible until some unrelated interaction (draw/toggle class) triggers redraw.
+  // The loading spinner only reflects data fetch; canvas/image readiness may
+  // settle slightly later. Without this, polygons can stay invisible until some
+  // unrelated interaction (draw/toggle class) triggers redraw.
   useEffect(() => {
     if (!currentImageName) return;
     if (annotationsLoadingForImage !== null) return;
@@ -4124,11 +4400,10 @@ const ImageAnnotation = () => {
     currentImageName,
     displayLayer,
     annotationLayerId,
-    calibrationIsActive,
     scheduleRedraw,
   ]);
 
-  // Calibration/homography refs are stored in useRef and may update after the
+  // Annotation-layer scale refs are stored in useRef and may update after the
   // first paint for an image/layer. Trigger redraws when these related states
   // settle so transformed polygons are drawn without requiring user interaction.
   useEffect(() => {
@@ -4139,8 +4414,6 @@ const ImageAnnotation = () => {
     const t = window.setTimeout(() => scheduleRedraw(12), 120);
     return () => window.clearTimeout(t);
   }, [
-    calibrationIsActive,
-    calibrationEnabled,
     annotationLayerId,
     displayLayer,
     currentImageName,
@@ -4284,24 +4557,19 @@ const ImageAnnotation = () => {
         annotations: annotations.map((ann, index) => {
           const categoryId = classes.findIndex(c => c.name === ann.label) + 1;
           
-          if (ann.type === 'polygon') {
+          if (ann.type === 'polygon' || ann.type === 'rectangle') {
             const pointsNatural = ann.points.map(toNatural);
-            const segmentation = pointsNatural.flatMap(p => [p.x, p.y]);
-            const xs = pointsNatural.map(p => p.x);
-            const ys = pointsNatural.map(p => p.y);
-            const minX = Math.min(...xs);
-            const minY = Math.min(...ys);
-            const maxX = Math.max(...xs);
-            const maxY = Math.max(...ys);
-            const polygonArea = calculatePolygonArea(pointsNatural);
-            
+            const [minX, minY, width, height] = pointsToBbox(pointsNatural);
+            const segmentation =
+              ann.type === 'polygon' ? [pointsNatural.flatMap((p) => [p.x, p.y])] : [];
+            const area = ann.type === 'polygon' ? calculatePolygonArea(pointsNatural) : width * height;
             return {
               id: index + 1,
               image_id: 1,
               category_id: categoryId,
-              segmentation: [segmentation],
-              area: polygonArea,
-              bbox: [minX, minY, maxX - minX, maxY - minY],
+              segmentation,
+              area,
+              bbox: [minX, minY, width, height],
               iscrowd: 0
             };
           }
@@ -4441,26 +4709,18 @@ const ImageAnnotation = () => {
         imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
 
         parsed.forEach((ann) => {
-          if (ann.type === 'polygon') {
-            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-            const xs = ann.points.map(p => p.x);
-            const ys = ann.points.map(p => p.y);
-            const minX = Math.min(...xs);
-            const minY = Math.min(...ys);
-            const maxX = Math.max(...xs);
-            const maxY = Math.max(...ys);
+          if (ann.type === 'polygon' || ann.type === 'rectangle') {
+            const [minX, minY, width, height] = pointsToBbox(ann.points);
             const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
-
-            // Calculate actual polygon area using the same method as altitude script
-            const polygonArea = calculatePolygonArea(ann.points);
-
+            const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
+            const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
             annotationsArr.push({
               id: annId++,
               image_id: imageId,
               category_id: categoryId,
-              segmentation: [segmentation],
-              area: polygonArea,
-              bbox: [minX, minY, maxX - minX, maxY - minY],
+              segmentation,
+              area,
+              bbox: [minX, minY, width, height],
               iscrowd: 0
             });
           }
@@ -4611,24 +4871,18 @@ const ImageAnnotation = () => {
         }
 
         parsed.forEach((ann) => {
-          if (ann.type === 'polygon') {
-            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-            const xs = ann.points.map(p => p.x);
-            const ys = ann.points.map(p => p.y);
-            const minX = Math.min(...xs);
-            const minY = Math.min(...ys);
-            const maxX = Math.max(...xs);
-            const maxY = Math.max(...ys);
+          if (ann.type === 'polygon' || ann.type === 'rectangle') {
+            const [minX, minY, width, height] = pointsToBbox(ann.points);
             const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
-            const polygonArea = calculatePolygonArea(ann.points);
-
+            const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
+            const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
             annotationsArr.push({
               id: annId++,
               image_id: imageId,
               category_id: categoryId,
-              segmentation: [segmentation],
-              area: polygonArea,
-              bbox: [minX, minY, maxX - minX, maxY - minY],
+              segmentation,
+              area,
+              bbox: [minX, minY, width, height],
               iscrowd: 0
             });
           }
@@ -4763,21 +5017,16 @@ const ImageAnnotation = () => {
         }
 
         const annotationsData = parsed
-          .filter((ann): ann is AnnotationShape & { type: 'polygon'; points: Point[] } => ann.type === 'polygon' && !!ann.points?.length)
+          .filter((ann) => (ann.type === 'polygon' || ann.type === 'rectangle') && !!ann.points?.length)
           .map((ann) => {
-            const segmentation = ann.points.flatMap((p: Point) => [p.x, p.y]);
-            const xs = ann.points.map((p: Point) => p.x);
-            const ys = ann.points.map((p: Point) => p.y);
-            const minX = Math.min(...xs);
-            const minY = Math.min(...ys);
-            const maxX = Math.max(...xs);
-            const maxY = Math.max(...ys);
-            const polygonArea = calculatePolygonArea(ann.points);
+            const [minX, minY, width, height] = pointsToBbox(ann.points);
+            const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p: Point) => [p.x, p.y])] : [];
+            const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
             return {
               category_name: ann.label,
-              segmentation: [segmentation],
-              bbox: [minX, minY, maxX - minX, maxY - minY],
-              area: polygonArea
+              segmentation,
+              bbox: [minX, minY, width, height],
+              area
             };
           });
 
@@ -4853,25 +5102,19 @@ const ImageAnnotation = () => {
       // Convert annotations to COCO format for this image
       const annotationsData = annotationsToSave.map((ann, idx) => {
 
-        if (ann.type === 'polygon') {
-          const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-          const xs = ann.points.map(p => p.x);
-          const ys = ann.points.map(p => p.y);
-          const minX = Math.min(...xs);
-          const minY = Math.min(...ys);
-          const maxX = Math.max(...xs);
-          const maxY = Math.max(...ys);
+        if (ann.type === 'polygon' || ann.type === 'rectangle') {
+          const [minX, minY, width, height] = pointsToBbox(ann.points);
           const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
-          const polygonArea = calculatePolygonArea(ann.points);
-
+          const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
+          const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
           return {
             id: idx + 1,
             image_id: 1,
             category_id: categoryId,
             category_name: ann.label,
-            segmentation: [segmentation],
-            bbox: [minX, minY, maxX - minX, maxY - minY],
-            area: polygonArea,
+            segmentation,
+            bbox: [minX, minY, width, height],
+            area,
             iscrowd: 0
           };
         }
@@ -4879,7 +5122,9 @@ const ImageAnnotation = () => {
       }).filter(Boolean);
 
       // Send to backend using fetch with PATCH method
-      const url = `${api ? 'http://localhost:9999' : ''}/datasets/${id}/annotations/${annotationId}/image/${encodeURIComponent(currentImageName)}`;
+      const activeCollId = getActiveCollectionId();
+      const numericCollectionId = Number(activeCollId);
+      const url = `${API_CONFIG.baseUrl}/datasets/${id}/annotations/${annotationId}/image/${encodeURIComponent(currentImageName)}`;
       const response = await fetch(url, {
         method: 'PATCH',
         headers: {
@@ -4889,7 +5134,9 @@ const ImageAnnotation = () => {
           annotations: annotationsData,
           image_width: imageWidth,
           image_height: imageHeight,
-          collection_id: getActiveCollectionId(),
+          ...(Number.isFinite(numericCollectionId)
+            ? { collection_id: numericCollectionId }
+            : {}),
         })
       });
 
@@ -4897,6 +5144,17 @@ const ImageAnnotation = () => {
 
       if (response.ok && data.success) {
         console.log('Image annotations saved:', data);
+
+        const saveDims =
+          imageWidth > 0 && imageHeight > 0
+            ? { width: imageWidth, height: imageHeight }
+            : imageRef.current?.naturalWidth && imageRef.current?.naturalHeight
+              ? {
+                  width: imageRef.current.naturalWidth,
+                  height: imageRef.current.naturalHeight,
+                }
+              : undefined;
+        saveAnnotationsToLocalStorage(currentImageName, annotationsToSave, saveDims);
         
         // Update sessionStorage COCO data to reflect the saved changes
         try {
@@ -4937,25 +5195,19 @@ const ImageAnnotation = () => {
                 // Add new annotations with proper COCO format
                 let nextAnnId = Math.max(0, ...cocoData.annotations.map((a: any) => a.id || 0)) + 1;
                 annotationsToSave.forEach((ann) => {
-                  if (ann.type === 'polygon') {
-                    const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-                    const xs = ann.points.map(p => p.x);
-                    const ys = ann.points.map(p => p.y);
-                    const minX = Math.min(...xs);
-                    const minY = Math.min(...ys);
-                    const maxX = Math.max(...xs);
-                    const maxY = Math.max(...ys);
+                  if (ann.type === 'polygon' || ann.type === 'rectangle') {
+                    const [minX, minY, width, height] = pointsToBbox(ann.points);
                     // Use category ID from the COCO categories, not from frontend index
                     const categoryId = categoryNameToId[ann.label] || 1;
-                    const polygonArea = calculatePolygonArea(ann.points);
-                    
+                    const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
+                    const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
                     cocoData.annotations.push({
                       id: nextAnnId++,
                       image_id: imageEntry.id,
                       category_id: categoryId,
-                      segmentation: [segmentation],
-                      bbox: [minX, minY, maxX - minX, maxY - minY],
-                      area: polygonArea,
+                      segmentation,
+                      bbox: [minX, minY, width, height],
+                      area,
                       iscrowd: 0
                     });
                   }
@@ -4985,7 +5237,7 @@ const ImageAnnotation = () => {
       console.error('Error saving image annotations:', error);
       return false;
     }
-  }, [annotationId, api, currentImageName, annotations, displayImage, currentImage, classes, id, getActiveCollectionId]);
+  }, [annotationId, api, currentImageName, annotations, displayImage, currentImage, classes, id, getActiveCollectionId, saveAnnotationsToLocalStorage]);
 
   // Auto-save function with debouncing
   const autoSaveToDatabase = useCallback(async () => {
@@ -5067,26 +5319,18 @@ const ImageAnnotation = () => {
         imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
 
         parsed.forEach((ann) => {
-          if (ann.type === 'polygon') {
-            const segmentation = ann.points.flatMap(p => [p.x, p.y]);
-            const xs = ann.points.map(p => p.x);
-            const ys = ann.points.map(p => p.y);
-            const minX = Math.min(...xs);
-            const minY = Math.min(...ys);
-            const maxX = Math.max(...xs);
-            const maxY = Math.max(...ys);
+          if (ann.type === 'polygon' || ann.type === 'rectangle') {
+            const [minX, minY, width, height] = pointsToBbox(ann.points);
             const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
-
-            // Calculate actual polygon area using the same method as altitude script
-            const polygonArea = calculatePolygonArea(ann.points);
-
+            const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
+            const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
             annotationsArr.push({
               id: annId++,
               image_id: imageId,
               category_id: categoryId,
-              segmentation: [segmentation],
-              area: polygonArea,
-              bbox: [minX, minY, maxX - minX, maxY - minY],
+              segmentation,
+              area,
+              bbox: [minX, minY, width, height],
               iscrowd: 0
             });
           }
@@ -5371,7 +5615,7 @@ const ImageAnnotation = () => {
           // so a user-initiated "delete all" propagates the same way saves do.
           const activeCollId = displayLayerRef.current || mainLayerRef.current || 'default';
           const targets = new Set<string>([activeCollId]);
-          for (const dupId of duplicateCollectionIdsRef.current) {
+          for (const dupId of readCompanionDuplicateIds()) {
             if (dupId && dupId !== activeCollId) targets.add(dupId);
           }
           for (const cid of targets) {
@@ -5700,7 +5944,7 @@ const ImageAnnotation = () => {
     layerSwitchCounterRef.current += 1;
     preserveZoomRef.current = false;
     preventZoomResetRef.current = false;
-    lastLoadedImageRef.current = ''; // force annotation reload for new collection
+    lastLoadedAnnotationKeyRef.current = ''; // force annotation reload for new collection
     setDisplayLayer(layerId);
     // Display bitmap + noCorrespondingImage are synced in the effect that calls updateCurrentImages when displayLayer changes
     // Force a refit after layer switch to ensure proper image sizing
@@ -6003,7 +6247,7 @@ const ImageAnnotation = () => {
                   <div className="mb-1"><strong>Zoom</strong>: Hold <kbd className="px-1 bg-muted rounded">Ctrl</kbd> (or <kbd className="px-1 bg-muted rounded">⌘</kbd>) + scroll</div>
                   <div className="mb-1"><strong>Pan</strong>: Middle-button drag, hold <kbd className="px-1 bg-muted rounded">Space</kbd> + drag, <strong>Ctrl</strong> + left/right drag, or <strong>Right + Left</strong> click drag</div>
                   <div className="mb-1"><strong>Reset View</strong>: Press <kbd className="px-1 bg-muted rounded">R</kbd> or click the reset button</div>
-                  <div className="mb-1"><strong>Select</strong>: Press <kbd className="px-1 bg-muted rounded">V</kbd> | <strong>Polygon</strong>: <kbd className="px-1 bg-muted rounded">P</kbd> | <strong>SAM</strong>: <kbd className="px-1 bg-muted rounded">A</kbd></div>
+                  <div className="mb-1"><strong>Select</strong>: Press <kbd className="px-1 bg-muted rounded">V</kbd> | <strong>Draw</strong>: <kbd className="px-1 bg-muted rounded">P/B</kbd> | <strong>SAM</strong>: <kbd className="px-1 bg-muted rounded">G</kbd></div>
                   <div className="text-xs text-muted-foreground/70 mt-1">Tip: scroll over area you want to zoom into</div>
                 </CardContent>
               </Card>
@@ -6033,6 +6277,26 @@ const ImageAnnotation = () => {
           {/* Tools */}
           <div className="p-4 border-b border-border">
             <h3 className="text-sm font-medium mb-3">Tools</h3>
+            <div className="mb-3 space-y-2">
+              <div className="flex items-center justify-between text-xs rounded-md border border-border bg-muted/30 px-2 py-1.5">
+                <span className="text-muted-foreground">Mode</span>
+                <span className="font-medium">{annotationMode === 'bbox' ? 'Bounding box' : 'Mask'}</span>
+              </div>
+              {annotationMode === 'mask' && bboxSwitchAllowed && !modeLocked && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={enableBboxModeOnce}
+                  title="Switch once to bbox-only mode for this file/session"
+                >
+                  Switch to bbox mode (one-way)
+                </Button>
+              )}
+              {modeLockReason && (
+                <div className="text-[11px] text-muted-foreground">{modeLockReason}</div>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <Button
                 variant={activeTool === 'select' ? 'default' : 'outline'}
@@ -6044,32 +6308,50 @@ const ImageAnnotation = () => {
                 <span className="flex-1 text-left">Select</span>
                 <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">V</kbd>
               </Button>
-              <Button
-                variant={activeTool === 'polygon' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  if (!ensureClassForDrawingTools()) return;
-                  setActiveTool('polygon');
-                }}
-                title="Polygon — click to add points (P)"
-              >
-                <Square className="w-4 h-4 mr-1" />
-                <span className="flex-1 text-left">Polygon</span>
-                <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">P</kbd>
-              </Button>
-              <Button
-                variant={activeTool === 'pencil' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  if (!ensureClassForDrawingTools()) return;
-                  setActiveTool('pencil');
-                }}
-                title="Free-hand draw — click and drag to outline a shape (B)"
-              >
-                <Pencil className="w-4 h-4 mr-1" />
-                <span className="flex-1 text-left">Pencil</span>
-                <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">B</kbd>
-              </Button>
+              {annotationMode === 'bbox' ? (
+                <Button
+                  variant={activeTool === 'rectangle' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    if (!ensureClassForDrawingTools()) return;
+                    setActiveTool('rectangle');
+                  }}
+                  title="Bounding box drawing (P/B)"
+                >
+                  <Square className="w-4 h-4 mr-1" />
+                  <span className="flex-1 text-left">Bounding box</span>
+                  <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">P/B</kbd>
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant={activeTool === 'polygon' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      if (!ensureClassForDrawingTools()) return;
+                      setActiveTool('polygon');
+                    }}
+                    title="Polygon — click to add points (P)"
+                  >
+                    <Square className="w-4 h-4 mr-1" />
+                    <span className="flex-1 text-left">Polygon</span>
+                    <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">P</kbd>
+                  </Button>
+                  <Button
+                    variant={activeTool === 'pencil' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      if (!ensureClassForDrawingTools()) return;
+                      setActiveTool('pencil');
+                    }}
+                    title="Free-hand draw — click and drag to outline a shape (B)"
+                  >
+                    <Pencil className="w-4 h-4 mr-1" />
+                    <span className="flex-1 text-left">Pencil</span>
+                    <kbd className="ml-1 px-1 py-0 text-[10px] font-mono rounded bg-muted text-muted-foreground border border-border">B</kbd>
+                  </Button>
+                </>
+              )}
               <Button
                 variant={activeTool === 'auto-segment' ? 'default' : 'outline'}
                 size="sm"
@@ -6084,6 +6366,8 @@ const ImageAnnotation = () => {
                     ? 'Waiting for SAM model...'
                     : isSamProcessing
                     ? 'Processing segmentation...'
+                    : annotationMode === 'bbox'
+                    ? 'AI Segment — masks are converted to bounding boxes (G)'
                     : 'AI Segment — click on image to segment (G)'
                 }
               >
@@ -6586,7 +6870,7 @@ const ImageAnnotation = () => {
                 <img
                   key={`layer-${layerSwitchCounterRef.current}-${displayLayer}`}
                   ref={imageRef}
-                  src={bitmap.url || ''}
+                  src={resolveBackendMediaUrl(bitmap.url) || bitmap.url || ''}
                   alt={bitmap.fileName || 'Current image'}
                   className="absolute opacity-0"
                   onLoad={handleImageLoad}
@@ -6622,7 +6906,7 @@ const ImageAnnotation = () => {
                     </div>
                   </div>
                 )}
-                {isSamInteractionBlocked && activeTool === 'auto-segment' && (
+                {showSamBlockingOverlay && (
                   <div
                     className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 backdrop-blur-[1px]"
                     onMouseDown={(e) => {
@@ -6633,12 +6917,12 @@ const ImageAnnotation = () => {
                     <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-card/95 px-6 py-5 shadow-lg max-w-xs text-center">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
                       <p className="text-sm font-medium">
-                        {isSamModelLoading ? 'Loading SAM model…' : 'Running segmentation…'}
+                        {isSamProcessing ? 'Running segmentation…' : 'Loading SAM model…'}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {isSamModelLoading
-                          ? 'Waiting for the segmentation service to be ready.'
-                          : 'Please wait while the mask is generated.'}
+                        {isSamProcessing
+                          ? 'Please wait while the mask is generated.'
+                          : 'First-time model load can take a minute.'}
                       </p>
                       <Button size="sm" variant="outline" onClick={cancelSamInteraction}>
                         Cancel
@@ -6692,7 +6976,12 @@ const ImageAnnotation = () => {
                   {activeTool === 'auto-segment' && (
                     <>
                       <Crosshair className="h-3.5 w-3.5 text-primary" />
-                      <span><strong>SAM</strong> — click positive point · <kbd className="px-1 bg-muted rounded">Shift</kbd>+click negative · <kbd className="px-1 bg-muted rounded">Enter</kbd> accept</span>
+                      <span>
+                        <strong>SAM</strong> — click positive point · <kbd className="px-1 bg-muted rounded">Shift</kbd>+click negative · <kbd className="px-1 bg-muted rounded">Enter</kbd> accept
+                        {isSamModelLoading && !showSamModelWaitOverlay && (
+                          <span className="ml-1 text-muted-foreground">(checking service…)</span>
+                        )}
+                      </span>
                     </>
                   )}
                   {activeTool === 'rectangle' && (
@@ -6775,7 +7064,7 @@ const ImageAnnotation = () => {
                         <div>
                           <div className="text-sm font-medium">Then annotate</div>
                           <div className="text-xs text-muted-foreground">
-                            Pick a tool — Polygon, Pencil, or AI Segment — and draw on the image.
+                            Pick a tool — {annotationMode === 'bbox' ? 'Bounding box or AI Segment' : 'Polygon, Pencil, or AI Segment'} — and draw on the image.
                           </div>
                         </div>
                       </li>
@@ -7005,15 +7294,13 @@ const ImageAnnotation = () => {
                     imageName={currentImageName}
                     datasetId={id ?? null}
                     annotations={annotations}
-                    calibrations={calibrations}
                     primaryCocoDims={currentImageName ? (getAnnotReferenceDimensions(currentImageName) ?? null) : null}
-                    projectId={projectId ?? null}
                     onClose={() => setCompanionPanelOpen(false)}
                     onPrev={() => goToImage(currentImageIndex - 1)}
                     onNext={() => goToImage(currentImageIndex + 1)}
                     canPrev={currentImageIndex > 0}
                     canNext={currentImageIndex < (currentLayerImageNames.length > 0 ? currentLayerImageNames.length : allImageNames.length) - 1}
-                    onDuplicateChange={setDuplicateCollectionIds}
+                    onDuplicateChange={handleDuplicateCollectionIdsChange}
                   />
                 </ResizablePanel>
               </>
@@ -7131,21 +7418,6 @@ const ImageAnnotation = () => {
                         Image "{currentImageName}" not available in {imageCollections.find(c => String(c.id) === String(displayLayer))?.name || 'this layer'}
                       </span>
                     )}
-
-                    {calibrations.length > 0 && displayLayer && (
-                      <button
-                        onClick={() => setCalibrationEnabled(prev => !prev)}
-                        className={`inline-flex items-center gap-1 text-xs font-medium rounded-md px-2 py-0.5 whitespace-nowrap border transition-colors ${
-                          calibrationIsActive && calibrationEnabled
-                            ? 'text-primary bg-primary/10 border-primary/30 hover:bg-primary/20'
-                            : 'text-muted-foreground bg-muted border-border hover:bg-muted/80'
-                        }`}
-                        title={calibrationEnabled ? 'Calibration is ON — click to disable coordinate mapping' : 'Calibration is OFF — click to enable coordinate mapping'}
-                      >
-                        <Crosshair className="h-3 w-3" />
-                        {calibrationEnabled ? 'Calibration ON' : 'Calibration OFF'}
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
@@ -7164,6 +7436,7 @@ const ImageAnnotation = () => {
             hasUnsavedChanges={hasUnsavedChanges}
             isAutoSaving={isAutoSaving}
             activeTool={activeTool}
+            annotationMode={annotationMode}
           />
         </div>
 

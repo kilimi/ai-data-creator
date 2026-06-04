@@ -45,6 +45,127 @@ def _content_disposition_attachment(filename_safe: str) -> str:
     return f'attachment; filename="{safe}"'
 
 
+def _fiftyone_bbox_normalized_from_xyxy_pixel(
+    xyxy_pixel: List[float], img_width: float, img_height: float
+) -> List[float]:
+    """FiftyOne Detection.bounding_box expects normalized [x, y, w, h] in [0, 1]."""
+    w = float(img_width) or 1.0
+    h = float(img_height) or 1.0
+    x1, y1, x2, y2 = (float(v) for v in xyxy_pixel[:4])
+    return [x1 / w, y1 / h, max(0.0, x2 - x1) / w, max(0.0, y2 - y1) / h]
+
+
+def _match_training_class_name(class_names: List[str], category: Optional[str]) -> Optional[str]:
+    if not category:
+        return None
+    cat_lower = category.lower()
+    for cn in class_names:
+        if cn == "background":
+            continue
+        if cn.lower() == cat_lower:
+            return cn
+    return category
+
+
+def _build_fiftyone_ground_truth_by_image(
+    *,
+    results: Dict[str, Any],
+    images_by_id: Dict[int, Image],
+    annotation_file_id: Optional[str],
+    class_names: List[str],
+    db: Session,
+) -> Dict[int, List[dict]]:
+    """
+    Ground truth for FiftyOne as fo.Detections (normalized xywh).
+
+    Prefer evaluation artifact ``all_ground_truth`` (xyxy pixels, same as metrics).
+    Fall back to DB annotations with correct coordinate handling (bbox_* fields are
+    already normalized; do not divide by image size again).
+    """
+    ground_truth_by_image: Dict[int, List[dict]] = {}
+
+    all_gt = results.get("all_ground_truth") or []
+    if all_gt:
+        for gt in all_gt:
+            try:
+                img_id = int(gt["image_id"])
+            except (TypeError, ValueError):
+                continue
+            img = images_by_id.get(img_id)
+            if not img:
+                continue
+            bbox_xyxy = gt.get("bbox")
+            if not isinstance(bbox_xyxy, list) or len(bbox_xyxy) < 4:
+                continue
+            label = gt.get("class_name")
+            if not label:
+                cid = int(gt.get("class_id", -1))
+                if 0 <= cid < len(class_names):
+                    label = class_names[cid]
+                else:
+                    label = "unknown"
+            w, h = float(img.width or 1), float(img.height or 1)
+            ground_truth_by_image.setdefault(img_id, []).append(
+                {
+                    "label": label,
+                    "bbox": _fiftyone_bbox_normalized_from_xyxy_pixel(bbox_xyxy, w, h),
+                    "confidence": 1.0,
+                }
+            )
+        return ground_truth_by_image
+
+    if not annotation_file_id:
+        return ground_truth_by_image
+
+    from sqlalchemy.orm import joinedload
+
+    from ..models import Annotation, AnnotationFile
+
+    annotation_file = (
+        db.query(AnnotationFile).filter(AnnotationFile.id == annotation_file_id).first()
+    )
+    if not annotation_file:
+        return ground_truth_by_image
+
+    annotations = (
+        db.query(Annotation)
+        .options(joinedload(Annotation.image))
+        .filter(Annotation.annotation_file_id == annotation_file_id)
+        .all()
+    )
+
+    for ann in annotations:
+        img = images_by_id.get(ann.image_id) or ann.image
+        if not img:
+            continue
+        w = float(img.width or 1) or 1.0
+        h = float(img.height or 1) or 1.0
+
+        bbox_norm: Optional[List[float]] = None
+        if (
+            ann.bbox_x is not None
+            and ann.bbox_y is not None
+            and ann.bbox_width is not None
+            and ann.bbox_height is not None
+        ):
+            # DB columns are normalized [0, 1] — FiftyOne expects the same
+            bbox_norm = [ann.bbox_x, ann.bbox_y, ann.bbox_width, ann.bbox_height]
+        elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+            # Legacy JSON bbox: pixel xywh (same convention as evaluation_helpers)
+            bx, by, bw, bh = ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]
+            bbox_norm = [bx / w, by / h, bw / w, bh / h]
+
+        if bbox_norm is None:
+            continue
+
+        label = _match_training_class_name(class_names, ann.category) or ann.category or "unknown"
+        ground_truth_by_image.setdefault(ann.image_id, []).append(
+            {"label": label, "bbox": bbox_norm, "confidence": 1.0}
+        )
+
+    return ground_truth_by_image
+
+
 def _xywh_to_xyxy(bbox: List[float]) -> List[float]:
     if len(bbox) < 4:
         return [0.0, 0.0, 0.0, 0.0]
@@ -1311,58 +1432,16 @@ async def view_in_fiftyone(
             raise HTTPException(status_code=400, detail="No images found in dataset")
         
         # Create image lookup
-        image_dict = {img.id: img for img in images}
-        
-        # Load ground truth if available
-        ground_truth_by_image = {}
-        if annotation_file_id:
-            from ..models import Annotation, AnnotationFile
-            
-            annotation_file = db.query(AnnotationFile).filter(
-                AnnotationFile.id == annotation_file_id
-            ).first()
-            
-            if annotation_file:
-                annotations = db.query(Annotation).filter(
-                    Annotation.annotation_file_id == annotation_file_id
-                ).all()
-                
-                for ann in annotations:
-                    if ann.image_id not in ground_truth_by_image:
-                        ground_truth_by_image[ann.image_id] = []
-                    
-                    # Get bbox from either individual fields or JSON bbox field
-                    bbox_x, bbox_y, bbox_width, bbox_height = None, None, None, None
-                    if ann.bbox_x is not None and ann.bbox_y is not None and ann.bbox_width is not None and ann.bbox_height is not None:
-                        bbox_x, bbox_y = ann.bbox_x, ann.bbox_y
-                        bbox_width, bbox_height = ann.bbox_width, ann.bbox_height
-                    elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
-                        bbox_x, bbox_y = ann.bbox[0], ann.bbox[1]
-                        bbox_width, bbox_height = ann.bbox[2], ann.bbox[3]
-                    
-                    # Skip annotations with missing bbox data
-                    if bbox_x is None or bbox_y is None or bbox_width is None or bbox_height is None:
-                        continue
-                    
-                    # Get class index
-                    class_id = -1
-                    if ann.category and ann.category in class_names:
-                        class_id = class_names.index(ann.category)
-                    
-                    if class_id >= 0:
-                        img_width = ann.image.width if ann.image else 1
-                        img_height = ann.image.height if ann.image else 1
-                        ground_truth_by_image[ann.image_id].append({
-                            'label': ann.category,
-                            'bbox': [
-                                bbox_x / img_width if img_width else 0,
-                                bbox_y / img_height if img_height else 0,
-                                bbox_width / img_width if img_width else 0,
-                                bbox_height / img_height if img_height else 0
-                            ],
-                            'confidence': 1.0  # Ground truth has 100% confidence
-                        })
-        
+        images_by_id = {img.id: img for img in images}
+
+        ground_truth_by_image = _build_fiftyone_ground_truth_by_image(
+            results=results,
+            images_by_id=images_by_id,
+            annotation_file_id=annotation_file_id,
+            class_names=class_names,
+            db=db,
+        )
+
         # Organize predictions by image
         predictions_by_image = {}
         for pred in predictions:
@@ -1370,8 +1449,8 @@ async def view_in_fiftyone(
             if img_id not in predictions_by_image:
                 predictions_by_image[img_id] = []
             
-            if img_id in image_dict:
-                img = image_dict[img_id]
+            if img_id in images_by_id:
+                img = images_by_id[img_id]
                 bbox_xywh = pred['bbox']
                 
                 # Normalize bbox to [0, 1] range for FiftyOne

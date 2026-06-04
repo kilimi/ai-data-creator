@@ -6,6 +6,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from lai.compose_files import compose_file_flag_args, ensure_compose_env
+from lai.compose_build import _parse_env_file
+
 
 def check_docker_stack(bundle_root: Path) -> list[str]:
     """Return human-readable errors (empty if OK)."""
@@ -51,10 +54,13 @@ def check_docker_stack(bundle_root: Path) -> list[str]:
                 f"Docker Compose is too old (have {ver}, need >= 2.24 for compose 'include'). Upgrade Docker/Compose."
             )
 
-    # Prefer plain `docker compose config` so .env COMPOSE_FILE (e.g. code-mount fragment) is honored.
-    if (bundle_root / "docker-compose.yml").is_file():
+    # Use explicit -f files (Windows cannot use ':' in COMPOSE_FILE — drive-letter syntax).
+    if (bundle_root / "docker-compose.yml").is_file() and (bundle_root / "dockers" / "docker-compose.yml").is_file():
+        ensure_compose_env(bundle_root)
+        env = _parse_env_file(bundle_root / ".env")
+        compose_file = env.get("COMPOSE_FILE", "docker-compose.yml")
         r = subprocess.run(
-            ["docker", "compose", "config"],
+            ["docker", "compose", *compose_file_flag_args(bundle_root, compose_file), "config"],
             cwd=bundle_root,
             capture_output=True,
             text=True,

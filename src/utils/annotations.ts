@@ -46,6 +46,46 @@ export interface AnnotationFile {
   missingCount?: number; // Number of images missing from dataset
 }
 
+export type SegmentationEditorMode = 'mask' | 'bbox';
+
+export interface SegmentationModeCapabilities {
+  hasMasks: boolean;
+  hasBboxesOnly: boolean;
+  isEmpty: boolean;
+}
+
+export function detectSegmentationModeCapabilities(cocoData: any): SegmentationModeCapabilities {
+  const anns = Array.isArray(cocoData?.annotations) ? cocoData.annotations : [];
+  if (anns.length === 0) {
+    return { hasMasks: false, hasBboxesOnly: false, isEmpty: true };
+  }
+
+  let hasMasks = false;
+  let hasBboxes = false;
+  for (const ann of anns) {
+    const seg = ann?.segmentation;
+    const hasMask =
+      Array.isArray(seg) &&
+      ((Array.isArray(seg[0]) && (seg[0] as any[]).length >= 6) ||
+        (typeof seg[0] === 'number' && seg.length >= 6));
+    if (hasMask) hasMasks = true;
+    const bbox = ann?.bbox;
+    if (Array.isArray(bbox) && bbox.length >= 4) hasBboxes = true;
+  }
+  return { hasMasks, hasBboxesOnly: !hasMasks && hasBboxes, isEmpty: false };
+}
+
+export function pointsToTightBbox(points: Array<{ x: number; y: number }>): [number, number, number, number] {
+  if (!points.length) return [0, 0, 0, 0];
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  return [minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY)];
+}
+
 // Generate distinct random colors for classes
 export function generateClassColors(classNames: string[]): { [className: string]: string } {
   const colors: { [className: string]: string } = {};

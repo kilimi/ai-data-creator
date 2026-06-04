@@ -18,8 +18,12 @@ from ..auto_annotate_collection import resolve_auto_annotate_source_collection_i
 from ..database import get_db
 from ..model_weights_presence import (
     WEIGHTS_DOWNLOAD_NOTICE,
+    is_auto_annotate_yolo_onnx_cached,
     is_depth_onnx_cached,
-    is_foundation_yolo_cached,
+)
+from ..foundation_models import (
+    AUTO_ANNOTATE_YOLO_BASE,
+    validate_auto_annotate_yolo_model,
 )
 
 # Create logger for this module
@@ -41,7 +45,7 @@ COCO_CLASSES = [
     "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
 ]
 
-# Size label for tags (short code -> display)
+# Size label for tags (kept for depth models if extended later)
 SIZE_LABELS = {"n": "nano", "s": "small", "m": "medium", "l": "large", "x": "xlarge"}
 
 
@@ -64,49 +68,28 @@ def _auto_annotate_tags(model_name: str, task_type: str) -> List[str]:
         if size_part:
             tags.insert(2, size_part)
     else:
-        # YOLO-style: yolo11n, yolo26s, rtdetrl
-        match = re.match(r"(yolo11|yolo26|rtdetr)([nsmlx])", model_name, re.IGNORECASE)
-        if match:
-            arch, size = match.group(1), match.group(2).lower()
-            tags.insert(1, arch)
-            tags.insert(2, SIZE_LABELS.get(size, size))
-        else:
-            tags.insert(1, model_name)
+        tags.insert(1, "yolo11")
+        tags.insert(2, "medium")
     return tags
 
 
-# Pre-downloaded models from Docker build (same as export_tasks)
-PRETRAINED_MODELS_DIR = Path("/app/models")
+def load_yolo_onnx_runner(model_name: str, task_id: int, task_type: str = "detect"):
+    """Load YOLO11m ONNX runner for Auto-Annotate."""
+    from app.ml.inference.yolo_onnx_runner import YoloOnnxRunner
 
-
-def load_yolo_model(model_name: str, task_id: int, task_type: str = "detect"):
-    """Load YOLO model and return model object with metadata.
-    
-    task_type: 'detect', 'segment', or 'classify'
-    Model file suffix: base name for detect, -seg for segment, -cls for classify.
-    Uses pre-downloaded model from /app/models when present (from Docker build).
-    """
-    from app.tasks.training_common import get_ultralytics_yolo
-    YOLO = get_ultralytics_yolo()
-
-    suffix_map = {"detect": "", "segment": "-seg", "classify": "-cls"}
-    model_suffix = suffix_map.get(task_type, "")
-    full_model_name = f"{model_name}{model_suffix}"
-    pt_name = f"{full_model_name}.pt"
-    
-    pretrained_path = PRETRAINED_MODELS_DIR / pt_name
-    if pretrained_path.exists():
-        logger.info(f"Task {task_id}: Loading YOLO model from pre-downloaded {pretrained_path}")
-        model = YOLO(str(pretrained_path))
-    else:
-        logger.info(f"Task {task_id}: Loading YOLO model {full_model_name} (task_type={task_type})")
-        model = YOLO(pt_name)
-    
+    validate_auto_annotate_yolo_model(model_name, task_type)
+    logger.info(
+        f"Task {task_id}: Loading YOLO ONNX model {AUTO_ANNOTATE_YOLO_BASE} "
+        f"(task_type={task_type})"
+    )
+    runner = YoloOnnxRunner.for_auto_annotate(task_type, COCO_CLASSES)
     use_segmentation = task_type == "segment"
     is_classification = task_type == "classify"
-    logger.info(f"Task {task_id}: Model type: {task_type}, segmentation: {use_segmentation}, classification: {is_classification}")
-    
-    return model, use_segmentation, is_classification
+    logger.info(
+        f"Task {task_id}: ONNX runner ready — task={task_type}, "
+        f"segmentation={use_segmentation}, classification={is_classification}"
+    )
+    return runner, use_segmentation, is_classification
 
 
 def create_annotation_file_with_classes(
@@ -195,50 +178,32 @@ def calculate_polygon_area(segmentation: List[float]) -> float:
     return abs(poly_area) / 2.0
 
 
-def extract_segmentation_from_result(result, box_idx: int, use_segmentation: bool):
-    """Extract segmentation mask from YOLO result if available"""
-    if not use_segmentation or not hasattr(result, 'masks') or result.masks is None:
-        return None
-    
-    try:
-        if box_idx < len(result.masks.xy):
-            mask_coords = result.masks.xy[box_idx]
-            if len(mask_coords) > 0:
-                return [float(coord) for point in mask_coords for coord in point]
-    except Exception as e:
-        logger.warning(f"Failed to extract mask: {e}")
-    
-    return None
+def create_annotation_from_yolo_detection(
+    db,
+    det,
+    annotation_file_id: str,
+    image_id: int,
+    dataset_id: int,
+):
+    """Create annotation object from YOLO ONNX detection."""
+    class_id = det.class_id
+    confidence = det.confidence
 
-
-def create_annotation_from_detection(db, box, box_idx: int, result, annotation_file_id: str, 
-                                    image_id: int, dataset_id: int, use_segmentation: bool):
-    """Create annotation object from YOLO detection"""
-    
-    class_id = int(box.cls.item())
-    confidence = float(box.conf.item())
-    
     if class_id >= len(COCO_CLASSES):
         return None
-    
+
     class_name = COCO_CLASSES[class_id]
-    
-    # Get bbox
-    xyxy = box.xyxy[0].cpu().numpy()
-    x1, y1, x2, y2 = xyxy
+    x1, y1, x2, y2 = det.bbox_xyxy
     bbox_x = float(x1)
     bbox_y = float(y1)
     bbox_width = float(x2 - x1)
     bbox_height = float(y2 - y1)
     bbox = [bbox_x, bbox_y, bbox_width, bbox_height]
     area = bbox_width * bbox_height
-    
-    # Get segmentation if available
-    segmentation = extract_segmentation_from_result(result, box_idx, use_segmentation)
+    segmentation = det.segmentation
     if segmentation:
         area = calculate_polygon_area(segmentation)
-    
-    # Create annotation
+
     annotation = models.Annotation(
         annotation_file_id=annotation_file_id,
         image_id=image_id,
@@ -252,17 +217,16 @@ def create_annotation_from_detection(db, box, box_idx: int, result, annotation_f
         bbox=bbox,
         segmentation=segmentation,
         area=area,
-        confidence=confidence
+        confidence=confidence,
     )
     db.add(annotation)
-    
     return class_name
 
 
-def process_single_image(db, model, img, project_id: int, dataset_id: int, 
-                        annotation_file_id: str, use_segmentation: bool, class_counts: dict,
+def process_single_image(db, runner, img, project_id: int, dataset_id: int,
+                        annotation_file_id: str, class_counts: dict,
                         conf_threshold: float = 0.25):
-    """Process a single image with YOLO inference and create annotations"""
+    """Process a single image with YOLO ONNX inference and create annotations."""
     import uuid
     
     # Construct image path - try multiple locations
@@ -298,30 +262,22 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
     
     logger.info(f"Processing image: {img_path} (size: {img_path.stat().st_size} bytes)")
     
-    # Run inference
+    # Run ONNX inference
     try:
-        results = model.predict(source=str(img_path), conf=conf_threshold, iou=0.45, verbose=False, save=False)
+        detections, (img_height, img_width) = runner.predict_detect_or_segment(
+            img_path, conf_threshold=conf_threshold, iou_threshold=0.45
+        )
     except Exception as e:
         logger.error(f"Inference failed on {img_path}: {e}", exc_info=True)
         return 0
-    
-    if not results or len(results) == 0:
-        logger.warning(f"No results returned for {img_path}")
-        return 0
-    
-    result = results[0]
-    img_height, img_width = result.orig_shape
-    logger.info(f"Image {img.file_name}: shape={result.orig_shape}, boxes={len(result.boxes) if result.boxes is not None else 'None'}")
-    
-    # Log raw detection info for debugging
-    if result.boxes is not None and len(result.boxes) > 0:
-        for i, box in enumerate(result.boxes):
-            cls_id = int(box.cls.item())
-            conf = float(box.conf.item())
-            cls_name = COCO_CLASSES[cls_id] if cls_id < len(COCO_CLASSES) else f"unknown_{cls_id}"
-            logger.info(f"  Detection {i}: class={cls_name}(id={cls_id}), conf={conf:.3f}, xyxy={box.xyxy[0].cpu().numpy()}")
-    else:
-        logger.info(f"  No detections for {img.file_name} at conf_threshold={conf_threshold}")
+
+    logger.info(f"Image {img.file_name}: shape=({img_height}, {img_width}), detections={len(detections)}")
+    for i, det in enumerate(detections[:5]):
+        cls_name = COCO_CLASSES[det.class_id] if det.class_id < len(COCO_CLASSES) else f"unknown_{det.class_id}"
+        logger.info(
+            f"  Detection {i}: class={cls_name}(id={det.class_id}), "
+            f"conf={det.confidence:.3f}, xyxy={det.bbox_xyxy}"
+        )
     
     # Create AnnotationFileImage
     ann_file_img = models.AnnotationFileImage(
@@ -333,16 +289,14 @@ def process_single_image(db, model, img, project_id: int, dataset_id: int,
     )
     db.add(ann_file_img)
     
-    # Process detections
     annotations_count = 0
-    if result.boxes is not None and len(result.boxes) > 0:
-        for box_idx, box in enumerate(result.boxes):
-            class_name = create_annotation_from_detection(
-                db, box, box_idx, result, annotation_file_id, img.id, dataset_id, use_segmentation
-            )
-            if class_name:
-                class_counts[class_name] += 1
-                annotations_count += 1
+    for det in detections:
+        class_name = create_annotation_from_yolo_detection(
+            db, det, annotation_file_id, img.id, dataset_id
+        )
+        if class_name:
+            class_counts[class_name] += 1
+            annotations_count += 1
     
     logger.info(f"Image {img.file_name}: created {annotations_count} annotations")
     return annotations_count
@@ -378,61 +332,33 @@ def _resolve_image_path(img, project_id: int, dataset_id: int) -> Optional[Path]
 
 def process_single_image_classification(
     db,
-    model,
+    runner,
     img,
     project_id: int,
     annotation_file_id: str,
     dataset_id: int,
     class_counts: dict,
 ):
-    """Run YOLO classification on one image and create one Annotation (image-level label, no bbox/segmentation)."""
+    """Run YOLO ONNX classification on one image."""
     img_path = _resolve_image_path(img, project_id, dataset_id)
     if img_path is None:
         logger.warning(f"Image not found for classification: {img.file_name} (project_id={project_id}, dataset_id={dataset_id}, url={getattr(img, 'url', None)})")
         return 0
     source_str = str(img_path)
     try:
-        # Classification models (e.g. ImageNet) expect 224x224 by default
-        results = model.predict(source=source_str, imgsz=224, verbose=False)
+        result = runner.predict_classify(source_str)
     except Exception as e:
         logger.error(f"Classification inference failed on {source_str}: {e}", exc_info=True)
         return 0
-    if not results or len(results) == 0:
-        logger.warning(f"Classification: no results returned for {img.file_name}")
-        return 0
-    result = results[0]
-    probs = getattr(result, "probs", None)
-    if probs is None:
-        logger.warning(
-            f"No probs in result for {img.file_name}; result type={type(result).__name__}, "
-            f"has boxes={hasattr(result, 'boxes') and result.boxes is not None}"
-        )
-        return 0
-    top1_val = getattr(probs, "top1", None)
-    if top1_val is None:
-        logger.warning(f"Classification: probs has no top1 for {img.file_name}")
-        return 0
-    top1_idx = int(top1_val.item()) if hasattr(top1_val, "item") else int(top1_val)
-    names = getattr(result, "names", None) or getattr(model, "names", None) or {}
-    if isinstance(names, (list, tuple)):
-        class_name = names[int(top1_idx)] if int(top1_idx) < len(names) else f"class_{top1_idx}"
-    elif isinstance(names, dict):
-        class_name = names.get(int(top1_idx), str(top1_idx))
+
+    top1_idx = result.class_id
+    names = runner.class_names
+    if top1_idx < len(names):
+        class_name = names[top1_idx]
     else:
         class_name = f"class_{top1_idx}"
-    confidence = None
-    if hasattr(probs, "data") and probs.data is not None:
-        try:
-            data = probs.data
-            if hasattr(data, "shape") and len(data.shape) > 1:
-                confidence = float(data[0, int(top1_idx)].item())
-            else:
-                confidence = float(data[int(top1_idx)].item())
-        except Exception:
-            pass
-    # Image dimensions for AnnotationFileImage
-    img_width = getattr(result, "orig_shape", (0, 0))[1] if hasattr(result, "orig_shape") else 0
-    img_height = getattr(result, "orig_shape", (0, 0))[0] if hasattr(result, "orig_shape") else 0
+    confidence = result.confidence
+    img_height, img_width = result.orig_shape
     if not img_width or not img_height:
         img_width = img.width or 1
         img_height = img.height or 1
@@ -595,7 +521,7 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         db.commit()
         
         # Load YOLO model
-        model, use_segmentation, is_classification = load_yolo_model(model_name, task_id, task_type)
+        model, use_segmentation, is_classification = load_yolo_onnx_runner(model_name, task_id, task_type)
         task.progress = 20.0
         db.commit()
         
@@ -616,12 +542,12 @@ async def preannotate_with_foundation_model_task(task_id: int, db_path: str, mod
         for img_idx, img in enumerate(images):
             if is_classification:
                 annotations_count = process_single_image_classification(
-                    db, model, img, project_id, annotation_file_id, dataset_id, class_counts
+                    db, runner, img, project_id, annotation_file_id, dataset_id, class_counts
                 )
             else:
                 annotations_count = process_single_image(
-                    db, model, img, project_id, dataset_id,
-                    annotation_file_id, use_segmentation, class_counts,
+                    db, runner, img, project_id, dataset_id,
+                    annotation_file_id, class_counts,
                     conf_threshold=conf_threshold
                 )
             
@@ -708,14 +634,17 @@ async def start_preannotate(
         
         if not model_name or not dataset_id:
             raise HTTPException(status_code=400, detail="model_name and dataset_id are required")
-        
-        # Get the dataset
+
+        is_depth_estimation = model_name.startswith("depth_anything")
+        if not is_depth_estimation:
+            try:
+                validate_auto_annotate_yolo_model(model_name, task_type)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+
         dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
         if not dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        
-        # Check if this is a depth estimation request
-        is_depth_estimation = model_name.startswith("depth_anything")
         
         # Create task record
         task_name = f"Generate depth maps for {dataset.name}" if is_depth_estimation else f"Auto-annotate {dataset.name} with {model_name}"
@@ -788,7 +717,7 @@ async def start_preannotate(
         weights_cached = (
             is_depth_onnx_cached(model_size, environment)
             if is_depth_estimation
-            else is_foundation_yolo_cached(model_name, task_type)
+            else is_auto_annotate_yolo_onnx_cached(task_type)
         )
 
         return {

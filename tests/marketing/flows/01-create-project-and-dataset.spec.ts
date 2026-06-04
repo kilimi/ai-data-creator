@@ -183,7 +183,7 @@ test.describe('Marketing tour', () => {
     // ── 10. Create an image collection ────────────────────────────────────
     // Image collections are sub-groups within a dataset (e.g. "RGB", "Depth",
     // "Masks"). A dataset can hold many of them, and each one can be uploaded
-    // to, calibrated, and exported independently.
+    // to and exported independently.
     await caption(
       page,
       'Image collections group related frames inside a dataset — RGB, depth, masks. A dataset can have many.',

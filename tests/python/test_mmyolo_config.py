@@ -15,6 +15,7 @@ _mod = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
 _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
 MMYOLOConfigParams = _mod.MMYOLOConfigParams
 build_mmyolo_config_content = _mod.build_mmyolo_config_content
+resolve_mmyolo_base_config = _mod.resolve_mmyolo_base_config
 
 
 def _sample_params(**overrides) -> MMYOLOConfigParams:
@@ -55,3 +56,76 @@ def test_generated_config_sets_coco_pretrained_load_from():
         )
     )
     assert "load_from = 'https://download.openmmlab.com/mmyolo/v0/yolov8/" in content
+
+
+def test_resolve_mmyolo_base_config_finds_absolute_path(tmp_path, monkeypatch):
+    import app.tasks.mmyolo_config as mc
+
+    root = tmp_path / "configs"
+    (root / "rtmdet").mkdir(parents=True)
+    cfg_file = root / "rtmdet" / "rtmdet_s_syncbn_fast_8xb32-300e_coco.py"
+    cfg_file.write_text("# test config\n")
+    monkeypatch.setattr(mc, "_mmyolo_config_search_roots", lambda: [root])
+
+    resolved = mc.resolve_mmyolo_base_config("rtmdet_s")
+    assert resolved == str(cfg_file.resolve())
+
+
+def test_resolve_mmyolo_base_config_rtmdet_ins(tmp_path, monkeypatch):
+    import app.tasks.mmyolo_config as mc
+
+    root = tmp_path / "mim" / "configs"
+    (root / "rtmdet").mkdir(parents=True)
+    cfg_file = root / "rtmdet" / "rtmdet-ins_s_8xb32-300e_coco.py"
+    cfg_file.write_text("# test config\n")
+    monkeypatch.setattr(mc, "_mmyolo_config_search_roots", lambda: [root])
+
+    resolved = mc.resolve_mmyolo_base_config("rtmdet-ins_s")
+    assert resolved == str(cfg_file.resolve())
+
+
+def test_normalize_config_stem_rtmdet_ins():
+    from app.tasks.mmyolo_config import _normalize_config_stem
+
+    assert _normalize_config_stem("rtmdet-ins_s") == "rtmdet-ins_s_8xb32-300e_coco"
+    assert _normalize_config_stem("rtmdet-ins_s.py") == "rtmdet-ins_s_8xb32-300e_coco"
+
+
+def test_generated_config_skips_pretrained_for_dji_widen_025():
+    content = build_mmyolo_config_content(
+        _sample_params(
+            is_dji_mode=True,
+            dji_use_widen_factor_025=True,
+        )
+    )
+    assert "load_from disabled for DJI widen_factor=0.25" in content
+    assert "load_from = 'https://download.openmmlab.com" not in content
+
+
+def test_resolve_dji_base_config_prefers_patched_repo(tmp_path):
+    from app.tasks.mmyolo_dji import resolve_dji_base_config
+
+    repo = tmp_path / "mmyolo"
+    cfg = repo / "configs" / "yolov8" / "yolov8_s_syncbn_fast_8xb16-500e_coco.py"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("# patched dji config\n")
+    resolved = resolve_dji_base_config(repo)
+    assert resolved == str(cfg.resolve())
+
+
+def test_dji_patch_is_applied_detects_diff(tmp_path):
+    from app.tasks.mmyolo_dji import dji_patch_is_applied
+
+    repo = tmp_path / "mmyolo"
+    repo.mkdir()
+    subprocess = __import__("subprocess")
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@test"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True, capture_output=True)
+    (repo / "README.md").write_text("v0\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "v0"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "tag", "v0.6.0"], cwd=repo, check=True, capture_output=True)
+    assert dji_patch_is_applied(repo) is False
+    (repo / "README.md").write_text("patched\n")
+    assert dji_patch_is_applied(repo) is True

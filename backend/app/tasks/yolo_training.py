@@ -178,7 +178,7 @@ class YOLOTrainingTask(TrainingTask):
     
     def _prepare_dataset(self):
         """Prepare YOLO dataset from database annotations"""
-        from app.routers.training import prepare_yolo_dataset
+        from app.ml.dataset import prepare_yolo_dataset
         
         logger.info(f"Preparing dataset for task {self.task_id}")
         
@@ -219,49 +219,63 @@ class YOLOTrainingTask(TrainingTask):
     
     def _create_training_examples(self, dataset_info: Dict[str, Any]):
         """Create visualization examples of training data with annotations"""
-        from app.tasks.training_visualization import create_training_examples
-        
+        from app.tasks.training_visualization import (
+            create_classification_training_examples,
+            create_training_examples,
+        )
+
         try:
             dataset_dir = self.output_base / "dataset"
             examples_dir = self.output_base / "examples"
-            
-            # Get class names and model type
-            class_names = dataset_info.get('class_names', [])
-            model_type = self.training_config.get('model_type', 'yolo11n-seg.pt')
-            is_segmentation = '-seg' in model_type.lower()
-            
-            logger.info(f"Creating training examples - model_type: {model_type}, is_seg: {is_segmentation}")
-            logger.info(f"Dataset dir: {dataset_dir}, Examples dir: {examples_dir}")
-            
-            create_training_examples(
-                dataset_dir=dataset_dir,
-                output_dir=examples_dir,
-                class_names=class_names,
-                num_examples=16,
-                is_segmentation=is_segmentation,
-                grid_size=(4, 4)
-            )
-            
+
+            class_names = dataset_info.get("class_names", [])
+            model_type = self.training_config.get("model_type", "yolo11n-seg.pt")
+            is_segmentation = "-seg" in model_type.lower()
+            is_classification = "-cls" in model_type.lower() or dataset_info.get("dataset_format") == "classify"
+
+            if is_classification:
+                logger.info(
+                    "Creating classification training examples — dataset dir: %s",
+                    dataset_dir,
+                )
+                create_classification_training_examples(
+                    dataset_dir=dataset_dir,
+                    output_dir=examples_dir,
+                    class_names=list(class_names),
+                    num_examples=16,
+                    grid_size=(4, 4),
+                )
+            else:
+                logger.info(
+                    "Creating training examples — model_type: %s, is_seg: %s",
+                    model_type,
+                    is_segmentation,
+                )
+                create_training_examples(
+                    dataset_dir=dataset_dir,
+                    output_dir=examples_dir,
+                    class_names=class_names,
+                    num_examples=16,
+                    is_segmentation=is_segmentation,
+                    grid_size=(4, 4),
+                )
+
             logger.info(f"Training examples created successfully in {examples_dir}")
-            
-            # Build list of example images created
+
             example_images = {}
-            for split in ['train', 'val', 'test']:
+            for split in ["train", "val", "test"]:
                 example_path = examples_dir / f"{split}_batch.jpg"
                 if example_path.exists():
-                    # Store as relative path that frontend can fetch via /tasks/{id}/examples/{split}
                     example_images[split] = f"/tasks/{self.task_id}/examples/{split}"
-            
-            # Update task metadata with examples path
+
             self.task.task_metadata = {
                 **self.task.task_metadata,
                 "examples_path": str(examples_dir),
-                "example_images": example_images  # URLs for frontend to fetch
+                "example_images": example_images,
             }
             self.db.commit()
-            
+
         except Exception as e:
-            # Don't fail the training if visualization fails
             logger.warning(f"Failed to create training examples: {e}", exc_info=True)
     
     def _load_model(self):
@@ -324,9 +338,16 @@ class YOLOTrainingTask(TrainingTask):
 
         # Verify critical paths exist
         data_path = Path(train_args.get('data', ''))
-        if not data_path.exists():
+        if dataset_info.get('dataset_format') == 'classify':
+            if not (data_path / 'train').is_dir():
+                raise FileNotFoundError(
+                    f"Classification dataset train/ folder does not exist: {data_path}"
+                )
+            logger.info(f"Verified classification dataset root: {data_path}")
+        elif not data_path.exists():
             raise FileNotFoundError(f"Data YAML file does not exist: {data_path}")
-        logger.info(f"Verified data.yaml exists: {data_path}")
+        else:
+            logger.info(f"Verified data.yaml exists: {data_path}")
         
         project_dir = Path(train_args.get('project', ''))
         if not project_dir.exists():

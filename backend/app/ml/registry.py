@@ -94,6 +94,24 @@ def clear_registry() -> None:
     _LEGACY_TASK_TYPE_MAP.clear()
 
 
+# runtime_profile (catalog / dispatch) vs Celery queue names (worker subscriptions)
+_RUNTIME_PROFILE_CELERY_QUEUE: Dict[str, str] = {
+    "ultralytics": "gpu",
+    "mmyolo": "mmyolo",
+    "general": "general",
+    "gpu": "gpu",
+}
+
+
 def celery_queue_for_backend(backend: ModelBackend) -> str:
-    """Map runtime profile to Celery queue name."""
-    return backend.runtime_profile
+    """Map backend runtime profile to the Celery queue a worker consumes."""
+    profile = backend.runtime_profile
+    queue = _RUNTIME_PROFILE_CELERY_QUEUE.get(profile, profile)
+    if queue != profile:
+        logger.debug(
+            "Celery queue for backend %s: runtime_profile=%r -> queue=%r",
+            getattr(backend, "id", "?"),
+            profile,
+            queue,
+        )
+    return queue

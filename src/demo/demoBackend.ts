@@ -570,12 +570,6 @@ const routes: Route[] = [
     pattern: /^\/datasets\/\d+\/annotations/,
     handler: () => [],
   },
-  {
-    method: "GET",
-    pattern: /^\/datasets\/\d+\/calibrations/,
-    handler: () => [],
-  },
-
   // Create dataset
   {
     method: "POST",

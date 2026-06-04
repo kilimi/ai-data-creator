@@ -1,25 +1,29 @@
 """Tests for foundation model matrix and install-time spec resolution."""
 
 from app.foundation_models import (
+    AUTO_ANNOTATE_YOLO_ONNX,
+    AUTO_ANNOTATE_YOLO_BASE,
     ARCH_SIZES,
     DEPTH_ONNX_NAMES,
     MINIMAL_DEPTH_ONNX,
     MINIMAL_ULTRALYTICS_PT,
+    auto_annotate_yolo_catalog,
+    auto_annotate_yolo_onnx_name,
     pretrained_yolo_catalog,
     resolve_depth_models_spec,
     resolve_ultralytics_pretrained_spec,
     ultralytics_foundation_pt_names,
+    validate_auto_annotate_yolo_model,
 )
 
 
-def test_arch_sizes_covers_auto_annotate_families():
+def test_arch_sizes_covers_training_families():
     archs = {a for a, _ in ARCH_SIZES}
-    assert archs >= {"yolo11", "yolo26", "yolo_nas", "rtdetr"}
+    assert archs >= {"yolo11", "yolo26", "rtdetr"}
 
 
-def test_ultralytics_names_include_yolo_nas_and_rtdetr_variants():
+def test_ultralytics_names_include_yolo11_and_rtdetr_variants():
     names = ultralytics_foundation_pt_names()
-    assert "yolo_nass-seg.pt" in names
     assert "rtdetrl.pt" in names
     assert "yolo11n-seg.pt" in names
 
@@ -50,9 +54,9 @@ def test_resolve_arch_token_yolo11():
 
 
 def test_resolve_comma_archs():
-    r = resolve_ultralytics_pretrained_spec("yolo_nas,rtdetr")
-    assert all(n.startswith("yolo_nas") or n.startswith("rtdetr") for n in r)
-    assert "yolo11n.pt" not in r
+    r = resolve_ultralytics_pretrained_spec("yolo11,rtdetr")
+    assert all(n.startswith("yolo11") or n.startswith("rtdetr") for n in r)
+    assert "yolo26n.pt" not in r
 
 
 def test_unknown_arch_token_ignored():
@@ -66,11 +70,28 @@ def test_resolve_exact_pt_files():
     assert r == ["yolo11n.pt", "yolo26m-seg.pt"]
 
 
-def test_pretrained_catalog_matches_matrix():
+def test_auto_annotate_catalog_yolo11m_onnx_only():
     cat = pretrained_yolo_catalog()
-    assert set(cat.keys()) == set(ultralytics_foundation_pt_names())
-    assert cat["yolo11n-seg.pt"]["type"] == "segmentation"
-    assert cat["yolo11n.pt"]["type"] == "detection"
+    assert set(cat.keys()) == set(AUTO_ANNOTATE_YOLO_ONNX)
+    assert cat["yolo11m-seg.onnx"]["type"] == "segmentation"
+    assert cat["yolo11m.onnx"]["type"] == "detection"
+    assert cat["yolo11m-cls.onnx"]["type"] == "classification"
+    assert cat["yolo11m.onnx"]["name"] == AUTO_ANNOTATE_YOLO_BASE
+
+
+def test_auto_annotate_onnx_name_by_task():
+    assert auto_annotate_yolo_onnx_name("detect") == "yolo11m.onnx"
+    assert auto_annotate_yolo_onnx_name("segment") == "yolo11m-seg.onnx"
+    assert auto_annotate_yolo_onnx_name("classify") == "yolo11m-cls.onnx"
+
+
+def test_validate_auto_annotate_rejects_other_models():
+    validate_auto_annotate_yolo_model("yolo11m", "detect")
+    try:
+        validate_auto_annotate_yolo_model("yolo11n", "detect")
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
 
 
 def test_depth_spec_all_and_minimal():

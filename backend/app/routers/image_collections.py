@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from ..database import get_db
+from ..http_utils import public_request_base_url
 from ..models import ImageCollection, Image, Dataset
 from ..schemas import (
     ImageCollectionCreate, 
@@ -100,7 +101,7 @@ def get_image_collections(request: Request, dataset_id: int, db: Session = Depen
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
-    base_url = str(request.base_url).rstrip('/')
+    base_url = public_request_base_url(request)
 
     # Default collection (if any) — used to attach orphan images with collection_id NULL.
     # We do NOT auto-create a collection here; the UI requires an explicit layer before upload.
@@ -316,7 +317,7 @@ async def upload_images_to_collection(
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
-    base_url = str(request.base_url).rstrip('/')
+    base_url = public_request_base_url(request)
     
     # Create upload directory using the same structure as the main upload
     project_id = dataset.project_id

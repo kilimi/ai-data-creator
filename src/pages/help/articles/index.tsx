@@ -7,8 +7,7 @@
  *   3. It will automatically appear in the sidebar and be routable at
  *      `/help/<slug>`.
  */
-import { LucideIcon, Target, BookOpen, Images, Files, HardDrive } from "lucide-react";
-import { CollectionCalibrationArticle } from "./CollectionCalibrationArticle";
+import { LucideIcon, BookOpen, Images, Files, HardDrive } from "lucide-react";
 import { DatasetViewArticle } from "./DatasetViewArticle";
 import { AnnotationFilesArticle } from "./AnnotationFilesArticle";
 import { FoundationModelsArticle } from "./FoundationModelsArticle";
@@ -38,14 +37,6 @@ export const helpArticles: HelpArticle[] = [
     category: "Datasets",
     icon: Files,
     Component: AnnotationFilesArticle,
-  },
-  {
-    slug: "collection-calibration",
-    title: "Collection Calibration",
-    description: "Align two image collections (e.g. RGB ↔ Thermal) using point pairs.",
-    category: "Datasets",
-    icon: Target,
-    Component: CollectionCalibrationArticle,
   },
   {
     slug: "foundation-models",

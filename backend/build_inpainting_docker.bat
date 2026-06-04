@@ -2,10 +2,10 @@
 echo Building Inpainting Docker Image...
 echo.
 
-cd /d "e:\projects\lai\backend"
+cd /d "%~dp0"
 
 echo Choose a Dockerfile version:
-echo 1. Standard version (Dockerfile.inpainting.stable) - RECOMMENDED
+echo 1. Standard version (dockers\backend\Dockerfile.inpainting.stable) - RECOMMENDED
 echo 2. Original version (python_scripts\data\inpainting\Dockerfile)
 echo.
 
@@ -13,7 +13,7 @@ set /p choice="Enter your choice (1-2): "
 
 if "%choice%"=="1" (
     echo Building with stable, proven compatible versions...
-    docker build -f Dockerfile.inpainting.stable -t lai-inpainting:stable .
+    docker build -f ..\dockers\backend\Dockerfile.inpainting.stable -t lai-inpainting:stable .
     set image_name=lai-inpainting:stable
 ) else if "%choice%"=="2" (
     echo Building with original Dockerfile...
@@ -21,7 +21,7 @@ if "%choice%"=="1" (
     set image_name=lai-inpainting:latest
 ) else (
     echo Invalid choice. Building stable version by default...
-    docker build -f Dockerfile.inpainting.stable -t lai-inpainting:stable .
+    docker build -f ..\dockers\backend\Dockerfile.inpainting.stable -t lai-inpainting:stable .
     set image_name=lai-inpainting:stable
 )
 

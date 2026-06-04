@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.ml.registry import clear_registry, get_backend, list_backends
+from app.ml.registry import celery_queue_for_backend, clear_registry, get_backend, list_backends
 from app.ml.schemas import VisionTask
 
 
@@ -48,3 +48,12 @@ def test_ultralytics_catalog_has_variants():
   cat = get_backend("ultralytics.yolo").catalog()
   assert len(cat.variants) > 0
   assert cat.runtime_profile == "ultralytics"
+
+
+def test_celery_queue_for_ultralytics_maps_to_gpu():
+  assert celery_queue_for_backend(get_backend("ultralytics.yolo")) == "gpu"
+  assert celery_queue_for_backend(get_backend("ultralytics.rtdetr")) == "gpu"
+
+
+def test_celery_queue_for_mmyolo():
+  assert celery_queue_for_backend(get_backend("mmyolo")) == "mmyolo"

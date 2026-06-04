@@ -32,16 +32,17 @@ def run_yolo_test_inference_via_celery(
             detail="YOLO test inference requires Celery (USE_CELERY=true).",
         )
 
-    from app.tasks.evaluation_tasks import yolo_test_inference as yolo_test_inference_task
+    from app.ml.celery_dispatch import GPU_QUEUE, send_gpu_task
 
     try:
-        async_result = yolo_test_inference_task.apply_async(
+        async_result = send_gpu_task(
+            "app.tasks.evaluation_tasks.yolo_test_inference",
             args=[tmp_image_path, model_path, class_names],
             kwargs={
                 "conf_threshold": conf_threshold,
                 "device": device,
             },
-            queue="ultralytics",
+            queue=GPU_QUEUE,
         )
         worker_result = async_result.get(timeout=timeout)
     except Exception as exc:

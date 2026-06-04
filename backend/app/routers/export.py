@@ -26,10 +26,12 @@ celery_export_task = None
 
 def _queue_export_task(export_task_id: int, export_config: dict):
     """Enqueue export on the GPU worker without importing ultralytics in the API process."""
-    from app.celery.gpu_app import celery_app as gpu_app
-    return gpu_app.send_task(
+    from app.ml.celery_dispatch import GPU_QUEUE, send_gpu_task
+
+    return send_gpu_task(
         "app.tasks.export_tasks.export_yolo_model",
         args=[export_task_id, export_config],
+        queue=GPU_QUEUE,
     )
 
 

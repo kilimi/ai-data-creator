@@ -1,5 +1,7 @@
 # Unified SAM service (SAM 2 + SAM 3)
 
+Application code lives here; the image is built from `dockers/sam/Dockerfile` with pip lockfiles in `dockers/sam/`.
+
 One Docker service runs both **SAM 2** (point prompts) and **SAM 3** (point / box / text prompts).
 
 - **SAM 2**: Loaded from Hugging Face at startup (`facebook/sam2.1-hiera-small`). No extra setup.

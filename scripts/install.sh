@@ -276,8 +276,13 @@ upsert_env SAM3_CHECKPOINT_FILENAME "$SAM3_CF"
 upsert_env LAI_PRETRAINED_MODELS "$PT_SPEC"
 upsert_env LAI_DEPTH_MODELS "$DEPTH_SPEC"
 upsert_env LAI_REPO_ROOT "$REPO_ROOT"
+# Windows treats ':' in COMPOSE_FILE as a drive letter; use ';' between compose files.
+COMPOSE_SEP=":"
+if [[ "${OS:-}" == "Windows_NT" ]] || [[ "${OSTYPE:-}" == msys* ]] || [[ "${OSTYPE:-}" == cygwin* ]]; then
+  COMPOSE_SEP=";"
+fi
 if [[ "$BIND_CODE" -eq 1 ]]; then
-  upsert_env COMPOSE_FILE "docker-compose.code-mount.yml:docker-compose.yml"
+  upsert_env COMPOSE_FILE "docker-compose.code-mount.yml${COMPOSE_SEP}docker-compose.yml"
 else
   upsert_env COMPOSE_FILE "docker-compose.yml"
 fi
@@ -293,7 +298,7 @@ echo "  LAI_PRETRAINED_MODELS=$PT_SPEC"
 echo "  LAI_DEPTH_MODELS=$DEPTH_SPEC"
 echo "  LAI_REPO_ROOT=$REPO_ROOT"
 if [[ "$BIND_CODE" -eq 1 ]]; then
-  echo "  COMPOSE_FILE=docker-compose.code-mount.yml:docker-compose.yml (host backend bind)"
+  echo "  COMPOSE_FILE=docker-compose.code-mount.yml${COMPOSE_SEP}docker-compose.yml (host backend bind)"
 else
   echo "  COMPOSE_FILE=docker-compose.yml (image /app only)"
 fi

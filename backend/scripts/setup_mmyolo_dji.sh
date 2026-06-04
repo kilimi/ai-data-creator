@@ -29,11 +29,27 @@ fi
 if git apply --check "$PATCH_FILE" >/dev/null 2>&1; then
   echo "[mmyolo-dji] Applying DJI patch: $PATCH_FILE"
   git apply "$PATCH_FILE"
+elif git diff --quiet tags/v0.6.0; then
+  echo "[mmyolo-dji] ERROR: DJI patch not applied and cannot be applied" >&2
+  echo "[mmyolo-dji] git apply --check failed; repo matches v0.6.0 with no patch changes" >&2
+  exit 1
 else
-  echo "[mmyolo-dji] Patch already applied or not applicable, continuing."
+  echo "[mmyolo-dji] DJI patch already applied (repo differs from v0.6.0)."
 fi
 
 echo "[mmyolo-dji] Installing MMYOLO (editable) from $REPO_DIR"
-pip install --no-cache-dir -e "$REPO_DIR"
+MMYOLO_PY="${MMYOLO_PYTHON:-/opt/conda/envs/mmyolo/bin/python}"
+if [ ! -x "$MMYOLO_PY" ]; then
+  echo "[mmyolo-dji] ERROR: MMYOLO_PYTHON not found: $MMYOLO_PY" >&2
+  exit 1
+fi
+export MKL_SERVICE_FORCE_INTEL="${MKL_SERVICE_FORCE_INTEL:-1}"
+export MKL_THREADING_LAYER="${MKL_THREADING_LAYER:-GNU}"
+export MKL_INTERFACE_LAYER="${MKL_INTERFACE_LAYER:-GNU,LP64}"
+export PYTHONNOUSERSITE=1
+unset PYTHONPATH
+export GLIBC_TUNABLES="${GLIBC_TUNABLES:-glibc.rtld.execstack=2}"
+"$MMYOLO_PY" -m pip install --no-cache-dir --no-build-isolation -e "$REPO_DIR" \
+  || "$MMYOLO_PY" -m pip install --no-cache-dir -e "$REPO_DIR"
 
-python -c "import mmyolo; print('mmyolo version loaded:', getattr(mmyolo, '__version__', 'unknown'))"
+PYTHONPATH="$REPO_DIR" "$MMYOLO_PY" -c "import mmyolo; print('mmyolo version loaded:', getattr(mmyolo, '__version__', 'unknown'))"

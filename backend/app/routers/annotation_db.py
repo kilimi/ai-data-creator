@@ -14,6 +14,60 @@ from ..database import SessionLocal
 router = APIRouter()
 
 
+def get_live_annotation_counts_by_file_id(db: Session, file_ids: List[str]) -> Dict[str, int]:
+    """Count Annotation rows grouped by annotation_file_id."""
+    if not file_ids:
+        return {}
+    rows = (
+        db.query(Annotation.annotation_file_id, func.count(Annotation.id))
+        .filter(Annotation.annotation_file_id.in_(file_ids))
+        .group_by(Annotation.annotation_file_id)
+        .all()
+    )
+    return {
+        str(file_id): int(count or 0)
+        for file_id, count in rows
+        if file_id is not None
+    }
+
+
+def annotation_bbox_normalized_xywh(
+    ann: Annotation,
+    *,
+    img_width: Optional[int],
+    img_height: Optional[int],
+) -> Optional[List[float]]:
+    """
+    Return COCO-style bbox [x, y, w, h] normalized to 0–1 for the UI overlay.
+
+    DB ``bbox_*`` columns are already normalized; ``bbox`` JSON is pixel xywh from COCO import.
+    """
+    if ann.bbox_x is not None and ann.bbox_width is not None:
+        return [
+            float(ann.bbox_x),
+            float(ann.bbox_y or 0),
+            float(ann.bbox_width),
+            float(ann.bbox_height or 0),
+        ]
+    if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+        w = float(img_width or 1) or 1.0
+        h = float(img_height or 1) or 1.0
+        return [
+            float(ann.bbox[0]) / w,
+            float(ann.bbox[1]) / h,
+            float(ann.bbox[2]) / w,
+            float(ann.bbox[3]) / h,
+        ]
+    return None
+
+
+def resolve_annotation_count(stored_count: Optional[int], live_count: int) -> int:
+    """Prefer live DB row counts; fall back to stored metadata when no rows are linked."""
+    stored = int(stored_count or 0)
+    live = int(live_count or 0)
+    return live if live > 0 else stored
+
+
 def _filename_lookup_candidates(raw: Optional[str]) -> List[str]:
     """Variants of a filesystem / COCO file_name useful for matching DB rows."""
     if not raw:
@@ -952,11 +1006,20 @@ async def get_annotation_data(
     annotation_data = []
     for ann in annotations:
         dims = image_dims.get(ann.image_id, (None, None))
+        img_w, img_h = dims[0], dims[1]
+        if (not img_w or not img_h) and ann.image_id:
+            img_row = db.query(Image).filter(Image.id == ann.image_id).first()
+            if img_row:
+                img_w = img_w or img_row.width
+                img_h = img_h or img_row.height
+        norm_bbox = annotation_bbox_normalized_xywh(
+            ann, img_width=img_w, img_height=img_h
+        )
         annotation_data.append({
             "id": ann.id,
             "imageId": ann.image_id,
             "className": ann.category,
-            "bbox": ann.bbox,  # Use the bbox JSON field directly
+            "bbox": norm_bbox,
             "segmentation": ann.segmentation,
             "area": ann.area,
             "confidence": ann.confidence,
@@ -1102,12 +1165,24 @@ async def get_annotation_classes(
                 "categoryId": None
             })
     
+    live_count = (
+        db.query(func.count(Annotation.id))
+        .filter(Annotation.annotation_file_id == annotation_file_id)
+        .scalar()
+        or 0
+    )
+    total_annotations = resolve_annotation_count(annotation_file.annotation_count, int(live_count))
+    if class_data:
+        class_total = sum(int(c.get("count") or 0) for c in class_data)
+        if class_total > 0:
+            total_annotations = class_total
+
     return {
         "success": True,
         "data": {
             "classes": class_data,
             "totalClasses": len(class_data),
-            "totalAnnotations": annotation_file.annotation_count
+            "totalAnnotations": total_annotations
         }
     }
 
@@ -1282,8 +1357,13 @@ def process_coco_annotation_file_task(
     db: Session
 ):
     """Process COCO annotation file as a task (for background processing)"""
+    from ..task_stop import TaskStopped, check_task_stop, mark_annotation_file_stopped
+
     print(f"DEBUG: Starting task processing for annotation file {file_id}, task {task_id}")
+    annotation_file = None
+    task = None
     try:
+        check_task_stop(db, task_id)
         # Get the annotation file record
         annotation_file = db.query(AnnotationFile).filter(AnnotationFile.id == file_id).first()
         if not annotation_file:
@@ -1384,9 +1464,11 @@ def process_coco_annotation_file_task(
         if 'annotations' in coco_data:
             total_annotations = len(coco_data['annotations'])
             for i, coco_ann in enumerate(coco_data['annotations']):
-                # Update progress periodically
+                # Update progress periodically and honor user stop requests
+                if task and i % 25 == 0:
+                    check_task_stop(db, task_id)
                 if task and i % 100 == 0:
-                    progress = 50 + int((i / total_annotations) * 40)
+                    progress = 50 + int((i / total_annotations) * 40) if total_annotations else 50
                     task.progress = min(progress, 90)
                     db.commit()
                 
@@ -1458,6 +1540,8 @@ def process_coco_annotation_file_task(
                 annotation_count += 1
                 class_counts[class_name] = class_counts.get(class_name, 0) + 1
         
+        check_task_stop(db, task_id)
+
         if task:
             task.progress = 95
             db.commit()
@@ -1495,26 +1579,34 @@ def process_coco_annotation_file_task(
         db.commit()
         print(f"DEBUG: Database committed for {file_id}. Annotation count set to: {annotation_file.annotation_count}")
         
+        check_task_stop(db, task_id)
+
         return {
             "success": True,
             "annotations_processed": annotation_count,
             "classes_created": len(class_counts),
             "images_matched": len(coco_image_mapping)
         }
-        
+
+    except TaskStopped:
+        mark_annotation_file_stopped(db, file_id)
+        raise
     except Exception as e:
         # Update error status
         if annotation_file:
             annotation_file.processing_status = "failed"
             annotation_file.error_message = str(e)
             db.commit()
-        
+
         if task:
-            task.status = 'failed'
-            task.error_message = str(e)
-            db.commit()
-        
-        raise e
+            from ..task_stop import task_stop_requested
+
+            if not task_stop_requested(task):
+                task.status = "failed"
+                task.error_message = str(e)
+                db.commit()
+
+        raise
 
 
 @router.post("/datasets/{dataset_id}/annotations/recalculate-count")

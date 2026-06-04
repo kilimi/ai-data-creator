@@ -23,6 +23,7 @@ import {
   LayoutGrid,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveBackendMediaUrl } from "@/config/api";
 
 // ── Types exposed to caller ────────────────────────────────────────────────
 export interface PickerAnnotationFile {
@@ -247,6 +248,7 @@ export function DatasetEvalPicker({
     const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
     // pick representative task type from first GT file
     const taskType = d.annotationFiles[0]?.taskType;
+    const thumbSrc = resolveBackendMediaUrl(d.thumbnailUrl);
 
     return (
       <div
@@ -277,8 +279,8 @@ export function DatasetEvalPicker({
 
           {!isDense && (
             <div className="h-12 w-12 shrink-0 rounded-md bg-muted overflow-hidden flex items-center justify-center ring-1 ring-border/40">
-              {d.thumbnailUrl ? (
-                <img src={d.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+              {thumbSrc ? (
+                <img src={thumbSrc} alt="" className="h-full w-full object-cover" loading="lazy" />
               ) : (
                 <ImageIcon className="h-5 w-5 text-muted-foreground" />
               )}

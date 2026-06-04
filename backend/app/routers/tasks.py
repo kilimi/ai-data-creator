@@ -311,12 +311,18 @@ async def cancel_task(task_id: int, db: Session = Depends(get_db)):
 
     db.commit()
 
-    # Send SIGTERM to interrupt active worker execution and clean up Celery result backend.
+    # Send SIGTERM/SIGKILL to interrupt active worker execution and clean up Celery result backend.
     celery_task_revoked = False
     if celery_task_id:
         try:
-            celery_app.control.revoke(celery_task_id, terminate=True, signal='SIGTERM')
-            logger.info(f"Sent SIGTERM to Celery task {celery_task_id} for task {task_id}")
+            # CPU-bound annotation work may not yield quickly; SIGKILL stops the worker process.
+            stop_signal = (
+                "SIGKILL"
+                if task.task_type in ("annotation_processing", "annotation_merge")
+                else "SIGTERM"
+            )
+            celery_app.control.revoke(celery_task_id, terminate=True, signal=stop_signal)
+            logger.info(f"Sent {stop_signal} to Celery task {celery_task_id} for task {task_id}")
             celery_task_revoked = True
             
             # Also delete from result backend to prevent auto-requeue on container restart
@@ -458,18 +464,21 @@ async def resume_task(task_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_task)
 
-    # Dispatch Celery task
-    from app.celery_app import celery_app as _celery
+    # Dispatch to worker-gpu (gpu queue), not worker-general
+    from app.ml.celery_dispatch import enqueue_training_task
+
     if is_rtdetr:
-        celery_result = _celery.send_task(
-            'app.tasks.training_tasks.train_rtdetr_model',
-            args=[new_task.id, training_config],
-        )
+        from app.tasks.rtdetr_training import train_rtdetr_model as train_task
+
+        framework_id = "ultralytics.rtdetr"
     else:
-        celery_result = _celery.send_task(
-            'app.tasks.training_tasks.train_yolo_model',
-            args=[new_task.id, training_config],
-        )
+        from app.tasks.yolo_training import train_yolo_model as train_task
+
+        framework_id = "ultralytics.yolo"
+
+    celery_result = enqueue_training_task(
+        train_task, new_task.id, training_config, framework_id
+    )
 
     new_task.task_metadata = {
         **(new_task.task_metadata or {}),

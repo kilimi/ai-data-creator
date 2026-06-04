@@ -3,6 +3,7 @@ import {
   buildApiUrl,
   getApiBaseUrl,
   normalizeApiBaseForBrowser,
+  resolveBackendMediaUrl,
 } from "./api";
 
 function mockLocation(origin: string, hostname: string) {
@@ -87,6 +88,42 @@ describe("getApiBaseUrl", () => {
     localStorage.setItem("apiBaseUrl", "http://localhost:9999");
     mockLocation("http://192.168.1.10:8089", "192.168.1.10");
     expect(getApiBaseUrl()).toBe("http://192.168.1.10:8089");
+  });
+});
+
+describe("resolveBackendMediaUrl", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    localStorage.clear();
+  });
+
+  it("rewrites /static paths on docker internal host to page origin", () => {
+    vi.stubEnv("VITE_API_URL", "SAME_ORIGIN");
+    mockLocation("http://localhost:8089", "localhost");
+    expect(
+      resolveBackendMediaUrl(
+        "http://backend:8000/static/projects/44/64/images/a.jpg?thumb=300",
+      ),
+    ).toBe("http://localhost:8089/static/projects/44/64/images/a.jpg?thumb=300");
+  });
+
+  it("fixes API URLs missing port (nginx Host without port)", () => {
+    vi.stubEnv("VITE_API_URL", "SAME_ORIGIN");
+    mockLocation("http://localhost:8089", "localhost");
+    expect(
+      resolveBackendMediaUrl(
+        "http://localhost/static/projects/45/65/images/a.jpg",
+      ),
+    ).toBe("http://localhost:8089/static/projects/45/65/images/a.jpg");
+  });
+
+  it("rewrites relative /static paths", () => {
+    vi.stubEnv("VITE_API_URL", "SAME_ORIGIN");
+    mockLocation("http://localhost:8089", "localhost");
+    expect(resolveBackendMediaUrl("/static/projects/44/64/images/a.jpg")).toBe(
+      "http://localhost:8089/static/projects/44/64/images/a.jpg",
+    );
   });
 });
 

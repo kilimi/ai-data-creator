@@ -72,4 +72,4 @@ runs/
 static/inference_results/
 
 # Other Dockerfiles / training-only assets
-Dockerfile.inpainting.stable
+# Inpainting image is built separately (see dockers/backend/Dockerfile.inpainting.stable)

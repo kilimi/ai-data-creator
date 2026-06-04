@@ -90,7 +90,15 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'evaluation':
         return <Layers className="w-4 h-4 text-orange-500" />;
       case 'preannotate':
+      case 'auto_annotation':
         return <Brain className="w-4 h-4 text-green-500" />;
+      case 'annotation_processing':
+      case 'annotation_merge':
+        return <Layers className="w-4 h-4 text-teal-500" />;
+      case 'depth_estimation':
+        return <Layers className="w-4 h-4 text-sky-500" />;
+      case 'model_export':
+        return <Copy className="w-4 h-4 text-slate-500" />;
       default:
         return <ListTodo className="w-4 h-4 text-gray-500" />;
     }
@@ -102,15 +110,27 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return 'Augmentation';
       case 'training':
       case 'yolo_training':
+      case 'mmyolo_training':
         return 'Training';
       case 'duplication':
+      case 'dataset_duplication':
         return 'Duplication';
       case 'evaluation':
+      case 'model_evaluation':
         return 'Evaluation';
       case 'preannotate':
+      case 'auto_annotation':
         return 'Auto-Annotate';
+      case 'annotation_processing':
+        return 'Annotations';
+      case 'annotation_merge':
+        return 'Merge';
+      case 'depth_estimation':
+        return 'Depth';
+      case 'model_export':
+        return 'Export';
       default:
-        return taskType;
+        return taskType.replace(/_/g, ' ');
     }
   };
 
@@ -160,13 +180,26 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'evaluation':
         return 'bg-orange-100 text-orange-800 border-orange-200';
       case 'preannotate':
+      case 'auto_annotation':
         return 'bg-green-100 text-green-800 border-green-200';
+      case 'annotation_processing':
+      case 'annotation_merge':
+        return 'bg-teal-100 text-teal-800 border-teal-200';
+      case 'depth_estimation':
+        return 'bg-sky-100 text-sky-800 border-sky-200';
+      case 'model_export':
+        return 'bg-slate-100 text-slate-800 border-slate-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }
   };
 
-  const handleCancelTask = async (taskId: number, taskName: string) => {
+  const handleCancelTask = async (
+    taskId: number,
+    taskName: string,
+    status: Task['status'] = 'pending',
+  ) => {
+    const isStop = status === 'running';
     setCancellingTasks(prev => new Set(prev).add(taskId));
     
     try {
@@ -174,20 +207,26 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       
       if (success) {
         toast({
-          title: "Task Cancelled",
-          description: `Task "${taskName}" has been cancelled successfully.`,
+          title: isStop ? "Task Stopped" : "Task Cancelled",
+          description: isStop
+            ? `Task "${taskName}" has been stopped.`
+            : `Task "${taskName}" has been cancelled successfully.`,
         });
       } else {
         toast({
           title: "Error",
-          description: `Failed to cancel task "${taskName}". Please try again.`,
+          description: isStop
+            ? `Failed to stop task "${taskName}". Please try again.`
+            : `Failed to cancel task "${taskName}". Please try again.`,
           variant: "destructive",
         });
       }
     } catch (error) {
       toast({
         title: "Error",
-        description: `An error occurred while cancelling the task.`,
+        description: isStop
+          ? `An error occurred while stopping the task.`
+          : `An error occurred while cancelling the task.`,
         variant: "destructive",
       });
     } finally {
@@ -320,7 +359,10 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[700px] p-0 max-h-[80vh] flex flex-col" align="end">
+        <PopoverContent
+          className="w-[min(920px,calc(100vw-1.5rem))] p-0 max-h-[80vh] flex flex-col"
+          align="end"
+        >
           <div className="p-4 border-b flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
@@ -345,15 +387,15 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                 <p>No active or recent tasks</p>
               </div>
             ) : (
-              <div className="p-2 pb-4">
-                <table className="w-full text-sm">
+              <div className="p-2 pb-4 overflow-x-auto">
+                <table className="w-full min-w-[880px] text-sm table-fixed">
                   <thead className="border-b sticky top-0 bg-background z-10">
                     <tr className="text-left">
-                      <th className="px-3 py-3 font-medium text-muted-foreground">Type</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-[168px]">Type</th>
                       <th className="px-3 py-3 font-medium text-muted-foreground">Task Name</th>
-                      <th className="px-3 py-3 font-medium text-muted-foreground">Status</th>
-                      <th className="px-3 py-3 font-medium text-muted-foreground w-28">Progress</th>
-                      <th className="px-3 py-3 font-medium text-muted-foreground w-32">Action</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-[100px]">Status</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-[88px]">Progress</th>
+                      <th className="px-3 py-3 font-medium text-muted-foreground w-[200px]">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -366,7 +408,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                         <td className="px-3 py-4">
                           <Badge 
                             variant="outline" 
-                            className={`${getTaskTypeColor(task.task_type)} text-xs`}
+                            className={`${getTaskTypeColor(task.task_type)} text-xs whitespace-nowrap`}
+                            title={task.task_type}
                           >
                             {getTaskTypeLabel(task.task_type)}
                           </Badge>
@@ -374,7 +417,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                         <td className="px-3 py-4">
                           <div className="flex items-center gap-2">
                             {getTaskTypeIcon(task.task_type)}
-                            <span className="font-medium truncate max-w-[180px]" title={task.name}>
+                            <span className="font-medium truncate min-w-0" title={task.name}>
                               {task.name}
                             </span>
                             {((task.error_message) || 
@@ -413,18 +456,41 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                             <span className="text-xs text-muted-foreground tabular-nums">{Math.round(task.progress ?? 0)}%</span>
                           )}
                         </td>
-                        <td className="px-3 py-4">
-                          {getTaskNavigationUrl(task, projectId) && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2 text-xs gap-1.5 flex items-center whitespace-nowrap"
-                              onClick={(e) => handleGoToTask(task, e)}
-                            >
-                              <span>Go to</span>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                            </Button>
-                          )}
+                        <td
+                          className="px-3 py-4 align-middle"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex items-center justify-end gap-1.5 flex-nowrap">
+                            {canCancelTask(task.status) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 shrink-0 px-2.5 text-xs gap-1 text-destructive border-destructive/40 hover:bg-destructive/10"
+                                disabled={cancellingTasks.has(task.id)}
+                                onClick={() =>
+                                  handleCancelTask(task.id, task.name, task.status)
+                                }
+                              >
+                                {cancellingTasks.has(task.id) ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <X className="w-3.5 h-3.5" />
+                                )}
+                                {task.status === 'running' ? 'Stop' : 'Cancel'}
+                              </Button>
+                            )}
+                            {getTaskNavigationUrl(task, projectId) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 shrink-0 px-2.5 text-xs gap-1.5 whitespace-nowrap"
+                                onClick={(e) => handleGoToTask(task, e)}
+                              >
+                                Go to
+                                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -658,7 +724,11 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                     variant="destructive"
                     size="sm"
                     onClick={() => {
-                      handleCancelTask(selectedTask.id, selectedTask.name);
+                      handleCancelTask(
+                        selectedTask.id,
+                        selectedTask.name,
+                        selectedTask.status,
+                      );
                       setIsDetailOpen(false);
                     }}
                     disabled={cancellingTasks.has(selectedTask.id)}
@@ -666,12 +736,12 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                     {cancellingTasks.has(selectedTask.id) ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Cancelling...
+                        {selectedTask.status === 'running' ? 'Stopping...' : 'Cancelling...'}
                       </>
                     ) : (
                       <>
                         <X className="w-4 h-4 mr-2" />
-                        Cancel Task
+                        {selectedTask.status === 'running' ? 'Stop Task' : 'Cancel Task'}
                       </>
                     )}
                   </Button>

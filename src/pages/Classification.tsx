@@ -8,10 +8,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Navbar } from "@/components/Navbar";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
-import { Image } from "@/types";
+import { Image, ImageCollection } from "@/types";
 import { ArrowLeft, Plus, X, Check, ChevronLeft, ChevronRight, Settings2, Save, Upload, Download, Settings, BarChart3, Database } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ImageDisplayControls } from "@/components/ImageDisplayControls";
 import { PaginationControls } from "@/components/PaginationControls";
 import { useDatasetSettings } from "@/hooks/useDatasetSettings";
@@ -56,6 +57,8 @@ export default function Classification() {
   
   // Data states
   const [images, setImages] = useState<Image[]>([]);
+  const [imageCollections, setImageCollections] = useState<ImageCollection[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("all");
   const [classes, setClasses] = useState<string[]>([]);
   const [classifications, setClassifications] = useState<ClassificationData>({});
   const [classColors, setClassColors] = useState<{ [className: string]: string }>({});
@@ -108,9 +111,40 @@ export default function Classification() {
     }
   };
   
+  const collectionIdFromUrl = searchParams.get("collectionId");
+
+  const collectionImages = useMemo(() => {
+    if (selectedCollectionId === "all") return images;
+    const selected = imageCollections.find(c => String(c.id) === String(selectedCollectionId));
+    return selected?.images ?? [];
+  }, [images, imageCollections, selectedCollectionId]);
+
+  const allKnownImages = useMemo(() => {
+    const byId = new Map<string, Image>();
+    images.forEach(img => byId.set(String(img.id), img));
+    imageCollections.forEach(c => (c.images ?? []).forEach(img => byId.set(String(img.id), img)));
+    return Array.from(byId.values());
+  }, [images, imageCollections]);
+
+  const getPeerImageIds = useCallback((imageId: string): string[] => {
+    const baseName = (n?: string) => {
+      const v = n ?? "";
+      return v.includes(".") ? v.slice(0, v.lastIndexOf(".")).toLowerCase() : v.toLowerCase();
+    };
+    const current = allKnownImages.find(i => String(i.id) === String(imageId));
+    if (!current) return [imageId];
+    const peers = allKnownImages.filter((img) => {
+      if (String(img.id) === String(current.id)) return true;
+      const byGroup = current.groupId && img.groupId && String(current.groupId) === String(img.groupId);
+      const byName = !byGroup && baseName(current.fileName) === baseName(img.fileName);
+      return !!(byGroup || byName);
+    });
+    return peers.map(p => String(p.id));
+  }, [allKnownImages]);
+
   // Calculate pagination
-  const totalPages = Math.ceil(images.length / settings.imagesPerPage);
-  const paginatedImages = images.slice(
+  const totalPages = Math.max(1, Math.ceil(collectionImages.length / settings.imagesPerPage));
+  const paginatedImages = collectionImages.slice(
     (currentPage - 1) * settings.imagesPerPage,
     currentPage * settings.imagesPerPage
   );
@@ -144,12 +178,12 @@ export default function Classification() {
           
           // Create filename to image ID mapping
           const filenameToImageId: { [filename: string]: string } = {};
-          images.forEach(img => {
+          allKnownImages.forEach(img => {
             filenameToImageId[img.fileName] = img.id;
           });
           
           console.log('[localStorage] Created filename mapping with', Object.keys(filenameToImageId).length, 'entries');
-          console.log('[localStorage] Sample filenames from images:', images.slice(0, 3).map(img => img.fileName));
+            console.log('[localStorage] Sample filenames from images:', allKnownImages.slice(0, 3).map(img => img.fileName));
           
           // Map annotations to classifications
           if (cocoData.annotations && cocoData.images) {
@@ -166,7 +200,7 @@ export default function Classification() {
             });
             
             console.log('[localStorage] Processing annotations:', cocoData.annotations.length);
-            console.log('[localStorage] COCO images count:', cocoData.images.length, 'Loaded images count:', images.length);
+            console.log('[localStorage] COCO images count:', cocoData.images.length, 'Loaded images count:', allKnownImages.length);
             console.log('[localStorage] Category mapping:', categoryIdToName);
             console.log('[localStorage] Sample COCO filenames:', cocoData.images.slice(0, 3).map((img: any) => img.file_name));
             
@@ -295,12 +329,12 @@ export default function Classification() {
             
             // Create filename to image ID mapping
             const filenameToImageId: { [filename: string]: string } = {};
-            images.forEach(img => {
+            allKnownImages.forEach(img => {
               filenameToImageId[img.fileName] = img.id;
             });
             
             console.log('[backend] Created filename mapping with', Object.keys(filenameToImageId).length, 'entries');
-            console.log('[backend] Sample filenames from images:', images.slice(0, 3).map(img => img.fileName));
+            console.log('[backend] Sample filenames from images:', allKnownImages.slice(0, 3).map(img => img.fileName));
             
             // Map annotations to classifications (similar logic as above)
             if (cocoData.annotations && cocoData.images) {
@@ -315,7 +349,7 @@ export default function Classification() {
               });
               
               console.log('[backend] Processing annotations:', cocoData.annotations.length);
-              console.log('[backend] COCO images count:', cocoData.images.length, 'Loaded images count:', images.length);
+              console.log('[backend] COCO images count:', cocoData.images.length, 'Loaded images count:', allKnownImages.length);
               console.log('[backend] Category mapping:', categoryIdToName);
               console.log('[backend] Sample COCO filenames:', cocoData.images.slice(0, 3).map((img: any) => img.file_name));
               
@@ -395,7 +429,7 @@ export default function Classification() {
       });
       return false;
     }
-  }, [id, api, images, toast]);
+  }, [id, api, allKnownImages, toast]);
 
   // Load images and existing classifications
   useEffect(() => {
@@ -415,16 +449,26 @@ export default function Classification() {
       try {
         setLoading(true);
         
-        // Load images if API is available
+        // Load images and collections if API is available
         if (api) {
           console.log('Loading images for dataset:', id);
-          const imagesRes = await api.getImages(id);
+          const [imagesRes, collectionsRes] = await Promise.all([
+            api.getImages(id),
+            api.getImageCollections(id),
+          ]);
+          const mergedImagesById = new Map<string, Image>();
           if (imagesRes.success && imagesRes.data) {
-            setImages(imagesRes.data);
-            console.log('Loaded', imagesRes.data.length, 'images');
-          } else {
-            console.warn('Failed to load images:', imagesRes.error);
+            imagesRes.data.forEach(img => mergedImagesById.set(String(img.id), img));
           }
+          if (collectionsRes.success && collectionsRes.data) {
+            setImageCollections(collectionsRes.data);
+            collectionsRes.data.forEach(c => (c.images ?? []).forEach(img => mergedImagesById.set(String(img.id), img)));
+          } else {
+            setImageCollections([]);
+          }
+          const mergedImages = Array.from(mergedImagesById.values());
+          setImages(mergedImages);
+          console.log('Loaded', mergedImages.length, 'images across collections');
         } else {
           console.warn('API client not available');
         }
@@ -506,6 +550,23 @@ export default function Classification() {
     
     loadData();
   }, [id, api, isConfigured, toast, annotationId]);
+
+  useEffect(() => {
+    if (imageCollections.length === 0) {
+      setSelectedCollectionId("all");
+      return;
+    }
+    const validIds = new Set(imageCollections.map(c => String(c.id)));
+    if (collectionIdFromUrl && validIds.has(String(collectionIdFromUrl))) {
+      setSelectedCollectionId(String(collectionIdFromUrl));
+      return;
+    }
+    if (selectedCollectionId !== "all" && validIds.has(String(selectedCollectionId))) {
+      return;
+    }
+    const preferred = imageCollections.find(c => c.is_default) ?? imageCollections[0];
+    setSelectedCollectionId(String(preferred.id));
+  }, [imageCollections, collectionIdFromUrl, selectedCollectionId]);
 
   // Load annotation data when images are loaded and we have an annotationId
   // Use ref to track if we've already loaded to prevent infinite loops
@@ -700,34 +761,46 @@ export default function Classification() {
 
   // Toggle class for specific image
   const handleImageClassToggle = (imageId: string, className: string) => {
+    const peerIds = getPeerImageIds(imageId);
     const currentImageClasses = classifications[imageId] || [];
+    const shouldRemove = currentImageClasses.includes(className);
     const updatedClassifications = {
       ...classifications,
-      [imageId]: currentImageClasses.includes(className)
-        ? currentImageClasses.filter(c => c !== className)
-        : [...currentImageClasses, className]
     };
+    peerIds.forEach((pid) => {
+      const currentClasses = updatedClassifications[pid] || [];
+      updatedClassifications[pid] = shouldRemove
+        ? currentClasses.filter(c => c !== className)
+        : Array.from(new Set([...currentClasses, className]));
+    });
     saveClassifications(updatedClassifications);
+  };
+
+  const withPeersOnPage = (pageImages: Image[]) => {
+    const ids = new Set<string>();
+    pageImages.forEach((img) => getPeerImageIds(img.id).forEach((pid) => ids.add(String(pid))));
+    return Array.from(ids);
   };
 
   // Assign/Remove class to/from all images on current page (toggle behavior)
   const handleAssignToAllOnPage = (className: string) => {
     const updatedClassifications = { ...classifications };
+    const targetImageIds = withPeersOnPage(paginatedImages);
     
-    // Check if all images on the page already have this class
-    const allImagesHaveClass = paginatedImages.every(image => {
-      const currentClasses = updatedClassifications[image.id] || [];
+    // Check if all images in selection already have this class
+    const allImagesHaveClass = targetImageIds.every(imageId => {
+      const currentClasses = updatedClassifications[imageId] || [];
       return currentClasses.includes(className);
     });
     
     let processedCount = 0;
     
     if (allImagesHaveClass) {
-      // Remove class from all images on page
-      paginatedImages.forEach(image => {
-        const currentClasses = updatedClassifications[image.id] || [];
+      // Remove class from all selected images (including peer collections)
+      targetImageIds.forEach((imageId) => {
+        const currentClasses = updatedClassifications[imageId] || [];
         if (currentClasses.includes(className)) {
-          updatedClassifications[image.id] = currentClasses.filter(c => c !== className);
+          updatedClassifications[imageId] = currentClasses.filter(c => c !== className);
           processedCount++;
         }
       });
@@ -736,14 +809,14 @@ export default function Classification() {
       
       toast({
         title: "Class removed",
-        description: `Removed "${className}" from all ${processedCount} images on this page`,
+        description: `Removed "${className}" from ${processedCount} linked images`,
       });
     } else {
-      // Add class to all images on page
-      paginatedImages.forEach(image => {
-        const currentClasses = updatedClassifications[image.id] || [];
+      // Add class to all selected images (including peer collections)
+      targetImageIds.forEach((imageId) => {
+        const currentClasses = updatedClassifications[imageId] || [];
         if (!currentClasses.includes(className)) {
-          updatedClassifications[image.id] = [...currentClasses, className];
+          updatedClassifications[imageId] = [...currentClasses, className];
           processedCount++;
         }
       });
@@ -752,7 +825,7 @@ export default function Classification() {
       
       toast({
         title: "Class assigned",
-        description: `Assigned "${className}" to ${processedCount} images on this page`,
+        description: `Assigned "${className}" to ${processedCount} linked images`,
       });
     }
   };
@@ -762,23 +835,24 @@ export default function Classification() {
     const updatedClassifications = { ...classifications };
     
     // Get all unclassified images on the page
-    const unclassifiedImages = paginatedImages.filter(image => {
-      const currentClasses = updatedClassifications[image.id] || [];
+    const targetImageIds = withPeersOnPage(paginatedImages);
+    const unclassifiedImageIds = targetImageIds.filter((imageId) => {
+      const currentClasses = updatedClassifications[imageId] || [];
       return currentClasses.length === 0;
     });
     
     // Get images that only have this specific class (were previously assigned via AU)
-    const imagesWithOnlyThisClass = paginatedImages.filter(image => {
-      const currentClasses = updatedClassifications[image.id] || [];
+    const imagesWithOnlyThisClass = targetImageIds.filter((imageId) => {
+      const currentClasses = updatedClassifications[imageId] || [];
       return currentClasses.length === 1 && currentClasses[0] === className;
     });
     
     let processedCount = 0;
     
-    if (imagesWithOnlyThisClass.length > 0 && unclassifiedImages.length === 0) {
+    if (imagesWithOnlyThisClass.length > 0 && unclassifiedImageIds.length === 0) {
       // If there are images with only this class and no unclassified images, remove the class
-      imagesWithOnlyThisClass.forEach(image => {
-        updatedClassifications[image.id] = [];
+      imagesWithOnlyThisClass.forEach((imageId) => {
+        updatedClassifications[imageId] = [];
         processedCount++;
       });
       
@@ -790,8 +864,8 @@ export default function Classification() {
       });
     } else {
       // Assign class to unclassified images
-      unclassifiedImages.forEach(image => {
-        updatedClassifications[image.id] = [className];
+      unclassifiedImageIds.forEach((imageId) => {
+        updatedClassifications[imageId] = [className];
         processedCount++;
       });
       
@@ -987,7 +1061,7 @@ export default function Classification() {
     });
 
     // Create images array
-    const cocoImages = images.map((image, index) => ({
+    const cocoImages = allKnownImages.map((image, index) => ({
       id: index + 1,
       file_name: image.fileName,
       width: image.width || 640,
@@ -1004,7 +1078,7 @@ export default function Classification() {
     const cocoAnnotations: any[] = [];
     let annotationId = 1;
 
-    images.forEach(image => {
+    allKnownImages.forEach(image => {
       const imageClasses = classifications[image.id] || [];
       const imageId = imageMap[image.fileName];
       
@@ -1279,7 +1353,13 @@ export default function Classification() {
             // If creating new annotation, navigate to edit mode
             if (!annotationId) {
               const newAnnotationId = result.data?.file_id || `classification_${Date.now()}`;
-              navigate(`/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}`);
+              const collectionQ =
+                selectedCollectionId !== "all" ? `&collectionId=${selectedCollectionId}` : "";
+              if (projectId && id) {
+                navigate(`/projects/${projectId}/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}${collectionQ}`);
+              } else {
+                navigate(`/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}${collectionQ}`);
+              }
             }
             
           } else {
@@ -1352,7 +1432,13 @@ export default function Classification() {
           // If creating new annotation, navigate to edit mode
           if (!annotationId) {
             const newAnnotationId = `classification_${Date.now()}`;
-            navigate(`/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}`);
+            const collectionQ =
+              selectedCollectionId !== "all" ? `&collectionId=${selectedCollectionId}` : "";
+            if (projectId && id) {
+              navigate(`/projects/${projectId}/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}${collectionQ}`);
+            } else {
+              navigate(`/datasets/${id}/annotate/classification?annotationId=${newAnnotationId}${collectionQ}`);
+            }
           }
           
         } catch (storageError) {
@@ -1404,6 +1490,14 @@ export default function Classification() {
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-2xl font-semibold">Classification</h1>
+                  {imageCollections.length > 1 && (
+                    <Badge variant="secondary" className="text-[11px] py-0.5 px-2">
+                      {selectedCollectionId === "all"
+                        ? "All collections"
+                        : imageCollections.find(c => String(c.id) === String(selectedCollectionId))?.name ||
+                          "Collection"}
+                    </Badge>
+                  )}
                   {annotationId && annotationName && (
                     <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/40 text-xs">
                       Editing {annotationName}
@@ -1411,7 +1505,7 @@ export default function Classification() {
                   )}
                 </div>
                 <p className="text-muted-foreground">
-                  Assign class labels to images ({images.length} total images)
+                  Assign class labels to images ({collectionImages.length} visible / {allKnownImages.length} total)
                 </p>
                 {showNavigationTip && (
                   <div className="text-xs text-blue-400 mt-1">
@@ -1483,6 +1577,23 @@ export default function Classification() {
                 imageSize={settings.imageSize}
                 onImageSizeChange={handleImageSizeChange}
               />
+              {imageCollections.length > 0 && (
+                <div className="mt-3 max-w-sm">
+                  <Select value={selectedCollectionId} onValueChange={setSelectedCollectionId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select image collection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All collections</SelectItem>
+                      {imageCollections.map((collection) => (
+                        <SelectItem key={String(collection.id)} value={String(collection.id)}>
+                          {collection.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             {/* Images Grid */}

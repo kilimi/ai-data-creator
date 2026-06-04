@@ -168,6 +168,14 @@ export async function postApiFormData(
   }
 }
 
+/** Origin used for ``<img src>`` — always includes the page port when in a browser. */
+export function getMediaBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return window.location.origin.replace(/\/+$/, "");
+  }
+  return getApiBaseUrl().replace(/\/+$/, "");
+}
+
 /**
  * Turn backend-relative media paths into absolute URLs the browser can load.
  * Dataset thumbnails and image URLs are often stored as `/static/projects/...`
@@ -179,19 +187,47 @@ export function resolveBackendMediaUrl(
   if (href == null) return undefined;
   const h = String(href).trim();
   if (!h) return undefined;
-  if (
-    h.startsWith("data:") ||
-    h.startsWith("http://") ||
-    h.startsWith("https://") ||
-    h.startsWith("blob:")
-  ) {
+  if (h.startsWith("data:") || h.startsWith("blob:")) {
     return h;
   }
+
+  const base = getMediaBaseUrl();
+
+  if (h.startsWith("http://") || h.startsWith("https://")) {
+    try {
+      const parsed = new URL(h);
+      // API/proxy may emit http://localhost/static/... (no :8089) or http://backend:8000/...
+      if (
+        parsed.pathname.startsWith("/static/") ||
+        parsed.pathname.startsWith("/data/")
+      ) {
+        return `${base}${parsed.pathname}${parsed.search}`;
+      }
+    } catch {
+      /* keep original */
+    }
+    return h;
+  }
+
   if (h.startsWith("/")) {
-    const base = getApiBaseUrl().replace(/\/+$/, "");
     return `${base}${h}`;
   }
   return h;
+}
+
+/** Normalize image url/thumbnailUrl from API for the current browser origin. */
+export function normalizeImageMedia<T extends { url?: string; thumbnailUrl?: string }>(
+  image: T,
+): T {
+  return {
+    ...image,
+    ...(image.url !== undefined
+      ? { url: resolveBackendMediaUrl(image.url) ?? image.url }
+      : {}),
+    ...(image.thumbnailUrl !== undefined
+      ? { thumbnailUrl: resolveBackendMediaUrl(image.thumbnailUrl) ?? image.thumbnailUrl }
+      : {}),
+  };
 }
 
 // Check if a URL is accessible

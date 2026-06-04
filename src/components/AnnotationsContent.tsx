@@ -701,15 +701,18 @@ export function AnnotationsContent({
   
   // Auto-detect annotation type based on content with detailed segmentation types
   const detectAnnotationType = (file: AnnotationFile): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {
-    // If type is explicitly set, use it (but expand old types to new ones)
-    if (file.type === 'Classification' || file.type === 'classification') return 'Classification';
-    if (file.type === 'Segmentation (mask+bbox)' || file.type === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
-    if (file.type === 'Segmentation (mask)' || file.type === 'segmentation-mask') return 'Segmentation (mask)';
-    if (file.type === 'Segmentation (bbox)' || file.type === 'segmentation-bbox') return 'Segmentation (bbox)';
-    // Augmentation pipeline historically stored bbox-only COCO as 'detection' (not in COCO import path)
-    {
-      const t = file.type as string | undefined;
-      if (t === "detection" || t === "object_detection") return "Segmentation (bbox)";
+    // If type is explicitly set, use it (case-insensitive), including legacy aliases.
+    const t = String(file.type || '').trim().toLowerCase();
+    if (t === 'classification') return 'Classification';
+    if (t === 'segmentation (mask+bbox)' || t === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
+    if (t === 'segmentation (mask)' || t === 'segmentation-mask') return 'Segmentation (mask)';
+    if (
+      t === 'segmentation (bbox)' ||
+      t === 'segmentation-bbox' ||
+      t === 'detection' ||
+      t === 'object_detection'
+    ) {
+      return 'Segmentation (bbox)';
     }
     if (file.type === 'segmentation') {
       // For DB type 'segmentation' (instance/semantic seg), prefer mask+bbox until samples load
@@ -1656,6 +1659,8 @@ export function AnnotationsContent({
     if (!file) return;
     
     const isBecomingVisible = !visibleAnnotations.has(annotationId);
+    const rawType = detectAnnotationType(file);
+    const isBboxOnly = rawType === 'Segmentation (bbox)';
     
     // If trying to make annotations visible, check if we have any matching images
     if (isBecomingVisible) {
@@ -1813,11 +1818,12 @@ export function AnnotationsContent({
     localStorage.setItem(`annotation_visibility_${id}`, JSON.stringify(Array.from(newVisibleAnnotations)));
     
     // Update the annotation files to mark visibility (don't need to update individual sample visibility)
-    const updatedFiles = annotationFiles.map(file => 
-      file.id === annotationId 
-        ? { 
-            ...file, 
-            isVisible: isBecomingVisible
+    const updatedFiles = annotationFiles.map(file =>
+      file.id === annotationId
+        ? {
+            ...file,
+            isVisible: isBecomingVisible,
+            showBboxes: isBecomingVisible && isBboxOnly ? true : file.showBboxes,
           }
         : file
     );
@@ -2186,7 +2192,8 @@ export function AnnotationsContent({
       clearAnnotationCache('segmentation');
       
       // Navigate to segmentation page with the dataset ID and annotation file ID
-      navigate(`/datasets/${id}/annotate/segmentation?annotationId=${annotationId}`);
+      const modeHint = annotationType === 'Segmentation (bbox)' ? '&modeHint=bbox' : '';
+      navigate(`/datasets/${id}/annotate/segmentation?annotationId=${annotationId}${modeHint}`);
     }
   };
 
@@ -3291,8 +3298,19 @@ export function AnnotationsContent({
             if (bt === 'detection' || bt === 'object_detection') {
               detectedType = 'Segmentation (bbox)';
             } else if (bt === 'segmentation') {
-              // DB stores generic instance-seg label; UI default before samples load
-              detectedType = 'Segmentation (mask+bbox)';
+              // DB may store generic "segmentation" for legacy files.
+              // Use filename/format hints to avoid showing "Masks + Boxes"
+              // for known bbox-only files before samples are loaded.
+              const fmt = String(fileSummary.format || '').toLowerCase();
+              const nameLower = String(fileSummary.name || '').toLowerCase();
+              const looksBboxOnly =
+                fmt === 'detection' ||
+                fmt === 'object_detection' ||
+                nameLower.includes('bbox') ||
+                nameLower.includes('detection');
+              detectedType = looksBboxOnly
+                ? 'Segmentation (bbox)'
+                : 'Segmentation (mask+bbox)';
             } else {
               detectedType = backendType as typeof detectedType;
             }
@@ -4498,10 +4516,8 @@ export function AnnotationsContent({
             const rawType = detectAnnotationType(file);
             const isBboxOnly = rawType === 'Segmentation (bbox)';
             const isOther = rawType === 'Other';
-            const isUnsupportedFormat = isBboxOnly || isOther;
-            const unsupportedReason = isBboxOnly
-              ? 'Format not supported, missing masks'
-              : isOther
+            const isUnsupportedFormat = isOther;
+            const unsupportedReason = isOther
               ? 'Format not supported'
               : undefined;
             const isEditing = editingName?.annotationId === file.id;

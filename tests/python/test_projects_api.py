@@ -135,3 +135,42 @@ def test_delete_missing_project_returns_404(client):
     test_client, _ = client
     res = test_client.delete("/projects/99999")
     assert res.status_code == 404
+
+
+def test_delete_project_with_dataset_and_image_collection(client):
+    """Regression: bulk DELETE datasets left image_collections rows (FK violation)."""
+    test_client, Session = client
+
+    created = test_client.post(
+        "/projects/",
+        data={"name": "With Data", "description": "", "tags": "[]"},
+    ).json()
+    pid = created["data"]["id"]
+
+    with Session() as db:
+        dataset = models.Dataset(name="DS1", project_id=pid)
+        db.add(dataset)
+        db.flush()
+        db.add(
+            models.ImageCollection(
+                dataset_id=dataset.id,
+                name="RGB Images",
+                is_default=True,
+                position=0,
+            )
+        )
+        db.commit()
+
+    deleted = test_client.delete(f"/projects/{pid}")
+    assert deleted.status_code == 200
+    assert deleted.json()["success"] is True
+
+    with Session() as db:
+        assert db.query(models.Project).filter(models.Project.id == pid).first() is None
+        assert (
+            db.query(models.ImageCollection)
+            .join(models.Dataset)
+            .filter(models.Dataset.project_id == pid)
+            .count()
+            == 0
+        )

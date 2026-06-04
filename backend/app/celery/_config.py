@@ -27,7 +27,7 @@ GPU_INCLUDE = [
     "app.tasks.evaluation_tasks",
     "app.tasks.export_tasks",
     "app.tasks.auto_annotation_tasks",
-    "app.tasks.task_monitoring",
+    "app.tasks.task_monitoring_gpu",
 ]
 
 TASK_ROUTES = {
@@ -47,6 +47,8 @@ TASK_ROUTES = {
     "app.tasks.auto_annotation_tasks.*": {"queue": "gpu"},
     "app.tasks.mmyolo_training.*": {"queue": "mmyolo"},
     "app.tasks.training_tasks.train_mmyolo_model": {"queue": "mmyolo"},
+    "app.tasks.evaluation_tasks.yolo_test_inference": {"queue": "gpu"},
+    "app.tasks.evaluation_tasks.mmyolo_test_inference": {"queue": "mmyolo"},
 }
 
 BEAT_SCHEDULE = {
@@ -83,6 +85,8 @@ KNOWN_TASK_QUEUES = {
     "app.tasks.export_tasks.export_yolo_model": "gpu",
     "app.tasks.auto_annotation_tasks.auto_annotate_yolo": "gpu",
     "app.tasks.training_tasks.train_mmyolo_model": "mmyolo",
+    "app.tasks.evaluation_tasks.yolo_test_inference": "gpu",
+    "app.tasks.evaluation_tasks.mmyolo_test_inference": "mmyolo",
 }
 
 
