@@ -2,6 +2,10 @@
 """Smoke tests for MMYOLO evaluation helpers."""
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("torch")
+
 from app.tasks.mmyolo_evaluation import (
     extract_predictions_from_result,
     resolve_mmyolo_checkpoint,

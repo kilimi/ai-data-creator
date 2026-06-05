@@ -15,13 +15,19 @@ def test_ensure_ultralytics_sys_path_drops_lai_overlay():
 def test_build_ultralytics_subprocess_env_strips_pythonpath():
     import os
 
-    from app.ml.runtime_env import build_ultralytics_subprocess_env
+    from app.ml.runtime_env import (
+        ULTRALYTICS_SITE,
+        build_ultralytics_subprocess_env,
+        conda_site_packages,
+    )
 
     os.environ["PYTHONPATH"] = "/opt/lai/lib/python3.10/site-packages"
     env = build_ultralytics_subprocess_env(device="0")
     pythonpath = env.get("PYTHONPATH", "")
-    assert "/opt/ultralytics-site" in pythonpath
-    assert pythonpath.index("/opt/conda") < pythonpath.index("/opt/ultralytics-site")
+    parts = pythonpath.split(os.pathsep)
+    assert ULTRALYTICS_SITE in parts
+    assert parts.index(conda_site_packages()) < parts.index(ULTRALYTICS_SITE)
+    assert "/opt/lai/" not in pythonpath.replace("\\", "/")
     assert env.get("CUDA_VISIBLE_DEVICES") == "0"
     assert env.get("PYTHONNOUSERSITE") == "1"
 

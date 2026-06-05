@@ -58,8 +58,7 @@ up-no-build:
 download-models:
 	cd "$(ROOT)" && $(COMPOSE) exec \
 		-e LAI_PRETRAINED_MODELS=$(LAI_PRETRAINED_MODELS) \
-		-e LAI_DEPTH_MODELS=$(LAI_DEPTH_MODELS) \
-		backend python scripts/download_ultralytics_models.py
+		worker-gpu python scripts/download_ultralytics_models.py
 	cd "$(ROOT)" && $(COMPOSE) exec \
 		-e LAI_PRETRAINED_MODELS=$(LAI_PRETRAINED_MODELS) \
 		-e LAI_DEPTH_MODELS=$(LAI_DEPTH_MODELS) \

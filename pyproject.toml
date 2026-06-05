@@ -9,6 +9,8 @@ description = "CLI to install and run the LAI annotation stack via Docker Compos
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "LAI maintainers" }]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md", "licenses/*.txt"]
 keywords = ["annotation", "docker", "segmentation", "dataset"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -27,6 +29,7 @@ lai = "lai.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/lulu/lai"
+Documentation = "https://github.com/lulu/lai/blob/main/website/download.html"
 Repository = "https://github.com/lulu/lai"
 Issues = "https://github.com/lulu/lai/issues"
 

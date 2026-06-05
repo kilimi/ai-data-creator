@@ -64,16 +64,35 @@ def get_backend_for_task(task: Any) -> ModelBackend:
     if task_type:
         mapped = _LEGACY_TASK_TYPE_MAP.get(str(task_type))
         if mapped:
+            logger.warning(
+                "Resolving backend via legacy task_type=%r -> %s; set task_metadata.framework_id",
+                task_type,
+                mapped,
+            )
             return get_backend(mapped)
 
-        # Heuristic fallbacks for partially migrated metadata
+        # Heuristic fallbacks for partially migrated metadata (deprecated)
         if meta.get("config_id") or meta.get("arch"):
+            logger.warning(
+                "Resolving MMYOLO via metadata heuristics (task_type=%r); set framework_id=mmyolo",
+                task_type,
+            )
             return get_backend("mmyolo")
         if meta.get("model_type", "").startswith("rtdetr") or meta.get("model_variant"):
+            logger.warning(
+                "Resolving RT-DETR via metadata heuristics; set framework_id=ultralytics.rtdetr"
+            )
             return get_backend("ultralytics.rtdetr")
         if meta.get("model_type") or task_type in ("yolo_training", "training"):
             if "rtdetr" in str(meta.get("model_type", "")).lower() or meta.get("model_type") == "rtdetr":
+                logger.warning(
+                    "Resolving RT-DETR via model_type heuristic; set framework_id=ultralytics.rtdetr"
+                )
                 return get_backend("ultralytics.rtdetr")
+            logger.warning(
+                "Resolving YOLO via metadata heuristics (task_type=%r); set framework_id=ultralytics.yolo",
+                task_type,
+            )
             return get_backend("ultralytics.yolo")
 
     raise KeyError(

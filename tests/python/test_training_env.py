@@ -5,18 +5,27 @@ Test script to verify YOLO training environment is properly configured
 
 import sys
 
+import pytest
+
+pytestmark = pytest.mark.training_smoke
+
+
 def test_imports():
-    """Test that all required packages can be imported"""
+    """Test that all required packages can be imported (GPU worker / training env)."""
+    pytest.importorskip("torch")
+    pytest.importorskip("torchvision")
+    pytest.importorskip("ultralytics")
+
     print("Testing imports...")
     packages = {
-        'torch': 'PyTorch',
-        'torchvision': 'TorchVision',
-        'ultralytics': 'Ultralytics YOLO',
-        'cv2': 'OpenCV',
-        'numpy': 'NumPy',
-        'PIL': 'Pillow',
+        "torch": "PyTorch",
+        "torchvision": "TorchVision",
+        "ultralytics": "Ultralytics YOLO",
+        "cv2": "OpenCV",
+        "numpy": "NumPy",
+        "PIL": "Pillow",
     }
-    
+
     failed = []
     for package, name in packages.items():
         try:
@@ -25,15 +34,15 @@ def test_imports():
         except ImportError as e:
             print(f"✗ {name}: {e}")
             failed.append(name)
-    
-    return len(failed) == 0
+
+    assert not failed, f"Failed imports: {failed}"
+
 
 def test_cuda():
     """Test CUDA availability"""
     print("\nTesting CUDA...")
+    torch = pytest.importorskip("torch")
     try:
-        import torch
-        
         cuda_available = torch.cuda.is_available()
         print(f"CUDA available: {cuda_available}")
         
@@ -49,30 +58,22 @@ def test_cuda():
             # Test tensor on GPU
             x = torch.randn(100, 100).cuda()
             y = x @ x.t()
-            print(f"✓ GPU computation test passed")
-            return True
+            print("✓ GPU computation test passed")
         else:
-            print("⚠ CUDA not available, training will use CPU")
-            return False
-            
+            pytest.skip("CUDA not available, training will use CPU")
     except Exception as e:
-        print(f"✗ CUDA test failed: {e}")
-        return False
+        pytest.fail(f"CUDA test failed: {e}")
+
 
 def test_ultralytics():
     """Test Ultralytics YOLO"""
     print("\nTesting Ultralytics...")
+    pytest.importorskip("ultralytics")
     try:
-        from ultralytics import YOLO
-        
-        # Just check if we can create a model instance
         print("✓ YOLO import successful")
         print("✓ Ready to train YOLO models")
-        return True
-        
     except Exception as e:
-        print(f"✗ Ultralytics test failed: {e}")
-        return False
+        pytest.fail(f"Ultralytics test failed: {e}")
 
 def main():
     print("=" * 60)
@@ -80,15 +81,17 @@ def main():
     print("=" * 60)
     
     results = []
-    
-    # Test imports
-    results.append(("Imports", test_imports()))
-    
-    # Test CUDA
-    results.append(("CUDA", test_cuda()))
-    
-    # Test Ultralytics
-    results.append(("Ultralytics", test_ultralytics()))
+
+    def _run(name, fn):
+        try:
+            fn()
+            results.append((name, True))
+        except Exception:
+            results.append((name, False))
+
+    _run("Imports", test_imports)
+    _run("CUDA", test_cuda)
+    _run("Ultralytics", test_ultralytics)
     
     # Summary
     print("\n" + "=" * 60)

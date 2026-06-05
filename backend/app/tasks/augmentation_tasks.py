@@ -25,7 +25,7 @@ import uuid
 from app.celery.general_app import celery_app
 from app.models import Task as TaskModel, Dataset, Image, ImageCollection, Annotation, Augmentation, AnnotationFile, AnnotationClass, AnnotationFileImage
 from app.dataset_media_paths import resolve_dataset_image_path_from_models
-from app.routers.annotation_db import validate_and_normalize_segmentation
+from app.services.annotation_processing import validate_and_normalize_segmentation
 from app.tasks.yolo_training_helpers import generate_safe_output_filename
 
 logger = logging.getLogger(__name__)

@@ -75,218 +75,44 @@ import { useTheme } from '@/components/ThemeProvider';
 import { useQuery } from '@tanstack/react-query';
 import { API_CONFIG, resolveBackendMediaUrl } from '@/config/api';
 import {
+  imageAnnotationApiBase,
+  patchAnnotationImageUrl,
+  segmentApiUrl,
+} from '@/hooks/use-image-annotation-api';
+import {
   clearSamModelReadyCache,
   isSamModelCachedReady,
   setSamModelCachedReady,
   type SamSegmentModelKey,
 } from '@/utils/samReadyCache';
+import type { AnnotationClass, AnnotationShape, AnnotationTool, Point } from '@/pages/image-annotation/types';
+import {
+  SAM_MODEL_WAIT_OVERLAY_MS,
+  DEFAULT_COLORS,
+  bboxToRectPoints,
+  calculatePolygonArea,
+  findCocoImageForDatasetName,
+  findCorrespondingImageInCollection,
+  formatArea,
+  pickPreferredRgbCollection,
+  pointsToBbox,
+} from '@/pages/image-annotation/utils';
 
-/** Show full-screen SAM wait UI only if readiness check exceeds this (first load). */
-const SAM_MODEL_WAIT_OVERLAY_MS = 500;
+export type { AnnotationTool, Point, AnnotationShape, AnnotationClass } from '@/pages/image-annotation/types';
+export {
+  resolveClassFilterToggleNavigation,
+  buildAutoSegmentMaskOverlayStyle,
+} from '@/pages/image-annotation/utils';
+
 import { useApi } from '@/hooks/use-api';
 import { useToast } from '@/hooks/use-toast';
 import { toast as sonnerToast } from 'sonner';
 import { Image, ImageCollection } from '@/types';
 import { applyClassColorsToAnnotations, resolveAnnotationDisplayColor } from '@/utils/annotationColorConsistency';
 import { shouldScheduleAnnotationRedraw } from '@/utils/annotationRenderVisibility';
-import { detectSegmentationModeCapabilities, pointsToTightBbox } from '@/utils/annotations';
+import { detectSegmentationModeCapabilities } from '@/utils/annotations';
 
-// Annotation types
-export type AnnotationTool = 'select' | 'rectangle' | 'circle' | 'polygon' | 'pencil' | 'auto-segment';
 type AnnotationMode = 'mask' | 'bbox';
-
-export interface Point {
-  x: number;
-  y: number;
-}
-
-export interface AnnotationShape {
-  id: string;
-  type: 'rectangle' | 'circle' | 'polygon';
-  points: Point[];
-  label: string;
-  color: string;
-  visible: boolean;
-  confidence?: number;
-}
-
-const pointsToBbox = (points: Point[]): [number, number, number, number] => pointsToTightBbox(points);
-
-const bboxToRectPoints = (bbox: number[]): Point[] => {
-  if (!Array.isArray(bbox) || bbox.length < 4) return [];
-  const [x, y, w, h] = bbox.map((v) => Number(v) || 0);
-  return [
-    { x, y },
-    { x: x + w, y },
-    { x: x + w, y: y + h },
-    { x, y: y + h },
-  ];
-};
-
-
-export interface AnnotationClass {
-  id: string;
-  name: string;
-  color: string;
-  visible: boolean;
-  count: number;
-}
-
-const DEFAULT_COLORS = [
-  '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
-  '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
-  '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D2B4DE'
-];
-
-/** Names that indicate a depth/auxiliary layer — avoid defaulting the display to these. */
-function isDepthLikeCollectionName(name: string): boolean {
-  const n = name.toLowerCase();
-  return /\bdepth\b/.test(n) || n.includes('depth map') || n.includes('depth-map');
-}
-
-/** Prefer an RGB/color layer for segmentation; otherwise use backend-default or first ordered layer. */
-function pickPreferredRgbCollection(collections: ImageCollection[]): ImageCollection | undefined {
-  if (collections.length === 0) return undefined;
-  const rgbLike = (n: string) => {
-    const s = n.toLowerCase();
-    return s.includes('rgb') || s.includes('color') || s.includes('visible') || s.includes('original');
-  };
-  const byName = collections.find(c => rgbLike(c.name) && !isDepthLikeCollectionName(c.name));
-  if (byName) return byName;
-  const byDefault = collections.find(c => c.is_default === true && !isDepthLikeCollectionName(c.name));
-  if (byDefault) return byDefault;
-  // If no RGB-like layer exists, lock to the first layer as ordered by backend.
-  return collections[0];
-}
-
-export function resolveClassFilterToggleNavigation(
-  baseNavigableImageNames: string[],
-  classImageMap: { [className: string]: Set<string> },
-  currentFilterName: string | null,
-  targetClassName: string
-): {
-  nextFilterName: string | null;
-  nextList: string[];
-  firstImage: string | null;
-} {
-  const nextFilterName = currentFilterName === targetClassName ? null : targetClassName;
-  const nextFilterSet = nextFilterName ? classImageMap[nextFilterName] : null;
-  const nextList = nextFilterSet && nextFilterSet.size > 0
-    ? baseNavigableImageNames.filter((n) => nextFilterSet.has(n))
-    : baseNavigableImageNames;
-  return {
-    nextFilterName,
-    nextList,
-    firstImage: nextList.length > 0 ? nextList[0] : null,
-  };
-}
-
-export function buildAutoSegmentMaskOverlayStyle(
-  imageOffset: { x: number; y: number },
-  imageScale: number,
-  naturalWidth: number,
-  naturalHeight: number
-): React.CSSProperties {
-  return {
-    left: imageOffset.x,
-    top: imageOffset.y,
-    width: Math.max(0, naturalWidth) * imageScale,
-    height: Math.max(0, naturalHeight) * imageScale,
-  };
-}
-
-function baseNameNoExt(fileName: string): string {
-  if (!fileName.includes('.')) return fileName.toLowerCase();
-  return fileName.slice(0, fileName.lastIndexOf('.')).toLowerCase();
-}
-
-/** Match the same frame across layers: exact name, same basename, then shared groupId. */
-function findCorrespondingImageInCollection(
-  collection: ImageCollection,
-  imageName: string,
-  referenceImage: Image | null
-): Image | null {
-  const exact = collection.images.find(img => img.fileName === imageName);
-  if (exact) return exact;
-  const targetBase = baseNameNoExt(imageName);
-  const byBase = collection.images.find(img => baseNameNoExt(img.fileName ?? '') === targetBase);
-  if (byBase) return byBase;
-  if (referenceImage?.groupId) {
-    const gid = referenceImage.groupId;
-    const byGroup = collection.images.find(img => img.groupId && img.groupId === gid);
-    if (byGroup) return byGroup;
-  }
-  return null;
-}
-
-// Helper function to calculate polygon area similar to OpenCV's contourArea
-// This uses the same mathematical approach as cv2.contourArea() in altitude_plant_resolution.py
-// Using the Green's theorem / Shoelace formula which OpenCV also uses internally
-const calculatePolygonArea = (points: Point[]): number => {
-  if (points.length < 3) return 0;
-  
-  // OpenCV uses the Shoelace formula (also called surveyor's formula)
-  // This is the same as cv2.contourArea() for simple polygons
-  let area = 0;
-  for (let i = 0; i < points.length; i++) {
-    const j = (i + 1) % points.length;
-    area += points[i].x * points[j].y;
-    area -= points[j].x * points[i].y;
-  }
-  
-  // Return absolute value and divide by 2 (standard formula)
-  // This matches OpenCV's contourArea calculation for non-oriented contours
-  return Math.abs(area / 2);
-};
-
-// Helper function to format area display
-const formatArea = (area: number): string => {
-  if (area < 1000) {
-    return `${Math.round(area)} px²`;
-  } else if (area < 1000000) {
-    return `${(area / 1000).toFixed(1)}K px²`;
-  } else {
-    return `${(area / 1000000).toFixed(1)}M px²`;
-  }
-};
-
-/**
- * Match dataset image names (API `fileName`) to COCO `images[].file_name`.
- * Mismatches here cause empty canvas while API statistics still show counts.
- */
-function findCocoImageForDatasetName(
-  cocoImages: Array<{ id?: unknown; file_name?: string | null; width?: number; height?: number }> | undefined,
-  datasetFileName: string
-): { id?: unknown; file_name?: string | null; width?: number; height?: number } | undefined {
-  if (!cocoImages?.length || !datasetFileName) return undefined;
-
-  const exact = cocoImages.find((img) => img.file_name === datasetFileName);
-  if (exact) return exact;
-
-  const lower = datasetFileName.toLowerCase();
-  const byLower = cocoImages.find((img) => (img.file_name || '').toLowerCase() === lower);
-  if (byLower) return byLower;
-
-  const leaf = (s: string) => s.replace(/^.*[/\\]/, '');
-
-  const dsLeaf = leaf(datasetFileName);
-  const byLeaf = cocoImages.find((img) => leaf(img.file_name || '') === dsLeaf);
-  if (byLeaf) return byLeaf;
-
-  const byLeafCI = cocoImages.find(
-    (img) => leaf(img.file_name || '').toLowerCase() === dsLeaf.toLowerCase()
-  );
-  if (byLeafCI) return byLeafCI;
-
-  const baseNoExt = (s: string) => {
-    const x = leaf(s);
-    const d = x.lastIndexOf('.');
-    return d > 0 ? x.slice(0, d) : x;
-  };
-  const dsBase = baseNoExt(datasetFileName).toLowerCase();
-  return cocoImages.find((img) => baseNoExt(img.file_name || '').toLowerCase() === dsBase);
-}
-
 
 const ImageAnnotation = () => {
   const { id, projectId } = useParams<{ id: string; projectId?: string }>();
@@ -646,7 +472,7 @@ const ImageAnnotation = () => {
   const { data: sam3Available = false } = useQuery({
     queryKey: ['sam3-available'],
     queryFn: async () => {
-      const r = await fetch(`${API_CONFIG.baseUrl}/segment/ready/sam3`);
+      const r = await fetch(`${segmentApiUrl()}/ready/sam3`);
       return r.ok;
     },
     staleTime: 60 * 1000,
@@ -693,8 +519,8 @@ const ImageAnnotation = () => {
     const modelKey = segmentModel as SamSegmentModelKey;
     const readyUrl =
       modelKey === 'sam3'
-        ? `${API_CONFIG.baseUrl}/segment/ready/sam3`
-        : `${API_CONFIG.baseUrl}/segment/ready`;
+        ? `${segmentApiUrl()}/ready/sam3`
+        : `${segmentApiUrl()}/ready`;
 
     const controller = new AbortController();
     samReadyAbortRef.current = controller;
@@ -894,7 +720,7 @@ const ImageAnnotation = () => {
 
     try {
       const { imageB64, sendScale } = getImageB64AndScale();
-      const apiBase = API_CONFIG.baseUrl;
+      const apiBase = imageAnnotationApiBase();
       const scalePoint = (p: { x: number; y: number }) =>
         imageB64 ? { x: Math.round(p.x * sendScale), y: Math.round(p.y * sendScale) } : { x: p.x, y: p.y };
       const body: Record<string, unknown> = {
@@ -2328,7 +2154,7 @@ const ImageAnnotation = () => {
     const classObj = classes.find((c) => c.id === selectedClass);
     if (!classObj) return;
 
-    const apiBase = API_CONFIG.baseUrl;
+    const apiBase = imageAnnotationApiBase();
     const total = mainColl.images.length;
     applyAllCancelledRef.current = false;
     setIsApplyingAllImages(true);
@@ -4892,7 +4718,7 @@ const ImageAnnotation = () => {
       }
 
       // Save directly to backend without building full COCO file
-      const response = await fetch(`${API_CONFIG.baseUrl}/datasets/${id}/annotations/save-direct`, {
+      const response = await fetch(`${imageAnnotationApiBase()}/datasets/${id}/annotations/save-direct`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4997,7 +4823,7 @@ const ImageAnnotation = () => {
       return;
     }
 
-    const apiBase = API_CONFIG?.baseUrl ?? '';
+    const apiBase = imageAnnotationApiBase();
     let totalAnnotations = 0;
     let imagesUpdated = 0;
     let lastError: string | null = null;
@@ -5030,7 +4856,7 @@ const ImageAnnotation = () => {
             };
           });
 
-        const url = `${apiBase}/datasets/${id}/annotations/${annotationId}/image/${encodeURIComponent(imageName)}`;
+        const url = patchAnnotationImageUrl(id!, annotationId!, imageName);
         const response = await fetch(url, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -5124,7 +4950,7 @@ const ImageAnnotation = () => {
       // Send to backend using fetch with PATCH method
       const activeCollId = getActiveCollectionId();
       const numericCollectionId = Number(activeCollId);
-      const url = `${API_CONFIG.baseUrl}/datasets/${id}/annotations/${annotationId}/image/${encodeURIComponent(currentImageName)}`;
+      const url = patchAnnotationImageUrl(id!, annotationId!, currentImageName);
       const response = await fetch(url, {
         method: 'PATCH',
         headers: {

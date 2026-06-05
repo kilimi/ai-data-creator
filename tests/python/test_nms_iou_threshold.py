@@ -110,16 +110,18 @@ class TestNMSPredictions:
 class TestEvaluationTaskNMSParameter:
     """Test that evaluate_model task uses nms_iou_threshold correctly."""
 
-    @patch("app.tasks.evaluation_tasks.YOLO")
+    @patch("app.tasks.evaluation_tasks._resolve_evaluation_image_path")
+    @patch("app.ml.dispatch.get_model_backend")
+    @patch("app.tasks.training_common.get_ultralytics_yolo")
     @patch("app.tasks.evaluation_tasks.SessionLocal")
-    @patch("app.tasks.evaluation_tasks.load_annotation_data")
     @patch("app.tasks.evaluation_tasks.write_evaluation_blobs")
     def test_nms_iou_threshold_passed_to_model_predict(
         self,
         mock_write_blobs,
-        mock_load_annotations,
         mock_session,
-        mock_yolo,
+        mock_get_yolo,
+        mock_get_backend,
+        mock_resolve_image_path,
     ):
         mock_db = MagicMock()
         mock_session.return_value = mock_db
@@ -127,14 +129,25 @@ class TestEvaluationTaskNMSParameter:
         mock_task = MagicMock()
         mock_task.id = 1
         mock_task.project_id = 1
+        mock_task.task_metadata = {}
         mock_db.query.return_value.filter.return_value.first.return_value = mock_task
 
         mock_training_task = MagicMock()
+        mock_training_task.status = "completed"
         mock_training_task.project_id = 1
-        mock_training_task.task_metadata = {"model_type": "yolov11n.pt"}
+        mock_training_task.task_metadata = {
+            "model_type": "yolov11n.pt",
+            "best_model": "/tmp/test/best.pt",
+            "class_names": ["cat"],
+        }
+
+        mock_backend = MagicMock()
+        mock_backend.runtime_profile = "ultralytics"
+        mock_get_backend.return_value = mock_backend
 
         mock_model = MagicMock()
-        mock_yolo.return_value = mock_model
+        mock_get_yolo.return_value = MagicMock(return_value=mock_model)
+        mock_resolve_image_path.return_value = __import__("pathlib").Path("/tmp/test.jpg")
 
         predict_calls = []
 
@@ -146,11 +159,11 @@ class TestEvaluationTaskNMSParameter:
 
         mock_model.predict = capture_predict
 
-        mock_load_annotations.return_value = ([], {}, {})
         mock_write_blobs.return_value = ("pred.json.gz", "gt.json.gz", "cm.json.gz")
 
         mock_dataset = MagicMock()
         mock_dataset.id = 1
+        mock_dataset.project_id = 1
         mock_dataset.image_dir = "/tmp/test"
 
         mock_image = MagicMock()

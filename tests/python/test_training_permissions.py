@@ -39,7 +39,6 @@ def test_directory_creation_with_permissions():
             assert is_writable, f"Directory {directory} should be writable (mode: {oct(stat.st_mode)})"
         
         print("✓ Directory creation with permissions: PASSED")
-        return True
 
 def test_parent_directory_permissions():
     """Test that parent directories are fixed before creating new task directories"""
@@ -81,10 +80,8 @@ def test_parent_directory_permissions():
             assert test_file.exists(), "Should be able to create file in weights directory"
             test_file.unlink()
             print("✓ Parent directory permission fixing: PASSED")
-            return True
         except PermissionError as e:
-            print(f"✗ Parent directory permission fixing: FAILED - {e}")
-            return False
+            raise AssertionError(f"Parent directory permission fixing failed: {e}") from e
 
 def test_existing_file_permission_fix():
     """Test that existing weight files with wrong permissions are handled"""
@@ -106,17 +103,14 @@ def test_existing_file_permission_fix():
             # Verify we can now write to it
             test_file.write_text("updated")
             print("✓ Existing file permission fix: PASSED")
-            return True
         except PermissionError as e:
             print(f"✗ Existing file permission fix: FAILED - {e}")
             # If we can't fix, try removing it
             try:
                 test_file.unlink()
                 print("  → File removed as fallback")
-                return True
             except Exception as e2:
-                print(f"  → Could not remove file: {e2}")
-                return False
+                raise AssertionError(f"Could not remove file: {e2}") from e2
 
 def test_write_access_verification():
     """Test that write access is verified before training starts"""
@@ -134,10 +128,8 @@ def test_write_access_verification():
             test_file.write_text("test")
             test_file.unlink()
             print("✓ Write access verification: PASSED")
-            return True
         except PermissionError as e:
-            print(f"✗ Write access verification: FAILED - {e}")
-            return False
+            raise AssertionError(f"Write access verification failed: {e}") from e
 
 def test_full_path_permission_fix():
     """Test the complete path from projects/ to weights/ has correct permissions"""
@@ -174,15 +166,13 @@ def test_full_path_permission_fix():
             test_weight_file.write_text("updated weights")
             
             print("✓ Full path permission chain: PASSED")
-            return True
         except PermissionError as e:
-            print(f"✗ Full path permission chain: FAILED - {e}")
             # Debug: check permissions on each directory
             for directory in [projects_base, project_dir, training_base, output_base, training_output_dir, weights_dir]:
                 if directory.exists():
                     stat = os.stat(directory)
                     print(f"  {directory}: mode={oct(stat.st_mode)}, writable={bool(stat.st_mode & 0o222)}")
-            return False
+            raise AssertionError(f"Full path permission chain failed: {e}") from e
 
 def test_permission_error_scenario():
     """Test the specific error scenario: Permission denied on last.pt"""
@@ -212,10 +202,8 @@ def test_permission_error_scenario():
         try:
             test_file.write_text("new content")
             print("✓ Permission error scenario: PASSED")
-            return True
         except PermissionError as e:
-            print(f"✗ Permission error scenario: FAILED - {e}")
-            return False
+            raise AssertionError(f"Permission error scenario failed: {e}") from e
 
 def main():
     print("=" * 80)
@@ -223,14 +211,20 @@ def main():
     print("=" * 80)
     
     results = []
-    
-    # Run all tests
-    results.append(("Directory Creation", test_directory_creation_with_permissions()))
-    results.append(("Parent Directory Permissions", test_parent_directory_permissions()))
-    results.append(("Existing File Permissions", test_existing_file_permission_fix()))
-    results.append(("Write Access Verification", test_write_access_verification()))
-    results.append(("Full Path Permissions", test_full_path_permission_fix()))
-    results.append(("Permission Error Scenario", test_permission_error_scenario()))
+
+    def _run(name, fn):
+        try:
+            fn()
+            results.append((name, True))
+        except Exception:
+            results.append((name, False))
+
+    _run("Directory Creation", test_directory_creation_with_permissions)
+    _run("Parent Directory Permissions", test_parent_directory_permissions)
+    _run("Existing File Permissions", test_existing_file_permission_fix)
+    _run("Write Access Verification", test_write_access_verification)
+    _run("Full Path Permissions", test_full_path_permission_fix)
+    _run("Permission Error Scenario", test_permission_error_scenario)
     
     # Summary
     print("\n" + "=" * 80)

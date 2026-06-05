@@ -8,7 +8,6 @@ from sqlalchemy import text
 from typing import List, Optional
 from datetime import datetime
 import asyncio
-import hashlib
 import json
 import os
 import base64
@@ -91,53 +90,20 @@ def _add_cors(response: Response, origin: Optional[str]) -> None:
         response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Expose-Headers"] = "*"
 
-_MEDIA_TYPES = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
-
-_THUMB_SUFFIXES = frozenset([".jpg", ".jpeg", ".png", ".webp"])
-
-
-def _generate_thumbnail_sync(full_path: Path, thumb_path: Path, thumb_size: int) -> bool:
-    """Generate a thumbnail synchronously (runs in a thread pool executor).
-
-    Returns True if the thumbnail was created/already exists, False on error.
-    """
-    if thumb_path.exists():
-        return True
-    try:
-        from PIL import Image
-        thumb_path.parent.mkdir(exist_ok=True)
-        with Image.open(full_path) as img:
-            ratio = min(thumb_size / img.width, thumb_size / img.height)
-            new_size = (max(1, int(img.width * ratio)), max(1, int(img.height * ratio)))
-            thumb_img = img.resize(new_size, Image.Resampling.LANCZOS)
-            suffix = full_path.suffix.lower()
-            if suffix in (".jpg", ".jpeg") and thumb_img.mode == "RGBA":
-                thumb_img = thumb_img.convert("RGB")
-            thumb_img.save(thumb_path, quality=85, optimize=True)
-        return True
-    except Exception as exc:
-        logger.warning("Thumbnail generation failed for %s: %s", full_path, exc)
-        return False
+from app.services.media_service import (
+    MEDIA_TYPES,
+    THUMB_SUFFIXES,
+    etag_for_path,
+    generate_thumbnail_sync,
+    prewarm_thumbnails,
+    resolve_thumbnail_path,
+)
 
 from . import models, schemas
 from .database import engine, get_db
+from app.db_bootstrap import wait_for_database
 
-import time
-for _attempt in range(1, 31):
-    try:
-        models.Base.metadata.create_all(bind=engine)
-        break
-    except Exception as _exc:
-        logger.warning("DB not ready (attempt %d/30): %s", _attempt, _exc)
-        if _attempt == 30:
-            raise
-        time.sleep(2)
+wait_for_database(engine, models.Base.metadata)
 
 app = FastAPI()
 
@@ -268,27 +234,21 @@ async def serve_project_files(file_path: str, request: Request, thumb: Optional[
         raise HTTPException(status_code=404, detail="File not found")
 
     suffix = full_path.suffix.lower()
-    media_type = _MEDIA_TYPES.get(suffix)
+    media_type = MEDIA_TYPES.get(suffix)
 
-    # Resolve thumbnail path (generate in thread if missing)
     serve_path = full_path
-    if thumb and suffix in _THUMB_SUFFIXES:
+    if thumb and suffix in THUMB_SUFFIXES:
         thumb_size = min(thumb, 800)
-        thumb_path = full_path.parent / ".thumbs" / f"{full_path.stem}_{thumb_size}{suffix}"
+        thumb_path = resolve_thumbnail_path(full_path, thumb_size)
         if not thumb_path.exists():
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None, _generate_thumbnail_sync, full_path, thumb_path, thumb_size
+                None, generate_thumbnail_sync, full_path, thumb_path, thumb_size
             )
         if thumb_path.exists():
             serve_path = thumb_path
 
-    # ETag based on file mtime — enables 304 Not Modified on repeat requests
-    try:
-        mtime = serve_path.stat().st_mtime
-        etag = f'"{hashlib.md5(f"{serve_path}{mtime}".encode()).hexdigest()}"'
-    except OSError:
-        etag = None
+    etag = etag_for_path(serve_path)
 
     if etag and request.headers.get("if-none-match") == etag:
         resp_304 = Response(status_code=304)
@@ -338,7 +298,7 @@ async def serve_data_files(file_path: str, request: Request):
     suffix = full_path.suffix.lower()
     response = FileResponse(
         path=str(full_path),
-        media_type=_MEDIA_TYPES.get(suffix),
+        media_type=MEDIA_TYPES.get(suffix),
         filename=full_path.name,
     )
     _add_cors(response, request.headers.get("origin"))
@@ -407,7 +367,7 @@ async def serve_inference_files(file_path: str, request: Request):
     suffix = full_path.suffix.lower()
     response = FileResponse(
         path=str(full_path),
-        media_type=_MEDIA_TYPES.get(suffix, "image/jpeg"),
+        media_type=MEDIA_TYPES.get(suffix, "image/jpeg"),
         filename=full_path.name,
     )
     _add_cors(response, request.headers.get("origin"))
@@ -427,27 +387,6 @@ async def serve_inference_files(file_path: str, request: Request):
 # Mount static files directories - COMMENTED OUT TO USE CUSTOM HANDLERS
 # app.mount("/data", StaticFiles(directory="data"), name="data")
 # app.mount("/static/projects", StaticFiles(directory="projects"), name="projects")
-
-
-def _prewarm_thumbnails(projects_root: Path, size: int = 300) -> None:
-    """Walk projects/ and generate missing thumbnails for all images.
-
-    Runs in a background thread so it doesn't block app startup or any requests.
-    """
-    count = generated = 0
-    for img_path in projects_root.rglob("*"):
-        if img_path.suffix.lower() not in _THUMB_SUFFIXES:
-            continue
-        if ".thumbs" in img_path.parts:
-            continue  # Skip already-generated thumbnails
-        count += 1
-        thumb_path = img_path.parent / ".thumbs" / f"{img_path.stem}_{size}{img_path.suffix.lower()}"
-        if not thumb_path.exists():
-            ok = _generate_thumbnail_sync(img_path, thumb_path, size)
-            if ok:
-                generated += 1
-    if count:
-        logger.info("Thumbnail pre-warm complete: %d images scanned, %d new thumbnails generated", count, generated)
 
 
 def _reconcile_pause_requested_tasks_on_startup() -> None:
@@ -488,7 +427,7 @@ async def startup_prewarm_thumbnails() -> None:
     """Fire-and-forget thumbnail pre-generation so first page loads are fast."""
     _reconcile_pause_requested_tasks_on_startup()
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, _prewarm_thumbnails, Path("projects"))
+    loop.run_in_executor(None, prewarm_thumbnails, Path("projects"))
 
 
 @app.get("/health-check")

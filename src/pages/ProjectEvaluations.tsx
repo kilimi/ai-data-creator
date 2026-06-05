@@ -38,7 +38,7 @@ import {
   evaluationCocoJsonDownloadName,
   evaluationCocoZipDownloadName,
 } from "@/lib/evaluationTableDisplay";
-import { getApiBaseUrl } from "@/config/api";
+import { buildApiUrl, getApiBaseUrl } from "@/config/api";
 
 interface OutletContext {
   project: Project | null;
@@ -84,7 +84,12 @@ export default function ProjectEvaluations() {
     setLoadingTasks(true);
     try {
       const response = await fetch(
-        `http://localhost:9999/tasks/?project_id=${id}&task_type=model_evaluation&metadata_mode=list&limit=200`
+        buildApiUrl("/tasks/", {
+          project_id: id,
+          task_type: "model_evaluation",
+          metadata_mode: "list",
+          limit: "200",
+        })
       );
       if (response.ok) {
         const data = await response.json();
@@ -106,10 +111,16 @@ export default function ProjectEvaluations() {
     setModalResourcesLoading(true);
     try {
       const [dsRes, dgRes, trRes] = await Promise.all([
-        fetch(`http://localhost:9999/projects/${id}/datasets/list`),
-        fetch(`http://localhost:9999/projects/${id}/dataset-groups/`),
+        fetch(buildApiUrl(`/projects/${id}/datasets/list`)),
+        fetch(buildApiUrl(`/projects/${id}/dataset-groups/`)),
         fetch(
-          `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training,mmyolo_training&status=completed&metadata_mode=list&limit=150`
+          buildApiUrl("/tasks/", {
+            project_id: id,
+            task_type: "yolo_training,training,mmyolo_training",
+            status: "completed",
+            metadata_mode: "list",
+            limit: "150",
+          })
         ),
       ]);
       if (dsRes.ok) {
@@ -233,7 +244,7 @@ export default function ProjectEvaluations() {
 
   const performDelete = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}`), { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete task');
       toast({ title: "Task Deleted", description: `Evaluation task "${task.name}" has been deleted.` });
       fetchEvaluationTasks();
@@ -250,7 +261,7 @@ export default function ProjectEvaluations() {
 
   const handleStop = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}/cancel`), { method: 'PATCH' });
       if (response.ok) {
         toast({ title: "Evaluation Stopped", description: `Task "${task.name}" has been stopped.` });
         fetchEvaluationTasks();
@@ -265,7 +276,7 @@ export default function ProjectEvaluations() {
 
   const handleRerun = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}/rerun`, { method: 'POST' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}/rerun`), { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
         sonnerToast.success("Evaluation Rerun Started", {
@@ -647,7 +658,7 @@ export default function ProjectEvaluations() {
                   if (!renamingTask || !newTaskName.trim()) return;
                   
                   try {
-                    const response = await fetch(`http://localhost:9999/tasks/${renamingTask.id}`, {
+                    const response = await fetch(buildApiUrl(`/tasks/${renamingTask.id}`), {
                       method: 'PATCH',
                       headers: {
                         'Content-Type': 'application/json',
@@ -705,7 +716,7 @@ export default function ProjectEvaluations() {
         datasetGroups={datasetGroups}
         onEvaluate={async (params) => {
           try {
-            const response = await fetch('http://localhost:9999/predictions/evaluate', {
+            const response = await fetch(buildApiUrl('/predictions/evaluate'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -777,7 +788,7 @@ export default function ProjectEvaluations() {
               ignored_classes: params.ignoredClasses || []
             };
             
-            const response = await fetch('http://localhost:9999/predictions/evaluate-multiple', {
+            const response = await fetch(buildApiUrl('/predictions/evaluate-multiple'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(requestBody)
@@ -844,7 +855,7 @@ export default function ProjectEvaluations() {
           setDeletingFailedTasks(true);
           try {
             for (const t of failed) {
-              await fetch(`http://localhost:9999/tasks/${t.id}`, { method: 'DELETE' });
+              await fetch(buildApiUrl(`/tasks/${t.id}`), { method: 'DELETE' });
             }
             toast({ title: "Tasks Deleted", description: `${failed.length} failed evaluation task(s) have been deleted.` });
             fetchEvaluationTasks();

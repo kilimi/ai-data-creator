@@ -16,6 +16,7 @@ import zipfile
 
 from ..database import get_db
 from .. import models
+from app.task_dispatch import ensure_inline_dispatch_allowed
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -180,10 +181,7 @@ async def start_yolo_export(
             }
             db.commit()
         else:
-            # Fallback to FastAPI BackgroundTasks (not recommended for production)
-            logger.warning("Using BackgroundTasks instead of Celery - tasks may run concurrently!")
-            # Note: Would need to implement background task handler for exports
-            raise HTTPException(status_code=500, detail="Export requires Celery. Set USE_CELERY=true.")
+            ensure_inline_dispatch_allowed("Model export")
         
         return {
             "success": True,

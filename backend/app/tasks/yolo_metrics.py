@@ -15,7 +15,7 @@ TRAIN_EPOCH_RE = re.compile(
 
 # Validation summary: first four floats after Images/Instances are box P, R, mAP50, mAP50-95
 VAL_ALL_RE = re.compile(
-    r"^\s*all\s+\d+\s+\d+\s+((?:[\d.eE+-]+\s+){4,})"
+    r"^\s*all\s+\d+\s+\d+\s+((?:[\d.eE+-]+\s*){4,})"
 )
 
 _FLOAT_RE = re.compile(r"[\d.eE+-]+")

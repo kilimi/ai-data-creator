@@ -1,7 +1,7 @@
 """Annotation API returns normalized bboxes for grid overlay."""
 from types import SimpleNamespace
 
-from app.routers.annotation_db import annotation_bbox_normalized_xywh
+from app.services.annotation_processing import annotation_bbox_normalized_xywh
 
 
 def test_normalized_from_bbox_columns():

@@ -68,8 +68,11 @@ backend/data/
 backend/projects/
 backend/sam_service/models/*.pt
 backend/migrations/__pycache__/
-backend/app/__pycache__/
-backend/app/routers/__pycache__/
+backend/**/__pycache__/
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
+backend/static/inference_results/
+backend/.fiftyone/
 backend/*.db
 backend/*.sqlite*
 backend/ai_models/

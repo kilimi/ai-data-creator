@@ -100,8 +100,12 @@ def image_tags(root: Path) -> dict[str, str]:
 
 def uses_local_build(root: Path) -> bool:
     """True when any stack image is configured for local build."""
+    env = _parse_env_file(root / ".env")
     tags = image_tags(root)
     keys = list(IMAGE_ENV_KEYS) + [_LEGACY_CELERY_KEY]
+    configured = [k for k in keys if k in env and env[k].strip()]
+    if configured:
+        return any(_is_local_build_tag(tags.get(k, "")) for k in configured)
     return any(_is_local_build_tag(tags.get(k, "")) for k in keys)
 
 

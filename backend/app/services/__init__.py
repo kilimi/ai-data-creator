@@ -1,1 +1,1 @@
-# Services module
+"""Domain services (shared by routers and Celery tasks)."""

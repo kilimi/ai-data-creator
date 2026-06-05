@@ -15,11 +15,11 @@ def _clear_ml_modules():
 
 
 def test_general_app_import_without_ultralytics():
-  # Import twice to ensure task modules load
-    import app.celery.general_app  # noqa: F401
+    # Import twice to ensure task modules load (use import_module — app.celery
+    # package shadows general_app with the Celery instance).
     import importlib
-    import app.celery.general_app as ga
 
+    ga = importlib.import_module("app.celery.general_app")
     importlib.reload(ga)
     assert "ultralytics" not in sys.modules
     assert "mmyolo" not in sys.modules

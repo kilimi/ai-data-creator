@@ -20,12 +20,8 @@ if str(BACKEND_DIR) not in sys.path:
 
 # ── Schema import (will fail until implemented) ──────────────────────────────
 
-from app.routers.training import (
-    MMYOLOTrainingRequest,
-    mmyolo_config_name,
-    MMYOLO_VALID_ARCHS,
-    MMYOLO_VALID_SIZES,
-)
+from app.ml.mmyolo_catalog import MMYOLO_VALID_ARCHS, MMYOLO_VALID_SIZES, mmyolo_config_name
+from app.services.training_schemas import MMYOLOTrainingRequest
 
 
 # ── MMYOLOTrainingRequest schema ─────────────────────────────────────────────

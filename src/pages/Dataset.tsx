@@ -20,6 +20,7 @@ import {
   ImageCollectionData 
 } from "@/utils/imageCollections";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
+import { getApiBaseUrl } from "@/config/api";
 
 // Session cache: once we've loaded a dataset id, don't show full-page loading again for it (avoids "Loading dataset" when component remounts during auto-annotate, etc.)
 const loadedDatasetIds = new Set<string>();
@@ -620,10 +621,7 @@ export default function Dataset() {
           xhr.ontimeout = () => reject(new Error('Upload timeout'));
         });
 
-        // Get the API base URL from localStorage or environment
-        const apiBaseUrl = localStorage.getItem("apiBaseUrl") || 
-                          import.meta.env.VITE_API_URL || 
-                          'http://localhost:9999';
+        const apiBaseUrl = getApiBaseUrl();
         
         console.log('DEBUG: Upload URL:', `${apiBaseUrl}/datasets/${id}/images`);
         console.log('DEBUG: Chunk file count:', chunk.length);

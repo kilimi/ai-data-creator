@@ -59,11 +59,17 @@ PAGE_FORM = Template("""<!DOCTYPE html>
     <input type="number" id="port" name="web_port" min="1" max="65535" value="$web_port" required/>
     <p class="hint">Then open <code>http://localhost:&lt;port&gt;</code> after <code>lai up</code>. API stays on 9999.</p>
 
-    <h2>Backend code in Docker</h2>
-    <p class="hint">Whether containers use Python from your disk (live edits) or only from the built image.</p>
+    <h2>GPU features (optional)</h2>
+    <p class="hint">Training, auto-annotate, SAM 2/3, and MMYOLO need an NVIDIA GPU and larger downloads. CPU-only installs can annotate and manage datasets.</p>
     <div class="pt-mode">
-      <label class="row"><input type="radio" name="bind_backend" value="1" id="bind_yes" checked/> Mount host <code>backend/</code> — edit code without rebuilding the image (recommended for development)</label>
-      <label class="row"><input type="radio" name="bind_backend" value="0" id="bind_no"/> Use code inside the image only — no host bind (e.g. pre-built images, CI)</label>
+      <label class="row"><input type="checkbox" name="gpu_tier" value="1" id="gpu_tier" $gpu_tier_checked/> Enable GPU tier (<code>worker-gpu</code> + <code>sam_service</code>)</label>
+    </div>
+
+    <h2>Backend code in Docker</h2>
+    <p class="hint">Whether containers use Python from your disk (live edits) or only from pre-built registry images.</p>
+    <div class="pt-mode">
+      <label class="row"><input type="radio" name="bind_backend" value="1" id="bind_yes" $bind_yes_checked/> Mount host <code>backend/</code> — edit code without rebuilding (developers)</label>
+      <label class="row"><input type="radio" name="bind_backend" value="0" id="bind_no" $bind_no_checked/> Use registry images only — recommended for <code>pip install lai</code></label>
     </div>
     <div id="repo_root_wrap">
       <label for="repo_root">Repository root (absolute path, contains <code>backend/</code>)</label>
@@ -161,8 +167,8 @@ PAGE_OK = Template("""<!DOCTYPE html>
 <body>
   <h1>Saved</h1>
   <div class="ok">
-    <p>Wrote <code>.env</code> (including <code>LAI_PRETRAINED_MODELS</code>, <code>LAI_DEPTH_MODELS</code>, <code>LAI_REPO_ROOT</code>, and <code>COMPOSE_FILE</code>) and created data folders.</p>
-    <p>In the terminal run <code>lai up</code>, then open <code>http://localhost:$port/</code></p>
+    <p>Wrote <code>.env</code> and created data folders.</p>
+    <p>In the terminal run <code>lai pull</code> then <code>lai up</code>, then open <code>http://localhost:$port/</code></p>
   </div>
   <p style="color:#8b98a5;font-size:0.9rem">Press <strong>Ctrl+C</strong> in the terminal to stop this server.</p>
 </body>
@@ -193,6 +199,7 @@ def _apply_setup(
     lai_depth_models: str = "all",
     bind_host_backend: bool = True,
     lai_repo_root: str | None = None,
+    gpu_tier: bool = False,
 ) -> None:
     data_path = Path(data_dir).expanduser().resolve()
     data_path.mkdir(parents=True, exist_ok=True)
@@ -217,6 +224,21 @@ def _apply_setup(
         "COMPOSE_FILE",
         compose_file_env_value(bind_code=bind_host_backend),
     )
+    from lai.registry import is_developer_checkout, write_registry_env
+
+    if is_developer_checkout(bundle_root):
+        _upsert_env_line(env_file, "LAI_GPU_TIER", "1" if gpu_tier else "0")
+        if gpu_tier:
+            _upsert_env_line(env_file, "COMPOSE_PROFILES", "gpu")
+        else:
+            _upsert_env_line(env_file, "COMPOSE_PROFILES", "")
+    else:
+        write_registry_env(env_file, gpu_tier=gpu_tier, bind_code=False)
+        _upsert_env_line(
+            env_file,
+            "COMPOSE_FILE",
+            compose_file_env_value(bind_code=False),
+        )
     ensure_compose_env(bundle_root)
 
 
@@ -299,6 +321,12 @@ def run_wizard(bundle_root: Path, *, open_browser: bool = True) -> int:
     default_sam3_file = "sam3.pt"
     default_repo_root = str(bundle_root.resolve())
     wizard_port = _pick_port()
+    from lai.registry import is_developer_checkout
+
+    dev_checkout = is_developer_checkout(bundle_root)
+    bind_yes_checked = "checked" if dev_checkout else ""
+    bind_no_checked = "" if dev_checkout else "checked"
+    gpu_tier_checked = ""
 
     def make_handler() -> type[BaseHTTPRequestHandler]:
         class Handler(BaseHTTPRequestHandler):
@@ -321,6 +349,9 @@ def run_wizard(bundle_root: Path, *, open_browser: bool = True) -> int:
                     sam3_dir=_html_escape(default_sam3_dir),
                     sam3_file=_html_escape(default_sam3_file),
                     submit_disabled=submit_dis,
+                    bind_yes_checked=bind_yes_checked,
+                    bind_no_checked=bind_no_checked,
+                    gpu_tier_checked=gpu_tier_checked,
                 ).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -358,6 +389,7 @@ def run_wizard(bundle_root: Path, *, open_browser: bool = True) -> int:
                 )
                 bind_raw = (data.get("bind_backend") or ["1"])[0].strip()
                 bind_host_backend = bind_raw not in ("0", "false", "False", "no", "NO")
+                gpu_tier = bool((data.get("gpu_tier") or [""])[0].strip())
                 repo_in = (data.get("repo_root") or [""])[0].strip()
                 if not data_dir or not web_port or not sam3_dir or not sam3_file:
                     self.send_response(400)
@@ -415,6 +447,7 @@ def run_wizard(bundle_root: Path, *, open_browser: bool = True) -> int:
                         lai_depth_models=lai_depth,
                         bind_host_backend=bind_host_backend,
                         lai_repo_root=str(repo_path) if repo_path is not None else None,
+                        gpu_tier=gpu_tier,
                     )
                 except OSError as e:
                     self.send_response(500)

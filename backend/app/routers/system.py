@@ -195,6 +195,47 @@ def _query_gpu_torch() -> List[dict[str, Any]]:
         return []
 
 
+def _gpu_tier_configured() -> bool:
+    raw = os.environ.get("LAI_GPU_TIER", "").strip().lower()
+    profiles = os.environ.get("COMPOSE_PROFILES", "").strip().lower()
+    return raw in ("1", "true", "yes") or "gpu" in profiles.split(",")
+
+
+def _enrich_gpu_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    tier = _gpu_tier_configured()
+    payload["gpu_tier_configured"] = tier
+    if not tier:
+        payload["gpu_features_message"] = (
+            "GPU tier is disabled. Run lai install, enable the GPU tier, then lai pull && lai up."
+        )
+    elif not payload.get("has_gpu"):
+        payload["gpu_features_message"] = (
+            "GPU tier is enabled but no GPU worker is responding. "
+            "Ensure worker-gpu is running (COMPOSE_PROFILES=gpu) and NVIDIA Container Toolkit is installed."
+        )
+    else:
+        payload["gpu_features_message"] = None
+    return payload
+
+
+@router.get("/system/capabilities")
+async def get_capabilities() -> dict[str, Any]:
+    """High-level feature flags for the UI (CPU vs GPU tier)."""
+    gpu = await get_gpu_status()
+    tier = bool(gpu.get("gpu_tier_configured"))
+    worker_up = bool(gpu.get("has_gpu")) or gpu.get("source") == "celery_worker"
+    return {
+        "annotation_available": True,
+        "dataset_management_available": True,
+        "training_available": tier and worker_up,
+        "auto_annotate_available": tier and worker_up,
+        "sam_available": tier and worker_up,
+        "gpu_tier_configured": tier,
+        "gpu_worker_available": worker_up,
+        "message": gpu.get("gpu_features_message"),
+    }
+
+
 @router.get("/system/gpu")
 async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
     """
@@ -205,12 +246,12 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
     # Fast path: read worker-visible status (worker has GPU, backend may not).
     cached_db = _read_worker_gpu_status_db()
     if cached_db:
-        return cached_db
+        return _enrich_gpu_payload(cached_db)
 
     # Fast path fallback: redis cache from worker.
     cached = _read_worker_gpu_status()
     if cached:
-        return {
+        return _enrich_gpu_payload({
             'has_gpu': bool(cached.get('has_gpu', False)),
             'gpu_count': int(cached.get('gpu_count', 0) or 0),
             'gpus': list(cached.get('gpus', [])),
@@ -218,17 +259,17 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
             'memory_total_mb': int(cached.get('memory_total_mb', 0) or 0),
             'source': cached.get('source', 'celery_worker'),
             'updated_at': cached.get('updated_at'),
-        }
+        })
 
     # Mostly on-request refresh: ask worker for a fresh sample when no cache exists.
     if GPU_REFRESH_ON_REQUEST:
         _trigger_worker_gpu_refresh()
         cached_db = _read_worker_gpu_status_db()
         if cached_db:
-            return cached_db
+            return _enrich_gpu_payload(cached_db)
         cached = _read_worker_gpu_status()
         if cached:
-            return {
+            return _enrich_gpu_payload({
                 'has_gpu': bool(cached.get('has_gpu', False)),
                 'gpu_count': int(cached.get('gpu_count', 0) or 0),
                 'gpus': list(cached.get('gpus', [])),
@@ -236,12 +277,12 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
                 'memory_total_mb': int(cached.get('memory_total_mb', 0) or 0),
                 'source': cached.get('source', 'celery_worker'),
                 'updated_at': cached.get('updated_at'),
-            }
+            })
 
     # Cache miss means we do not yet know whether the worker has a GPU.
     # Do not claim "No GPU" here because backend may be CPU-only by design.
     if debug:
-        return {
+        return _enrich_gpu_payload({
             'has_gpu': False,
             'gpu_count': 0,
             'gpus': [],
@@ -250,7 +291,7 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
             'source': 'unknown',
             'status': 'unknown',
             'debug': ['worker GPU cache miss'],
-        }
+        })
 
     gpus, nvidia_debug = _query_gpu_nvidia_smi()
     if not gpus:
@@ -274,7 +315,7 @@ async def get_gpu_status(debug: bool = False) -> dict[str, Any]:
     }
     if debug and not gpus and nvidia_debug:
         out["debug"] = nvidia_debug
-    return out
+    return _enrich_gpu_payload(out)
 
 
 # ---------------------------------------------------------------------------

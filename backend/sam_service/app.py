@@ -94,7 +94,7 @@ if _sam3_path:
     _exists = os.path.isfile(_sam3_path)
     print(f"[SAM3] SAM3_CHECKPOINT_PATH={_sam3_path}, exists={_exists}")
     if not _exists:
-        print("[SAM3] Local weights missing — SAM 3 disabled until you add the checkpoint (see install / README).")
+        print("[SAM3] Local weights missing — SAM 3 disabled until you add the checkpoint (see lai install / repository README).")
         if not SAM3_ALLOW_HF_DOWNLOAD:
             print("[SAM3] Hugging Face download is disabled (SAM3_ALLOW_HF_DOWNLOAD not true).")
         else:

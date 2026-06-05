@@ -2,7 +2,22 @@
 
 Annotation and dataset stack. The **`lai`** CLI drives **Docker Compose** (Docker Engine + Compose **v2.24+** required).
 
-## Run the stack
+## Install (end users — pull-only)
+
+No git clone or image builds required. See [website/download.html](website/download.html) for full docs.
+
+```bash
+pip install lai          # or: pipx install lai
+lai install-gui          # data folder, port, CPU vs GPU tier
+lai pull                 # pull pre-built images from GHCR
+lai up                   # start stack
+```
+
+Open **`http://localhost:<WEB_PORT>`** (default **8089**). Stop: `lai down`. Upgrade: `lai upgrade`.
+
+**Requires:** Docker Engine + Compose **v2.24+**. GPU tier needs NVIDIA Container Toolkit.
+
+## Develop from source
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -10,10 +25,8 @@ pip install -U pip && pip install -e .
 
 lai install-gui    # browser wizard: data directory + port (or: lai install)
 lai up             # docker compose up -d (no rebuild)
-lai up --build     # same, but rebuild images first
+lai up --build     # rebuild local images first
 ```
-
-Open **`http://localhost:<WEB_PORT>`** (default **8089**). Stop: `lai down`.
 
 **On Debian/Ubuntu:** do not `pip install` on system Python (PEP 668). Use the venv above or **`pipx install -e .`**.
 
@@ -37,7 +50,13 @@ Uses Vite (see `package.json`). The full app runs in Docker via `lai up`.
 
 ## Background workers
 
-CPU tasks (`worker-general`) and GPU tasks (`worker-gpu`) use separate Docker images and Celery queues. See [docs/WORKERS.md](docs/WORKERS.md).
+CPU tasks (`worker-general`) and GPU tasks (`worker-gpu`) use separate Docker images and Celery queues. See [docs/WORKERS.md](docs/WORKERS.md) and [docs/BACKGROUND_TASKS.md](docs/BACKGROUND_TASKS.md) (production requires Celery workers).
+
+## Database
+
+Schema policy (`LAI_DB_AUTO_CREATE`, Alembic on container start): [docs/DATABASE.md](docs/DATABASE.md).
+
+Service layer map: [docs/BACKGROUND_TASKS.md](docs/BACKGROUND_TASKS.md#service-layer-p1).
 
 ```bash
 docker compose build worker-general worker-gpu
@@ -74,7 +93,7 @@ pip install -r backend/requirements-backend.txt pytest
 
 # All Python tests
 pytest tests/python/
-
+pytest tests/python -q -m "not training_smoke"
 # GPU training smoke (5 epochs on tests/python/test_dataset/car_dataset):
 # worker-gpu: backend is /app; tests are mounted at /tests (see dockers/backend/docker-compose.yml).
 # Recreate worker after compose changes: docker compose up -d worker-gpu
@@ -154,9 +173,27 @@ pytest tests/python/ && npm run tests && npm run test:e2e
 
 Or: `npm run test:all` (Vitest + Playwright; run `pytest` separately).
 
+### Marketing / demo flows
+
+```bash
+npx playwright test --config=playwright.marketing.config.ts
+```
+
+Produces screenshots and video under `docs/flows/` (requires API on `:9999` and Vite on `:8080`).
 
 See **GPU training smoke** under [Tests](#tests) above.
 
 ## License
 
-Add your license here.
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+
+| Component | License | Details |
+|-----------|---------|---------|
+| LAI + Ultralytics YOLO | AGPL-3.0 | [LICENSE](LICENSE) — [Ultralytics Enterprise](https://www.ultralytics.com/license) for closed-source use |
+| MMYOLO / OpenMMLab | GPL-3.0 | [licenses/GPL-3.0.txt](licenses/GPL-3.0.txt) |
+| SAM 2 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) |
+| SAM 3 | Meta SAM License | [licenses/SAM-3-Meta.txt](licenses/SAM-3-Meta.txt) |
+
+Full attribution and redistribution notes: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [NOTICE](NOTICE).
+
+If you distribute Docker images or releases that bundle these ML runtimes, include the license files above and comply with each upstream license (especially AGPL-3.0 for YOLO, GPL-3.0 for MMYOLO, and Meta’s SAM License for SAM 3).

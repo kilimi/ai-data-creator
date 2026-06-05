@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 import lai
-from lai.compose_build import build_stack, missing_runtime_images, should_build_stack
+from lai.compose_build import build_stack, missing_runtime_images, should_build_stack, uses_local_build
+from lai.compose_pull import missing_registry_images, pull_stack
 from lai.compose_files import ensure_compose_env
 from lai.paths import _candidate_repo_root, bundle_data_dir, get_bundle_root
 from lai.uninstall import run_uninstall
@@ -131,12 +132,41 @@ def cmd_build(ns: argparse.Namespace) -> int:
     return build_stack(root, no_cache=ns.no_cache)
 
 
+def cmd_pull(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    _hint_guided_install(root)
+    return pull_stack(root)
+
+
+def cmd_upgrade(ns: argparse.Namespace) -> int:
+    root = get_bundle_root(force_download=ns.refresh)
+    _hint_guided_install(root)
+    if _candidate_repo_root() is None:
+        get_bundle_root(force_download=True)
+        print(f"Bundle refreshed under {bundle_data_dir()}", file=sys.stderr)
+    rc = pull_stack(root)
+    if rc != 0:
+        return rc
+    return _run(["docker", "compose", "up", "-d", *(ns.docker_compose_args or [])], root)
+
+
 def cmd_up(ns: argparse.Namespace) -> int:
     root = get_bundle_root(force_download=ns.refresh)
     _hint_guided_install(root)
     extra = ns.docker_compose_args or []
 
-    if should_build_stack(root, force=ns.build):
+    if not uses_local_build(root):
+        missing = missing_registry_images(root)
+        if missing or ns.pull:
+            if missing:
+                print(
+                    f"Pulling registry images ({len(missing)} missing locally)...",
+                    file=sys.stderr,
+                )
+            rc = pull_stack(root)
+            if rc != 0:
+                return rc
+    elif should_build_stack(root, force=ns.build):
         if ns.build:
             print(
                 "Rebuilding all local stack images (ML runtimes first, then backend/workers/web)...",
@@ -306,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         description="LAI stack via Docker Compose (needs Docker + Compose 2.24+). "
         "pip install only adds this CLI — run `lai install` once for guided setup, then `lai up`.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Typical first run:\n  pip install -e .   # or: pip install lai\n  lai install-gui  # browser wizard (or: lai install in terminal)\n  lai up           # builds missing images in order, then starts stack\n  lai up --build   # rebuild all local images\n\nRemove data:  lai uninstall  (type DELETE to confirm)",
+        epilog="Typical first run (pull-only):\n  pip install lai\n  lai install-gui\n  lai pull && lai up\n\nDevelopers (git clone):\n  pip install -e .\n  lai install-gui\n  lai up --build\n\nRemove data:  lai uninstall  (type DELETE to confirm)",
     )
     p.add_argument("--version", action="version", version=f"lai {lai.__version__}")
 
@@ -364,14 +394,35 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--refresh", action="store_true")
     sp.set_defaults(func=cmd_build)
 
+    sp = sub.add_parser("pull", help="Pull pre-built images from the registry (.env LAI_*_IMAGE tags)")
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_pull)
+
+    sp = sub.add_parser(
+        "upgrade",
+        help="Refresh bundle (PyPI installs), pull images, and restart stack",
+    )
+    sp.add_argument(
+        "docker_compose_args",
+        nargs="*",
+        help="Extra args passed to docker compose up",
+    )
+    sp.add_argument("--refresh", action="store_true")
+    sp.set_defaults(func=cmd_upgrade)
+
     sp = sub.add_parser(
         "up",
-        help="Start stack (builds missing local images in order; use --build to rebuild all)",
+        help="Start stack (pull registry images or build missing local images)",
     )
     sp.add_argument(
         "--build",
         action="store_true",
         help="Rebuild all local images in dependency order before starting",
+    )
+    sp.add_argument(
+        "--pull",
+        action="store_true",
+        help="Pull registry images before starting (even if already present)",
     )
     sp.add_argument(
         "docker_compose_args",

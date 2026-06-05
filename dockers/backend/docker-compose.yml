@@ -33,6 +33,8 @@ services:
       - SERVICE_TYPE=main
       - REDIS_URL=redis://redis:6379/0
       - USE_CELERY=true
+      - LAI_DB_AUTO_CREATE=false
+      - LAI_RUN_MIGRATIONS=true
       - XDG_CACHE_HOME=/app/.cache
       - MIM_CACHE_DIR=/app/.cache/mim
       - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017
@@ -111,7 +113,9 @@ services:
     restart: unless-stopped
 
   # GPU worker: YOLO train/eval/export, auto-annotate, MMYOLO (subprocess)
+  # Profile ``gpu`` — enable with COMPOSE_PROFILES=gpu or lai install GPU tier.
   worker-gpu:
+    profiles: [gpu]
     image: ${LAI_WORKER_GPU_IMAGE:-lai-worker-gpu:local}
     build:
       <<: *app_build
@@ -239,7 +243,9 @@ services:
 
   # SAM 2/3 service: needs the same GPU exposure as `backend` (runtime + NVIDIA_* env).
   # Requires: NVIDIA Container Toolkit (`nvidia-smi` in container). Do not set SAM_FORCE_CPU when using GPU.
+  # Profile ``gpu`` — optional; CPU-only installs skip this service.
   sam_service:
+    profiles: [gpu]
     image: ${LAI_SAM_IMAGE:-lai-sam:local}
     build:
       context: ../../backend/sam_service

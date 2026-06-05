@@ -20,7 +20,7 @@ import json
 # Add the app directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
-from app.routers.annotation_db import detect_annotation_type
+from app.services.annotation_processing import detect_annotation_type
 
 async def update_annotation_types():
     """Update existing annotation type values to new format."""

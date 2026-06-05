@@ -206,7 +206,7 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
                             # Validate segmentation coordinates before saving
                             segmentation = annotation.segmentation
                             if segmentation:
-                                from ..routers.annotation_db import validate_and_normalize_segmentation
+                                from app.services.annotation_processing import validate_and_normalize_segmentation
                                 validated_seg = validate_and_normalize_segmentation(
                                     segmentation,
                                     image_width=augmented_image.width,
@@ -246,7 +246,7 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
                                 # Validate segmentation coordinates before saving
                                 segmentation = transformed_annotation.get('segmentation')
                                 if segmentation:
-                                    from ..routers.annotation_db import validate_and_normalize_segmentation
+                                    from app.services.annotation_processing import validate_and_normalize_segmentation
                                     validated_seg = validate_and_normalize_segmentation(
                                         segmentation,
                                         image_width=augmented_image.width,
@@ -297,7 +297,7 @@ async def process_augmented_dataset_task(task_id: int, db_path: str):
             models.Image.dataset_id == target_dataset.id
         ).count()
         # Recalculate annotation counts using helper to avoid relying on a persistent column
-        from ..routers.annotation_db import update_dataset_annotation_count
+        from app.services.annotation_processing import update_dataset_annotation_count
         update_dataset_annotation_count(db, target_dataset.id)
         # Refresh target_dataset from DB to update any dependent code
         db.refresh(target_dataset)

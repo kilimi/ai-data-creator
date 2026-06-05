@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ConfirmDeleteDialog } from "@/components/ConfirmDeleteDialog";
+import { buildApiUrl } from "@/config/api";
 
 interface OutletContext {
   project: Project | null;
@@ -120,7 +121,12 @@ export default function ProjectModels() {
     setLoadingTasks(true);
     try {
       const response = await fetch(
-        `http://localhost:9999/tasks/?project_id=${id}&task_type=yolo_training,training,mmyolo_training&metadata_mode=list&limit=200`
+        buildApiUrl("/tasks/", {
+          project_id: id,
+          task_type: "yolo_training,training,mmyolo_training",
+          metadata_mode: "list",
+          limit: "200",
+        })
       );
       if (response.ok) {
         const data = await response.json();
@@ -141,8 +147,8 @@ export default function ProjectModels() {
     setModalResourcesLoading(true);
     try {
       const [dsRes, dgRes] = await Promise.all([
-        fetch(`http://localhost:9999/projects/${id}/datasets/list`),
-        fetch(`http://localhost:9999/projects/${id}/dataset-groups/`),
+        fetch(buildApiUrl(`/projects/${id}/datasets/list`)),
+        fetch(buildApiUrl(`/projects/${id}/dataset-groups/`)),
       ]);
       if (dsRes.ok) {
         const result = await dsRes.json();
@@ -199,7 +205,7 @@ export default function ProjectModels() {
     setDeletingFailedTasks(true);
     try {
       for (const task of failedTasks) {
-        await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
+        await fetch(buildApiUrl(`/tasks/${task.id}`), { method: 'DELETE' });
       }
       toast({
         title: "Tasks Deleted",
@@ -257,7 +263,7 @@ export default function ProjectModels() {
   // Action handlers (extracted so cards can call them)
   const handleRerunTask = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/training/${task.id}/rerun`, { method: 'POST' });
+      const response = await fetch(buildApiUrl(`/training/${task.id}/rerun`), { method: 'POST' });
       if (response.ok) {
         const data = await response.json();
         toast({ title: "Training Rerun Started", description: `New training task "${data.task.name}" has been created and started.` });
@@ -273,7 +279,7 @@ export default function ProjectModels() {
 
   const performDeleteTask = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}`, { method: 'DELETE' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}`), { method: 'DELETE' });
       if (response.ok) {
         toast({ title: "Task Deleted", description: `Training task "${task.name}" has been deleted.` });
         fetchTrainingTasks();
@@ -294,7 +300,7 @@ export default function ProjectModels() {
 
   const performStopTask = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}/cancel`, { method: 'PATCH' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}/cancel`), { method: 'PATCH' });
       if (response.ok) {
         toast({ title: "Training Stopped", description: `Task "${task.name}" has been cancelled.` });
         fetchTrainingTasks();
@@ -314,7 +320,7 @@ export default function ProjectModels() {
 
   const handlePauseTask = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}/pause`, { method: 'PATCH' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}/pause`), { method: 'PATCH' });
       if (response.ok) {
         toast({ title: "Training Paused", description: `Task "${task.name}" will pause at the next epoch boundary and save a checkpoint.` });
         fetchTrainingTasks();
@@ -329,7 +335,7 @@ export default function ProjectModels() {
 
   const handleResumeTask = async (task: any) => {
     try {
-      const response = await fetch(`http://localhost:9999/tasks/${task.id}/resume`, { method: 'PATCH' });
+      const response = await fetch(buildApiUrl(`/tasks/${task.id}/resume`), { method: 'PATCH' });
       if (response.ok) {
         const data = await response.json();
         toast({ title: "Training Resumed", description: `New training task #${data.new_task_id} started from saved checkpoint.` });
@@ -607,7 +613,7 @@ export default function ProjectModels() {
                   if (!renamingTask || !newTaskName.trim()) return;
                   
                   try {
-                    const response = await fetch(`http://localhost:9999/tasks/${renamingTask.id}`, {
+                    const response = await fetch(buildApiUrl(`/tasks/${renamingTask.id}`), {
                       method: 'PATCH',
                       headers: {
                         'Content-Type': 'application/json',

@@ -1,7 +1,7 @@
 """Cooperative cancellation for long-running DB-backed tasks."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -65,7 +65,7 @@ def finalize_running_task(
         if task.status != "stopped":
             task.status = "stopped"
         if not task.completed_at:
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(UTC)
         if not task.error_message:
             task.error_message = "Task stopped by user"
         db.commit()
@@ -73,7 +73,7 @@ def finalize_running_task(
     if task.status == "failed":
         return False
     task.status = success_status
-    task.completed_at = datetime.utcnow()
+    task.completed_at = datetime.now(UTC)
     if success_status == "completed":
         task.progress = 100.0
     db.commit()
@@ -96,13 +96,13 @@ def handle_task_failure_status(
         if task.status != "stopped":
             task.status = "stopped"
         if not task.completed_at:
-            task.completed_at = datetime.utcnow()
+            task.completed_at = datetime.now(UTC)
         if not task.error_message:
             task.error_message = "Task stopped by user"
         db.commit()
         return
     task.status = "failed"
-    task.completed_at = datetime.utcnow()
+    task.completed_at = datetime.now(UTC)
     task.error_message = str(exc)
     db.commit()
 
@@ -116,7 +116,7 @@ def run_annotation_file_processing(
 ) -> None:
     """Shared entry for Celery and in-process annotation import workers."""
     from app import models
-    from app.routers.annotation_db import process_coco_annotation_file_task
+    from app.services.annotation_processing import process_coco_annotation_file_task
 
     task = db.query(models.Task).filter(models.Task.id == task_id).first()
     if task_stop_requested(task):

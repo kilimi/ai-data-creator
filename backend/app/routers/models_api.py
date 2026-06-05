@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -68,7 +68,6 @@ async def get_models_catalog():
 @router.post("/training/start")
 async def start_unified_training(
     request: UnifiedTrainingStartRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -95,16 +94,21 @@ async def start_unified_training(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    from app.routers import training as training_router
+    from app.services import training_operations_service as training_ops
+    from app.services.training_schemas import (
+        MMYOLOTrainingRequest,
+        RTDETRTrainingRequest,
+        YoloTrainingRequest,
+    )
 
     if request.framework_id == "ultralytics.yolo":
-        yolo_req = training_router.YoloTrainingRequest(**body)
-        return await training_router.start_yolo_training(yolo_req, background_tasks, db)
+        yolo_req = YoloTrainingRequest(**body)
+        return await training_ops.start_yolo_training(yolo_req, db)
     if request.framework_id == "ultralytics.rtdetr":
-        rtdetr_req = training_router.RTDETRTrainingRequest(**body)
-        return await training_router.start_rtdetr_training(rtdetr_req, background_tasks, db)
+        rtdetr_req = RTDETRTrainingRequest(**body)
+        return await training_ops.start_rtdetr_training(rtdetr_req, db)
     if request.framework_id == "mmyolo":
-        mmyolo_req = training_router.MMYOLOTrainingRequest(**body)
-        return await training_router.start_mmyolo_training(mmyolo_req, background_tasks, db)
+        mmyolo_req = MMYOLOTrainingRequest(**body)
+        return await training_ops.start_mmyolo_training(mmyolo_req, db)
 
     raise HTTPException(status_code=501, detail=f"Training start not wired for {request.framework_id}")

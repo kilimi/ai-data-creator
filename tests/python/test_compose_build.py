@@ -44,19 +44,27 @@ def test_uses_local_build_with_defaults(tmp_path: Path):
     assert uses_local_build(tmp_path) is True
 
 
-def test_uses_local_build_with_ghcr(tmp_path: Path):
-    (tmp_path / ".env").write_text(
-        "LAI_WORKER_GPU_IMAGE=ghcr.io/x/worker-gpu:latest\n"
-        "LAI_BACKEND_IMAGE=ghcr.io/x/backend:latest\n"
+def _ghcr_env() -> str:
+    return "\n".join(
+        [
+            "LAI_BACKEND_IMAGE=ghcr.io/x/backend:latest",
+            "LAI_WORKER_GPU_IMAGE=ghcr.io/x/worker-gpu:latest",
+            "LAI_WORKER_GENERAL_IMAGE=ghcr.io/x/worker-general:latest",
+            "LAI_ULTRALYTICS_IMAGE=ghcr.io/x/ultralytics:latest",
+            "LAI_MMYOLO_IMAGE=ghcr.io/x/mmyolo:latest",
+            "LAI_FRONTEND_IMAGE=ghcr.io/x/frontend:latest",
+            "LAI_SAM_IMAGE=ghcr.io/x/sam:latest",
+        ]
     )
+
+
+def test_uses_local_build_with_ghcr(tmp_path: Path):
+    (tmp_path / ".env").write_text(_ghcr_env())
     assert uses_local_build(tmp_path) is False
 
 
 def test_should_build_stack_force_respects_ghcr(tmp_path: Path):
-    (tmp_path / ".env").write_text(
-        "LAI_WORKER_GPU_IMAGE=ghcr.io/x/worker-gpu:latest\n"
-        "LAI_BACKEND_IMAGE=ghcr.io/x/backend:latest\n"
-    )
+    (tmp_path / ".env").write_text(_ghcr_env())
     assert should_build_stack(tmp_path, force=True) is False
 
 

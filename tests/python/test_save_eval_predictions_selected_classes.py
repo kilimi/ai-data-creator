@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app import models
-from app.routers.predictions import build_thresholded_evaluation_coco_bundle
+from app.services.predictions_service import build_thresholded_evaluation_coco_bundle
 
 
 class FakeQuery:
@@ -41,7 +41,7 @@ def test_cm_cell_save_keeps_only_selected_classes_without_background_or_unselect
         task_metadata={"results": {"artifact": "ignored_by_test"}},
     )
 
-    dataset = SimpleNamespace(id=5)
+    dataset = SimpleNamespace(id=5, name="test_dataset")
     images = [
         SimpleNamespace(
             id=10,
@@ -64,7 +64,7 @@ def test_cm_cell_save_keeps_only_selected_classes_without_background_or_unselect
         ],
         "all_ground_truth": [
             {"image_id": 10, "class_id": 0, "bbox": [0, 0, 20, 20]},
-            {"image_id": 10, "class_id": 1, "bbox": [30, 30, 20, 20]},
+            {"image_id": 10, "class_id": 1, "bbox": [30, 30, 50, 50]},
         ],
         "dataset_id": 5,
         "collection_id": None,
@@ -74,7 +74,10 @@ def test_cm_cell_save_keeps_only_selected_classes_without_background_or_unselect
         "iou_threshold": 0.5,
     }
 
-    with patch("app.routers.predictions.load_merged_evaluation_results", return_value=merged_results):
+    with patch(
+        "app.services.predictions_service.load_merged_evaluation_results",
+        return_value=merged_results,
+    ):
         coco_output, _, _, _ = build_thresholded_evaluation_coco_bundle(
             db=db,
             task=task,

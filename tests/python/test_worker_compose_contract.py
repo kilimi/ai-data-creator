@@ -15,7 +15,9 @@ def test_compose_defines_worker_general_and_gpu():
 
 
 def test_code_mount_targets_both_workers():
-    mount_path = Path(__file__).resolve().parents[2] / "docker-compose.code-mount.yml"
+    mount_path = (
+        Path(__file__).resolve().parents[2] / "dockers" / "docker-compose.code-mount.yml"
+    )
     data = yaml.safe_load(mount_path.read_text(encoding="utf-8"))
     services = data.get("services", {})
     assert "worker-general" in services
@@ -36,7 +38,7 @@ def test_sam_service_uses_docker_deps_additional_context():
     data = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     build = data["services"]["sam_service"]["build"]
     assert "sam_service" in build["context"].replace("\\", "/")
-    assert build.get("additional_contexts", {}).get("docker_deps") == "../sam"
+    assert build.get("additional_contexts", {}).get("docker_deps") == "../../dockers/sam"
 
 
 def test_worker_gpu_consumes_gpu_and_mmyolo_queues():

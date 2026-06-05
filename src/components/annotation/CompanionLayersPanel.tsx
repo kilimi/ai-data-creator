@@ -44,7 +44,7 @@ import {
 } from "@/components/ui/resizable";
 import { cn } from "@/lib/utils";
 import { Image, ImageCollection } from "@/types";
-import type { AnnotationShape } from "@/pages/ImageAnnotation";
+import type { AnnotationShape } from "@/pages/image-annotation/types";
 import { pointsToTightBbox } from "@/utils/annotations";
 import {
   COMPANION_DUPLICATE_STORAGE_KEY,

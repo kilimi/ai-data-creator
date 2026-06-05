@@ -1,5 +1,5 @@
 """Tests for FiftyOne evaluation ground-truth bbox normalization."""
-from app.routers.predictions import (
+from app.services.predictions_service import (
     _fiftyone_bbox_normalized_from_xyxy_pixel,
     _match_training_class_name,
 )

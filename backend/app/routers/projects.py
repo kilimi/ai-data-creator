@@ -4,17 +4,18 @@ from sqlalchemy import func, text
 from typing import Optional, List
 from pydantic import BaseModel
 import json
-import base64
 from pathlib import Path
 import shutil
 import sys
 import re
-from PIL import Image
-import io
 
 from .. import models, schemas
 from ..database import get_db
 from ..db_cleanup import delete_project_record
+from app.services.dataset_media_service import (
+    create_thumbnail_base64,
+    truncate_base64_url,
+)
 
 router = APIRouter()
 
@@ -45,7 +46,7 @@ async def create_project(
             db_project.logo = logo_data
             mime_type = logo.content_type or "image/png"
             # Generate thumbnail for faster loading in list view
-            thumbnail_url = _create_thumbnail(logo_data, mime_type)
+            thumbnail_url = create_thumbnail_base64(logo_data, mime_type)
             db_project.logo_url = thumbnail_url
         db.add(db_project)
         db.commit()
@@ -65,57 +66,6 @@ async def create_project(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
-
-def _create_thumbnail(image_data: bytes, mime_type: str, max_size: tuple = (200, 200)) -> str:
-    """Create a thumbnail from image data and return base64 encoded string."""
-    try:
-        # Open image from bytes
-        img = Image.open(io.BytesIO(image_data))
-        
-        # Convert RGBA to RGB if necessary
-        if img.mode == 'RGBA':
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            background.paste(img, mask=img.split()[3])  # 3 is the alpha channel
-            img = background
-        elif img.mode != 'RGB':
-            img = img.convert('RGB')
-        
-        # Create thumbnail maintaining aspect ratio
-        img.thumbnail(max_size, Image.Resampling.LANCZOS)
-        
-        # Save to bytes
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=85, optimize=True)
-        thumbnail_data = buffer.getvalue()
-        
-        # Encode to base64
-        thumbnail_base64 = base64.b64encode(thumbnail_data).decode()
-        return f"data:image/jpeg;base64,{thumbnail_base64}"
-    except Exception as e:
-        print(f"Error creating thumbnail: {e}")
-        # Return original if thumbnail creation fails
-        original_base64 = base64.b64encode(image_data).decode()
-        return f"data:{mime_type};base64,{original_base64}"
-
-
-def _is_base64_image(url: str | None) -> bool:
-    """Check if a URL is a base64 encoded image data URL."""
-    if not url:
-        return False
-    return url.startswith("data:image/")
-
-
-def _truncate_base64_url(url: str | None, include_base64: bool = False) -> str | None:
-    """
-    Truncate base64 image URLs to reduce response size.
-    If include_base64 is False, returns None for base64 URLs.
-    """
-    if not url:
-        return None
-    if _is_base64_image(url) and not include_base64:
-        return None  # Exclude base64 data from list view
-    return url
 
 
 @router.get("/projects/", response_model=list[schemas.Project])
@@ -175,7 +125,7 @@ def read_projects(skip: int = 0, limit: int = 100, include_images: bool = True, 
                     })
             
             # Only include base64 project logo if explicitly requested
-            project_logo_url = _truncate_base64_url(p.logo_url, include_images)
+            project_logo_url = truncate_base64_url(p.logo_url, include_images)
             
             result.append({
                 "id": p.id,
@@ -348,7 +298,10 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
     # AnnotationFile even though rows exist in `annotations`. Compute live
     # counts once and use them as a fallback so UI selectors (e.g. augmentation
     # source picker) don't incorrectly show "0 annotations".
-    from .annotation_db import get_live_annotation_counts_by_file_id, resolve_annotation_count
+    from app.services.annotation_processing import (
+        get_live_annotation_counts_by_file_id,
+        resolve_annotation_count,
+    )
 
     file_ids = [f.id for f in annotation_files if f.id]
     live_counts_by_file = get_live_annotation_counts_by_file_id(db, file_ids)
@@ -605,8 +558,8 @@ def read_project(
                 "annotation_file_count": annotation_file_counts.get(dataset.id, 0),
                 "annotation_files": annotation_files_by_dataset.get(dataset.id, []),
                 "project_id": dataset.project_id,
-                "thumbnailUrl": _truncate_base64_url(dataset.thumbnailUrl, include_images),
-                "logo_url": _truncate_base64_url(dataset.logo_url, include_images),
+                "thumbnailUrl": truncate_base64_url(dataset.thumbnailUrl, include_images),
+                "logo_url": truncate_base64_url(dataset.logo_url, include_images),
                 "url": dataset.url
             })
     
@@ -618,8 +571,8 @@ def read_project(
         "updated_at": project.updated_at,
         "is_project": project.is_project,
         "datasets": datasets,
-        "logo_url": _truncate_base64_url(project.logo_url, include_images),
-        "thumbnailUrl": _truncate_base64_url(project.logo_url, include_images),
+        "logo_url": truncate_base64_url(project.logo_url, include_images),
+        "thumbnailUrl": truncate_base64_url(project.logo_url, include_images),
         "tags": project.tags
     }
 
@@ -646,7 +599,7 @@ async def update_project(
             project.logo = logo_data
             mime_type = logo.content_type or "image/png"
             # Generate thumbnail for faster loading in list view
-            thumbnail_url = _create_thumbnail(logo_data, mime_type)
+            thumbnail_url = create_thumbnail_base64(logo_data, mime_type)
             project.logo_url = thumbnail_url
         db.commit()
         db.refresh(project)

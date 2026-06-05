@@ -61,7 +61,7 @@ def iter_training_smoke_cases() -> Iterator[TrainingSmokeCase]:
     allowed = {s.strip() for s in allow.split(",") if s.strip()} if allow else None
 
     for info in list_backends():
-        backend = get_backend(info.backend_id)
+        backend = get_backend(info.id)
         catalog = backend.catalog()
         legacy = backend.legacy_task_types()
         task_type = legacy[0] if legacy else "training"
@@ -70,7 +70,7 @@ def iter_training_smoke_cases() -> Iterator[TrainingSmokeCase]:
             if variant.task == VisionTask.CLASSIFY:
                 continue
 
-            if info.backend_id == "mmyolo":
+            if info.id == "mmyolo":
                 arch = variant.metadata.get("arch", "rtmdet")
                 # car_dataset has boxes/segmentation only — skip oriented (OBB) smoke.
                 if arch == "rtmdet-r":
@@ -83,7 +83,7 @@ def iter_training_smoke_cases() -> Iterator[TrainingSmokeCase]:
                     "task": _mmyolo_task_for_arch(arch),
                     "config_id": variant.metadata.get("config_id"),
                 }
-            elif info.backend_id == "ultralytics.rtdetr":
+            elif info.id == "ultralytics.rtdetr":
                 case_id = f"rtdetr/{variant.id}"
                 extra = {"model_type": variant.id}
             else:
@@ -95,7 +95,7 @@ def iter_training_smoke_cases() -> Iterator[TrainingSmokeCase]:
 
             yield TrainingSmokeCase(
                 id=case_id,
-                backend_id=info.backend_id,
+                backend_id=info.id,
                 display_name=variant.display_name,
                 task_type=task_type,
                 extra=extra,
@@ -195,7 +195,7 @@ def seed_car_dataset(
 
     from app.database import Base
     from app.models import AnnotationFile, Dataset, Image, Project
-    from app.routers.annotation_db import process_coco_annotation_file
+    from app.services.annotation_processing import process_coco_annotation_file
 
     if not CAR_DATASET_DIR.is_dir():
         raise FileNotFoundError(f"Car dataset folder not found: {CAR_DATASET_DIR}")

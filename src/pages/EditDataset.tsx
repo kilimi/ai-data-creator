@@ -4,6 +4,7 @@ import { Navbar } from "@/components/Navbar";
 import { Dataset, Image as ImageType } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
+import { buildApiUrl } from "@/config/api";
 import { UploadCard } from "@/components/UploadCard";
 import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
@@ -757,7 +758,7 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     
     // Check for augmented datasets
     try {
-      const response = await fetch(`http://localhost:9999/datasets/${dataset.id}/augmented-datasets`);
+      const response = await fetch(buildApiUrl(`/datasets/${dataset.id}/augmented-datasets`));
       if (response.ok) {
         const result = await response.json();
         setAugmentedDatasets(result.augmented_datasets || []);
@@ -777,14 +778,10 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
     
     setIsDeleting(true);
     try {
-      const url = new URL(`http://localhost:9999/datasets/${dataset.id}`);
-      if (deleteAugmented) {
-        url.searchParams.set('delete_augmented', 'true');
-      }
-      
-      const response = await fetch(url.toString(), {
-        method: 'DELETE'
-      });
+      const response = await fetch(
+        buildApiUrl(`/datasets/${dataset.id}`, deleteAugmented ? { delete_augmented: "true" } : undefined),
+        { method: "DELETE" },
+      );
       
       if (response.ok) {
         const result = await response.json();

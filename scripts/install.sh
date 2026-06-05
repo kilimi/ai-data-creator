@@ -143,14 +143,41 @@ if ! [[ "$WEB_P" =~ ^[0-9]+$ ]] || [[ "$WEB_P" -lt 1 ]] || [[ "$WEB_P" -gt 65535
   die "Invalid port: $WEB_P"
 fi
 
+# --- Developer vs pull-only install ---
+IS_DEVELOPER=0
+if [[ -d "$ROOT/.git" ]] && [[ -d "$ROOT/backend" ]]; then
+  IS_DEVELOPER=1
+fi
+
+# --- GPU tier (optional) ---
+echo ""
+echo "GPU tier (optional)"
+echo "  Enables worker-gpu + sam_service for training, auto-annotate, and SAM."
+echo "  Requires NVIDIA GPU + Container Toolkit. CPU-only installs can still annotate datasets."
+echo ""
+if [[ "$YES" -eq 1 ]]; then
+  case "${LAI_GPU_TIER:-0}" in
+    1|true|yes|YES) GPU_TIER=1 ;;
+    *) GPU_TIER=0 ;;
+  esac
+else
+  read -r -p "Enable GPU tier (training / SAM)? [y/N] " gt || true
+  case "${gt:-N}" in
+    [Yy]*) GPU_TIER=1 ;;
+    *) GPU_TIER=0 ;;
+  esac
+fi
+
 # --- Repository root / bind host backend (developers) ---
 echo ""
 echo "Developer: host backend code"
 echo "  When enabled, backend and Celery mount your repo’s backend/ over /app (see docker-compose.code-mount.yml)."
-echo "  Disable if you only run pre-built images and do not need live edits from disk."
+echo "  Disable for pull-only installs (pip install lai + registry images)."
 echo ""
 if [[ -z "$BIND_CODE" ]]; then
-  if [[ "$YES" -eq 1 ]]; then
+  if [[ "$IS_DEVELOPER" -eq 0 ]]; then
+    BIND_CODE=0
+  elif [[ "$YES" -eq 1 ]]; then
     case "${LAI_BIND_CODE:-1}" in
       0|false|False|no|NO) BIND_CODE=0 ;;
       *) BIND_CODE=1 ;;
@@ -287,6 +314,20 @@ else
   upsert_env COMPOSE_FILE "docker-compose.yml"
 fi
 
+upsert_env LAI_GPU_TIER "$GPU_TIER"
+if [[ "$GPU_TIER" -eq 1 ]]; then
+  upsert_env COMPOSE_PROFILES "gpu"
+else
+  upsert_env COMPOSE_PROFILES ""
+fi
+
+if [[ "$IS_DEVELOPER" -eq 0 ]] || [[ "$BIND_CODE" -eq 0 ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$ROOT/scripts/write_registry_env.py" --env "$ENV_FILE" --bundle-root "$ROOT" --gpu-tier "$GPU_TIER" \
+      ${LAI_RELEASE_VERSION:+--version "$LAI_RELEASE_VERSION"} || true
+  fi
+fi
+
 echo ""
 echo "Wrote to $ENV_FILE:"
 echo "  LAI_DATA_DIR=$DATA_DIR"
@@ -341,8 +382,9 @@ echo ""
 echo "=========================================="
 echo "  Next steps"
 echo "=========================================="
-echo "  1. Start:     lai up   or   make up   or   npm run docker:up"
-echo "  2. Open:      http://localhost:${WEB_P}"
+echo "  1. Pull:      lai pull   (registry images; skip if you build locally)"
+echo "  2. Start:     lai up"
+echo "  3. Open:      http://localhost:${WEB_P}"
 echo "  (Next time you can use a browser wizard instead:  lai install-gui )"
 echo ""
 echo "Why Docker (not pip alone)?"

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app import models
-from app.routers.datasets import merge_annotation_files_task
+from app.services.dataset_annotation_merge_service import merge_annotation_files_task
 
 
 class FakeQuery:
@@ -64,6 +64,9 @@ class FakeSession:
     def commit(self):
         return None
 
+    def refresh(self, obj):
+        return None
+
     def close(self):
         return None
 
@@ -120,9 +123,13 @@ def test_merge_annotations_exact_strategy_removes_duplicates_and_preserves_uniqu
     fake_db = FakeSession(task, annotation_files, images, class_batches, annotation_batches)
     process_coco = AsyncMock()
 
-    with patch("app.routers.datasets.SessionLocal", return_value=fake_db), patch(
-        "app.routers.annotation_db.detect_annotation_type", return_value="bbox"
-    ), patch("app.routers.annotation_db.process_coco_annotation_file", process_coco):
+    with patch(
+        "app.services.dataset_annotation_merge_service.SessionLocal", return_value=fake_db
+    ), patch(
+        "app.services.annotation_processing.detect_annotation_type", return_value="bbox"
+    ), patch(
+        "app.services.annotation_processing.process_coco_annotation_file", process_coco
+    ):
         asyncio.run(
             merge_annotation_files_task(
                 task_id=99,
@@ -206,9 +213,13 @@ def test_merge_annotations_computes_area_for_segmentation_only_annotations():
     fake_db = FakeSession(task, annotation_files, images, class_batches, annotation_batches)
     process_coco = AsyncMock()
 
-    with patch("app.routers.datasets.SessionLocal", return_value=fake_db), patch(
-        "app.routers.annotation_db.detect_annotation_type", return_value="segmentation"
-    ), patch("app.routers.annotation_db.process_coco_annotation_file", process_coco):
+    with patch(
+        "app.services.dataset_annotation_merge_service.SessionLocal", return_value=fake_db
+    ), patch(
+        "app.services.annotation_processing.detect_annotation_type", return_value="segmentation"
+    ), patch(
+        "app.services.annotation_processing.process_coco_annotation_file", process_coco
+    ):
         asyncio.run(
             merge_annotation_files_task(
                 task_id=100,

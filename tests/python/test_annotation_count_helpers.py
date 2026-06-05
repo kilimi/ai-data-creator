@@ -10,7 +10,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2] / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.routers.annotation_db import resolve_annotation_count  # noqa: E402
+from app.services.annotation_processing import resolve_annotation_count  # noqa: E402
 
 
 @pytest.mark.parametrize(
