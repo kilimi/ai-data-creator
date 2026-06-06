@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch, call
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -56,7 +56,7 @@ def test_sync_tasks_with_database_revokes_stopped_tasks():
         progress=50,
         task_metadata={
             "celery_task_id": "celery-stopped-task-123",
-            "stop_requested_at": datetime.now(UTC).isoformat(),
+            "stop_requested_at": datetime.now(timezone.utc).isoformat(),
         }
     )
     
@@ -239,11 +239,11 @@ def test_stopped_task_not_restarted_after_container_restart():
         status="stopped",
         project_id=1,
         progress=75,
-        completed_at=datetime.now(UTC),
+        completed_at=datetime.now(timezone.utc),
         error_message="Task stopped by user",
         task_metadata={
             "celery_task_id": "celery-stopped-task-integration",
-            "stop_requested_at": datetime.now(UTC).isoformat(),
+            "stop_requested_at": datetime.now(timezone.utc).isoformat(),
             "stage": "stopped",
         }
     )

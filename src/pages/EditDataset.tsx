@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useApi } from "@/hooks/use-api";
 import { buildApiUrl } from "@/config/api";
 import { UploadCard } from "@/components/UploadCard";
-import { processCOCOAnnotations, AnnotationSample } from "@/utils/annotations";
+import { processCOCOAnnotations, AnnotationSample, detectAnnotationDisplayType } from "@/utils/annotations";
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { ClassStatisticsWithManagement } from "@/components/ClassStatisticsWithManagement";
 import { AnnotationVisualizer } from "@/components/AnnotationVisualizer";
@@ -98,55 +98,19 @@ const EditDataset = ({ projectMode = false }: EditDatasetProps) => {
   const { toast } = useToast();
   const { api } = useApi(); // Add the useApi hook here
 
-  // Utility function to detect annotation type
-  const detectAnnotationType = (file: AnnotationFile): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {
-    // If type is explicitly set, use it (but expand old types to new ones)
-    if (file.type === 'Classification' || file.type === 'classification') return 'Classification';
-    if (file.type === 'Segmentation (mask+bbox)' || file.type === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
-    if (file.type === 'Segmentation (mask)' || file.type === 'segmentation-mask') return 'Segmentation (mask)';
-    if (file.type === 'Segmentation (bbox)' || file.type === 'segmentation-bbox') return 'Segmentation (bbox)';
-    if (file.type === 'segmentation') {
-      // For old 'segmentation' type, we still need to detect the detailed subtype
-      if (file.samples && file.samples.length > 0) {
-        const hasSegmentation = file.samples.some(sample => 
-          sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-        );
-        const hasMeaningfulBbox = file.samples.some(sample => 
-          sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-          (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-        );
-        
-        if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
-        if (hasSegmentation) return 'Segmentation (mask)';
-        if (hasMeaningfulBbox) return 'Segmentation (bbox)';
-      }
-      return 'Segmentation (bbox)'; // Default fallback for old segmentation type
-    }
-    
-    // Auto-detect based on samples content
-    if (file.samples && file.samples.length > 0) {
-      // Check if any annotation has segmentation mask data
-      const hasSegmentation = file.samples.some(sample => 
-        sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-      );
-      const hasMeaningfulBbox = file.samples.some(sample => 
-        sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-        (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-      );
-      
-      if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
-      if (hasSegmentation) return 'Segmentation (mask)';
-      if (hasMeaningfulBbox) return 'Segmentation (bbox)';
-      
-      // Check if this looks like classification (based on presence of specific fields)
-      const looksLikeClassification = file.samples.some(sample => 
-        sample.className && !sample.segmentation && !sample.bbox
-      );
-      if (looksLikeClassification) return 'Classification';
-    }
-    
-    return 'Other';
-  };
+  const detectAnnotationType = (file: AnnotationFile) =>
+    detectAnnotationDisplayType({
+      id: String(file.id),
+      name: file.fileName,
+      date: file.uploadedAt,
+      format: 'COCO',
+      type: file.type as any,
+      classCount: file.classStats?.length || 0,
+      imageCount: 0,
+      matchedImageCount: 0,
+      datasetId: id || '',
+      samples: file.samples as any,
+    });
 
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [loading, setLoading] = useState(true);

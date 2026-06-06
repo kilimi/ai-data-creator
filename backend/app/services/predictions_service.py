@@ -8,7 +8,7 @@ import os
 import subprocess
 import tempfile
 import zipfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -558,7 +558,7 @@ def build_thresholded_evaluation_coco_bundle(
     coco_output: Dict[str, Any] = {
         "info": {
             "description": f"Evaluation results for task {task_id} (thresholded export)",
-            "date_created": datetime.now(UTC).isoformat(),
+            "date_created": datetime.now(timezone.utc).isoformat(),
             "task_name": task.name,
             "model_checkpoint": checkpoint,
             "task_type": task_type,
@@ -1307,7 +1307,7 @@ async def export_all_coco_results(
                 coco_output = {
                     "info": {
                         "description": f"Evaluation results for {dataset_name}",
-                        "date_created": datetime.now(UTC).isoformat(),
+                        "date_created": datetime.now(timezone.utc).isoformat(),
                         "task_name": child_task.name,
                         "parent_task_id": task_id,
                         "dataset_id": dataset_id,

@@ -1,11 +1,22 @@
 """MMYOLO arch/size catalog and config name resolution."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
 MMYOLO_VALID_ARCHS: frozenset = frozenset({"yolov8", "rtmdet", "rtmdet-ins", "rtmdet-r"})
 MMYOLO_VALID_SIZES: frozenset = frozenset({"tiny", "s", "m", "l", "x"})
+
+MMYOLO_PRETRAINED_DOWNLOAD_NOTICE = (
+    "MMYOLO COCO pretrained weights are not cached under /app/models/mmyolo. "
+    "Run `lai download-models --mmyolo <alias>` (e.g. rtmdet_s) while the worker "
+    "has network access, then retry training."
+)
+
+
+def mmyolo_models_dir() -> Path:
+    return Path(os.environ.get("LAI_MMYOLO_MODELS_DIR", "/app/models/mmyolo"))
 
 # UI alias (arch_size) → official OpenMMLab config stem (no .py suffix).
 # rtmdet-ins configs ship with MMDetection; rtmdet / rtmdet-r / yolov8 with MMYOLO.
@@ -107,6 +118,68 @@ def mmyolo_pretrained_checkpoint(config_id: str) -> Optional[str]:
         if stem.startswith(key.split("_syncbn")[0]):
             return url
     return None
+
+
+def mmyolo_ui_alias_for_config(config_id: str) -> Optional[str]:
+    """UI alias (rtmdet_s) for a config stem or path, when known."""
+    stem = mmyolo_config_stem(config_id)
+    for alias, official in MMYOLO_OFFICIAL_CONFIG_STEMS.items():
+        if official == stem:
+            return alias
+    return None
+
+
+def resolve_mmyolo_local_pretrained_checkpoint(config_id: str) -> Optional[Path]:
+    """
+    Locate a mim-downloaded .pth under /app/models/mmyolo for this config.
+
+    mim download writes config + checkpoint into the dest folder (flat or nested).
+    """
+    stem = mmyolo_config_stem(config_id)
+    url = mmyolo_pretrained_checkpoint(config_id)
+    if not url:
+        return None
+
+    expected_name = url.rsplit("/", 1)[-1]
+    models_dir = mmyolo_models_dir()
+    if models_dir.is_dir():
+        for candidate in (
+            models_dir / expected_name,
+            models_dir / stem / expected_name,
+        ):
+            if candidate.is_file():
+                return candidate.resolve()
+
+        matches: list[Path] = []
+        for pth in models_dir.rglob("*.pth"):
+            if pth.name == expected_name:
+                matches.append(pth)
+            elif pth.name.startswith(f"{stem}_"):
+                matches.append(pth)
+        if len(matches) == 1:
+            return matches[0].resolve()
+        if len(matches) > 1:
+            exact = [p for p in matches if p.name == expected_name]
+            if len(exact) == 1:
+                return exact[0].resolve()
+            return sorted(matches, key=lambda p: p.name)[0].resolve()
+
+    return None
+
+
+def resolve_mmyolo_pretrained_load_from(config_id: str) -> Optional[str]:
+    """Absolute local .pth path when cached; otherwise the OpenMMLab URL."""
+    local = resolve_mmyolo_local_pretrained_checkpoint(config_id)
+    if local is not None:
+        return str(local)
+    return mmyolo_pretrained_checkpoint(config_id)
+
+
+def mmyolo_pretrained_requires_download(config_id: str) -> bool:
+    """True when known pretrained weights exist but are not cached locally."""
+    if mmyolo_pretrained_checkpoint(config_id) is None:
+        return False
+    return resolve_mmyolo_local_pretrained_checkpoint(config_id) is None
 
 
 def mmyolo_config_name(arch: str, size: str) -> str:

@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -97,7 +97,7 @@ async def merge_annotation_files_task(
             return
             
         task.status = "running"
-        task.started_at = datetime.now(UTC)
+        task.started_at = datetime.now(timezone.utc)
         task.progress = 5
         db.commit()
 
@@ -140,9 +140,9 @@ async def merge_annotation_files_task(
             "info": {
                 "description": f"Merged annotations from {len(annotation_files)} files: {', '.join([f.name for f in annotation_files])}",
                 "version": "1.0",
-                "year": datetime.now(UTC).year,
+                "year": datetime.now(timezone.utc).year,
                 "contributor": "AI Data Creator",
-                "date_created": datetime.now(UTC).isoformat()
+                "date_created": datetime.now(timezone.utc).isoformat()
             },
             "licenses": [{
                 "id": 1,
@@ -512,7 +512,9 @@ async def merge_annotation_files_task(
         
         # Calculate final statistics
         final_annotation_count = len(merged_data["annotations"])
-        final_image_count = len(merged_data["images"])
+        final_image_count = len({
+            a.get("image_id") for a in merged_data["annotations"] if a.get("image_id") is not None
+        })
         final_category_count = len(merged_data["categories"])
         
         print(f"Merge summary: {final_annotation_count} annotations, {final_image_count} images, {final_category_count} categories")
@@ -571,13 +573,13 @@ async def merge_annotation_files_task(
             if task.status != "stopped":
                 task.status = "stopped"
             if not task.completed_at:
-                task.completed_at = datetime.now(UTC)
+                task.completed_at = datetime.now(timezone.utc)
             db.commit()
         print(f"Annotation merge stopped for task {task_id}")
     except Exception as e:
         if task is not None and not task_stop_requested(task):
             task.status = "failed"
-            task.completed_at = datetime.now(UTC)
+            task.completed_at = datetime.now(timezone.utc)
             task.error_message = str(e)
             task.progress = 0
             db.commit()
@@ -730,6 +732,13 @@ async def start_annotation_merge(
         
         if len(annotation_files) < 2:
             raise HTTPException(status_code=400, detail="At least 2 annotation files are required for merging")
+
+        from app.services.annotation_processing import (
+            resolve_annotation_file_merge_type,
+            validate_annotation_files_merge_compatible,
+        )
+        merge_types = [resolve_annotation_file_merge_type(db, f) for f in annotation_files]
+        validate_annotation_files_merge_compatible(merge_types)
         
         # Generate merged filename if not provided
         merged_filename = request.merged_filename

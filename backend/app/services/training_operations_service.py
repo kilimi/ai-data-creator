@@ -25,7 +25,7 @@ from app.database import get_db, SessionLocal
 from app.ml.dataset import prepare_mmyolo_dataset, prepare_yolo_dataset
 from app.ml.mmyolo_catalog import MMYOLO_VALID_ARCHS, MMYOLO_VALID_SIZES, mmyolo_config_name
 from app.ml.task_metadata import merge_task_metadata
-from app.model_weights_presence import WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
+from app.model_weights_presence import TRAINING_WEIGHTS_DOWNLOAD_NOTICE, is_training_base_weights_cached
 from app.models import (
     Annotation,
     AnnotationClass,
@@ -427,7 +427,7 @@ async def start_yolo_training(
             "task_id": task.id,
             "message": "YOLO training started",
             "weights_download_expected": not tw_cached,
-            "weights_download_notice": None if tw_cached else WEIGHTS_DOWNLOAD_NOTICE,
+            "weights_download_notice": None if tw_cached else TRAINING_WEIGHTS_DOWNLOAD_NOTICE,
             "task": {
                 "id": task.id,
                 "name": task.name,
@@ -1207,7 +1207,7 @@ async def start_rtdetr_training(
             "task_id": task.id,
             "message": "RT-DETR training started",
             "weights_download_expected": not rtd_cached,
-            "weights_download_notice": None if rtd_cached else WEIGHTS_DOWNLOAD_NOTICE,
+            "weights_download_notice": None if rtd_cached else TRAINING_WEIGHTS_DOWNLOAD_NOTICE,
             "task": {
                 "id": task.id,
                 "name": task.name,

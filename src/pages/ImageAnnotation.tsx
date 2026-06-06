@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -111,6 +111,11 @@ import { Image, ImageCollection } from '@/types';
 import { applyClassColorsToAnnotations, resolveAnnotationDisplayColor } from '@/utils/annotationColorConsistency';
 import { shouldScheduleAnnotationRedraw } from '@/utils/annotationRenderVisibility';
 import { detectSegmentationModeCapabilities } from '@/utils/annotations';
+import { downloadCocoFile, type CocoData } from '@/utils/downloadCoco';
+
+const AnnotationStatisticsCharts = lazy(
+  () => import('@/components/annotation/AnnotationStatisticsCharts'),
+);
 
 type AnnotationMode = 'mask' | 'bbox';
 
@@ -288,49 +293,6 @@ const ImageAnnotation = () => {
       );
     }
   }, [classes, annotations, id, currentImageName, displayLayer, mainLayer]);
-
-  // When an annotation is selected (e.g., by clicking on canvas), scroll only the right list container
-  useEffect(() => {
-    if (!selectedAnnotation) return;
-    // Ensure right panel is open so the item is visible
-    setRightCollapsed(false);
-
-    // Small timeout to allow the panel to expand and DOM to render
-    setTimeout(() => {
-      // Find the annotation element first
-      const el = document.querySelector(`[data-annotation-id="${selectedAnnotation}"]`) as HTMLElement | null;
-      if (!el) {
-        console.warn('Selected annotation element not found:', selectedAnnotation);
-        return;
-      }
-
-      // Find the closest scrollable div that contains this element
-      const scrollContainer = el.closest('.overflow-y-auto') as HTMLElement | null;
-      if (!scrollContainer) {
-        console.warn('Scroll container not found for annotation');
-        return;
-      }
-
-      // Calculate position relative to the scroll container's visible area
-      const elementRect = el.getBoundingClientRect();
-      const containerRect = scrollContainer.getBoundingClientRect();
-
-      // Check if the element is already visible
-      if (elementRect.top >= containerRect.top && elementRect.bottom <= containerRect.bottom) {
-        // Element is already visible, no need to scroll.
-        return;
-      }
-      
-      // Calculate scroll position to center the element within the container
-      const elementTopInContainer = el.offsetTop - scrollContainer.offsetTop;
-      const desiredScrollTop = elementTopInContainer - (scrollContainer.clientHeight / 2) + (el.clientHeight / 2);
-
-      scrollContainer.scrollTo({
-        top: desiredScrollTop,
-        behavior: 'smooth'
-      });
-    }, 120);
-  }, [selectedAnnotation]);
 
   // Right sidebar UI: collapsible and resizable
   const [rightCollapsed, setRightCollapsed] = useState(false);
@@ -613,6 +575,50 @@ const ImageAnnotation = () => {
 
   // Panel tab state
   const [activePanelTab, setActivePanelTab] = useState<string>('annotations');
+  const annotationListViewportRef = useRef<HTMLDivElement>(null);
+  const annotationItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  const scrollAnnotationListToSelected = useCallback((annotationId: string) => {
+    const viewport = annotationListViewportRef.current;
+    const el = annotationItemRefs.current.get(annotationId);
+    if (!viewport || !el) return;
+    if (viewport.scrollHeight <= viewport.clientHeight + 1) return;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const padding = 12;
+
+    if (elRect.top >= viewportRect.top + padding && elRect.bottom <= viewportRect.bottom - padding) {
+      return;
+    }
+
+    const delta =
+      elRect.top < viewportRect.top + padding
+        ? elRect.top - viewportRect.top - padding
+        : elRect.bottom - viewportRect.bottom + padding;
+
+    viewport.scrollBy({ top: delta, behavior: 'smooth' });
+  }, []);
+
+  // Scroll the annotation list to the selected item (canvas click or list click)
+  useEffect(() => {
+    if (!selectedAnnotation) return;
+    setRightCollapsed(false);
+    setActivePanelTab('annotations');
+
+    const runScroll = () => scrollAnnotationListToSelected(selectedAnnotation);
+
+    // Panel expand / tab switch need time before the list viewport has final layout
+    const t1 = window.setTimeout(runScroll, 0);
+    const t2 = window.setTimeout(runScroll, 100);
+    const t3 = window.setTimeout(runScroll, 250);
+
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(t3);
+    };
+  }, [selectedAnnotation, scrollAnnotationListToSelected]);
 
    // Auto-save state
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -4484,104 +4490,304 @@ const ImageAnnotation = () => {
     computeGlobalStatsDebounced();
   };
 
-  // Download annotations as COCO JSON file
-  const downloadAnnotationsJSON = async () => {
+  const buildCocoExportInfo = (): CocoData['info'] => ({
+    description: `${projectName ? `Project: ${projectName} | ` : ''}Dataset: ${datasetName || id}${annotationName ? ` | Annotation: ${annotationName}` : ''}`,
+    version: '1.0',
+    year: new Date().getFullYear(),
+    contributor: 'LAI',
+    date_created: new Date().toISOString(),
+  });
+
+  const resolveExportDimensions = (imageName: string, collId: string): { width: number; height: number } => {
+    const dimsKey = `annotations_${id}_${collId}_${imageName}_dims`;
+    const savedDims = localStorage.getItem(dimsKey);
+    if (savedDims) {
+      try {
+        const dims = JSON.parse(savedDims) as { width: number; height: number };
+        if (dims.width > 0 && dims.height > 0) return dims;
+      } catch { /* ignore */ }
+    }
+    const cocoDims = cocoImageDimensionsRef.current[imageName];
+    if (cocoDims && cocoDims.width > 0 && cocoDims.height > 0) return cocoDims;
+    if (imageName === currentImageName) {
+      const refDims = getAnnotReferenceDimensions(imageName);
+      if (refDims && refDims.width > 0 && refDims.height > 0) return refDims;
+    }
+    return { width: 0, height: 0 };
+  };
+
+  const hasLocalExportOverride = (imageName: string, collId: string): boolean => {
+    if (imageName === currentImageName) return true;
+    return localStorage.getItem(`annotations_${id}_${collId}_${imageName}`) !== null;
+  };
+
+  const getExportShapesForImage = (imageName: string, collId: string): AnnotationShape[] | null => {
+    if (imageName === currentImageName) return annotations;
+    const storageKey = `annotations_${id}_${collId}_${imageName}`;
+    const saved = localStorage.getItem(storageKey);
+    if (saved === null) return null;
     try {
-      // Build images array and annotations array by reading per-image localStorage
-      const imagesArr: any[] = [];
-      const annotationsArr: any[] = [];
-      const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
+      return JSON.parse(saved) as AnnotationShape[];
+    } catch {
+      return [];
+    }
+  };
 
-      let annId = 1;
-      let imageId = 1;
-      const dlCollId = annotationStorageCollId;
+  const shapesToCocoAnnEntries = (
+    shapes: AnnotationShape[],
+    imageId: number,
+    startAnnId: number,
+  ): { entries: CocoData['annotations']; nextAnnId: number } => {
+    let annId = startAnnId;
+    const entries: CocoData['annotations'] = [];
+    for (const ann of shapes) {
+      if (ann.type !== 'polygon' && ann.type !== 'rectangle') continue;
+      const [minX, minY, width, height] = pointsToBbox(ann.points);
+      const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
+      const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
+      const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
+      entries.push({
+        id: annId++,
+        image_id: imageId,
+        category_id: categoryId,
+        segmentation,
+        area,
+        bbox: [minX, minY, width, height],
+        iscrowd: 0,
+      });
+    }
+    return { entries, nextAnnId: annId };
+  };
 
-      for (const name of allImageNames) {
-        const storageKey = `annotations_${id}_${dlCollId}_${name}`;
-        const saved = localStorage.getItem(storageKey);
-        
-        // Get stored dimensions for this specific image (not current image!)
-        const dimsKey = `annotations_${id}_${dlCollId}_${name}_dims`;
-        const savedDims = localStorage.getItem(dimsKey);
-        let imgWidth = 0;
-        let imgHeight = 0;
-        
-        if (savedDims) {
-          try {
-            const dims = JSON.parse(savedDims) as { width: number; height: number };
-            imgWidth = dims.width || 0;
-            imgHeight = dims.height || 0;
-          } catch (e) {
-            console.warn(`Failed to parse dimensions for ${name}, using fallback`);
-            imgWidth = imageRef.current?.naturalWidth || 0;
-            imgHeight = imageRef.current?.naturalHeight || 0;
-          }
-        } else {
-          // Fallback to current image dimensions (may be incorrect if different image)
-          imgWidth = imageRef.current?.naturalWidth || 0;
-          imgHeight = imageRef.current?.naturalHeight || 0;
+  const apiAnnotationsToShapes = (
+    apiAnns: Array<{
+      id: number;
+      className: string;
+      color: string;
+      segmentation: number[];
+      bbox: number[] | null;
+    }>,
+    imageWidth: number,
+    imageHeight: number,
+  ): AnnotationShape[] => {
+    const shapes: AnnotationShape[] = [];
+    for (const ann of apiAnns) {
+      const seg = ann.segmentation;
+      const points: Point[] = [];
+      if (seg && seg.length >= 6) {
+        for (let i = 0; i < seg.length; i += 2) {
+          const x = seg[i];
+          const y = seg[i + 1];
+          if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) continue;
+          points.push({
+            x: Math.max(0, Math.min(x, imageWidth - 1)),
+            y: Math.max(0, Math.min(y, imageHeight - 1)),
+          });
         }
-        
-        if (!saved) {
-          // still add image entry to keep indexing consistent
-          imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
-          imageId++;
-          continue;
-        }
-
-        let parsed: AnnotationShape[] = [];
-        try { parsed = JSON.parse(saved); } catch (err) { parsed = []; }
-
-        imagesArr.push({ id: imageId, file_name: name, width: imgWidth, height: imgHeight });
-
-        parsed.forEach((ann) => {
-          if (ann.type === 'polygon' || ann.type === 'rectangle') {
-            const [minX, minY, width, height] = pointsToBbox(ann.points);
-            const categoryId = (classes.findIndex(c => c.name === ann.label) + 1) || 1;
-            const segmentation = ann.type === 'polygon' ? [ann.points.flatMap((p) => [p.x, p.y])] : [];
-            const area = ann.type === 'polygon' ? calculatePolygonArea(ann.points) : width * height;
-            annotationsArr.push({
-              id: annId++,
-              image_id: imageId,
-              category_id: categoryId,
-              segmentation,
-              area,
-              bbox: [minX, minY, width, height],
-              iscrowd: 0
-            });
-          }
+      } else if (Array.isArray(ann.bbox) && ann.bbox.length >= 4) {
+        bboxToRectPoints(ann.bbox).forEach((p) => {
+          points.push({
+            x: Math.max(0, Math.min(p.x, imageWidth - 1)),
+            y: Math.max(0, Math.min(p.y, imageHeight - 1)),
+          });
         });
+      }
+      if (points.length < 3) continue;
+      shapes.push({
+        id: `annotation_${ann.id}`,
+        type: seg && seg.length >= 6 ? 'polygon' : 'rectangle',
+        points,
+        label: ann.className,
+        color: ann.color || DEFAULT_COLORS[0],
+        visible: true,
+      });
+    }
+    return applyClassColorsToAnnotations(shapes, classes);
+  };
 
-        imageId++;
+  const buildCocoFromLocalStorageOnly = (collId: string): CocoData => {
+    const imagesArr: CocoData['images'] = [];
+    const annotationsArr: CocoData['annotations'] = [];
+    const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
+    let annId = 1;
+    let imageId = 1;
+
+    for (const imageName of allImageNames) {
+      const shapes = getExportShapesForImage(imageName, collId);
+      if (shapes === null) continue;
+
+      const dims = resolveExportDimensions(imageName, collId);
+      if (dims.width <= 0 || dims.height <= 0) {
+        if (shapes.length === 0) continue;
       }
 
-      const coco = {
-        info: {
-          description: `${projectName ? `Project: ${projectName} | ` : ''}Dataset: ${datasetName || id}${annotationName ? ` | Annotation: ${annotationName}` : ''}`,
-          version: '1.0',
-          year: new Date().getFullYear(),
-          contributor: 'LAI',
-          date_created: new Date().toISOString()
-        },
-        images: imagesArr,
-        categories: categoryMap,
-        annotations: annotationsArr
-      };
+      imagesArr.push({
+        id: imageId,
+        file_name: imageName,
+        width: dims.width,
+        height: dims.height,
+      });
 
-      const dataStr = JSON.stringify(coco, null, 2);
+      const { entries, nextAnnId } = shapesToCocoAnnEntries(shapes, imageId, annId);
+      annotationsArr.push(...entries);
+      annId = nextAnnId;
+      imageId++;
+    }
 
-      // Download the JSON file
-      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-      const fileName = `annotations_all_${id}.json`;
+    return {
+      info: buildCocoExportInfo(),
+      images: imagesArr,
+      categories: categoryMap,
+      annotations: annotationsArr,
+    };
+  };
 
-      const link = document.createElement('a');
-      link.setAttribute('href', dataUri);
-      link.setAttribute('download', fileName);
-      link.click();
+  const mergeLocalOverridesIntoCoco = (baseCoco: CocoData, collId: string): CocoData => {
+    const images = [...baseCoco.images];
+    const fileToImageId = new Map(images.map((img) => [img.file_name, img.id]));
+    let nextImageId = Math.max(0, ...images.map((i) => i.id)) + 1;
+    let nextAnnId = Math.max(0, ...baseCoco.annotations.map((a) => a.id)) + 1;
 
-      toast({ 
-        title: 'Downloaded', 
-        description: `Downloaded ${annotationsArr.length} annotations from ${imagesArr.length} images as JSON file` 
+    const overriddenNames = allImageNames.filter((name) => hasLocalExportOverride(name, collId));
+    let mergedAnnotations = baseCoco.annotations.filter((ann) => {
+      const img = images.find((i) => i.id === ann.image_id);
+      return !img || !overriddenNames.includes(img.file_name);
+    });
+
+    for (const imageName of overriddenNames) {
+      const shapes = getExportShapesForImage(imageName, collId) ?? [];
+      const dims = resolveExportDimensions(imageName, collId);
+      let imgId = fileToImageId.get(imageName);
+
+      if (!imgId) {
+        if (dims.width <= 0 || dims.height <= 0) continue;
+        imgId = nextImageId++;
+        images.push({ id: imgId, file_name: imageName, width: dims.width, height: dims.height });
+        fileToImageId.set(imageName, imgId);
+      } else if (dims.width > 0 && dims.height > 0) {
+        const idx = images.findIndex((i) => i.id === imgId);
+        if (idx >= 0) {
+          images[idx] = { ...images[idx], width: dims.width, height: dims.height };
+        }
+      }
+
+      const { entries, nextAnnId: updatedAnnId } = shapesToCocoAnnEntries(shapes, imgId, nextAnnId);
+      nextAnnId = updatedAnnId;
+      mergedAnnotations = mergedAnnotations.concat(entries);
+    }
+
+    return {
+      ...baseCoco,
+      info: baseCoco.info ?? buildCocoExportInfo(),
+      images,
+      annotations: mergedAnnotations,
+      categories: classes.length > 0
+        ? classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }))
+        : baseCoco.categories,
+    };
+  };
+
+  const buildCocoFromAllImagesViaApi = async (collId: string): Promise<CocoData> => {
+    const imagesArr: CocoData['images'] = [];
+    const annotationsArr: CocoData['annotations'] = [];
+    const categoryMap = classes.map((cls, idx) => ({ id: idx + 1, name: cls.name }));
+    let annId = 1;
+    let imageId = 1;
+
+    for (const imageName of allImageNames) {
+      let shapes: AnnotationShape[] | null = null;
+      let dims = resolveExportDimensions(imageName, collId);
+
+      if (hasLocalExportOverride(imageName, collId)) {
+        shapes = getExportShapesForImage(imageName, collId) ?? [];
+      } else if (api && annotationId && id) {
+        try {
+          const resp = await api.getImageAnnotations(id, annotationId, imageName, collId);
+          if (resp.success && resp.data) {
+            dims = { width: resp.data.imageWidth, height: resp.data.imageHeight };
+            cocoImageDimensionsRef.current[imageName] = dims;
+            shapes = apiAnnotationsToShapes(resp.data.annotations, dims.width, dims.height);
+          }
+        } catch (err) {
+          console.warn(`Export: failed to load annotations for ${imageName}`, err);
+        }
+      }
+
+      if (shapes === null) continue;
+      if ((dims.width <= 0 || dims.height <= 0) && shapes.length === 0) continue;
+
+      imagesArr.push({
+        id: imageId,
+        file_name: imageName,
+        width: dims.width,
+        height: dims.height,
+      });
+
+      if (shapes.length > 0) {
+        const { entries, nextAnnId } = shapesToCocoAnnEntries(shapes, imageId, annId);
+        annotationsArr.push(...entries);
+        annId = nextAnnId;
+      }
+      imageId++;
+    }
+
+    return {
+      info: buildCocoExportInfo(),
+      images: imagesArr,
+      categories: categoryMap,
+      annotations: annotationsArr,
+    };
+  };
+
+  // Download annotations as COCO JSON file (all images, not just the current one)
+  const downloadAnnotationsJSON = async () => {
+    try {
+      const collId = annotationStorageCollId;
+
+      if (id && currentImageName) {
+        const dims = resolveExportDimensions(currentImageName, collId);
+        if (dims.width > 0 && dims.height > 0) {
+          saveAnnotationsToLocalStorage(currentImageName, annotations, dims);
+        } else {
+          saveAnnotationsToLocalStorage(currentImageName, annotations);
+        }
+      }
+
+      toast({
+        title: 'Preparing export...',
+        description: 'Collecting annotations from all images.',
+      });
+
+      let coco: CocoData;
+
+      if (annotationId && api && id) {
+        let baseCoco: CocoData | null = null;
+        try {
+          const response = await api.getAnnotationContent(id, annotationId);
+          if (
+            response.success
+            && response.data?.content
+            && !response.data.is_large
+            && !response.data.is_processing
+          ) {
+            baseCoco = JSON.parse(response.data.content) as CocoData;
+          }
+        } catch (err) {
+          console.warn('Full annotation export from backend failed, falling back to per-image fetch', err);
+        }
+
+        coco = baseCoco
+          ? mergeLocalOverridesIntoCoco(baseCoco, collId)
+          : await buildCocoFromAllImagesViaApi(collId);
+      } else {
+        coco = buildCocoFromLocalStorageOnly(collId);
+      }
+
+      downloadCocoFile(coco, `annotations_all_${id}`);
+
+      toast({
+        title: 'Downloaded',
+        description: `Downloaded ${coco.annotations.length} annotations from ${coco.images.length} images as JSON file`,
       });
     } catch (err) {
       console.error('Error downloading annotations', err);
@@ -5225,34 +5431,6 @@ const ImageAnnotation = () => {
     }
   };
 
-  // Clear all saved annotations from localStorage for this dataset
-  const clearAllAnnotations = () => {
-    if (!id) return;
-    const confirmed = window.confirm('Delete ALL annotations for this dataset from localStorage? This cannot be undone.');
-    if (!confirmed) return;
-
-    const prefix = `annotations_${id}_`;
-    let removed = 0;
-    // Iterate backwards to safely remove keys while iterating
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      if (key.startsWith(prefix)) {
-        localStorage.removeItem(key);
-        removed++;
-      }
-    }
-
-    // Reset in-memory annotations and class counts
-    setAnnotations([]);
-      setClasses([]); // Clear classes for fresh start
-      localStorage.removeItem(`classes_${id}`); // Also clear persisted classes
-    setClasses(prev => prev.map(c => ({ ...c, count: 0 })));
-    setGlobalStats({});
-
-    toast({ title: 'Annotations cleared', description: `Removed ${removed} saved annotation file(s) from localStorage` });
-  };
-
   // Delete annotations for current image only
   const deleteCurrentImageAnnotations = async () => {
     if (!currentImageName || !id) return;
@@ -5818,6 +5996,40 @@ const ImageAnnotation = () => {
     }
   };
 
+  const annotationStatistics = useMemo(() => {
+    const mergedStats: Record<string, number> = { ...globalStats };
+    const unsavedCounts: Record<string, number> = {};
+    if (hasUnsavedChanges && annotations.length > 0) {
+      annotations.forEach((a) => {
+        if (a.label) {
+          unsavedCounts[a.label] = (unsavedCounts[a.label] || 0) + 1;
+        }
+      });
+      Object.entries(unsavedCounts).forEach(([name, count]) => {
+        mergedStats[name] = (mergedStats[name] || 0) + count;
+      });
+    }
+    const total = Object.values(mergedStats).reduce((s, v) => s + v, 0);
+    const sortedClasses = [...classes].sort(
+      (a, b) => (mergedStats[b.name] || 0) - (mergedStats[a.name] || 0),
+    );
+    const stats = sortedClasses.map((c) => {
+      const count = mergedStats[c.name] || 0;
+      const avgArea = globalAvgAreas[c.name] || 0;
+      return {
+        id: c.id,
+        name: c.name,
+        color: c.color,
+        count,
+        percentage: total > 0 ? (count / total) * 100 : 0,
+        avgArea: avgArea > 0 ? avgArea : undefined,
+        hasUnsaved: (unsavedCounts[c.name] || 0) > 0,
+        unsavedDelta: unsavedCounts[c.name] || 0,
+      };
+    });
+    return { stats, total };
+  }, [globalStats, globalAvgAreas, classes, hasUnsavedChanges, annotations]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
@@ -6033,17 +6245,6 @@ const ImageAnnotation = () => {
           </Button>
 
           <Button
-            variant="destructive"
-            size="sm"
-            onClick={clearAllAnnotations}
-            disabled={!hasAnyAnnotationsStored}
-            title="Delete all saved annotations from localStorage"
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete All
-          </Button>
-
-          <Button
             size="sm"
             variant="outline"
             onClick={resetZoomAndPan}
@@ -6082,7 +6283,7 @@ const ImageAnnotation = () => {
         </div>
       </header>
 
-  <div className="flex flex-1 overflow-hidden relative">
+  <div className="flex flex-1 min-h-0 overflow-hidden relative">
         {/* Left Sidebar - Tools and Classes (collapsible & resizable) */}
         <div
            className="bg-card border-r border-border flex flex-col overflow-hidden"
@@ -6674,7 +6875,7 @@ const ImageAnnotation = () => {
 
 
         {/* Main Canvas Area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
           <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0 relative">
             <ResizablePanel defaultSize={imageCollections.length > 1 && companionPanelOpen ? 70 : 100} minSize={30}>
               <div
@@ -7268,7 +7469,7 @@ const ImageAnnotation = () => {
 
   {/* Right Sidebar - Annotations Panel (redesigned container) */}
         <div
-           className="bg-card border-l border-border flex flex-col overflow-hidden"
+           className="bg-card border-l border-border flex flex-col min-h-0 self-stretch overflow-hidden"
           style={{ width: rightCollapsed ? 0 : rightWidth, minWidth: rightCollapsed ? 0 : undefined }}
         >
           {/* Panel Header */}
@@ -7291,10 +7492,10 @@ const ImageAnnotation = () => {
           </div>
 
           {/* Panel Content */}
-          <div className="flex-1 flex flex-col min-h-0 bg-card">
-            <Tabs value={activePanelTab} onValueChange={setActivePanelTab} className="h-full flex flex-col">
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-card">
+            <Tabs value={activePanelTab} onValueChange={setActivePanelTab} className="flex flex-1 flex-col min-h-0 overflow-hidden">
               {/* Tab Navigation */}
-              <div className="border-b border-border">
+              <div className="border-b border-border flex-shrink-0">
                 <TabsList className="grid grid-cols-2 w-full bg-transparent border-0 p-1">
                   <TabsTrigger 
                     value="annotations" 
@@ -7312,8 +7513,8 @@ const ImageAnnotation = () => {
               </div>
 
               {/* Annotations Tab */}
-              <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
-                <div className="p-3 border-b border-border">
+              <TabsContent value="annotations" className="flex-1 flex flex-col min-h-0 h-0 overflow-hidden m-0 p-0 mt-0 data-[state=inactive]:hidden">
+                <div className="flex-shrink-0 p-3 border-b border-border">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>Current Image Annotations</span>
@@ -7334,7 +7535,11 @@ const ImageAnnotation = () => {
                   </div>
                 </div>
                 
-                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 scrollbar-thin" style={{ scrollbarWidth: 'thin' }}>
+                <div
+                  ref={annotationListViewportRef}
+                  className="flex-1 min-h-0 h-0 overflow-y-auto overflow-x-hidden overscroll-contain"
+                >
+                  <div className="p-3">
                   {annotations.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-32 text-center">
                       <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
@@ -7349,6 +7554,10 @@ const ImageAnnotation = () => {
                         return (
                         <div 
                           key={annotation.id}
+                          ref={(node) => {
+                            if (node) annotationItemRefs.current.set(annotation.id, node);
+                            else annotationItemRefs.current.delete(annotation.id);
+                          }}
                           data-annotation-id={annotation.id}
                           className={`group border rounded-lg p-3 cursor-pointer transition-all duration-200 ${
                             selectedAnnotation === annotation.id 
@@ -7478,147 +7687,40 @@ const ImageAnnotation = () => {
                       })}
                     </div>
                   )}
+                  </div>
                 </div>
               </TabsContent>
 
               {/* Statistics Tab */}
-              <TabsContent value="statistics" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0">
-                <div className="flex-1 min-h-0 p-3 flex flex-col">
-                  {(() => {
-                    // Merge saved globalStats with unsaved current-image annotations
-                    const mergedStats: { [name: string]: number } = { ...globalStats };
-                    const unsavedCounts: { [name: string]: number } = {};
-                    if (hasUnsavedChanges && annotations.length > 0) {
-                      annotations.forEach(a => {
-                        if (a.label) {
-                          unsavedCounts[a.label] = (unsavedCounts[a.label] || 0) + 1;
-                        }
-                      });
-                      // Add unsaved counts on top of saved stats
-                      Object.entries(unsavedCounts).forEach(([name, count]) => {
-                        mergedStats[name] = (mergedStats[name] || 0) + count;
-                      });
-                    }
-
-                    const total = Object.values(mergedStats).reduce((s, v) => s + v, 0);
-                    const sortedClasses = [...classes].sort((a, b) => (mergedStats[b.name] || 0) - (mergedStats[a.name] || 0));
-                    const maxCount = sortedClasses.length > 0 ? (mergedStats[sortedClasses[0]?.name] || 0) : 0;
-
-                    if (classes.length === 0) {
-                      return (
-                        <div className="flex flex-col items-center justify-center h-32 text-center">
-                          <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
-                            <BarChart className="w-6 h-6 text-muted-foreground" />
-                          </div>
-                          <p className="text-sm text-muted-foreground">No classes defined yet</p>
+              <TabsContent value="statistics" className="flex-1 flex flex-col min-h-0 overflow-hidden m-0 p-0 mt-0 data-[state=inactive]:hidden">
+                <ScrollArea className="flex-1 min-h-0">
+                  <div className="p-3">
+                    {classes.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-32 text-center">
+                        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                          <BarChart className="w-6 h-6 text-muted-foreground" />
                         </div>
-                      );
-                    }
-
-                    return (
-                      <div className="h-full min-h-0 flex flex-col gap-3">
-                        {/* Summary row */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <BarChart className="h-3.5 w-3.5" />
-                            <span>{sortedClasses.length} {sortedClasses.length === 1 ? 'class' : 'classes'}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold text-foreground">{total.toLocaleString()}</span>
-                            <span className="text-xs text-muted-foreground">annotations</span>
-                          </div>
-                        </div>
-
-                        {/* Unsaved indicator */}
-                        {hasUnsavedChanges && annotations.length > 0 && (
-                          <div className="flex items-center gap-1.5 text-[11px] text-amber-500 bg-amber-500/10 px-2 py-1 rounded">
-                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            Includes {annotations.length} unsaved annotation{annotations.length !== 1 ? 's' : ''} from current image
-                          </div>
-                        )}
-
-                        {/* Distribution bar */}
-                        <div className="h-2.5 w-full flex rounded-full overflow-hidden bg-muted/50">
-                          {sortedClasses.map((c) => {
-                            const count = mergedStats[c.name] || 0;
-                            const pct = total > 0 ? (count / total) * 100 : 0;
-                            return (
-                              <div
-                                key={c.id}
-                                className="transition-all duration-300 hover:opacity-80 first:rounded-l-full last:rounded-r-full"
-                                style={{
-                                  backgroundColor: c.color,
-                                  width: `${pct}%`,
-                                  minWidth: pct > 0 ? '3px' : '0',
-                                }}
-                                title={`${c.name}: ${count} (${Math.round(pct)}%)`}
-                              />
-                            );
-                          })}
-                        </div>
-
-                        {/* Class rows */}
-                        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 pr-1 scrollbar-thin">
-                          {sortedClasses.map((c) => {
-                            const count = mergedStats[c.name] || 0;
-                            const pct = total > 0 ? (count / total) * 100 : 0;
-                            const barWidth = maxCount > 0 ? (count / maxCount) * 100 : 0;
-                            const avgArea = globalAvgAreas[c.name] || 0;
-                            const hasUnsaved = (unsavedCounts[c.name] || 0) > 0;
-
-                            return (
-                              <div
-                                key={c.id}
-                                className="group flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-accent/40 transition-all duration-150"
-                              >
-                                {/* Color dot */}
-                                <span
-                                  className="w-3 h-3 rounded-sm flex-shrink-0 ring-1 ring-black/10"
-                                  style={{ backgroundColor: c.color }}
-                                />
-
-                                {/* Name + bar */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between mb-0.5">
-                                    <span className="text-xs font-medium text-foreground truncate pr-2">
-                                      {c.name}
-                                    </span>
-                                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                                      <span className="text-[11px] tabular-nums text-muted-foreground">
-                                        {count.toLocaleString()}
-                                        {hasUnsaved && (
-                                          <span className="text-amber-500 ml-0.5" title={`+${unsavedCounts[c.name]} unsaved`}>*</span>
-                                        )}
-                                      </span>
-                                      <span className="text-[10px] tabular-nums text-muted-foreground/70 w-8 text-right">
-                                        {Math.round(pct)}%
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <div className="h-1 w-full rounded-full bg-muted/50 overflow-hidden">
-                                    <div
-                                      className="h-full rounded-full transition-all duration-500"
-                                      style={{
-                                        backgroundColor: c.color,
-                                        width: `${barWidth}%`,
-                                        opacity: 0.8,
-                                      }}
-                                    />
-                                  </div>
-                                  {avgArea > 0 && (
-                                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                                      Avg area: {formatArea(avgArea)}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <p className="text-sm text-muted-foreground">No classes defined yet</p>
                       </div>
-                    );
-                  })()}
-                </div>
+                    ) : activePanelTab === 'statistics' ? (
+                      <Suspense
+                        fallback={
+                          <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Loading charts…
+                          </div>
+                        }
+                      >
+                        <AnnotationStatisticsCharts
+                          classes={annotationStatistics.stats}
+                          total={annotationStatistics.total}
+                          hasUnsavedChanges={hasUnsavedChanges}
+                          unsavedAnnotationCount={annotations.length}
+                        />
+                      </Suspense>
+                    ) : null}
+                  </div>
+                </ScrollArea>
               </TabsContent>
             </Tabs>
           </div>

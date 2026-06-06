@@ -40,6 +40,10 @@ export interface AnnotationFile {
   error_message?: string; // Error message if processing failed
   totalSampleCount?: number; // Total number of annotations in the file
   isContentLoaded?: boolean; // Whether full content has been loaded (for lazy loading)
+  /** True after annotations for every dataset image were loaded for grid overlay */
+  allGridAnnotationsLoaded?: boolean;
+  currentPageLoaded?: boolean;
+  isLoadingCurrentPage?: boolean;
   // Coverage properties
   totalReferencedImages?: number; // Total images referenced in annotation file
   presentCount?: number; // Number of images present in dataset
@@ -47,6 +51,13 @@ export interface AnnotationFile {
 }
 
 export type SegmentationEditorMode = 'mask' | 'bbox';
+
+export type AnnotationDisplayType =
+  | 'Classification'
+  | 'Segmentation (mask+bbox)'
+  | 'Segmentation (mask)'
+  | 'Segmentation (bbox)'
+  | 'Other';
 
 export interface SegmentationModeCapabilities {
   hasMasks: boolean;
@@ -73,6 +84,283 @@ export function detectSegmentationModeCapabilities(cocoData: any): SegmentationM
     if (Array.isArray(bbox) && bbox.length >= 4) hasBboxes = true;
   }
   return { hasMasks, hasBboxesOnly: !hasMasks && hasBboxes, isEmpty: false };
+}
+
+/** True when segmentation contains a polygon with at least 3 points (6 coords). */
+export function hasMeaningfulSegmentation(segmentation: unknown): boolean {
+  if (!segmentation || !Array.isArray(segmentation) || segmentation.length === 0) {
+    return false;
+  }
+  const first = segmentation[0];
+  if (typeof first === 'number') {
+    return segmentation.length >= 6;
+  }
+  if (Array.isArray(first)) {
+    return first.length >= 6;
+  }
+  return false;
+}
+
+export function hasMeaningfulBbox(bbox: unknown): boolean {
+  if (!bbox || !Array.isArray(bbox) || bbox.length !== 4) {
+    return false;
+  }
+  return bbox.some((v) => typeof v === 'number' && v !== 0);
+}
+
+export function detectAnnotationTypeFromSamples(
+  samples: AnnotationSample[],
+): AnnotationDisplayType {
+  if (!samples.length) {
+    return 'Other';
+  }
+
+  const hasSegmentation = samples.some((s) => hasMeaningfulSegmentation(s.segmentation));
+  const hasBbox = samples.some((s) => hasMeaningfulBbox(s.bbox));
+
+  if (hasSegmentation && hasBbox) return 'Segmentation (mask+bbox)';
+  if (hasSegmentation) return 'Segmentation (mask)';
+  if (hasBbox) return 'Segmentation (bbox)';
+
+  const hasOnlyEmptyBbox = samples.every(
+    (s) =>
+      !s.bbox ||
+      (Array.isArray(s.bbox) &&
+        s.bbox.length === 4 &&
+        s.bbox[0] === 0 &&
+        s.bbox[1] === 0 &&
+        s.bbox[2] === 0 &&
+        s.bbox[3] === 0),
+  );
+  if (hasOnlyEmptyBbox && samples.some((s) => s.className)) {
+    return 'Classification';
+  }
+
+  return 'Segmentation (bbox)';
+}
+
+/** Display type for dataset annotation files — prefers loaded sample content over stale DB type. */
+export function detectAnnotationDisplayType(file: AnnotationFile): AnnotationDisplayType {
+  if (file.samples && file.samples.length > 0) {
+    return detectAnnotationTypeFromSamples(file.samples);
+  }
+
+  const t = String(file.type || '').trim().toLowerCase();
+  if (t === 'classification') return 'Classification';
+  if (t === 'segmentation (mask+bbox)' || t === 'segmentation-mask-bbox') {
+    return 'Segmentation (mask+bbox)';
+  }
+  if (t === 'segmentation (mask)' || t === 'segmentation-mask') {
+    return 'Segmentation (mask)';
+  }
+  if (
+    t === 'segmentation (bbox)' ||
+    t === 'segmentation-bbox' ||
+    t === 'detection' ||
+    t === 'object_detection' ||
+    t === 'object detection (bbox)'
+  ) {
+    return 'Segmentation (bbox)';
+  }
+  if (t === 'segmentation') {
+    return 'Segmentation (bbox)';
+  }
+
+  if (file.name || (file as { fileName?: string }).fileName) {
+    const nameLower = String(file.name || (file as { fileName?: string }).fileName).toLowerCase();
+    if (nameLower.startsWith('augmented_')) return 'Segmentation (mask+bbox)';
+    if (nameLower.includes('classification') || nameLower.includes('class')) {
+      return 'Classification';
+    }
+    if (nameLower.includes('mask') && nameLower.includes('bbox')) {
+      return 'Segmentation (mask+bbox)';
+    }
+    if (nameLower.includes('mask')) return 'Segmentation (mask)';
+    if (nameLower.includes('bbox') || nameLower.includes('detection')) {
+      return 'Segmentation (bbox)';
+    }
+    if (nameLower.includes('segmentation') || nameLower.includes('seg')) {
+      return 'Segmentation (bbox)';
+    }
+  }
+
+  return 'Other';
+}
+
+export const ANNOTATION_TYPE_SHORT_LABELS: Record<AnnotationDisplayType, string> = {
+  Classification: 'Class',
+  'Segmentation (mask+bbox)': 'Masks + Boxes',
+  'Segmentation (mask)': 'Masks',
+  'Segmentation (bbox)': 'Boxes',
+  Other: 'Other',
+};
+
+/** Merge compatibility groups — mask-only and mask+bbox files merge together. */
+export type AnnotationMergeGroup = 'classification' | 'bbox' | 'mask' | 'other';
+
+export const ANNOTATION_MERGE_GROUP_LABELS: Record<Exclude<AnnotationMergeGroup, 'other'>, string> = {
+  classification: 'Class',
+  bbox: 'Boxes',
+  mask: 'Masks',
+};
+
+export function getAnnotationMergeGroup(type: AnnotationDisplayType): AnnotationMergeGroup {
+  if (type === 'Classification') return 'classification';
+  if (type === 'Segmentation (bbox)') return 'bbox';
+  if (type === 'Segmentation (mask)' || type === 'Segmentation (mask+bbox)') return 'mask';
+  return 'other';
+}
+
+export function getAnnotationMergeGroupForFile(file: AnnotationFile): AnnotationMergeGroup {
+  return getAnnotationMergeGroup(detectAnnotationDisplayType(file));
+}
+
+export type TrainingAnnotationTaskType = 'detection' | 'segmentation' | 'classification' | 'oriented';
+
+/** Normalize oriented detection to bbox-based detection for compatibility checks. */
+export function normalizeTrainingTaskType(
+  task: TrainingAnnotationTaskType,
+): 'detection' | 'segmentation' | 'classification' {
+  if (task === 'oriented') return 'detection';
+  return task;
+}
+
+/**
+ * Whether an annotation file can train the given task.
+ * Detection needs bbox data (Boxes or Masks + Boxes); segmentation needs masks.
+ */
+export function annotationFileSupportsTrainingTask(
+  file: Pick<AnnotationFile, 'type' | 'name' | 'samples'> & {
+    annotationType?: AnnotationDisplayType;
+  },
+  task: TrainingAnnotationTaskType,
+): boolean {
+  const displayType =
+    file.annotationType ?? detectAnnotationDisplayType(file as AnnotationFile);
+  const normalized = normalizeTrainingTaskType(task);
+  if (normalized === 'detection') {
+    return (
+      displayType === 'Segmentation (bbox)' || displayType === 'Segmentation (mask+bbox)'
+    );
+  }
+  if (normalized === 'segmentation') {
+    return (
+      displayType === 'Segmentation (mask)' || displayType === 'Segmentation (mask+bbox)'
+    );
+  }
+  if (normalized === 'classification') {
+    return displayType === 'Classification';
+  }
+  return false;
+}
+
+/** Primary task badge for picker rows (mask+bbox files report as segmentation-capable). */
+export function primaryTrainingTaskTypeForAnnotationFile(
+  file: Pick<AnnotationFile, 'type' | 'name' | 'samples'>,
+): 'detection' | 'segmentation' | 'classification' | undefined {
+  const displayType = detectAnnotationDisplayType(file as AnnotationFile);
+  if (displayType === 'Segmentation (bbox)') return 'detection';
+  if (displayType === 'Segmentation (mask)') return 'segmentation';
+  if (displayType === 'Segmentation (mask+bbox)') return 'segmentation';
+  if (displayType === 'Classification') return 'classification';
+  return undefined;
+}
+
+export function filterAnnotationFilesForTrainingTask<
+  T extends Pick<AnnotationFile, 'type' | 'name' | 'samples'> & {
+    annotationType?: AnnotationDisplayType;
+  },
+>(files: T[], task: TrainingAnnotationTaskType): T[] {
+  return files.filter((f) => annotationFileSupportsTrainingTask(f, task));
+}
+
+export function mapAnnotationFileForTrainingPicker(file: {
+  id: string | number;
+  name?: string;
+  file_name?: string;
+  type?: string | null;
+  created_at?: string | null;
+}): {
+  id: string;
+  name: string;
+  classes: string[];
+  annotationType: AnnotationDisplayType;
+  taskType: 'detection' | 'segmentation' | 'classification' | undefined;
+  modifiedAt?: string;
+} {
+  const name = file.name || file.file_name || String(file.id);
+  const stub: AnnotationFile = {
+    id: String(file.id),
+    name,
+    date: '',
+    format: 'COCO',
+    type: (file.type || undefined) as AnnotationFile['type'],
+    classCount: 0,
+    imageCount: 0,
+    matchedImageCount: 0,
+    datasetId: '',
+  };
+  const annotationType = detectAnnotationDisplayType(stub);
+  return {
+    id: String(file.id),
+    name,
+    classes: [],
+    annotationType,
+    taskType: primaryTrainingTaskTypeForAnnotationFile(stub),
+    modifiedAt: file.created_at || undefined,
+  };
+}
+
+/** Whether two or more files can be merged — all must share the same merge group. */
+export function validateAnnotationMergeSelection(files: AnnotationFile[]): {
+  ok: boolean;
+  mergeGroup?: Exclude<AnnotationMergeGroup, 'other'>;
+  message?: string;
+} {
+  if (files.length < 2) {
+    return { ok: false, message: 'Select at least 2 annotation files to merge.' };
+  }
+
+  const groups = files.map((f) => getAnnotationMergeGroupForFile(f));
+  if (groups.some((g) => g === 'other')) {
+    return {
+      ok: false,
+      message: 'One or more selected files have an unsupported format and cannot be merged.',
+    };
+  }
+
+  const unique = [...new Set(groups)];
+  if (unique.length > 1) {
+    const labels = unique.map((g) => ANNOTATION_MERGE_GROUP_LABELS[g as Exclude<AnnotationMergeGroup, 'other'>]).join(', ');
+    return {
+      ok: false,
+      message: `All files must be the same annotation type. Selected: ${labels}. Merge Boxes with Boxes, Masks with Masks (mask-only and Masks + Boxes together), Class with Class.`,
+    };
+  }
+
+  return { ok: true, mergeGroup: unique[0] as Exclude<AnnotationMergeGroup, 'other'> };
+}
+
+/** Whether a file can be added to the current merge selection. */
+export function canAddFileToMergeSelection(
+  file: AnnotationFile,
+  selectedFiles: AnnotationFile[],
+): { ok: boolean; reason?: string } {
+  const fileGroup = getAnnotationMergeGroupForFile(file);
+  if (fileGroup === 'other') {
+    return { ok: false, reason: 'Unsupported format — this file cannot be merged.' };
+  }
+  if (selectedFiles.length === 0) {
+    return { ok: true };
+  }
+  const anchorGroup = getAnnotationMergeGroupForFile(selectedFiles[0]);
+  if (fileGroup !== anchorGroup) {
+    return {
+      ok: false,
+      reason: `This file is "${ANNOTATION_MERGE_GROUP_LABELS[fileGroup]}". Your selection is "${ANNOTATION_MERGE_GROUP_LABELS[anchorGroup]}" — only matching types can be merged.`,
+    };
+  }
+  return { ok: true };
 }
 
 export function pointsToTightBbox(points: Array<{ x: number; y: number }>): [number, number, number, number] {

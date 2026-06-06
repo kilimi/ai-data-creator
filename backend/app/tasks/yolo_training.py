@@ -292,8 +292,15 @@ class YOLOTrainingTask(TrainingTask):
                     f"resume_from path not found ({resume_from}), loading base model instead"
                 )
             logger.info(f"Preparing YOLO model path: {model_type}")
-            model_path = Path(model_type)
-            load_path = str(model_path) if model_path.exists() else model_type
+            from app.model_weights_presence import resolve_training_base_weights_path
+
+            resolved = resolve_training_base_weights_path(model_type)
+            if resolved:
+                load_path = str(resolved)
+                logger.info(f"Resolved base weights: {load_path}")
+            else:
+                model_path = Path(model_type)
+                load_path = str(model_path) if model_path.exists() else model_type
 
         self.model_path = str(load_path)
         self.model_class = "yolo"

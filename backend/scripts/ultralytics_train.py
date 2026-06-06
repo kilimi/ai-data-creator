@@ -22,6 +22,24 @@ def main() -> int:
     model_path = cfg["model_path"]
     train_args = cfg["train_args"]
 
+    from app.model_weights_presence import resolve_training_base_weights_path
+
+    resolved = resolve_training_base_weights_path(model_path)
+    if resolved:
+        model_path = str(resolved)
+
+    # Ultralytics AMP self-check exports a temporary ONNX model; disable AMP when
+    # the onnx package is unavailable (misleading "ONNX" errors during .pt training).
+    try:
+        import onnx  # noqa: F401
+    except ImportError:
+        train_args["amp"] = False
+        print(
+            "LAI: onnx package not found — disabled AMP "
+            "(Ultralytics AMP check requires a one-time ONNX export).",
+            flush=True,
+        )
+
     from app.ml.ultralytics_train_metrics import emit_trainer_epoch_metrics
 
     if model_class == "rtdetr":

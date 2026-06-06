@@ -48,7 +48,23 @@ def test_generated_config_avoids_albumentations_pipeline_switch():
     assert "meta_keys=('img_id', 'img_path'" in content
 
 
-def test_generated_config_sets_coco_pretrained_load_from():
+def test_generated_config_uses_local_pretrained_when_cached(tmp_path, monkeypatch):
+    pth = tmp_path / "yolov8_s_syncbn_fast_8xb16-500e_coco_20230117_180101-5aa5f0f1.pth"
+    pth.write_bytes(b"ckpt")
+    monkeypatch.setenv("LAI_MMYOLO_MODELS_DIR", str(tmp_path))
+
+    content = build_mmyolo_config_content(
+        _sample_params(
+            base_cfg="yolov8_s_syncbn_fast_8xb16-500e_coco.py",
+            is_dji_mode=False,
+        )
+    )
+    assert f"load_from = '{pth.resolve()}'" in content
+    assert "load_from = 'https://download.openmmlab.com" not in content
+
+
+def test_generated_config_falls_back_to_url_when_not_cached(tmp_path, monkeypatch):
+    monkeypatch.setenv("LAI_MMYOLO_MODELS_DIR", str(tmp_path / "empty"))
     content = build_mmyolo_config_content(
         _sample_params(
             base_cfg="yolov8_s_syncbn_fast_8xb16-500e_coco.py",

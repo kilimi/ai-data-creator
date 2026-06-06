@@ -38,6 +38,23 @@ const SHORT_TYPE: Record<AnnotationDisplayType, string> = {
   Other: "Other",
 };
 
+/** Stable accent per tag so multiple tags are easy to tell apart. */
+const TAG_ACCENT_CLASSES = [
+  "bg-sky-500/15 text-sky-800 dark:text-sky-200 border-sky-500/40",
+  "bg-violet-500/15 text-violet-800 dark:text-violet-200 border-violet-500/40",
+  "bg-amber-500/15 text-amber-900 dark:text-amber-100 border-amber-500/45",
+  "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 border-emerald-500/40",
+  "bg-rose-500/15 text-rose-800 dark:text-rose-200 border-rose-500/40",
+] as const;
+
+function tagAccentClass(tag: string): string {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i += 1) {
+    hash = (hash + tag.charCodeAt(i)) % TAG_ACCENT_CLASSES.length;
+  }
+  return TAG_ACCENT_CLASSES[hash];
+}
+
 interface Props {
   file: AnnotationFile;
   index: number;
@@ -54,6 +71,8 @@ interface Props {
   // selection
   mergeMode: boolean;
   selectedForMerge: boolean;
+  mergeSelectDisabled?: boolean;
+  mergeSelectDisabledReason?: string;
   onToggleSelect: () => void;
   // primary
   onOpen: () => void;
@@ -75,6 +94,7 @@ export function AnnotationFileCard(props: Props) {
   const {
     file, index, density, selectedAnnotation, visible, showBboxes, loading, type,
     isUnsupported, unsupportedReason, importing, processing, mergeMode, selectedForMerge,
+    mergeSelectDisabled, mergeSelectDisabledReason,
     onToggleSelect, onOpen, onToggleVisibility, onToggleBboxes, onEditName, onEditAnnotations,
     onTags, onDuplicate, onDownload, onDownloadImages, onDelete, children,
   } = props;
@@ -92,6 +112,7 @@ export function AnnotationFileCard(props: Props) {
         "group/card border rounded-lg overflow-hidden transition-colors",
         isOpen ? "border-primary/40 bg-card" : "border-border/60 bg-card/40 hover:bg-accent/30",
         isUnsupported && "border-yellow-500/40 bg-yellow-500/5",
+        mergeMode && mergeSelectDisabled && !selectedForMerge && "opacity-50",
       )}
     >
       <div className={cn("cursor-pointer", padding)} onClick={onOpen}>
@@ -104,11 +125,25 @@ export function AnnotationFileCard(props: Props) {
             )}
             onClick={(e) => e.stopPropagation()}
           >
-            <Checkbox
-              checked={selectedForMerge}
-              onCheckedChange={onToggleSelect}
-              aria-label={`Select ${file.name}`}
-            />
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex">
+                    <Checkbox
+                      checked={selectedForMerge}
+                      disabled={mergeSelectDisabled}
+                      onCheckedChange={onToggleSelect}
+                      aria-label={`Select ${file.name}`}
+                    />
+                  </span>
+                </TooltipTrigger>
+                {mergeSelectDisabled && mergeSelectDisabledReason && (
+                  <TooltipContent side="right" className="max-w-xs text-xs">
+                    {mergeSelectDisabledReason}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Number + status dot */}
@@ -153,26 +188,11 @@ export function AnnotationFileCard(props: Props) {
               )}
             </div>
 
-            {/* Subtitle: format · date · tags */}
+            {/* Subtitle: format · date */}
             <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
               <span className="uppercase tracking-wide">{file.format || "COCO"}</span>
               <span aria-hidden>·</span>
               <span>{new Date(file.date).toLocaleDateString()}</span>
-              {file.tags && file.tags.length > 0 && (
-                <>
-                  <span aria-hidden>·</span>
-                  <span className="inline-flex items-center gap-1">
-                    {file.tags.slice(0, 3).map((tag) => (
-                      <Badge key={tag} variant="secondary" className="text-[10px] h-4 px-1.5 bg-muted/60 text-muted-foreground border-transparent">
-                        {tag}
-                      </Badge>
-                    ))}
-                    {file.tags.length > 3 && (
-                      <span className="text-[10px]">+{file.tags.length - 3}</span>
-                    )}
-                  </span>
-                </>
-              )}
               {unsupportedReason && (
                 <>
                   <span aria-hidden>·</span>
@@ -180,6 +200,34 @@ export function AnnotationFileCard(props: Props) {
                 </>
               )}
             </div>
+
+            {/* Tags — own row so they stand out from metadata */}
+            {file.tags && file.tags.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                {file.tags.slice(0, isCompact ? 2 : 4).map((tag) => (
+                  <Badge
+                    key={tag}
+                    variant="outline"
+                    className={cn(
+                      "text-[10px] h-5 px-1.5 font-medium shrink-0 shadow-sm",
+                      tagAccentClass(tag),
+                    )}
+                  >
+                    <Tag className="h-2.5 w-2.5 mr-1 shrink-0 opacity-80" />
+                    {tag}
+                  </Badge>
+                ))}
+                {file.tags.length > (isCompact ? 2 : 4) && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] h-5 px-1.5 font-medium bg-muted/80 text-foreground border-border"
+                    title={file.tags.slice(isCompact ? 2 : 4).join(", ")}
+                  >
+                    +{file.tags.length - (isCompact ? 2 : 4)}
+                  </Badge>
+                )}
+              </div>
+            )}
 
             {/* Stats row */}
             {!isCompact && (
@@ -234,9 +282,12 @@ export function AnnotationFileCard(props: Props) {
                   </Tooltip>
                 </TooltipProvider>
                 {file.imageCount > 0 && (
-                  <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="inline-flex items-center gap-1.5"
+                    title="Images in this dataset that have at least one annotation"
+                  >
                     <span className="tabular-nums text-foreground font-medium">{file.imageCount}</span>
-                    images
+                    annotated images
                   </span>
                 )}
               </div>

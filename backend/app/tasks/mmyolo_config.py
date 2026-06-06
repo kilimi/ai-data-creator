@@ -4,7 +4,10 @@ from pathlib import Path
 
 from typing import List
 
-from app.ml.mmyolo_catalog import MMYOLO_OFFICIAL_CONFIG_STEMS, mmyolo_pretrained_checkpoint
+from app.ml.mmyolo_catalog import (
+    MMYOLO_OFFICIAL_CONFIG_STEMS,
+    resolve_mmyolo_pretrained_load_from,
+)
 
 
 _MMYOLO_CONFIG_ROOTS = (
@@ -189,7 +192,7 @@ def build_mmyolo_config_content(params: MMYOLOConfigParams) -> str:
     )
     image_size = params.image_size
     val_interval = max(1, min(10, max(1, params.epochs // 3)))
-    pretrained = mmyolo_pretrained_checkpoint(params.base_cfg)
+    pretrained = resolve_mmyolo_pretrained_load_from(params.base_cfg)
     skip_pretrained = params.is_dji_mode and params.dji_use_widen_factor_025
     if skip_pretrained:
         load_from_line = (

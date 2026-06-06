@@ -361,12 +361,24 @@ def train_mmyolo_model(self, task_id: int, training_config: Dict[str, Any]):
             batch_size = max(1, min(int(batch_size), train_image_count))
 
         base_cfg = resolve_mmyolo_base_config(config_id, dji_repo_dir=dji_repo)
-        from app.ml.mmyolo_catalog import mmyolo_pretrained_checkpoint
+        from app.ml.mmyolo_catalog import (
+            MMYOLO_PRETRAINED_DOWNLOAD_NOTICE,
+            mmyolo_pretrained_requires_download,
+            mmyolo_ui_alias_for_config,
+            resolve_mmyolo_pretrained_load_from,
+        )
 
-        pretrained_url = None if (is_dji_mode and dji_use_widen_factor_025) else mmyolo_pretrained_checkpoint(base_cfg)
-        if pretrained_url:
-            logger.info("MMYOLO task %s: fine-tuning from COCO pretrained %s", task_id, pretrained_url)
-        elif is_dji_mode and dji_use_widen_factor_025:
+        skip_pretrained = is_dji_mode and dji_use_widen_factor_025
+        if not skip_pretrained and mmyolo_pretrained_requires_download(base_cfg):
+            alias = mmyolo_ui_alias_for_config(base_cfg) or config_id
+            raise RuntimeError(
+                f"{MMYOLO_PRETRAINED_DOWNLOAD_NOTICE} Missing alias: {alias!r}."
+            )
+
+        pretrained = None if skip_pretrained else resolve_mmyolo_pretrained_load_from(base_cfg)
+        if pretrained:
+            logger.info("MMYOLO task %s: fine-tuning from COCO pretrained %s", task_id, pretrained)
+        elif skip_pretrained:
             logger.info(
                 "MMYOLO task %s: DJI widen_factor=0.25 — training without COCO load_from "
                 "(YOLOv8-S checkpoint is incompatible)",

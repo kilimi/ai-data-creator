@@ -106,7 +106,7 @@ def merge_annotation_files(
     strategy_cfg: Optional[Dict[str, Any]] = None,
 ):
     """Merge annotation files (replaces API background thread)."""
-    from app.routers.datasets import merge_annotation_files_task
+    from app.services.dataset_annotation_merge_service import merge_annotation_files_task
 
     try:
         asyncio.run(

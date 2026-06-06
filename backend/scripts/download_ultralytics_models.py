@@ -30,11 +30,53 @@ from app.foundation_models import (
 MODELS_DIR = Path("/app/models")
 
 
+def _bootstrap_ultralytics_runtime() -> None:
+    """Use conda + /opt/ultralytics-site (onnx lives there, not in /opt/lai)."""
+    from app.ml.runtime_env import ensure_ultralytics_sys_path
+    from app.ml.ultralytics_compat import patch_ultralytics_lazy_exports
+
+    ensure_ultralytics_sys_path()
+    patch_ultralytics_lazy_exports()
+
+
+def _onnx_export_deps_available() -> bool:
+    try:
+        import onnx  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _should_export_auto_annotate_onnx(spec: str) -> bool:
+    """Skip ONNX when user requested a single training .pt (e.g. yolov8n.pt)."""
+    if os.environ.get("LAI_SKIP_AUTO_ANNOTATE_ONNX", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return False
+    sl = (spec or "").strip().lower()
+    if sl in ("none", "on_demand", "runtime", "download_on_request"):
+        return False
+    # One explicit checkpoint name → training download only.
+    if sl.endswith(".pt") and "," not in spec:
+        return False
+    return True
+
+
 def _export_pt_to_onnx(pt_path: Path, *, imgsz: int) -> Path:
+    _bootstrap_ultralytics_runtime()
+    if not _onnx_export_deps_available():
+        raise ImportError(
+            "onnx is not importable (expected under /opt/ultralytics-site). "
+            "Rebuild worker-gpu or run export with ULTRALYTICS_PYTHON."
+        )
+
     from ultralytics import YOLO
 
     model = YOLO(str(pt_path))
-    exported = model.export(format="onnx", imgsz=imgsz, simplify=True)
+    # simplify=False avoids onnxslim when only onnx is present in ultralytics-site.
+    exported = model.export(format="onnx", imgsz=imgsz, simplify=False)
     exported_path = Path(exported)
     if not exported_path.is_file():
         raise FileNotFoundError(f"ONNX export did not produce a file for {pt_path}")
@@ -53,6 +95,7 @@ def _export_pt_to_onnx(pt_path: Path, *, imgsz: int) -> Path:
 
 
 def _download_pt(name: str) -> Path:
+    _bootstrap_ultralytics_runtime()
     from ultralytics import YOLO
 
     dst = MODELS_DIR / name
@@ -92,6 +135,8 @@ def main() -> int:
     models_to_download = resolve_ultralytics_pretrained_spec(spec)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
+    _bootstrap_ultralytics_runtime()
+
     try:
         from ultralytics import YOLO  # noqa: F401
     except ImportError:
@@ -104,6 +149,7 @@ def main() -> int:
 
     auto_pts = set(resolve_auto_annotate_onnx_download())
     extra = [m for m in models_to_download if m not in auto_pts]
+    pt_ok = False
 
     if extra:
         print(
@@ -114,15 +160,34 @@ def main() -> int:
             try:
                 print(f"[{i}/{len(extra)}] {name}", flush=True)
                 _download_pt(name)
+                pt_ok = True
             except Exception as e:
                 print(f"  Skip {name}: {e}", file=sys.stderr)
     elif not auto_pts:
         print(f"LAI_PRETRAINED_MODELS={spec!r} → no extra .pt models", flush=True)
 
+    if not _should_export_auto_annotate_onnx(spec):
+        print(
+            "Skipping Auto-Annotate ONNX export "
+            f"(LAI_PRETRAINED_MODELS={spec!r} is training weights only).",
+            flush=True,
+        )
+        if pt_ok or extra:
+            print("Done.")
+            return 0
+        print("Nothing to download.", file=sys.stderr)
+        return 1
+
     try:
         _ensure_auto_annotate_onnx()
     except Exception as e:
         print(f"Auto-Annotate ONNX export failed: {e}", file=sys.stderr)
+        if pt_ok:
+            print(
+                "Training .pt weights were saved; ONNX is only needed for Auto-Annotate.",
+                file=sys.stderr,
+            )
+            return 0
         return 1
 
     print("Done.")

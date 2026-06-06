@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,9 @@ import { Split, GitCompare } from "lucide-react";
 
 import { ClassStatistics } from "@/components/ClassStatistics";
 import { Switch } from "@/components/ui/switch";
-import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors } from "@/utils/annotations";
+import { AnnotationSample, processCOCOAnnotations, AnnotationFile, generateClassColors, detectAnnotationDisplayType, detectAnnotationTypeFromSamples, validateAnnotationMergeSelection, canAddFileToMergeSelection, ANNOTATION_MERGE_GROUP_LABELS, getAnnotationMergeGroupForFile } from "@/utils/annotations";
 import { mergeAnnotationSamples } from "@/utils/mergeAnnotationSamples";
+import { fetchAllAnnotationDataPages } from "@/utils/fetchAnnotationDataPages";
 import { downloadCocoFile, buildCocoFromSamples, validateCocoData } from "@/utils/downloadCoco";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AnnotationFilters } from "./AnnotationFilters";
@@ -259,6 +260,7 @@ export function AnnotationsContent({
   const [splitDialog, setSplitDialog] = useState<{ open: boolean; fileId: string | null }>({ open: false, fileId: null });
   const [compareDialog, setCompareDialog] = useState<{ open: boolean; aId: string | null; bId: string | null }>({ open: false, aId: null, bId: null });
   const [mergeStrategyDialogOpen, setMergeStrategyDialogOpen] = useState(false);
+
   const [tagsDialog, setTagsDialog] = useState<{ isOpen: boolean; annotationId: string; annotationName: string; currentTags: string[] }>({ isOpen: false, annotationId: '', annotationName: '', currentTags: [] });
   const [editingName, setEditingName] = useState<{ annotationId: string; newName: string } | null>(null);
   const [downloadImagesDialog, setDownloadImagesDialog] = useState<{ isOpen: boolean; annotationId: string; categories: Array<{ id: number; name: string }>; selectedCategory: string | null; selectedCollectionIds: string[] }>({ isOpen: false, annotationId: '', categories: [], selectedCategory: null, selectedCollectionIds: [] });
@@ -302,29 +304,81 @@ export function AnnotationsContent({
 
   const { api } = useApi();
   const { toast } = useToast();
+
+  const selectedMergeFiles = useMemo(
+    () => annotationFiles.filter((f) => selectedForMerge.has(f.id)),
+    [annotationFiles, selectedForMerge],
+  );
+
+  const mergeSelectionValidation = useMemo(
+    () => validateAnnotationMergeSelection(selectedMergeFiles),
+    [selectedMergeFiles],
+  );
+
+  const mergeSelectionGroup = useMemo(() => {
+    if (selectedMergeFiles.length === 0) return null;
+    if (mergeSelectionValidation.mergeGroup) return mergeSelectionValidation.mergeGroup;
+    return getAnnotationMergeGroupForFile(selectedMergeFiles[0]);
+  }, [selectedMergeFiles, mergeSelectionValidation.mergeGroup]);
+
+  const canConfirmMerge = selectedForMerge.size >= 2 && mergeSelectionValidation.ok;
+
+  const toggleMergeSelection = useCallback((annotationId: string) => {
+    setSelectedForMerge((prev) => {
+      const next = new Set(prev);
+      if (next.has(annotationId)) {
+        next.delete(annotationId);
+        return next;
+      }
+      const file = annotationFiles.find((f) => f.id === annotationId);
+      if (!file) return prev;
+      const anchor = annotationFiles.filter((f) => prev.has(f.id));
+      const check = canAddFileToMergeSelection(file, anchor);
+      if (!check.ok) {
+        toast({
+          title: 'Cannot select for merge',
+          description: check.reason,
+          variant: 'destructive',
+        });
+        return prev;
+      }
+      next.add(annotationId);
+      return next;
+    });
+  }, [annotationFiles, toast]);
+
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
   const [fiftyOneDialogOpen, setFiftyOneDialogOpen] = useState(false);
   const [selectedForFiftyOne, setSelectedForFiftyOne] = useState<Set<string>>(new Set());
   const [fiftyOneImageCollectionId, setFiftyOneImageCollectionId] = useState<string>('');
   const [launchingFiftyOne, setLaunchingFiftyOne] = useState(false);
 
-  // Smart annotation loading for current page
+  // Smart annotation loading for current page (or full dataset when showAllAnnotationsOnGrid)
   const loadAnnotationsForCurrentPage = async (fileId: string, force = false, currentBboxState?: boolean) => {
     const file = annotationFiles.find(f => f.id === fileId);
     if (!file || !api) return null;
 
+    const targetImageIds = showAllAnnotationsOnGrid
+      ? imagesMemo.map(img => String(img.id))
+      : currentPageImageIds;
+
     // Prevent loading if already processing this file
-    if ((file as any).isLoadingCurrentPage && !force) {
+    if (file.isLoadingCurrentPage && !force) {
       console.log(`Skipping load for ${file.name} - already loading`);
       return null;
     }
 
+    if (!force && showAllAnnotationsOnGrid && file.allGridAnnotationsLoaded) {
+      console.log(`Skipping full grid load for ${file.name} - already loaded`);
+      return file.samples || [];
+    }
+
     // Check if we need to load annotations for current page
-    const currentPageString = currentPageImageIds.join(',');
+    const targetPageString = targetImageIds.join(',');
     const lastPageString = lastLoadedPageIds.join(',');
     
     // Skip if already loaded for this page (unless forced)
-    if (!force && currentPageString === lastPageString && currentPageAnnotations[fileId]) {
+    if (!force && !showAllAnnotationsOnGrid && targetPageString === lastPageString && currentPageAnnotations[fileId]) {
       return currentPageAnnotations[fileId];
     }
 
@@ -336,31 +390,30 @@ export function AnnotationsContent({
       
       setLoadingAnnotations(prev => new Set(prev).add(fileId));
       
-      console.log(`Loading annotations for file ${file.name} for current page with ${currentPageImageIds.length} images`);
+      console.log(
+        showAllAnnotationsOnGrid
+          ? `Loading all grid annotations for file ${file.name} (${targetImageIds.length} dataset images)`
+          : `Loading annotations for file ${file.name} for current page with ${targetImageIds.length} images`
+      );
       
       // Determine the bbox state to use
       const bboxState = currentBboxState !== undefined ? currentBboxState : file.showBboxes;
       
       // Try to use the new annotation data API first (better for large files)
       try {
-        const annotationDataResponse = await api.getAnnotationData(id, fileId, {
-          imageIds: currentPageImageIds,
-          limit: 1000 // Get up to 1000 annotations for current page
-        });
-        
-        if (annotationDataResponse?.success && annotationDataResponse.data?.annotations) {
-          console.log(`Loaded ${annotationDataResponse.data.annotations.length} annotations using annotation data API`);
-          console.log('Raw annotation data:', annotationDataResponse.data.annotations.slice(0, 2)); // Debug first 2 annotations
+        const rawAnnotations = await fetchAllAnnotationDataPages(
+          api.getAnnotationData.bind(api),
+          id,
+          fileId,
+          showAllAnnotationsOnGrid ? undefined : targetImageIds,
+        );
+
+        if (rawAnnotations.length > 0 || showAllAnnotationsOnGrid) {
+          console.log(`Loaded ${rawAnnotations.length} annotations using annotation data API`);
           
           // Track used colors to ensure uniqueness
           const usedColors = new Set(Object.values(file.classColors || {}));
           
-          // Convert to our format
-          // Build a quick lookup so we can fall back to dataset-image dims when
-          // the backend's AnnotationFileImage row is missing width/height.
-          // Without a reference space, segmentation polygons (stored as raw
-          // pixel coords) get drawn outside the displayed image and appear
-          // invisible — the bug users hit on Segmentation files.
           const imageDimsLookup: Record<string, { width: number; height: number }> = {};
           imagesMemo.forEach(img => {
             if (img.width && img.height) {
@@ -368,18 +421,19 @@ export function AnnotationsContent({
             }
           });
 
-          const currentPageAnnotations = annotationDataResponse.data.annotations.map((anno: any): AnnotationSample => {
+          const datasetImageIdSet = showAllAnnotationsOnGrid
+            ? new Set(targetImageIds)
+            : null;
+
+          const loadedAnnotations = (rawAnnotations as any[])
+            .filter((anno) => !datasetImageIdSet || datasetImageIdSet.has(String(anno.imageId)))
+            .map((anno: any): AnnotationSample => {
             const color = getOrAssignClassColor(anno.className, file.classColors || {}, usedColors);
-            usedColors.add(color); // Track this color as used
+            usedColors.add(color);
             const fallbackDims = imageDimsLookup[String(anno.imageId)];
             const refW = anno.imageWidth || fallbackDims?.width || undefined;
             const refH = anno.imageHeight || fallbackDims?.height || undefined;
-            if (!anno.imageWidth || !anno.imageHeight) {
-              console.warn(
-                `Annotation ${anno.id} for image ${anno.imageId} missing imageWidth/Height from backend; falling back to dataset image dims (${refW}x${refH}). Run backend/repair_annotation_file_images.py if this is widespread.`
-              );
-            }
-            const annotationSample = {
+            return {
               id: anno.id || `annotation_${anno.cocoAnnotationId || Math.random()}`,
               imageId: anno.imageId,
               className: anno.className,
@@ -388,77 +442,54 @@ export function AnnotationsContent({
               area: anno.area || 0,
               confidence: anno.confidence || 1.0,
               color: color,
-              isVisible: true, // This controls mask visibility
+              isVisible: true,
               showBboxes: bboxState !== false,
               annotationFileName: file.name,
               referenceImageWidth: refW,
               referenceImageHeight: refH,
             };
-            console.log(`Converted annotation for image ${anno.imageId}:`, annotationSample);
-            return annotationSample;
           });
           
-          console.log(`Converted ${currentPageAnnotations.length} annotations for current page`);
+          console.log(`Converted ${loadedAnnotations.length} annotations for grid display`);
           
-          // Update classColors with any new colors that were generated
           const updatedClassColors = { ...file.classColors };
-          currentPageAnnotations.forEach(annotation => {
+          loadedAnnotations.forEach(annotation => {
             if (!updatedClassColors[annotation.className]) {
               updatedClassColors[annotation.className] = annotation.color;
             }
           });
           
-          // Cache the loaded annotations
           setCurrentPageAnnotations(prev => ({
             ...prev,
-            [fileId]: currentPageAnnotations
+            [fileId]: loadedAnnotations
           }));
           
-          setLastLoadedPageIds([...currentPageImageIds]);
+          setLastLoadedPageIds([...targetImageIds]);
           
-          // Merge newly loaded page samples into the in-memory cache instead of
-          // replacing, so modal next/prev keeps annotations across page changes.
           const updatedFiles = annotationFiles.map(f => 
             f.id === fileId
               ? (() => {
-                  const mergedSamples = mergeAnnotationSamples(f.samples || [], currentPageAnnotations);
+                  const mergedSamples = showAllAnnotationsOnGrid
+                    ? loadedAnnotations
+                    : mergeAnnotationSamples(f.samples || [], loadedAnnotations);
                   return {
                   ...f, 
                   samples: mergedSamples,
-                  classColors: updatedClassColors, // Save the updated colors
-                  // Use the bbox state parameter if provided, otherwise preserve current state
+                  classColors: updatedClassColors,
                   showBboxes: currentBboxState !== undefined ? currentBboxState : f.showBboxes,
                   currentPageLoaded: true,
+                  allGridAnnotationsLoaded: showAllAnnotationsOnGrid ? true : f.allGridAnnotationsLoaded,
                   isLoadingCurrentPage: false,
-                  // Re-detect type now that we have samples loaded
-                  type: mergedSamples.length > 0 ? (() => {
-                    const hasSegmentation = mergedSamples.some(sample => 
-                      sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-                    );
-                    const hasMeaningfulBbox = mergedSamples.some(sample => 
-                      sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-                      (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-                    );
-                    
-                    if (hasSegmentation && hasMeaningfulBbox) {
-                      return 'segmentation-mask-bbox';
-                    } else if (hasSegmentation) {
-                      return 'segmentation-mask';
-                    } else if (hasMeaningfulBbox) {
-                      return 'segmentation-bbox';
-                    } else {
-                      return 'classification';
-                    }
-                  })() : f.type
+                  type: mergedSamples.length > 0
+                    ? detectAnnotationTypeFromSamples(mergedSamples)
+                    : f.type
                 };
               })()
               : f
           );
           setAnnotationFiles(updatedFiles);
           
-          console.log(`Updated annotation file ${file.name} with ${currentPageAnnotations.length} samples`);
-          
-          return currentPageAnnotations;
+          return loadedAnnotations;
         }
       } catch (apiError) {
         console.log('Annotation data API failed, falling back to content API:', apiError);
@@ -480,8 +511,9 @@ export function AnnotationsContent({
 
       const cocoData = JSON.parse(contentResponse.data.content);
       
-      // Filter annotations for current page images only
-      const currentPageAnnotations = [];
+      // Filter annotations for current page or full dataset
+      const loadedAnnotations: AnnotationSample[] = [];
+      const targetImageIdSet = new Set(targetImageIds);
       
       if (cocoData.annotations && Array.isArray(cocoData.annotations)) {
         // Create image ID mapping
@@ -507,7 +539,7 @@ export function AnnotationsContent({
             imageName.includes(img.fileName.replace(/\.[^/.]+$/, ''))
           );
           
-          if (matchingImage && currentPageImageIds.includes(matchingImage.id)) {
+          if (matchingImage && (showAllAnnotationsOnGrid || targetImageIdSet.has(String(matchingImage.id)))) {
             // Convert COCO annotation to our format
             const category = cocoData.categories?.find((cat: any) => cat.id === anno.category_id);
             const className = category ? category.name : `category_${anno.category_id}`;
@@ -546,16 +578,16 @@ export function AnnotationsContent({
               referenceImageHeight: imageHeight,
             };
             
-            currentPageAnnotations.push(annotationSample);
+            loadedAnnotations.push(annotationSample);
           }
         }
       }
 
-      console.log(`Loaded ${currentPageAnnotations.length} annotations for current page from ${file.name}`);
+      console.log(`Loaded ${loadedAnnotations.length} annotations for grid from ${file.name}`);
       
       // Update classColors with any new colors that were generated
       const updatedClassColors = { ...file.classColors };
-      currentPageAnnotations.forEach(annotation => {
+      loadedAnnotations.forEach(annotation => {
         if (!updatedClassColors[annotation.className]) {
           updatedClassColors[annotation.className] = annotation.color;
         }
@@ -566,32 +598,19 @@ export function AnnotationsContent({
       setAnnotationFiles(prev => prev.map(f => 
         f.id === fileId
           ? (() => {
-              const mergedSamples = mergeAnnotationSamples(f.samples || [], currentPageAnnotations);
+              const mergedSamples = showAllAnnotationsOnGrid
+                ? loadedAnnotations
+                : mergeAnnotationSamples(f.samples || [], loadedAnnotations);
               return {
               ...f, 
               samples: mergedSamples,
               cocoImages: cocoData.images || f.cocoImages,
               classColors: updatedClassColors,
-              // Re-detect type now that we have samples loaded
-              type: mergedSamples.length > 0 ? (() => {
-                const hasSegmentation = mergedSamples.some(sample => 
-                  sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-                );
-                const hasMeaningfulBbox = mergedSamples.some(sample => 
-                  sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-                  (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-                );
-                
-                if (hasSegmentation && hasMeaningfulBbox) {
-                  return 'segmentation-mask-bbox';
-                } else if (hasSegmentation) {
-                  return 'segmentation-mask';
-                } else if (hasMeaningfulBbox) {
-                  return 'segmentation-bbox';
-                } else {
-                  return 'classification';
-                }
-              })() : f.type
+              currentPageLoaded: true,
+              allGridAnnotationsLoaded: showAllAnnotationsOnGrid ? true : f.allGridAnnotationsLoaded,
+              type: mergedSamples.length > 0
+                ? detectAnnotationTypeFromSamples(mergedSamples)
+                : f.type
             };
           })()
           : f
@@ -600,12 +619,12 @@ export function AnnotationsContent({
       // Cache the loaded annotations
       setCurrentPageAnnotations(prev => ({
         ...prev,
-        [fileId]: currentPageAnnotations
+        [fileId]: loadedAnnotations
       }));
       
-      setLastLoadedPageIds([...currentPageImageIds]);
+      setLastLoadedPageIds([...targetImageIds]);
       
-      return currentPageAnnotations;
+      return loadedAnnotations;
       
     } catch (error) {
       console.error('Error loading annotations for current page:', error);
@@ -699,104 +718,7 @@ export function AnnotationsContent({
     newName: string;
   }>({ isOpen: false, annotationId: '', currentName: '', newName: '' });
   
-  // Auto-detect annotation type based on content with detailed segmentation types
-  const detectAnnotationType = (file: AnnotationFile): 'Classification' | 'Segmentation (mask+bbox)' | 'Segmentation (mask)' | 'Segmentation (bbox)' | 'Other' => {
-    // If type is explicitly set, use it (case-insensitive), including legacy aliases.
-    const t = String(file.type || '').trim().toLowerCase();
-    if (t === 'classification') return 'Classification';
-    if (t === 'segmentation (mask+bbox)' || t === 'segmentation-mask-bbox') return 'Segmentation (mask+bbox)';
-    if (t === 'segmentation (mask)' || t === 'segmentation-mask') return 'Segmentation (mask)';
-    if (
-      t === 'segmentation (bbox)' ||
-      t === 'segmentation-bbox' ||
-      t === 'detection' ||
-      t === 'object_detection'
-    ) {
-      return 'Segmentation (bbox)';
-    }
-    if (file.type === 'segmentation') {
-      // For DB type 'segmentation' (instance/semantic seg), prefer mask+bbox until samples load
-      if (!file.samples || file.samples.length === 0) {
-        return 'Segmentation (mask+bbox)';
-      }
-      const hasSegmentation = file.samples.some(sample =>
-        sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-      );
-      const hasMeaningfulBbox = file.samples.some(sample =>
-        sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 &&
-        (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-      );
-
-      if (hasSegmentation && hasMeaningfulBbox) return 'Segmentation (mask+bbox)';
-      if (hasSegmentation) return 'Segmentation (mask)';
-      if (hasMeaningfulBbox) return 'Segmentation (bbox)';
-      return 'Segmentation (mask+bbox)';
-    }
-    
-    // Auto-detect based on samples content
-    if (file.samples && file.samples.length > 0) {
-      // Check if any annotation has segmentation mask data
-      const hasSegmentation = file.samples.some(sample => 
-        sample.segmentation && Array.isArray(sample.segmentation) && sample.segmentation.length > 0
-      );
-      
-      // Check if annotations have meaningful bounding boxes (not [0,0,0,0])
-      const hasMeaningfulBbox = file.samples.some(sample => 
-        sample.bbox && Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-        (sample.bbox[0] !== 0 || sample.bbox[1] !== 0 || sample.bbox[2] !== 0 || sample.bbox[3] !== 0)
-      );
-      
-      // Determine detailed segmentation type
-      if (hasSegmentation && hasMeaningfulBbox) {
-        return 'Segmentation (mask+bbox)'; // Both masks and bounding boxes
-      } else if (hasSegmentation) {
-        return 'Segmentation (mask)'; // Only segmentation masks
-      } else if (hasMeaningfulBbox) {
-        return 'Segmentation (bbox)'; // Only bounding boxes (object detection)
-      }
-      
-      // If all bboxes are [0,0,0,0] or missing, it's classification
-      const hasOnlyEmptyBbox = file.samples.every(sample => 
-        !sample.bbox || 
-        (Array.isArray(sample.bbox) && sample.bbox.length === 4 && 
-         sample.bbox[0] === 0 && sample.bbox[1] === 0 && sample.bbox[2] === 0 && sample.bbox[3] === 0)
-      );
-      if (hasOnlyEmptyBbox) return 'Classification';
-    }
-    
-    // Check filename for hints
-    if (file.name) {
-      const nameLower = file.name.toLowerCase();
-      // Augmented datasets are usually seg/bbox COCO; detailed subtype comes from samples when loaded
-      if (nameLower.startsWith('augmented_')) return 'Segmentation (mask+bbox)';
-      if (nameLower.includes('classification') || nameLower.includes('class')) return 'Classification';
-      if (nameLower.includes('mask') && nameLower.includes('bbox')) return 'Segmentation (mask+bbox)';
-      if (nameLower.includes('mask')) return 'Segmentation (mask)';
-      if (nameLower.includes('bbox') || nameLower.includes('detection')) return 'Segmentation (bbox)';
-      if (nameLower.includes('segmentation') || nameLower.includes('seg')) return 'Segmentation (mask+bbox)';
-    }
-    
-    // Check content for COCO classification patterns (for saved classifications)
-    if ((file as any).content) {
-      const content = (file as any).content;
-      // COCO format with only category_ids and no bbox/segmentation
-      if (content.annotations && Array.isArray(content.annotations)) {
-        const hasOnlyCategories = content.annotations.every((ann: any) => 
-          ann.category_id && !ann.bbox && !ann.segmentation
-        );
-        if (hasOnlyCategories && content.annotations.length > 0) return 'Classification';
-      }
-    }
-    
-    // If we have annotation data but can't determine type, default to bbox segmentation
-    // since most COCO annotation files are object detection (bounding boxes)
-    if (file.samples && file.samples.length > 0) {
-      return 'Segmentation (bbox)';
-    }
-    
-    // Default to "Other" until we can analyze the content
-    return 'Other';
-  };
+  const detectAnnotationType = detectAnnotationDisplayType;
 
   // Handler for managing tags
   const handleTagsClick = (annotationId: string, e: React.MouseEvent) => {
@@ -942,10 +864,12 @@ export function AnnotationsContent({
 
   // Open the merge-strategy dialog (replaces direct merge call).
   const handleMergeAnnotations = () => {
-    if (selectedForMerge.size < 2) {
+    const filesToMerge = annotationFiles.filter((f) => selectedForMerge.has(f.id));
+    const validation = validateAnnotationMergeSelection(filesToMerge);
+    if (!validation.ok) {
       toast({
-        title: "Invalid selection",
-        description: "Please select at least 2 annotation files to merge.",
+        title: "Cannot merge",
+        description: validation.message,
         variant: "destructive",
       });
       return;
@@ -957,6 +881,15 @@ export function AnnotationsContent({
   // The backend applies the strategy exactly over all annotations (avoids loading every sample in the browser).
   const handleConfirmMerge = async (cfg: MergeStrategyConfig, mergedFileName: string) => {
     const filesToMerge = annotationFiles.filter((f) => selectedForMerge.has(f.id));
+    const validation = validateAnnotationMergeSelection(filesToMerge);
+    if (!validation.ok) {
+      toast({
+        title: "Cannot merge",
+        description: validation.message,
+        variant: "destructive",
+      });
+      return;
+    }
     if (filesToMerge.length < 2) return;
 
     try {
@@ -1340,8 +1273,9 @@ export function AnnotationsContent({
     updateVisibleAnnotations();
   }, [annotationFiles, visibleAnnotations, imagesMemo, showAllAnnotationsOnGrid]); // REMOVE updateVisibleAnnotations from deps to prevent infinite loop
 
-  // Reset currentPageLoaded flag when page changes
+  // Reset currentPageLoaded flag when page changes (page-by-page mode only)
   useEffect(() => {
+    if (showAllAnnotationsOnGrid) return;
     if (currentPageImageIds.length > 0) {
       setAnnotationFiles(prev => prev.map(f => ({ 
         ...f, 
@@ -1349,7 +1283,7 @@ export function AnnotationsContent({
         isLoadingCurrentPage: false 
       })));
     }
-  }, [currentPageImageIds.join(',')]); // Only trigger when actual page changes
+  }, [currentPageImageIds.join(','), showAllAnnotationsOnGrid]); // Only trigger when actual page changes
 
   // Auto-load annotations for current page when page changes
   useEffect(() => {
@@ -1357,9 +1291,10 @@ export function AnnotationsContent({
       // Find annotation files that need loading for current page
       const filesNeedingLoad = annotationFiles.filter(file => 
         visibleAnnotations.has(file.id) &&
-        !(file as any).currentPageLoaded &&
-        !loadingAnnotations.has(file.id) && // Don't load if already loading
-        !(file as any).isLoadingCurrentPage // Additional check to prevent loading if already processing
+        !(showAllAnnotationsOnGrid && file.allGridAnnotationsLoaded) &&
+        !file.currentPageLoaded &&
+        !loadingAnnotations.has(file.id) &&
+        !file.isLoadingCurrentPage
       );
       
       if (filesNeedingLoad.length > 0) {
@@ -1479,16 +1414,7 @@ export function AnnotationsContent({
 
   const handleAnnotationClick = (annotationId: string) => {
     if (mergeMode) {
-      // In merge mode, toggle merge selection instead of expanding statistics
-      setSelectedForMerge(prev => {
-        const newSet = new Set(prev);
-        if (newSet.has(annotationId)) {
-          newSet.delete(annotationId);
-        } else {
-          newSet.add(annotationId);
-        }
-        return newSet;
-      });
+      toggleMergeSelection(annotationId);
       return;
     }
     const newSelectedAnnotation = annotationId === selectedAnnotation ? null : annotationId;
@@ -1664,14 +1590,15 @@ export function AnnotationsContent({
     
     // If trying to make annotations visible, check if we have any matching images
     if (isBecomingVisible) {
-      // For large files, use a different approach - check if we have current page images
+      // For large files, use a different approach - check if annotations exist
       if (!file.imageMapping && api) {
-        console.log('Checking annotation availability for current page images...');
+        console.log('Checking annotation availability...');
         try {
-          // Get current page image IDs
-          const currentImageIds = currentPageImageIds;
-          
-          if (currentImageIds.length === 0) {
+          const checkImageIds = showAllAnnotationsOnGrid
+            ? undefined
+            : currentPageImageIds;
+
+          if (!showAllAnnotationsOnGrid && currentPageImageIds.length === 0) {
             toast({
               title: "No images on current page",
               description: "Navigate to a page with images to view annotations.",
@@ -1680,29 +1607,24 @@ export function AnnotationsContent({
             return;
           }
           
-          // Try to load annotations for current page images only
-          console.log(`Checking annotations for ${currentImageIds.length} current page images`);
           const annotationDataResponse = await api.getAnnotationData(id, file.id, {
-            imageIds: currentImageIds,
-            limit: 10 // Just check if any exist
+            ...(checkImageIds?.length ? { imageIds: checkImageIds } : {}),
+            limit: 1
           });
           
           if (annotationDataResponse?.success && annotationDataResponse.data) {
             const hasAnnotations = annotationDataResponse.data.annotations && annotationDataResponse.data.annotations.length > 0;
             
-            console.log(`Visibility check result: ${hasAnnotations ? 'found' : 'no'} annotations for current page`);
-            console.log('Annotation data response:', annotationDataResponse.data);
-            
             if (!hasAnnotations) {
               toast({
-                title: "No annotations for current page",
-                description: "There are no annotations for images on the current page. Try navigating to other pages.",
+                title: showAllAnnotationsOnGrid ? "No annotations in dataset" : "No annotations for current page",
+                description: showAllAnnotationsOnGrid
+                  ? "This annotation file has no annotations matching images in the dataset."
+                  : "There are no annotations for images on the current page. Try navigating to other pages.",
                 variant: "default"
               });
               return;
             }
-            
-            console.log(`Found ${annotationDataResponse.data.annotations.length} annotations for current page - proceeding with visibility toggle`);
           } else {
             // Fallback to original method for smaller files
             console.log('Falling back to full content loading...');
@@ -1803,9 +1725,16 @@ export function AnnotationsContent({
       newVisibleAnnotations.add(annotationId);
       console.log(`Showing annotations for file ${file.name}`);
       
-      // Load annotations for current page when making them visible
-      if (currentPageImageIds.length > 0 && api) {
-        console.log(`Loading annotations for current page with ${currentPageImageIds.length} images`);
+      // Load annotations when making them visible
+      const shouldLoad = showAllAnnotationsOnGrid
+        ? imagesMemo.length > 0
+        : currentPageImageIds.length > 0;
+      if (shouldLoad && api) {
+        console.log(
+          showAllAnnotationsOnGrid
+            ? `Loading all grid annotations for ${file.name}`
+            : `Loading annotations for current page with ${currentPageImageIds.length} images`
+        );
         loadAnnotationsForCurrentPage(file.id, true).then(annotations => {
           console.log(`Loaded ${annotations?.length || 0} annotations for visibility toggle`);
         });
@@ -2023,11 +1952,16 @@ export function AnnotationsContent({
     
     console.log(`Updated annotation files after bbox toggle. File ${file.name} showBboxes: ${newBboxVisibility}`);
     
-    // If we're enabling bboxes, make sure we load annotations for current page
-    // Do this AFTER updating the annotation files to ensure we use the correct bbox state
-    if (newBboxVisibility && currentPageImageIds.length > 0 && api) {
-      console.log(`Loading annotations for bbox display with ${currentPageImageIds.length} images`);
-      // Pass the new bbox state to ensure it's used correctly
+    // If we're enabling bboxes, make sure annotations are loaded
+    const shouldLoadForBboxes = showAllAnnotationsOnGrid
+      ? imagesMemo.length > 0
+      : currentPageImageIds.length > 0;
+    if (newBboxVisibility && shouldLoadForBboxes && api) {
+      console.log(
+        showAllAnnotationsOnGrid
+          ? `Loading all grid annotations for bbox display`
+          : `Loading annotations for bbox display with ${currentPageImageIds.length} images`
+      );
       loadAnnotationsForCurrentPage(annotationId, true, newBboxVisibility).then(annotations => {
         console.log(`Loaded ${annotations?.length || 0} annotations for bbox display`);
       });
@@ -4357,7 +4291,8 @@ export function AnnotationsContent({
             <div className="flex gap-2">
               <Button 
                 onClick={handleMergeAnnotations}
-                disabled={selectedForMerge.size < 2}
+                disabled={!canConfirmMerge}
+                title={!canConfirmMerge && selectedForMerge.size >= 2 ? mergeSelectionValidation.message : undefined}
               >
                 <CheckSquare className="w-4 h-4 mr-2" />
                 Merge Selected ({selectedForMerge.size})
@@ -4395,6 +4330,22 @@ export function AnnotationsContent({
 
       {/* Main content: annotation files with expandable statistics - scrollable */}
       <div className="flex-1 min-h-0 overflow-y-auto">
+
+        {mergeMode && (
+          <div className="mb-3 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 text-sm">
+            <p className="font-medium">Merge mode — same annotation type required</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Select 2 or more files of the <strong>same</strong> type: Class, Boxes (bbox only), or Masks (mask-only and Masks + Boxes files merge together).
+            </p>
+            {mergeSelectionGroup && (
+              <p className="text-xs mt-2 flex items-center gap-2 flex-wrap">
+                <span>Current selection:</span>
+                <Badge variant="secondary">{ANNOTATION_MERGE_GROUP_LABELS[mergeSelectionGroup]}</Badge>
+                <span className="text-muted-foreground">Incompatible files are disabled.</span>
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Search, filter, sort, density */}
         <div className="mb-4 flex items-start gap-2">
@@ -4521,6 +4472,10 @@ export function AnnotationsContent({
               ? 'Format not supported'
               : undefined;
             const isEditing = editingName?.annotationId === file.id;
+            const isSelectedForMerge = selectedForMerge.has(file.id);
+            const mergeSelectCheck = mergeMode && !isSelectedForMerge
+              ? canAddFileToMergeSelection(file, selectedMergeFiles)
+              : { ok: true as const };
 
             // Inline rename UI replaces the card entirely while editing
             if (isEditing) {
@@ -4558,13 +4513,10 @@ export function AnnotationsContent({
                 importing={importingFiles.has(file.name)}
                 processing={processingFiles.has(file.id) || file.processing_status === 'processing'}
                 mergeMode={mergeMode}
-                selectedForMerge={selectedForMerge.has(file.id)}
-                onToggleSelect={() => {
-                  const next = new Set(selectedForMerge);
-                  if (next.has(file.id)) next.delete(file.id);
-                  else next.add(file.id);
-                  setSelectedForMerge(next);
-                }}
+                selectedForMerge={isSelectedForMerge}
+                mergeSelectDisabled={mergeMode && !mergeSelectCheck.ok}
+                mergeSelectDisabledReason={mergeSelectCheck.reason}
+                onToggleSelect={() => toggleMergeSelection(file.id)}
                 onOpen={() => handleAnnotationClick(file.id)}
                 onToggleVisibility={(e) => handleToggleAnnotationVisibility(file.id, e)}
                 onToggleBboxes={(e) => handleToggleAnnotationBboxes(file.id, e as any)}
@@ -4652,9 +4604,20 @@ export function AnnotationsContent({
         {/* Sticky bulk action bar */}
         {selectedForMerge.size > 0 && (
           <div className="sticky bottom-2 z-10 mt-3 flex items-center justify-between gap-3 rounded-lg border border-primary/40 bg-card shadow-lg px-3 py-2">
-            <span className="text-sm">
+            <span className="text-sm flex items-center gap-2 flex-wrap">
               <strong className="tabular-nums">{selectedForMerge.size}</strong> file
               {selectedForMerge.size === 1 ? '' : 's'} selected
+              {mergeSelectionGroup && (
+                <>
+                  <span className="text-muted-foreground">·</span>
+                  <Badge variant="secondary" className="text-[10px] h-4">
+                    {ANNOTATION_MERGE_GROUP_LABELS[mergeSelectionGroup]}
+                  </Badge>
+                </>
+              )}
+              {!mergeSelectionValidation.ok && selectedForMerge.size >= 2 && (
+                <span className="text-destructive text-xs">{mergeSelectionValidation.message}</span>
+              )}
             </span>
             <div className="flex items-center gap-2">
               <Button
@@ -4686,7 +4649,8 @@ export function AnnotationsContent({
               <Button
                 size="sm"
                 onClick={handleMergeAnnotations}
-                disabled={selectedForMerge.size < 2}
+                disabled={!canConfirmMerge}
+                title={!canConfirmMerge && selectedForMerge.size >= 2 ? mergeSelectionValidation.message : undefined}
               >
                 <Merge className="h-3.5 w-3.5 mr-1.5" />
                 Merge

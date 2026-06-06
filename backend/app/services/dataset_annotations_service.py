@@ -439,12 +439,16 @@ async def get_dataset_annotations(db: Session, dataset_id: int) -> dict:
 
         from app.services.annotation_processing import (
             get_live_annotation_counts_by_file_id,
+            get_annotated_image_counts_by_file_id,
             resolve_annotation_count,
+            detect_annotation_type_from_db_annotations,
         )
 
         file_ids = [f.id for f in db_annotation_files if f.id]
         live_counts_by_file = get_live_annotation_counts_by_file_id(db, file_ids)
+        live_image_counts_by_file = get_annotated_image_counts_by_file_id(db, file_ids)
         needs_count_sync = False
+        needs_type_sync = False
 
         annotation_files = []
         for db_file in db_annotation_files:
@@ -462,15 +466,36 @@ async def get_dataset_annotations(db: Session, dataset_id: int) -> dict:
                 db_file.annotation_count = live_count
                 needs_count_sync = True
 
+            live_image_count = int(live_image_counts_by_file.get(db_file.id, 0))
+            effective_image_count = live_image_count if live_image_count > 0 else int(db_file.image_count or 0)
+            if live_image_count > 0 and live_image_count != int(db_file.image_count or 0):
+                db_file.image_count = live_image_count
+                needs_count_sync = True
+
+            effective_type = db_file.type
+            if live_count > 0 and db_file.type == 'Segmentation (mask+bbox)':
+                sample_rows = (
+                    db.query(models.Annotation)
+                    .filter(models.Annotation.annotation_file_id == db_file.id)
+                    .limit(100)
+                    .all()
+                )
+                detected_type = detect_annotation_type_from_db_annotations(sample_rows)
+                if detected_type and detected_type != db_file.type:
+                    db_file.type = detected_type
+                    effective_type = detected_type
+                    needs_type_sync = True
+
             file_info = {
                 "id": db_file.id,
                 "name": db_file.name,
                 "format": db_file.format or 'COCO',
-                "type": db_file.type,
+                "type": effective_type,
                 "tags": db_file.tags,
                 "size": db_file.file_size or 0,
                 "annotation_count": effective_count,
-                "image_count": total_referenced_images,  # Total images referenced in annotation file
+                "image_count": effective_image_count,
+                "referenced_image_count": total_referenced_images,
                 "image_coverage": {
                     "total_referenced": total_referenced_images,
                     "present": present_count,
@@ -485,7 +510,7 @@ async def get_dataset_annotations(db: Session, dataset_id: int) -> dict:
             }
             annotation_files.append(file_info)
 
-        if needs_count_sync:
+        if needs_count_sync or needs_type_sync:
             db.commit()
 
         return {
@@ -515,6 +540,13 @@ async def get_dataset_annotation(db: Session, dataset_id: int, annotation_id: st
         
         if not db_annotation_file:
             raise HTTPException(status_code=404, detail="Annotation file not found")
+
+        from app.services.annotation_processing import get_annotated_image_counts_by_file_id
+        live_image_count = get_annotated_image_counts_by_file_id(db, [annotation_id]).get(annotation_id, 0)
+        effective_image_count = live_image_count if live_image_count > 0 else int(db_annotation_file.image_count or 0)
+        if live_image_count > 0 and live_image_count != int(db_annotation_file.image_count or 0):
+            db_annotation_file.image_count = live_image_count
+            db.commit()
         
         file_info = {
             "id": db_annotation_file.id,
@@ -525,7 +557,7 @@ async def get_dataset_annotation(db: Session, dataset_id: int, annotation_id: st
             "tags": db_annotation_file.tags,
             "size": db_annotation_file.file_size or 0,
             "annotation_count": db_annotation_file.annotation_count,
-            "image_count": db_annotation_file.image_count,
+            "image_count": effective_image_count,
             "category_count": db_annotation_file.category_count,
             "is_processed": db_annotation_file.is_processed,
             "processing_status": db_annotation_file.processing_status,
@@ -1533,6 +1565,19 @@ async def update_single_image_annotations(db: Session, dataset_id: int, annotati
         annotation_file.statistics = statistics
         annotation_file.category_count = len(class_counts)
         annotation_file.updated_at = datetime.utcnow()
+
+        from app.services.annotation_processing import detect_annotation_type_from_db_annotations
+        detected_type = detect_annotation_type_from_db_annotations(all_annotations)
+        if detected_type:
+            annotation_file.type = detected_type
+
+        annotated_image_count = db.query(
+            func.count(func.distinct(models.Annotation.image_id))
+        ).filter(
+            models.Annotation.annotation_file_id == annotation_id,
+            models.Annotation.image_id.isnot(None),
+        ).scalar() or 0
+        annotation_file.image_count = int(annotated_image_count)
         
         db.commit()
         

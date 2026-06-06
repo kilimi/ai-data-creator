@@ -12,6 +12,7 @@ import re
 from .. import models, schemas
 from ..database import get_db
 from ..db_cleanup import delete_project_record
+from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.services.dataset_media_service import (
     create_thumbnail_base64,
     truncate_base64_url,
@@ -799,6 +800,19 @@ async def merge_datasets(
         new_dataset_dir = Path("projects") / str(project_id) / str(new_dataset.id)
         new_images_dir = new_dataset_dir / "images"
         new_images_dir.mkdir(parents=True, exist_ok=True)
+        new_thumbnails_dir = new_images_dir / "thumbnails"
+        new_thumbnails_dir.mkdir(parents=True, exist_ok=True)
+
+        # Tabbed dataset UI loads images via collections — create a default layer.
+        default_collection = models.ImageCollection(
+            dataset_id=new_dataset.id,
+            name="RGB Images",
+            description="Merged images from source datasets",
+            is_default=True,
+            position=0,
+        )
+        db.add(default_collection)
+        db.flush()
         
         total_images = 0
         total_annotations = 0
@@ -818,23 +832,32 @@ async def merge_datasets(
                 # Generate new filename with dataset prefix
                 new_filename = f"{dataset_prefix}_{source_image.file_name}"
                 
-                # Copy the image file
-                source_image_path = Path("projects") / str(project_id) / str(source_dataset.id) / "images" / source_image.file_name
-                
-                # Also check old data structure for backward compatibility
-                if not source_image_path.exists():
-                    source_image_path = Path("data/images") / str(source_dataset.id) / source_image.file_name
+                source_image_path = resolve_dataset_image_path_from_models(
+                    source_image,
+                    dataset_id=source_dataset.id,
+                    project_id=project_id,
+                )
                 
                 # Create new image record regardless of whether file exists
                 # This ensures annotations can be properly mapped
                 new_image = models.Image(
                     dataset_id=new_dataset.id,
+                    collection_id=default_collection.id,
                     file_name=new_filename,
                     file_size=source_image.file_size,
                     width=source_image.width,
                     height=source_image.height,
                     url=f"/static/projects/{project_id}/{new_dataset.id}/images/{new_filename}",
-                    thumbnail_url=f"/static/projects/{project_id}/{new_dataset.id}/images/{new_filename}"
+                    thumbnail_url=(
+                        source_image.thumbnail_url.replace(
+                            f"/{source_dataset.id}/",
+                            f"/{new_dataset.id}/",
+                        )
+                        if source_image.thumbnail_url
+                        else f"/static/projects/{project_id}/{new_dataset.id}/images/{new_filename}"
+                    ),
+                    group_id=source_image.group_id,
+                    annotations_count=source_image.annotations_count or 0,
                 )
                 db.add(new_image)
                 db.flush()  # Get the new image ID
@@ -842,13 +865,36 @@ async def merge_datasets(
                 image_id_mapping[source_image.id] = new_image.id
                 
                 # Copy the physical file if it exists
-                if source_image_path.exists():
+                if source_image_path and source_image_path.exists():
                     new_image_path = new_images_dir / new_filename
                     shutil.copy2(source_image_path, new_image_path)
+                    new_image.file_size = new_image_path.stat().st_size
+
+                    # Copy thumbnail when present (thumbnails/ sibling or .thumbs cache)
+                    thumb_copied = False
+                    for thumb_candidate in (
+                        source_image_path.parent / "thumbnails" / source_image_path.name,
+                        source_image_path.parent / "thumbnails" / source_image.file_name,
+                    ):
+                        if thumb_candidate.is_file():
+                            thumb_dest = new_thumbnails_dir / new_filename
+                            shutil.copy2(thumb_candidate, thumb_dest)
+                            new_image.thumbnail_url = (
+                                f"/static/projects/{project_id}/{new_dataset.id}"
+                                f"/images/thumbnails/{new_filename}"
+                            )
+                            thumb_copied = True
+                            break
+                    if not thumb_copied:
+                        new_image.thumbnail_url = new_image.url
+
                     total_images += 1
                 else:
                     skipped_images += 1
-                    print(f"Warning: Image file not found, creating DB record only: {source_image.file_name}")
+                    print(
+                        f"Warning: Image file not found, creating DB record only: "
+                        f"{source_image.file_name} (dataset {source_dataset.id})"
+                    )
             
             # Copy annotation files and annotations
             source_annotation_files = db.query(models.AnnotationFile).filter(

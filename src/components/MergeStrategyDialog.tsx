@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import type { AnnotationFile } from "@/utils/annotations";
+import { ANNOTATION_TYPE_SHORT_LABELS, ANNOTATION_MERGE_GROUP_LABELS, detectAnnotationDisplayType, validateAnnotationMergeSelection } from "@/utils/annotations";
 import {
   applyMergeStrategy,
   collectTaggedSamples,
@@ -96,6 +97,11 @@ export function MergeStrategyDialog({ open, onOpenChange, files, onConfirm }: Pr
 
   const fileById = (id: string) => files.find((f) => f.id === id);
 
+  const mergeValidation = useMemo(() => validateAnnotationMergeSelection(files), [files]);
+  const mergeGroupLabel = mergeValidation.mergeGroup
+    ? ANNOTATION_MERGE_GROUP_LABELS[mergeValidation.mergeGroup]
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -105,6 +111,33 @@ export function MergeStrategyDialog({ open, onOpenChange, files, onConfirm }: Pr
 
         <ScrollArea className="max-h-[65vh] pr-3">
           <div className="space-y-4 py-2">
+            {/* Selected files + types */}
+            <div className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-2">
+              <div className="text-xs font-medium">Files to merge</div>
+              {mergeGroupLabel && (
+                <p className="text-xs text-muted-foreground">
+                  All selected files are compatible <Badge variant="secondary" className="text-[10px] h-4">{mergeGroupLabel}</Badge>
+                  {' '}— mask-only and Masks + Boxes files can be merged together.
+                </p>
+              )}
+              <ul className="space-y-1">
+                {files.map((f) => {
+                  const t = detectAnnotationDisplayType(f);
+                  return (
+                    <li key={f.id} className="flex items-center gap-2 text-sm min-w-0">
+                      <span className="truncate flex-1" title={f.name}>{f.name}</span>
+                      <Badge variant="outline" className="text-[10px] h-4 shrink-0">
+                        {ANNOTATION_TYPE_SHORT_LABELS[t]}
+                      </Badge>
+                    </li>
+                  );
+                })}
+              </ul>
+              {!mergeValidation.ok && (
+                <p className="text-xs text-destructive">{mergeValidation.message}</p>
+              )}
+            </div>
+
             {/* Output name */}
             <div>
               <Label className="text-xs">Output file name</Label>
@@ -241,7 +274,11 @@ export function MergeStrategyDialog({ open, onOpenChange, files, onConfirm }: Pr
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => onConfirm(cfg, mergedName)} disabled={!mergedName.trim()}>
+          <Button
+            onClick={() => onConfirm(cfg, mergedName)}
+            disabled={!mergedName.trim() || !mergeValidation.ok}
+            title={!mergeValidation.ok ? mergeValidation.message : undefined}
+          >
             Merge
           </Button>
         </DialogFooter>

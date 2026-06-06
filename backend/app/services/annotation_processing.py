@@ -32,6 +32,29 @@ def get_live_annotation_counts_by_file_id(db: Session, file_ids: List[str]) -> D
     }
 
 
+def get_annotated_image_counts_by_file_id(db: Session, file_ids: List[str]) -> Dict[str, int]:
+    """Count distinct dataset images that have at least one annotation per file."""
+    if not file_ids:
+        return {}
+    rows = (
+        db.query(
+            Annotation.annotation_file_id,
+            func.count(func.distinct(Annotation.image_id)),
+        )
+        .filter(
+            Annotation.annotation_file_id.in_(file_ids),
+            Annotation.image_id.isnot(None),
+        )
+        .group_by(Annotation.annotation_file_id)
+        .all()
+    )
+    return {
+        str(file_id): int(count or 0)
+        for file_id, count in rows
+        if file_id is not None
+    }
+
+
 def annotation_bbox_normalized_xywh(
     ann: Annotation,
     *,
@@ -59,6 +82,44 @@ def annotation_bbox_normalized_xywh(
             float(ann.bbox[2]) / w,
             float(ann.bbox[3]) / h,
         ]
+    return None
+
+
+def annotation_bbox_pixel_xywh(
+    ann: Annotation,
+    *,
+    img_width: Optional[int],
+    img_height: Optional[int],
+) -> Optional[List[float]]:
+    """
+    Return COCO pixel bbox [x, y, w, h] for training / augmentation.
+
+    DB ``bbox_*`` columns are normalized 0–1; legacy ``bbox`` JSON may be pixel
+    xywh from COCO import or normalized xywh from the UI editor.
+    """
+    w = float(img_width or 1) or 1.0
+    h = float(img_height or 1) or 1.0
+
+    if (
+        ann.bbox_x is not None
+        and ann.bbox_y is not None
+        and ann.bbox_width is not None
+        and ann.bbox_height is not None
+    ):
+        return [
+            float(ann.bbox_x) * w,
+            float(ann.bbox_y) * h,
+            float(ann.bbox_width) * w,
+            float(ann.bbox_height) * h,
+        ]
+
+    if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+        x, y, bw, bh = (float(v) for v in ann.bbox[:4])
+        # UI-saved annotations store normalized xywh in the bbox JSON column.
+        if max(x, y, bw, bh) <= 1.0:
+            return [x * w, y * h, bw * w, bh * h]
+        return [x, y, bw, bh]
+
     return None
 
 
@@ -315,6 +376,18 @@ def validate_and_normalize_segmentation(
     return None
 
 
+def _has_meaningful_segmentation(seg: Any) -> bool:
+    """True when segmentation contains a polygon with at least 3 points (6 coords)."""
+    if not seg or not isinstance(seg, list) or len(seg) == 0:
+        return False
+    first = seg[0]
+    if isinstance(first, (int, float)):
+        return len(seg) >= 6
+    if isinstance(first, list):
+        return len(first) >= 6
+    return False
+
+
 def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
     """
     Detect annotation type based on COCO data content.
@@ -336,10 +409,9 @@ def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
         has_bbox = False
         
         for ann in annotations:
-            if not has_segmentation and ann.get('segmentation'):
-                # Check if segmentation is not empty (sometimes it's [] or null)
-                seg = ann['segmentation']
-                if seg and (isinstance(seg, list) and len(seg) > 0):
+            if not has_segmentation:
+                seg = ann.get('segmentation')
+                if _has_meaningful_segmentation(seg):
                     has_segmentation = True
             if not has_bbox and ann.get('bbox') and len(ann['bbox']) >= 4:
                 # Check if bbox is not just zero values
@@ -361,6 +433,136 @@ def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
     except Exception as e:
         print(f"Error detecting annotation type: {e}")
         return 'Other'
+
+
+def detect_annotation_type_from_db_annotations(
+    annotations: List[Any],
+) -> Optional[str]:
+    """Detect annotation type from ORM Annotation rows or similar dicts."""
+    if not annotations:
+        return None
+    coco_annotations: List[Dict[str, Any]] = []
+    for ann in annotations:
+        row: Dict[str, Any] = {}
+        bbox = getattr(ann, 'bbox', None) if not isinstance(ann, dict) else ann.get('bbox')
+        if bbox and isinstance(bbox, list) and len(bbox) >= 4:
+            row['bbox'] = bbox
+        elif getattr(ann, 'bbox_x', None) is not None:
+            row['bbox'] = [
+                ann.bbox_x,
+                ann.bbox_y,
+                ann.bbox_width,
+                ann.bbox_height,
+            ]
+        elif isinstance(ann, dict) and ann.get('bbox_x') is not None:
+            row['bbox'] = [
+                ann['bbox_x'],
+                ann['bbox_y'],
+                ann['bbox_width'],
+                ann['bbox_height'],
+            ]
+        seg = getattr(ann, 'segmentation', None) if not isinstance(ann, dict) else ann.get('segmentation')
+        if seg:
+            row['segmentation'] = seg
+        coco_annotations.append(row)
+    return detect_annotation_type({'annotations': coco_annotations})
+
+
+MERGEABLE_ANNOTATION_TYPES = frozenset({
+    'Classification',
+    'Segmentation (bbox)',
+    'Segmentation (mask)',
+    'Segmentation (mask+bbox)',
+})
+
+ANNOTATION_TYPE_SHORT_LABELS = {
+    'Classification': 'Class',
+    'Segmentation (bbox)': 'Boxes',
+    'Segmentation (mask)': 'Masks',
+    'Segmentation (mask+bbox)': 'Masks + Boxes',
+    'Other': 'Other',
+}
+
+ANNOTATION_MERGE_GROUP_LABELS = {
+    'classification': 'Class',
+    'bbox': 'Boxes',
+    'mask': 'Masks',
+}
+
+
+def annotation_merge_group(type_str: Optional[str]) -> str:
+    """Merge compatibility group — mask-only and mask+bbox files belong to 'mask'."""
+    normalized = normalize_annotation_merge_type(type_str)
+    if normalized == 'Classification':
+        return 'classification'
+    if normalized == 'Segmentation (bbox)':
+        return 'bbox'
+    if normalized in ('Segmentation (mask)', 'Segmentation (mask+bbox)'):
+        return 'mask'
+    return 'other'
+
+
+def validate_annotation_files_merge_compatible(types: List[str]) -> None:
+    """Raise HTTPException when annotation file types cannot be merged together."""
+    groups = [annotation_merge_group(t) for t in types]
+    if any(g == 'other' for g in groups):
+        raise HTTPException(
+            status_code=400,
+            detail='One or more annotation files have an unsupported format and cannot be merged.',
+        )
+    unique = set(groups)
+    if len(unique) > 1:
+        labels = [ANNOTATION_MERGE_GROUP_LABELS.get(g, g) for g in sorted(unique)]
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'All annotation files must be the same type to merge. '
+                f'Selected: {", ".join(labels)}. '
+                f'Merge Boxes with Boxes, Masks with Masks (mask-only and Masks + Boxes together), Class with Class.'
+            ),
+        )
+
+
+def normalize_annotation_merge_type(type_str: Optional[str]) -> str:
+    """Map stored annotation file type strings to canonical display types."""
+    if not type_str:
+        return 'Other'
+    t = str(type_str).strip().lower()
+    mapping = {
+        'classification': 'Classification',
+        'segmentation (mask+bbox)': 'Segmentation (mask+bbox)',
+        'segmentation-mask-bbox': 'Segmentation (mask+bbox)',
+        'segmentation (mask)': 'Segmentation (mask)',
+        'segmentation-mask': 'Segmentation (mask)',
+        'segmentation (bbox)': 'Segmentation (bbox)',
+        'segmentation-bbox': 'Segmentation (bbox)',
+        'detection': 'Segmentation (bbox)',
+        'object_detection': 'Segmentation (bbox)',
+        'object detection (bbox)': 'Segmentation (bbox)',
+    }
+    if t in mapping:
+        return mapping[t]
+    if t == 'segmentation':
+        return 'Segmentation (bbox)'
+    if type_str in MERGEABLE_ANNOTATION_TYPES:
+        return type_str
+    return 'Other'
+
+
+def resolve_annotation_file_merge_type(db: Session, annotation_file: AnnotationFile) -> str:
+    """Effective merge type from content when possible, else stored metadata."""
+    live_count = int(annotation_file.annotation_count or 0)
+    if live_count > 0:
+        sample_rows = (
+            db.query(Annotation)
+            .filter(Annotation.annotation_file_id == annotation_file.id)
+            .limit(100)
+            .all()
+        )
+        detected = detect_annotation_type_from_db_annotations(sample_rows)
+        if detected:
+            return normalize_annotation_merge_type(detected)
+    return normalize_annotation_merge_type(annotation_file.type)
 
 
 def update_dataset_annotation_count(db: Session, dataset_id: int):
@@ -575,7 +777,10 @@ async def process_coco_annotation_file(
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
         annotation_file.category_count = len(class_counts)
-        annotation_file.image_count = len(afi_rows)
+        annotated_image_ids = {
+            row['image_id'] for row in annotation_rows if row.get('image_id') is not None
+        }
+        annotation_file.image_count = len(annotated_image_ids)
         
         # Update dataset annotation count
         update_dataset_annotation_count(db, annotation_file.dataset_id)
@@ -683,6 +888,8 @@ async def save_annotations_direct(
     
     if not categories:
         raise HTTPException(status_code=400, detail="At least one category is required")
+
+    detected_type = detect_annotation_type({'annotations': annotations, 'categories': categories}) or 'Other'
     
     # Create annotation file record
     annotation_file_id = str(uuid.uuid4())
@@ -692,7 +899,7 @@ async def save_annotations_direct(
         dataset_id=dataset_id,
         name=name if name.endswith('.json') else f"{name}.json",
         format="COCO",
-        type="Segmentation (mask+bbox)",
+        type=detected_type,
         is_processed=False,
         processing_status="processing"
     )
@@ -926,7 +1133,11 @@ async def save_annotations_direct(
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
         annotation_file.category_count = len(class_counts)
-        annotation_file.image_count = len(coco_image_mapping)
+        annotated_image_ids = {
+            row['image_id'] for row in annotation_rows_direct if row.get('image_id') is not None
+        }
+        annotation_file.image_count = len(annotated_image_ids)
+        annotation_file.type = detect_annotation_type({'annotations': annotations, 'categories': categories}) or detected_type
         
         # Update dataset annotation count
         update_dataset_annotation_count(db, dataset_id)
@@ -936,7 +1147,7 @@ async def save_annotations_direct(
         return {
             "success": True,
             "annotation_file_id": annotation_file_id,
-            "message": f"Saved {annotation_count} annotations from {len(coco_image_mapping)} images"
+            "message": f"Saved {annotation_count} annotations from {len(annotated_image_ids)} images"
         }
         
     except Exception as e:
@@ -1563,7 +1774,8 @@ def process_coco_annotation_file_task(
         annotation_file.processing_status = "completed"
         annotation_file.annotation_count = annotation_count
         annotation_file.category_count = len(class_counts)
-        annotation_file.image_count = len(coco_image_mapping)
+        live_image_counts = get_annotated_image_counts_by_file_id(db, [file_id])
+        annotation_file.image_count = int(live_image_counts.get(file_id, 0))
         # Detect type based on presence of segmentation or bboxes
         detected_type = detect_annotation_type(coco_data)
         if detected_type:

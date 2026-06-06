@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import json

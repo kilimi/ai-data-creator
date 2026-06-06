@@ -1,7 +1,7 @@
 """add performance indexes
 
 Revision ID: a1b2c3d4e5f6
-Revises: 68a7cd08324f
+Revises: add_image_collection_position
 Create Date: 2026-05-12
 
 Performance improvements:
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'a1b2c3d4e5f6'
-down_revision = '68a7cd08324f'
+down_revision = 'add_image_collection_position'
 branch_labels = None
 depends_on = None
 

@@ -1,7 +1,7 @@
 """Cooperative cancellation for long-running DB-backed tasks."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -65,7 +65,7 @@ def finalize_running_task(
         if task.status != "stopped":
             task.status = "stopped"
         if not task.completed_at:
-            task.completed_at = datetime.now(UTC)
+            task.completed_at = datetime.now(timezone.utc)
         if not task.error_message:
             task.error_message = "Task stopped by user"
         db.commit()
@@ -73,7 +73,7 @@ def finalize_running_task(
     if task.status == "failed":
         return False
     task.status = success_status
-    task.completed_at = datetime.now(UTC)
+    task.completed_at = datetime.now(timezone.utc)
     if success_status == "completed":
         task.progress = 100.0
     db.commit()
@@ -96,13 +96,13 @@ def handle_task_failure_status(
         if task.status != "stopped":
             task.status = "stopped"
         if not task.completed_at:
-            task.completed_at = datetime.now(UTC)
+            task.completed_at = datetime.now(timezone.utc)
         if not task.error_message:
             task.error_message = "Task stopped by user"
         db.commit()
         return
     task.status = "failed"
-    task.completed_at = datetime.now(UTC)
+    task.completed_at = datetime.now(timezone.utc)
     task.error_message = str(exc)
     db.commit()
 

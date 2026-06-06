@@ -28,6 +28,7 @@ dist-ssr
 *.onnx
 *.pt
 *.engine
+dockers/backend/wheels/*.whl
 
 # Editor
 .vscode/*

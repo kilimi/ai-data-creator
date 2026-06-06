@@ -24,6 +24,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveBackendMediaUrl } from "@/config/api";
+import {
+  ANNOTATION_TYPE_SHORT_LABELS,
+  annotationFileSupportsTrainingTask,
+  detectAnnotationDisplayType,
+  type AnnotationDisplayType,
+  type TrainingAnnotationTaskType,
+} from "@/utils/annotations";
 
 // ── Types exposed to caller ────────────────────────────────────────────────
 export interface PickerAnnotationFile {
@@ -31,6 +38,8 @@ export interface PickerAnnotationFile {
   name: string;
   classes: string[];
   taskType?: "detection" | "segmentation" | "classification";
+  /** Resolved display type for filtering (Boxes / Masks / Masks + Boxes). */
+  annotationType?: AnnotationDisplayType;
   modifiedAt?: string;
   annotationCount?: number;
 }
@@ -139,12 +148,22 @@ export function DatasetEvalPicker({
   }, [datasets]);
 
   // "oriented" boxes train on bbox annotation files (rotated boxes are a det variant)
-  const compatTaskType: "detection" | "segmentation" | "classification" | undefined =
+  const compatTaskType: TrainingAnnotationTaskType | undefined =
     requiredTaskType === "oriented" ? "detection" : requiredTaskType;
 
+  function compatibleAnnotationFiles(d: PickerDataset): PickerAnnotationFile[] {
+    if (!compatTaskType) return d.annotationFiles;
+    return d.annotationFiles.filter((f) =>
+      annotationFileSupportsTrainingTask(
+        { type: f.annotationType ?? f.taskType, name: f.name },
+        compatTaskType,
+      ),
+    );
+  }
+
   function hasAnyFiles(d: PickerDataset) {
-    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
-    return d.imageCount > 0 && gtCount > 0;
+    const compatible = compatibleAnnotationFiles(d);
+    return d.imageCount > 0 && compatible.length > 0;
   }
 
   /** Returns 'match' | 'mismatch' | 'unknown' for the dataset vs requiredTaskType. */
@@ -153,9 +172,13 @@ export function DatasetEvalPicker({
     const files = d.annotationFiles;
     // Lazy/back-end-only counts → we don't know types yet, allow selection.
     if (files.length === 0) return "unknown";
-    const knownTypes = files.map((f) => f.taskType).filter(Boolean) as string[];
-    if (knownTypes.length === 0) return "unknown"; // not yet fetched
-    return knownTypes.includes(compatTaskType) ? "match" : "mismatch";
+    const compatible = compatibleAnnotationFiles(d);
+    if (compatible.length > 0) return "match";
+    const knownTypes = files
+      .map((f) => f.annotationType ?? detectAnnotationDisplayType({ type: f.taskType, name: f.name } as any))
+      .filter((t) => t && t !== "Other");
+    if (knownTypes.length === 0) return "unknown";
+    return "mismatch";
   }
 
   function visible(d: PickerDataset) {
@@ -201,17 +224,15 @@ export function DatasetEvalPicker({
     if (checked) {
       // Block selecting datasets known to be incompatible with the chosen task.
       if (taskCompatibility(d) === "mismatch") return;
-      // Prefer an annotation file matching the required task type; otherwise latest.
-      const filesSorted = [...d.annotationFiles].sort((a, b) => {
+      // Prefer a compatible annotation file for the required task; otherwise latest.
+      const compatibleFiles = compatibleAnnotationFiles(d);
+      const filesSorted = [...compatibleFiles].sort((a, b) => {
         if (!a.modifiedAt && !b.modifiedAt) return 0;
         if (!a.modifiedAt) return 1;
         if (!b.modifiedAt) return -1;
         return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
       });
-      const preferred = compatTaskType
-        ? filesSorted.find((f) => f.taskType === compatTaskType)
-        : undefined;
-      const latestFile = preferred ?? filesSorted[0];
+      const latestFile = filesSorted[0];
       const coll = d.collections[0];
       onChange([
         ...value,
@@ -245,9 +266,9 @@ export function DatasetEvalPicker({
       ? `No ${compatTaskType} annotations in this dataset — not usable for the selected task.`
       : undefined;
 
-    const gtCount = d.annotationFileCount ?? d.annotationFiles.length;
-    // pick representative task type from first GT file
-    const taskType = d.annotationFiles[0]?.taskType;
+    const gtCount = compatibleAnnotationFiles(d).length;
+    const visibleAnnotationFiles = compatibleAnnotationFiles(d);
+    const taskType = visibleAnnotationFiles[0]?.taskType;
     const thumbSrc = resolveBackendMediaUrl(d.thumbnailUrl);
 
     return (
@@ -435,13 +456,17 @@ export function DatasetEvalPicker({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">No ground truth</SelectItem>
-                  {d.annotationFiles.map((f) => (
+                  {visibleAnnotationFiles.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       <div className="flex items-center gap-2">
                         <span>{f.name}</span>
-                        {f.taskType && (
+                        {(f.annotationType || f.taskType) && (
                           <span className="text-[10px] text-muted-foreground">
-                            ({f.taskType})
+                            (
+                            {f.annotationType
+                              ? ANNOTATION_TYPE_SHORT_LABELS[f.annotationType]
+                              : f.taskType}
+                            )
                           </span>
                         )}
                       </div>
@@ -691,7 +716,8 @@ export function DatasetEvalPicker({
                         const additions: DatasetSelection[] = [];
                         dsInGroup.forEach((d) => {
                           if (selectionMap.has(d.id)) return;
-                          const file = d.annotationFiles[0];
+                          const compatible = compatibleAnnotationFiles(d);
+                          const file = compatible[0];
                           const coll = d.collections[0];
                           additions.push({
                             datasetId: d.id,

@@ -25,7 +25,7 @@ import uuid
 from app.celery.general_app import celery_app
 from app.models import Task as TaskModel, Dataset, Image, ImageCollection, Annotation, Augmentation, AnnotationFile, AnnotationClass, AnnotationFileImage
 from app.dataset_media_paths import resolve_dataset_image_path_from_models
-from app.services.annotation_processing import validate_and_normalize_segmentation
+from app.services.annotation_processing import validate_and_normalize_segmentation, annotation_bbox_pixel_xywh
 from app.tasks.yolo_training_helpers import generate_safe_output_filename
 
 logger = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ def create_albumentations_transform(
     augmentation_methods: List[str],
     method_parameters: Dict[str, Any],
     *,
-    include_keypoint_params: bool = True,
+    include_keypoint_params: bool = False,
 ) -> 'A.Compose':
     """
     Create an Albumentations transform pipeline based on the selected methods and parameters.
@@ -769,9 +769,14 @@ def create_augmented_dataset_task(self, task_id: int):
                 classification_annotations = []  # Annotations without bboxes (classification)
                 
                 for ann in source_annotations:
-                    if ann.bbox and len(ann.bbox) >= 4:
+                    pixel_bbox = annotation_bbox_pixel_xywh(
+                        ann,
+                        img_width=image_width,
+                        img_height=image_height,
+                    )
+                    if pixel_bbox and len(pixel_bbox) >= 4:
                         # Albumentations COCO format: [x, y, width, height]
-                        x, y, w, h = ann.bbox[:4]
+                        x, y, w, h = pixel_bbox[:4]
                         # Clamp bbox to image bounds
                         x = max(0, min(x, image_width))
                         y = max(0, min(y, image_height))
@@ -823,6 +828,11 @@ def create_augmented_dataset_task(self, task_id: int):
                     else:
                         # Classification annotation (no bbox) - store for copying
                         classification_annotations.append(ann)
+
+                # Bbox-only images append one [] per annotation, so bool(keypoints) is
+                # True even with no polygon vertices — only enable keypoint_params when
+                # at least one annotation has real mask vertices.
+                has_polygon_keypoints = any(kp for kp in keypoints)
                 
                 # Create augmented versions
                 # Compose is randomized per call, so it can be reused safely and avoids
@@ -830,7 +840,7 @@ def create_augmented_dataset_task(self, task_id: int):
                 transform = create_albumentations_transform(
                     augmentation.augmentation_methods,
                     augmentation.method_parameters or {},
-                    include_keypoint_params=bool(keypoints),
+                    include_keypoint_params=has_polygon_keypoints,
                 )
                 for i in range(augmentation_factor):
                     # Check for cancellation
@@ -854,8 +864,8 @@ def create_augmented_dataset_task(self, task_id: int):
                                 'class_labels': class_labels
                             }
                             
-                            # Only add keypoints if we have them (Albumentations will handle it even without keypoint_params)
-                            if flat_keypoints:
+                            # When keypoint_params is configured, Albumentations requires keypoints on every call.
+                            if has_polygon_keypoints:
                                 transform_args['keypoints'] = flat_keypoints
                             
                             augmented = transform(**transform_args)
@@ -1246,7 +1256,7 @@ def create_augmented_dataset_task(self, task_id: int):
                                             
                                             # Track category counts and detect annotation type (match annotation_db / UI)
                                             annotation_type = 'segmentation' if transformed_seg else 'Segmentation (bbox)'
-                                            if ann_data.get('segmentation'):
+                                            if ann_data.get('has_polygon_masks') or ann_data.get('has_rle_mask'):
                                                 annotation_type = 'segmentation'
                                             category_counts[label] = category_counts.get(label, 0) + 1
                                         else:
