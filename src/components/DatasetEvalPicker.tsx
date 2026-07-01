@@ -411,15 +411,33 @@ export function DatasetEvalPicker({
                   {d.description}
                 </span>
               )}
-              {taskType && (
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded-md border px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide",
-                    taskTypeStyles[taskType]
-                  )}
-                  title={taskType}
-                >
-                  {taskTypeShort[taskType]}
+              {/* Annotation-file type pill stack — surfaces 1:N relationship at a glance */}
+              {d.annotationFiles.length > 0 && (() => {
+                const typeCounts = new Map<string, number>();
+                d.annotationFiles.forEach((f) => {
+                  const t = f.taskType ?? "other";
+                  typeCounts.set(t, (typeCounts.get(t) ?? 0) + 1);
+                });
+                return (
+                  <div className="inline-flex items-center gap-0.5" title={`${d.annotationFiles.length} annotation file(s)`}>
+                    {Array.from(typeCounts.entries()).map(([t, n]) => (
+                      <span
+                        key={t}
+                        className={cn(
+                          "inline-flex items-center rounded-md border px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide",
+                          taskTypeStyles[t] ?? "bg-muted text-muted-foreground border-border"
+                        )}
+                      >
+                        {taskTypeShort[t] ?? t}
+                        {n > 1 && <span className="ml-0.5 opacity-70">×{n}</span>}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
+              {d.annotationFiles.length === 0 && (
+                <span className="inline-flex items-center rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 px-1.5 py-0 text-[10px] font-medium">
+                  no annotations
                 </span>
               )}
               {isDense && d.tags && d.tags.length > 0 && (
