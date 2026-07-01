@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,10 @@ import {
   Rows3,
   LayoutList,
   LayoutGrid,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  FileWarning,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveBackendMediaUrl } from "@/config/api";
@@ -138,6 +143,7 @@ export function DatasetEvalPicker({
   const isEvaluateMode = pickerMode === "evaluate";
   const requiresAnnotationSelection =
     requireAnnotationSelection ?? isTrainMode;
+  const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [density, setDensity] = useState<"comfortable" | "dense" | "grid">("comfortable");
@@ -145,6 +151,12 @@ export function DatasetEvalPicker({
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
   );
+  const [showIncompatible, setShowIncompatible] = useState(false);
+  const [openSection, setOpenSection] = useState<Record<"compatible" | "incompatible" | "empty", boolean>>({
+    compatible: true,
+    incompatible: false,
+    empty: false,
+  });
 
   const selectionMap = useMemo(() => {
     const m = new Map<number, DatasetSelection>();
@@ -219,7 +231,7 @@ export function DatasetEvalPicker({
   }
 
   function visible(d: PickerDataset) {
-    if (!hasAnyFiles(d)) return false;
+    if (d.imageCount <= 0 && isTrainMode) return false;
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
     if (activeTags.size > 0) {
@@ -235,6 +247,32 @@ export function DatasetEvalPicker({
     return true;
   }
 
+  /** Bucket a list of datasets by compatibility with the current task. */
+  function bucketByCompat(list: PickerDataset[]): {
+    compatible: PickerDataset[];
+    incompatible: PickerDataset[];
+    empty: PickerDataset[];
+  } {
+    const compatible: PickerDataset[] = [];
+    const incompatible: PickerDataset[] = [];
+    const empty: PickerDataset[] = [];
+    for (const d of list) {
+      const files = groundTruthFileCount(d);
+      if (files <= 0) {
+        empty.push(d);
+        continue;
+      }
+      if (!isTrainMode || !compatTaskType) {
+        compatible.push(d);
+        continue;
+      }
+      const compat = taskCompatibility(d);
+      if (compat === "mismatch") incompatible.push(d);
+      else compatible.push(d);
+    }
+    return { compatible, incompatible, empty };
+  }
+
   function toggleTag(t: string) {
     setActiveTags((s) => {
       const n = new Set(s);
@@ -245,8 +283,9 @@ export function DatasetEvalPicker({
 
   const groupedIds = new Set<number>(groups.flatMap((g) => g.datasetIds));
   const ungrouped = datasets.filter((d) => !groupedIds.has(d.id) && visible(d));
+  const ungroupedBuckets = bucketByCompat(ungrouped);
 
-  const recent = [...ungrouped]
+  const recent = [...ungroupedBuckets.compatible]
     .filter((d) => d.lastUsedAt)
     .sort(
       (a, b) =>
@@ -254,7 +293,9 @@ export function DatasetEvalPicker({
     )
     .slice(0, 3);
   const recentIds = new Set(recent.map((d) => d.id));
-  const others = ungrouped.filter((d) => !recentIds.has(d.id));
+  const compatibleOthers = ungroupedBuckets.compatible.filter((d) => !recentIds.has(d.id));
+  const incompatibleOthers = ungroupedBuckets.incompatible;
+  const emptyOthers = ungroupedBuckets.empty;
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
@@ -765,8 +806,16 @@ export function DatasetEvalPicker({
                       className="h-7 text-xs"
                       onClick={() => {
                         const additions: DatasetSelection[] = [];
+                        let skippedIncompat = 0;
+                        let skippedEmpty = 0;
                         dsInGroup.forEach((d) => {
                           if (selectionMap.has(d.id)) return;
+                          if (groundTruthFileCount(d) <= 0) {
+                            if (isTrainMode) { skippedEmpty += 1; return; }
+                          } else if (isTrainMode && taskCompatibility(d) === "mismatch") {
+                            skippedIncompat += 1;
+                            return;
+                          }
                           const compatible = compatibleAnnotationFiles(d);
                           const file = compatible[0];
                           const coll = d.collections[0];
@@ -779,6 +828,15 @@ export function DatasetEvalPicker({
                           });
                         });
                         if (additions.length) onChange([...value, ...additions]);
+                        if (skippedIncompat > 0 || skippedEmpty > 0) {
+                          toast({
+                            title: `Added ${additions.length} of ${dsInGroup.length}`,
+                            description: [
+                              skippedIncompat > 0 && `${skippedIncompat} skipped (no ${compatTaskType ?? "matching"} annotations)`,
+                              skippedEmpty > 0 && `${skippedEmpty} skipped (no annotation files)`,
+                            ].filter(Boolean).join(" · "),
+                          });
+                        }
                       }}
                     >
                       Add all
@@ -797,18 +855,80 @@ export function DatasetEvalPicker({
           </section>
         )}
 
-        {others.length > 0 && (
+        {compatibleOthers.length > 0 && (
           <section className="space-y-2">
-            {(recent.length > 0 || groups.length > 0) && (
-              <h4 className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
-                All datasets
-              </h4>
+            <button
+              type="button"
+              onClick={() => setOpenSection((s) => ({ ...s, compatible: !s.compatible }))}
+              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground"
+            >
+              {openSection.compatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              {(recent.length > 0 || groups.length > 0) ? "Compatible datasets" : "Datasets"}
+              <Badge variant="secondary" className="text-[10px] ml-1">{compatibleOthers.length}</Badge>
+            </button>
+            {openSection.compatible && (
+              <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
+                {compatibleOthers.map((d) => (
+                  <DatasetRow key={d.id} d={d} />
+                ))}
+              </div>
             )}
-            <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
-              {others.map((d) => (
-                <DatasetRow key={d.id} d={d} />
-              ))}
-            </div>
+          </section>
+        )}
+
+        {incompatibleOthers.length > 0 && (
+          <section className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setOpenSection((s) => ({ ...s, incompatible: !s.incompatible }))}
+              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400 font-semibold hover:opacity-80"
+            >
+              {openSection.incompatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <FileWarning className="h-3.5 w-3.5" />
+              Not compatible with {compatTaskType ?? "task"}
+              <Badge variant="outline" className="text-[10px] ml-1 border-amber-500/40 text-amber-600 dark:text-amber-400">
+                {incompatibleOthers.length}
+              </Badge>
+            </button>
+            {openSection.incompatible && (
+              <>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  These datasets have annotation files, but none match the selected task. They can't be added.
+                </p>
+                <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
+                  {incompatibleOthers.map((d) => (
+                    <DatasetRow key={d.id} d={d} />
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {emptyOthers.length > 0 && !isTrainMode && (
+          <section className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setOpenSection((s) => ({ ...s, empty: !s.empty }))}
+              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground"
+            >
+              {openSection.empty ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <AlertTriangle className="h-3.5 w-3.5" />
+              No annotations yet
+              <Badge variant="outline" className="text-[10px] ml-1">{emptyOthers.length}</Badge>
+            </button>
+            {openSection.empty && (
+              <>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  Datasets without annotation files. Add annotations first if you need ground truth.
+                </p>
+                <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
+                  {emptyOthers.map((d) => (
+                    <DatasetRow key={d.id} d={d} />
+                  ))}
+                </div>
+              </>
+            )}
           </section>
         )}
 

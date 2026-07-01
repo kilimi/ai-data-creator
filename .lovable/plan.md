@@ -1,68 +1,116 @@
-## Goal
 
-Refactor the backend Docker image to be a slim, multi-stage build on top of an official PyTorch+CUDA base, stop baking model weights into the image, and surface model availability in the UI so users see what's installed and how to fetch more.
+# Shared Dataset Picker — UX ideas for scale
 
-## 1. Backend: Multi-stage Dockerfile
+`DatasetEvalPicker` is already shared across `TrainModelModal`, `EvaluateModelModal`, and `CreateAugmentedDatasetModal`. **We keep three separate modals** that share this one picker component — no unification.
 
-Rewrite `backend/Dockerfile`:
+**Domain rule (project memory):** a dataset has a **1:N relationship with annotation files**. There is no single "ground truth" per dataset; a dataset can carry many annotation files of different types (detection / segmentation / classification / oriented). The picker must let the user choose which annotation file(s) to use — not just which dataset.
 
-- Stage 1 (`builder`, `python:3.11-slim`): install `gcc/g++/cmake`, run `pip install --prefix=/install -r requirements.txt` (drop torch/torchvision from this list — they come from the base).
-- Stage 2 (`runtime`, `pytorch/pytorch:2.7.1-cuda12.6-cudnn9-runtime`): install only runtime apt deps (`libgl1`, `libglib2.0-0`, `curl`, `postgresql-client`), copy installed site-packages from builder, copy app code.
-- Remove the `RUN python scripts/download_*` lines. Models live on a volume now.
-- Update `backend/requirements.txt` to drop `torch>=2.0.0` and `torchvision>=0.15.0` (provided by base image).
-- Apply the same multi-stage pattern to `backend/Dockerfile.training` (already on a CUDA base — convert to PyTorch base too for consistency).
+**Confirmed decisions (from this conversation):**
+- Keep three modals sharing the picker.
+- **No "saved presets"** feature.
+- Default annotation file per dataset = **latest compatible** one.
+- Picker **filters by the chosen task**, and **notifies** the user (inline, non-blocking) when they try to add a dataset that has no annotation files or none that suit the task.
 
-Expected: backend image shrinks from ~15 GB to ~3–4 GB and builds in ~2 min instead of ~15 min.
+Below are the scale-friendly ideas we want to build, reflecting those decisions.
 
-## 2. Models as volumes
+## 1. Two-pane layout with a persistent "Selection" tray
+Split the picker into a left "Browse" pane and a right "Selection" tray. Each tray entry is a **(dataset, annotation file, collection)** triple — the same dataset can appear twice with two different annotation files.
+- Always-visible running totals: rows, datasets, images, annotation files, class union/intersection
+- Bulk actions on the tray: Remove all, Clear invalid
+- Inline warnings surface here (see #5)
 
-- Add `./models` and `./ai_models` bind volumes for `backend` and `celery_worker` in `backend/docker-compose.yml` (next to existing `projects` / `data` / `runs`):
+## 2. Faceted filter rail (left sidebar inside the modal)
+Replace/augment the horizontal tag chips with a compact filter rail:
+- **Task type** — pre-selected from the current modal's task; filters at the **annotation-file** level. This is what "filter by choice" means in practice.
+- Annotation type (Boxes / Masks / Masks+Boxes / Keypoints)
+- Annotation-file count (0, 1, 2+) — quickly find datasets with multiple options
+- Groups (checkbox per group)
+- Tags (searchable, "show more")
+- Size buckets (0, 1–100, 100–1k, 1k+ images)
+- Last used / Last annotated (Any / 7d / 30d)
+Each facet shows counts and can be collapsed.
 
-```text
-- ${LAI_DATA_DIR:-../.lai-data}/models:/app/models
-- ${LAI_DATA_DIR:-../.lai-data}/ai_models:/app/ai_models
-```
+## 3. Compatibility-first sorting & sections
+Filter-by-choice is the default, but we don't hide everything. Auto-sort the browse list into sections:
+1. **Compatible** — has ≥ 1 annotation file matching the current task (default: expanded)
+2. **Not compatible** — has annotation files, but none suit the task (collapsed; label "Show N incompatible")
+3. **No annotations** — datasets with zero annotation files (collapsed; hidden entirely in Train, shown collapsed in Evaluate/Augment where empty datasets can still be valid)
 
-- Keep `scripts/download_ultralytics_models.py` and `scripts/download_depth_anything_models.py` but invoke them from a new helper, not from Docker build:
-  - Add `make download-models LAI_PRETRAINED_MODELS=minimal LAI_DEPTH_MODELS=minimal` target that runs them inside the running `backend` container (`docker compose exec backend python scripts/download_*`).
-  - Update `scripts/install.sh` wizard step: after `up`, ask "Download foundation models now? (minimal / all / skip)" and run the make target.
-- Document that on-demand Ultralytics downloads still work automatically when a missing model is requested (existing behavior).
+## 4. Smart top section: "Recent"
+Above the list, show 3–6 chips: datasets/groups the user recently trained or evaluated on for this task. One-click "Add" pre-selects the **latest compatible** annotation file. No named presets, no persistence beyond usage history that already exists (`lastUsedAt`).
 
-## 3. Backend: Model inventory endpoint
+## 5. Non-blocking notifications for bad picks
+When the user tries to add a dataset that is not usable for the current task, the picker never silently drops it. Instead:
+- **Dataset with no annotation files** → a toast/inline banner on the row: "'{name}' has no annotation files. Add annotations first, or remove it from your selection." In Train mode, the row is not addable; in Augment mode, the row is addable with a soft warning; in Evaluate mode, blocked with the same message.
+- **Dataset with annotation files but none matching the task** → row banner: "'{name}' has 3 annotation files, but none are {task}. Change the task or pick a different dataset." Row is dimmed; checkbox disabled; message is dismissible per-session.
+- **Selection tray** shows an aggregated warning strip: "1 dataset has no compatible annotations — Fix or remove."
 
-New `backend/app/routers/system.py` endpoint `GET /system/models`:
+Consistent phrasing across the three modals. Notifications live inline (no modal-on-modal).
 
-- Lists, for both Ultralytics and Depth-Anything, every model in the matrix from `app/foundation_models.py` with a `present: bool` (uses `model_weights_presence` helpers and `DEPTH_ONNX_NAMES`).
-- Returns grouped sections:
-  - `yolo`: `[{ file, name, arch, size, task, present, size_mb }]`
-  - `depth`: `[{ file, variant, environment, present, size_mb }]`
-  - `commands`: convenience CLI strings the UI can copy (`make download-models LAI_PRETRAINED_MODELS=yolo11n`, `docker compose exec backend python scripts/download_ultralytics_models.py`).
-- Also returns paths (`/app/models`, `/app/ai_models`) so users know where the volume is mounted.
+## 6. Group-first browsing with drill-down
+When groups exist, default the browse view to *groups only* (collapsed). Each group card shows aggregate stats (datasets, images, total annotation files, count compatible with the current task). "Add whole group":
+- Adds one tray row per member dataset
+- Auto-picks **latest compatible** annotation file per dataset (per the confirmed default)
+- Skips incompatible members and shows the notification from #5 for each skipped one
+Ungrouped datasets appear under a final "Ungrouped" section.
 
-## 4. Frontend: "Available models" panel
+## 7. Annotation-file-aware dataset row
+The collapsed row makes the 1:N relationship visible without expanding:
+- Small stack of annotation-type pills (e.g. `seg` `det` `det`) with count
+- Hover reveals file names + last-modified dates
+- On add, latest compatible file is used automatically
+- Expand to swap file or add another file from the same dataset ("1 of 3 files selected — add another")
 
-- Add `src/utils/api.ts` helper `getAvailableModels()` calling `/system/models` via central ApiClient.
-- New page `src/pages/SystemModels.tsx` reachable from a Help/Settings entry:
-  - Two tables (YOLO foundation, Depth Anything) with present / missing status badges (green check, gray dash).
-  - Footer card with the copy-pasteable `make download-models` and `docker compose exec ...` snippets, plus a short note: "Models live in `<LAI_DATA_DIR>/models` and `ai_models` on the host. Add more by re-running the command with a different `LAI_PRETRAINED_MODELS` value (e.g. `all`, `yolo11`, `yolo11n-seg.pt`)."
-- In `AutoAnnotateModal` and `TrainModelModal`, when a selected base model is missing locally, show the existing `WEIGHTS_DOWNLOAD_NOTICE`-style hint plus a small "Manage models" link to the new page.
-- Add a Help article `src/pages/help/articles/ModelsArticle.tsx` explaining the volume layout, the download command, on-demand fallback, and how to bring in custom `.pt` files (drop them in the volume).
+## 8. Bulk operations
+- Multi-select via checkbox + shift-click range
+- "Select all filtered" — adds latest compatible annotation file per dataset; skipped rows raise the notifications from #5
+- "Select all annotation files matching task" — expands every compatible file into its own tray row
+- "Invert selection"
+- "Remove all" on the tray
 
-## 5. Docs and cleanup
+## 9. Class-overlap preview per annotation file (Train / Evaluate)
+Class sets belong to annotation files, so overlap is shown at file level:
+- Row-level meter per annotation file: "8/12 model classes present"
+- Tray aggregate: "Union: 14 classes · Intersection: 6 · Missing from model: 2"
+- Warning when two selected annotation files for the same dataset have conflicting class definitions
 
-- Update `README.md` install steps: image is now slim by default; run `make download-models` once after `make up`.
-- Update `lai/wizard.py` first-run flow to print the new model-download prompt and surface it in the GUI Help → Models entry.
-- Remove `LAI_PRETRAINED_MODELS` / `LAI_DEPTH_MODELS` build args from compose; they remain runtime env vars passed to the download script.
+## 10. Virtualization + keyboard nav
+Virtualized list so 500+ rows scroll like 20. Keyboard: `Cmd/Ctrl+K` focus search, arrows to navigate, `Space` to toggle (adds latest compatible file), `Enter` to expand the file picker for the row.
 
-## Technical notes
+## 11. Density & view modes tuned to size
+Auto-pick default density by dataset count:
+- ≤ 20: comfortable (thumbnails)
+- 21–100: dense
+- 100+: table view with click-sortable columns (Name · Images · Annotation files · Task types · Tags · Last used) plus an inline "Files" popover
+Manual toggle stays.
 
-- Multi-stage `COPY --from=builder /install /usr/local` — keep prefix matching the base image's site-packages path (the PyTorch base uses `/opt/conda`; we'll `pip install --target=/install` and add it to `PYTHONPATH` instead, which is more portable across base images).
-- `model_weights_presence.py` already checks `/app/models` and `/app/ai_models/depth_estimation` — no change needed beyond using it from the new endpoint.
-- Backward compatibility: if the volume is empty on first boot, Ultralytics' built-in fetch still works at job runtime, so existing customers won't break.
-- Tests: add a vitest for `getAvailableModels` shape and a small render test for `SystemModels.tsx`.
+## 12. Empty & noisy states
+- "3 filters are hiding 47 datasets — Clear filters"
+- "Model task = segmentation hides 22 datasets that only have detection files — Show anyway"
+- Never show an empty modal without an action
 
-## Out of scope
+## 13. Cross-modal consistency polish
+Same picker component in three modals, so all three get:
+- Same header ("Datasets · N rows · Est. images · Est. annotations")
+- Same keyboard shortcuts
+- Same tray on the right
+- Same notification phrasing from #5
 
-- Pushing pre-built images to GHCR / Docker Hub (separate PR).
-- CPU-only image variant.
-- Compose profiles for opting out of MongoDB / SAM / Flower.
+---
+
+## Recommended first slice (highest ROI, lowest risk)
+1. **Two-pane layout with persistent selection tray** treating each entry as (dataset, annotation file, collection) — #1
+2. **Faceted filter rail** with task-type filter defaulted from the modal's task — #2
+3. **Compatibility sections + "Show incompatible"** — #3
+4. **Non-blocking notifications for incompatible / empty datasets** — #5 (this is the "notify the user" ask)
+5. **Group-first browsing with "Add whole group" using latest compatible per member** — #6
+6. **Annotation-file-aware dataset row** ("1 of 3 selected", pills) — #7
+7. **Virtualized list + keyboard nav** — #10
+
+Class-overlap preview (#9) and table view (#11) are strong follow-ups.
+
+## Notes on scope guarantees
+- No preset save/load anywhere.
+- Default annotation-file resolution everywhere (add, bulk add, add-group, "Recent" chip) = **latest compatible**.
+- Task-based filter is on by default and can be turned off via "Show incompatible" in-section, per #3.
+- Incompatible / empty picks always surface an inline, dismissible notification — never a silent drop and never a hard modal dialog.
