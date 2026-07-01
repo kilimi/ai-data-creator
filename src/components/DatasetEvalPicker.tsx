@@ -143,6 +143,7 @@ export function DatasetEvalPicker({
   const isEvaluateMode = pickerMode === "evaluate";
   const requiresAnnotationSelection =
     requireAnnotationSelection ?? isTrainMode;
+  const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [density, setDensity] = useState<"comfortable" | "dense" | "grid">("comfortable");
