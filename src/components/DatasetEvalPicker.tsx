@@ -149,6 +149,12 @@ export function DatasetEvalPicker({
   const [openGroups, setOpenGroups] = useState<Set<number>>(
     new Set(groups.map((g) => g.id))
   );
+  const [showIncompatible, setShowIncompatible] = useState(false);
+  const [openSection, setOpenSection] = useState<Record<"compatible" | "incompatible" | "empty", boolean>>({
+    compatible: true,
+    incompatible: false,
+    empty: false,
+  });
 
   const selectionMap = useMemo(() => {
     const m = new Map<number, DatasetSelection>();
