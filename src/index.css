@@ -5,6 +5,8 @@
 
 @layer base {
   :root {
+    --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
     --background: 1 0 0;
     --foreground: 0.2 0.03 235;
 
