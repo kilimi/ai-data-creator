@@ -804,8 +804,16 @@ export function DatasetEvalPicker({
                       className="h-7 text-xs"
                       onClick={() => {
                         const additions: DatasetSelection[] = [];
+                        let skippedIncompat = 0;
+                        let skippedEmpty = 0;
                         dsInGroup.forEach((d) => {
                           if (selectionMap.has(d.id)) return;
+                          if (groundTruthFileCount(d) <= 0) {
+                            if (isTrainMode) { skippedEmpty += 1; return; }
+                          } else if (isTrainMode && taskCompatibility(d) === "mismatch") {
+                            skippedIncompat += 1;
+                            return;
+                          }
                           const compatible = compatibleAnnotationFiles(d);
                           const file = compatible[0];
                           const coll = d.collections[0];
@@ -818,6 +826,15 @@ export function DatasetEvalPicker({
                           });
                         });
                         if (additions.length) onChange([...value, ...additions]);
+                        if (skippedIncompat > 0 || skippedEmpty > 0) {
+                          toast({
+                            title: `Added ${additions.length} of ${dsInGroup.length}`,
+                            description: [
+                              skippedIncompat > 0 && `${skippedIncompat} skipped (no ${compatTaskType ?? "matching"} annotations)`,
+                              skippedEmpty > 0 && `${skippedEmpty} skipped (no annotation files)`,
+                            ].filter(Boolean).join(" · "),
+                          });
+                        }
                       }}
                     >
                       Add all
