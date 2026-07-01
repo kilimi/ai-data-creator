@@ -112,6 +112,10 @@ export default {
         'pulse-subtle': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.8' }
+        },
+        'spin-slow': {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg)' }
         }
       },
       animation: {
