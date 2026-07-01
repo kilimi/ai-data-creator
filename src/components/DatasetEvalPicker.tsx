@@ -21,6 +21,10 @@ import {
   Rows3,
   LayoutList,
   LayoutGrid,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  FileWarning,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveBackendMediaUrl } from "@/config/api";
