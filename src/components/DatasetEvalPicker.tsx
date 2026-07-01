@@ -229,7 +229,7 @@ export function DatasetEvalPicker({
   }
 
   function visible(d: PickerDataset) {
-    if (!hasAnyFiles(d)) return false;
+    if (d.imageCount <= 0 && isTrainMode) return false;
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
     if (activeTags.size > 0) {
@@ -245,6 +245,32 @@ export function DatasetEvalPicker({
     return true;
   }
 
+  /** Bucket a list of datasets by compatibility with the current task. */
+  function bucketByCompat(list: PickerDataset[]): {
+    compatible: PickerDataset[];
+    incompatible: PickerDataset[];
+    empty: PickerDataset[];
+  } {
+    const compatible: PickerDataset[] = [];
+    const incompatible: PickerDataset[] = [];
+    const empty: PickerDataset[] = [];
+    for (const d of list) {
+      const files = groundTruthFileCount(d);
+      if (files <= 0) {
+        empty.push(d);
+        continue;
+      }
+      if (!isTrainMode || !compatTaskType) {
+        compatible.push(d);
+        continue;
+      }
+      const compat = taskCompatibility(d);
+      if (compat === "mismatch") incompatible.push(d);
+      else compatible.push(d);
+    }
+    return { compatible, incompatible, empty };
+  }
+
   function toggleTag(t: string) {
     setActiveTags((s) => {
       const n = new Set(s);
@@ -255,8 +281,9 @@ export function DatasetEvalPicker({
 
   const groupedIds = new Set<number>(groups.flatMap((g) => g.datasetIds));
   const ungrouped = datasets.filter((d) => !groupedIds.has(d.id) && visible(d));
+  const ungroupedBuckets = bucketByCompat(ungrouped);
 
-  const recent = [...ungrouped]
+  const recent = [...ungroupedBuckets.compatible]
     .filter((d) => d.lastUsedAt)
     .sort(
       (a, b) =>
@@ -264,7 +291,9 @@ export function DatasetEvalPicker({
     )
     .slice(0, 3);
   const recentIds = new Set(recent.map((d) => d.id));
-  const others = ungrouped.filter((d) => !recentIds.has(d.id));
+  const compatibleOthers = ungroupedBuckets.compatible.filter((d) => !recentIds.has(d.id));
+  const incompatibleOthers = ungroupedBuckets.incompatible;
+  const emptyOthers = ungroupedBuckets.empty;
 
   function toggleSelected(d: PickerDataset, checked: boolean) {
     if (checked) {
