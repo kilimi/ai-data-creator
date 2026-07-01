@@ -23,7 +23,7 @@ import {
   AlertCircle, 
   X,
   Loader2,
-  ListTodo,
+  Activity,
   Layers,
   Brain,
   Copy,
@@ -356,7 +356,7 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
                 {activeTaskCount > 0 ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <ListTodo className="h-4 w-4" />
+                  <Activity className="h-4 w-4" />
                 )}
                 {activeTaskCount > 0 && (
                   <span 
