@@ -875,15 +875,42 @@ export function DatasetEvalPicker({
 
         {compatibleOthers.length > 0 && (
           <section className="space-y-2">
-            <button
-              type="button"
-              onClick={() => setOpenSection((s) => ({ ...s, compatible: !s.compatible }))}
-              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground"
-            >
-              {openSection.compatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-              {(recent.length > 0 || groups.length > 0) ? "Compatible datasets" : "Datasets"}
-              <Badge variant="secondary" className="text-[10px] ml-1">{compatibleOthers.length}</Badge>
-            </button>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setOpenSection((s) => ({ ...s, compatible: !s.compatible }))}
+                className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground"
+              >
+                {openSection.compatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                {(recent.length > 0 || groups.length > 0) ? "Compatible datasets" : "Datasets"}
+                <Badge variant="secondary" className="text-[10px] ml-1">{compatibleOthers.length}</Badge>
+              </button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => {
+                  const unselected = compatibleOthers.filter((d) => !selectionMap.has(d.id));
+                  if (unselected.length === 0) return;
+                  const additions: DatasetSelection[] = unselected.map((d) => {
+                    const file = compatibleAnnotationFiles(d)[0];
+                    const coll = d.collections[0];
+                    return {
+                      datasetId: d.id,
+                      annotationFileId: requiresAnnotationSelection ? (file?.id ?? null) : null,
+                      collectionId: coll?.id ?? null,
+                    };
+                  });
+                  onChange([...value, ...additions]);
+                  toast({
+                    title: `Added ${additions.length} dataset${additions.length === 1 ? "" : "s"}`,
+                    description: "Latest compatible annotation file selected for each.",
+                  });
+                }}
+              >
+                Select all
+              </Button>
+            </div>
             {openSection.compatible && (
               <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
                 {compatibleOthers.map((d) => (
