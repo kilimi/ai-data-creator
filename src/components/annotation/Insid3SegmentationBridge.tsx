@@ -160,7 +160,7 @@ export function useInsid3AnnotationIntegration(opts: UseInsid3AnnotationIntegrat
         polygon: snapshotPolygon,
       });
       if (!result.ok) {
-        opts.toast({ title: 'Cannot update reference', description: result.error, variant: 'destructive' });
+        opts.toast({ title: 'Cannot update reference', description: (result as { error?: string }).error, variant: 'destructive' });
       }
     },
     [opts, refsState],
