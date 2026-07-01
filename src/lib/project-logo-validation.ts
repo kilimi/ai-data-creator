@@ -1,7 +1,7 @@
 export const PROJECT_LOGO_MAX_BYTES = 25 * 1024 * 1024;
 
 export type LogoValidationResult =
-  | { ok: true }
+  | { ok: true; title?: undefined; description?: undefined }
   | { ok: false; title: string; description: string };
 
 /** Validate project logo file type and size (shared by create + edit flows). */
