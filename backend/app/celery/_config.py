@@ -9,14 +9,20 @@ from datetime import timedelta
 from kombu import Queue
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+BROKER_VISIBILITY_TIMEOUT = int(
+    os.environ.get("CELERY_BROKER_VISIBILITY_TIMEOUT", str(7 * 24 * 60 * 60))
+)
 
 GENERAL_INCLUDE = [
     "app.tasks.dataset_tasks",
     "app.tasks.augmentation_tasks",
     "app.tasks.backup_tasks",
+    "app.tasks.database_export_tasks",
     "app.tasks.task_monitoring",
     "app.tasks.annotation_tasks",
     "app.tasks.depth_estimation_tasks",
+    "app.tasks.preannotate_tasks",
+    "app.tasks.insid3_tasks",
     "app.tasks.maintenance_tasks",
 ]
 
@@ -34,9 +40,12 @@ TASK_ROUTES = {
     "app.tasks.dataset_tasks.*": {"queue": "general"},
     "app.tasks.augmentation_tasks.*": {"queue": "general"},
     "app.tasks.backup_tasks.*": {"queue": "general"},
+    "app.tasks.database_export_tasks.*": {"queue": "general"},
     "app.tasks.task_monitoring.*": {"queue": "general"},
     "app.tasks.annotation_tasks.*": {"queue": "general"},
     "app.tasks.depth_estimation_tasks.*": {"queue": "general"},
+    "app.tasks.preannotate_tasks.*": {"queue": "general"},
+    "app.tasks.insid3_tasks.*": {"queue": "general"},
     "app.tasks.training_tasks.cleanup_old_tasks": {"queue": "general"},
     "app.tasks.task_monitoring.refresh_worker_gpu_status": {"queue": "gpu"},
     "app.tasks.yolo_training.*": {"queue": "gpu"},
@@ -52,13 +61,13 @@ TASK_ROUTES = {
 }
 
 BEAT_SCHEDULE = {
-    "check-backup-schedule": {
-        "task": "app.tasks.backup_tasks.run_automatic_backup",
-        "schedule": timedelta(hours=1),
-    },
     "auto-cancel-stale-tasks": {
         "task": "app.tasks.task_monitoring.auto_cancel_stale_tasks",
         "schedule": timedelta(minutes=30),
+    },
+    "check-scheduled-backups": {
+        "task": "app.tasks.backup_tasks.check_scheduled_backups",
+        "schedule": timedelta(minutes=15),
     },
 }
 
@@ -72,12 +81,17 @@ TASK_QUEUES = (
 KNOWN_TASK_QUEUES = {
     "app.tasks.dataset_tasks.duplicate_dataset": "general",
     "app.tasks.augmentation_tasks.create_augmented_dataset": "general",
-    "app.tasks.backup_tasks.run_automatic_backup": "general",
+    "app.tasks.backup_tasks.run_manual_backup": "general",
+    "app.tasks.backup_tasks.run_restore_backup": "general",
+    "app.tasks.backup_tasks.check_scheduled_backups": "general",
+    "app.tasks.database_export_tasks.export_database": "general",
     "app.tasks.task_monitoring.auto_cancel_stale_tasks": "general",
     "app.tasks.task_monitoring.refresh_worker_gpu_status": "gpu",
     "app.tasks.annotation_tasks.process_annotation_file": "general",
     "app.tasks.annotation_tasks.merge_annotation_files": "general",
     "app.tasks.depth_estimation_tasks.generate_depth_maps": "general",
+    "app.tasks.preannotate_tasks.run_yolo_preannotate": "general",
+    "app.tasks.insid3_tasks.run_insid3_propagate": "general",
     "app.tasks.training_tasks.cleanup_old_tasks": "general",
     "app.tasks.training_tasks.train_yolo_model": "gpu",
     "app.tasks.training_tasks.train_rtdetr_model": "gpu",
@@ -106,6 +120,7 @@ def apply_common_config(app, *, enable_beat: bool = False) -> None:
         "task_queues": TASK_QUEUES,
         "task_routes": TASK_ROUTES,
         "result_expires": 3600 * 24,
+        "broker_transport_options": {"visibility_timeout": BROKER_VISIBILITY_TIMEOUT},
         "result_backend_transport_options": {"master_name": "mymaster"},
         "task_acks_late": True,
         "task_reject_on_worker_lost": True,

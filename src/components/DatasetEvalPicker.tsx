@@ -82,13 +82,25 @@ export type RequiredTaskType =
   | "classification"
   | "oriented";
 
+export type DatasetPickerMode = "train" | "evaluate" | "augment";
+
 interface Props {
   datasets: PickerDataset[];
   groups?: PickerGroup[];
   modelClasses: string[];
   modelTaskType?: "detection" | "segmentation" | "classification";
   /**
-   * When set, datasets without compatible annotation files are dimmed and
+    * train: hide datasets without annotation files; optionally filter by requiredTaskType.
+    * evaluate/augment: show all datasets with images.
+   */
+  pickerMode?: DatasetPickerMode;
+  /**
+   * Require selecting an annotation file per selected dataset.
+   * Defaults to true for train mode and false for evaluate/augment.
+   */
+  requireAnnotationSelection?: boolean;
+  /**
+   * When set (train mode), datasets without compatible annotation files are dimmed and
    * cannot be selected. Datasets with zero annotation files are always hidden.
    * "oriented" is treated as "detection" for compatibility (rotated boxes).
    */
@@ -118,8 +130,14 @@ export function DatasetEvalPicker({
   value,
   onChange,
   renderExpandedExtra,
+  pickerMode = "train",
+  requireAnnotationSelection,
   requiredTaskType,
 }: Props) {
+  const isTrainMode = pickerMode === "train";
+  const isEvaluateMode = pickerMode === "evaluate";
+  const requiresAnnotationSelection =
+    requireAnnotationSelection ?? isTrainMode;
   const [query, setQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [density, setDensity] = useState<"comfortable" | "dense" | "grid">("comfortable");
@@ -152,37 +170,55 @@ export function DatasetEvalPicker({
     requiredTaskType === "oriented" ? "detection" : requiredTaskType;
 
   function compatibleAnnotationFiles(d: PickerDataset): PickerAnnotationFile[] {
-    if (!compatTaskType) return d.annotationFiles;
+    if (!isTrainMode || !compatTaskType) return d.annotationFiles;
     return d.annotationFiles.filter((f) =>
       annotationFileSupportsTrainingTask(
-        { type: f.annotationType ?? f.taskType, name: f.name },
+        {
+          name: f.name,
+          annotationType: f.annotationType,
+          type: f.taskType,
+        },
         compatTaskType,
       ),
     );
   }
 
+  function groundTruthFileCount(d: PickerDataset): number {
+    if (d.annotationFiles.length > 0) return d.annotationFiles.length;
+    return d.annotationFileCount ?? 0;
+  }
+
   function hasAnyFiles(d: PickerDataset) {
-    const compatible = compatibleAnnotationFiles(d);
-    return d.imageCount > 0 && compatible.length > 0;
+    if (d.imageCount <= 0) return false;
+    if (!isTrainMode) return true;
+    if (groundTruthFileCount(d) <= 0) return false;
+    // Files not loaded yet — trust annotation_file_count from list API.
+    if (d.annotationFiles.length === 0) return true;
+    return compatibleAnnotationFiles(d).length > 0;
   }
 
   /** Returns 'match' | 'mismatch' | 'unknown' for the dataset vs requiredTaskType. */
   function taskCompatibility(d: PickerDataset): "match" | "mismatch" | "unknown" {
-    if (!compatTaskType) return "match";
+    if (!isTrainMode || !compatTaskType) return "match";
     const files = d.annotationFiles;
     // Lazy/back-end-only counts → we don't know types yet, allow selection.
     if (files.length === 0) return "unknown";
     const compatible = compatibleAnnotationFiles(d);
     if (compatible.length > 0) return "match";
     const knownTypes = files
-      .map((f) => f.annotationType ?? detectAnnotationDisplayType({ type: f.taskType, name: f.name } as any))
+      .map((f) =>
+        f.annotationType ??
+        detectAnnotationDisplayType({
+          type: f.taskType,
+          name: f.name,
+        } as Parameters<typeof detectAnnotationDisplayType>[0]),
+      )
       .filter((t) => t && t !== "Other");
     if (knownTypes.length === 0) return "unknown";
     return "mismatch";
   }
 
   function visible(d: PickerDataset) {
-    // Always hide datasets with zero annotation files — nothing to train on.
     if (!hasAnyFiles(d)) return false;
     if (query && !d.name.toLowerCase().includes(query.toLowerCase()))
       return false;
@@ -238,7 +274,9 @@ export function DatasetEvalPicker({
         ...value,
         {
           datasetId: d.id,
-          annotationFileId: latestFile?.id ?? null,
+          annotationFileId: requiresAnnotationSelection
+            ? (latestFile?.id ?? null)
+            : null,
           collectionId: coll?.id ?? null,
         },
       ]);
@@ -266,7 +304,9 @@ export function DatasetEvalPicker({
       ? `No ${compatTaskType} annotations in this dataset — not usable for the selected task.`
       : undefined;
 
-    const gtCount = compatibleAnnotationFiles(d).length;
+    const annotationFileCount = isTrainMode
+      ? compatibleAnnotationFiles(d).length
+      : groundTruthFileCount(d);
     const visibleAnnotationFiles = compatibleAnnotationFiles(d);
     const taskType = visibleAnnotationFiles[0]?.taskType;
     const thumbSrc = resolveBackendMediaUrl(d.thumbnailUrl);
@@ -279,7 +319,7 @@ export function DatasetEvalPicker({
           "hover:border-border hover:shadow-sm",
           !isDense && "hover:-translate-y-[1px]",
           isSelected
-            ? "border-primary/60 bg-primary/[0.04] shadow-[0_0_0_1px_hsl(var(--primary)/0.25)]"
+            ? "border-primary/60 bg-primary/[0.04] shadow-[0_0_0_1px_oklch(var(--primary)/0.25)]"
             : "border-border/60",
           !usable && !isSelected && "opacity-55 hover:opacity-90",
           incompatible && !isSelected && "opacity-40 grayscale"
@@ -371,7 +411,7 @@ export function DatasetEvalPicker({
               </span>
               <span className="inline-flex items-center gap-1">
                 <Database className="h-3 w-3" />
-                {gtCount} GT
+                {annotationFileCount} files
               </span>
               {d.lastUsedAt && !isDense && (
                 <span className="text-muted-foreground/70">
@@ -438,10 +478,11 @@ export function DatasetEvalPicker({
 
         {isSelected && isExpanded && (
           <div className="border-t border-border/60 px-3 py-3 space-y-3 bg-muted/30">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className={cn("grid gap-3", requiresAnnotationSelection ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1")}>
+            {requiresAnnotationSelection && (
             <div className="space-y-1">
               <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
-                Ground truth
+                Annotation file
               </label>
               <Select
                 value={sel?.annotationFileId ?? "none"}
@@ -455,7 +496,7 @@ export function DatasetEvalPicker({
                   <SelectValue placeholder="Pick annotation file" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">No ground truth</SelectItem>
+                  <SelectItem value="none">No annotation file</SelectItem>
                   {visibleAnnotationFiles.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
                       <div className="flex items-center gap-2">
@@ -475,6 +516,7 @@ export function DatasetEvalPicker({
                 </SelectContent>
               </Select>
             </div>
+            )}
 
             <div className="space-y-1">
               <label className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium">
@@ -579,7 +621,7 @@ export function DatasetEvalPicker({
           </div>
         </div>
 
-        {requiredTaskType && (
+        {requiredTaskType && isTrainMode && (
           <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 font-medium">
               Filtering by task:
@@ -587,8 +629,17 @@ export function DatasetEvalPicker({
                 {requiredTaskType}
               </span>
             </span>
-            <span>Datasets without matching annotations are dimmed.</span>
+            <span>
+              {compatTaskType === "detection"
+                ? "Classification-only datasets are dimmed."
+                : "Datasets without matching annotations are dimmed."}
+            </span>
           </div>
+        )}
+        {isEvaluateMode && (
+          <p className="text-[11px] text-muted-foreground">
+            All datasets with images are listed. Annotation file selection is optional in evaluation.
+          </p>
         )}
 
         {/* Tag filter chips */}
@@ -721,7 +772,9 @@ export function DatasetEvalPicker({
                           const coll = d.collections[0];
                           additions.push({
                             datasetId: d.id,
-                            annotationFileId: file?.id ?? null,
+                            annotationFileId: requiresAnnotationSelection
+                              ? (file?.id ?? null)
+                              : null,
                             collectionId: coll?.id ?? null,
                           });
                         });

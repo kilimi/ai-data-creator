@@ -3,20 +3,61 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from lai.compose_build import uses_local_build
 from lai.registry import (
+    RegistryTagResolutionError,
+    _embedded_registry_org,
+    _org_from_image_ref,
     default_bundle_url,
+    embedded_docker_fallback_tag,
+    fetch_dockerhub_latest_tag,
     gpu_tier_enabled,
     is_developer_checkout,
     registry_image_tag,
     registry_image_tags,
+    registry_org,
+    resolve_release_version,
+    write_registry_env,
 )
 
 
-def test_registry_image_tag_format():
+def test_org_from_image_ref():
+    assert _org_from_image_ref("docker.io/luluray/lai-backend:0.1.0") == "luluray"
+    assert _org_from_image_ref("luluray/lai-backend:0.1.0") == "luluray"
+
+
+def test_registry_org_defaults_to_luluray(monkeypatch):
+    monkeypatch.delenv("LAI_DOCKERHUB_USER", raising=False)
+    monkeypatch.delenv("LAI_GHCR_ORG", raising=False)
+    monkeypatch.setattr("lai.registry._embedded_registry_org", lambda: None)
+    assert registry_org() == "luluray"
+
+
+def test_embedded_registry_org_from_bundle_example(tmp_path, monkeypatch):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / ".env.example").write_text(
+        "LAI_BACKEND_IMAGE=docker.io/luluray/lai-backend:0.1.0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("lai.paths.embedded_bundle_dir", lambda: bundle)
+    assert _embedded_registry_org() == "luluray"
+
+
+def test_registry_image_tag_format_dockerhub(monkeypatch):
+    monkeypatch.delenv("LAI_REGISTRY", raising=False)
+    monkeypatch.setenv("LAI_DOCKERHUB_USER", "myorg")
     tag = registry_image_tag("LAI_BACKEND_IMAGE", "1.2.3")
-    assert tag.startswith("ghcr.io/")
-    assert tag.endswith("/lai-backend:1.2.3")
+    assert tag == "docker.io/myorg/lai-backend:1.2.3"
+
+
+def test_registry_image_tag_format_ghcr(monkeypatch):
+    monkeypatch.setenv("LAI_REGISTRY", "ghcr.io")
+    monkeypatch.setenv("LAI_GHCR_ORG", "myorg")
+    tag = registry_image_tag("LAI_BACKEND_IMAGE", "1.2.3")
+    assert tag == "ghcr.io/myorg/lai-backend:1.2.3"
 
 
 def test_registry_image_tags_all_keys():
@@ -31,16 +72,22 @@ def test_default_bundle_url_uses_release_asset():
     assert "releases/download/v1.0.0/lai-dist-1.0.0.tar.gz" in url
 
 
-def test_uses_local_build_only_configured_keys(tmp_path: Path):
+@pytest.fixture
+def env_file(tmp_path: Path, monkeypatch):
     env = tmp_path / ".env"
-    env.write_text(
-        "LAI_BACKEND_IMAGE=ghcr.io/x/lai-backend:1.0.0\n"
-        "LAI_WORKER_GPU_IMAGE=ghcr.io/x/lai-worker-gpu:1.0.0\n"
-        "LAI_WORKER_GENERAL_IMAGE=ghcr.io/x/lai-worker-general:1.0.0\n"
-        "LAI_FRONTEND_IMAGE=ghcr.io/x/lai-frontend:1.0.0\n"
-        "LAI_SAM_IMAGE=ghcr.io/x/lai-sam:1.0.0\n"
-        "LAI_ULTRALYTICS_IMAGE=ghcr.io/x/lai-ultralytics:1.0.0\n"
-        "LAI_MMYOLO_IMAGE=ghcr.io/x/lai-mmyolo:1.0.0\n"
+    monkeypatch.setattr("lai.paths.resolve_env_file", lambda _root: env)
+    return env
+
+
+def test_uses_local_build_only_configured_keys(tmp_path: Path, env_file: Path):
+    env_file.write_text(
+        "LAI_BACKEND_IMAGE=docker.io/x/lai-backend:1.0.0\n"
+        "LAI_WORKER_GPU_IMAGE=docker.io/x/lai-worker-gpu:1.0.0\n"
+        "LAI_WORKER_GENERAL_IMAGE=docker.io/x/lai-worker-general:1.0.0\n"
+        "LAI_FRONTEND_IMAGE=docker.io/x/lai-frontend:1.0.0\n"
+        "LAI_SAM_IMAGE=docker.io/x/lai-sam:1.0.0\n"
+        "LAI_ULTRALYTICS_IMAGE=docker.io/x/lai-ultralytics:1.0.0\n"
+        "LAI_MMYOLO_IMAGE=docker.io/x/lai-mmyolo:1.0.0\n"
     )
     assert uses_local_build(tmp_path) is False
 
@@ -51,8 +98,105 @@ def test_gpu_tier_enabled_from_env():
     assert gpu_tier_enabled({"LAI_GPU_TIER": "0"}) is False
 
 
+def test_fetch_dockerhub_latest_tag_picks_highest_semver(monkeypatch):
+    monkeypatch.setattr(
+        "lai.registry._fetch_tags_registry_v2",
+        lambda org, repo, timeout=15.0: ["0.1.0", "0.2.0", "latest"],
+    )
+    monkeypatch.setattr("lai.registry._fetch_tags_hub_api", lambda *a, **k: None)
+    assert fetch_dockerhub_latest_tag("luluray") == "0.2.0"
+
+
+def test_fetch_dockerhub_latest_tag_falls_back_to_latest_when_listed(monkeypatch):
+    monkeypatch.setattr(
+        "lai.registry._fetch_tags_registry_v2",
+        lambda org, repo, timeout=15.0: ["latest"],
+    )
+    monkeypatch.setattr("lai.registry._fetch_tags_hub_api", lambda *a, **k: None)
+    assert fetch_dockerhub_latest_tag("luluray") == "latest"
+
+
+def test_fetch_dockerhub_latest_tag_uses_hub_api_when_registry_fails(monkeypatch):
+    monkeypatch.setattr("lai.registry._fetch_tags_registry_v2", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "lai.registry._fetch_tags_hub_api",
+        lambda org, repo, timeout=15.0: ["0.3.1"],
+    )
+    assert fetch_dockerhub_latest_tag("luluray") == "0.3.1"
+
+
+def test_resolve_release_version_uses_dockerhub_when_auto(monkeypatch):
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: "9.9.9")
+    monkeypatch.setattr("lai.registry.registry_org", lambda: "luluray")
+    assert resolve_release_version({"LAI_RELEASE_VERSION": "0.1.0"}) == "9.9.9"
+
+
+def test_resolve_release_version_respects_pin(monkeypatch):
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: "9.9.9")
+    assert (
+        resolve_release_version(
+            {"LAI_PIN_DOCKER_VERSION": "1", "LAI_RELEASE_VERSION": "0.1.0"}
+        )
+        == "0.1.0"
+    )
+
+
+def test_resolve_release_version_skips_hub_when_auto_disabled(monkeypatch):
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: "9.9.9")
+    assert (
+        resolve_release_version(
+            {"LAI_AUTO_DOCKER_LATEST": "0", "LAI_RELEASE_VERSION": "0.1.0"}
+        )
+        == "0.1.0"
+    )
+
+
+def test_resolve_release_version_uses_env_semver_when_hub_unreachable(monkeypatch):
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: None)
+    monkeypatch.setattr("lai.registry.embedded_docker_fallback_tag", lambda: None)
+    assert resolve_release_version(
+        {
+            "LAI_BACKEND_IMAGE": "docker.io/luluray/lai-backend:0.1.0",
+        }
+    ) == "0.1.0"
+
+
+def test_resolve_release_version_uses_embedded_fallback(monkeypatch):
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: None)
+    monkeypatch.setattr("lai.registry.embedded_docker_fallback_tag", lambda: "0.4.0")
+    assert resolve_release_version({}) == "0.4.0"
+
+
+def test_resolve_release_version_raises_without_fallback(monkeypatch):
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: None)
+    monkeypatch.setattr("lai.registry.embedded_docker_fallback_tag", lambda: None)
+    with pytest.raises(RegistryTagResolutionError):
+        resolve_release_version({})
+
+
+def test_embedded_docker_fallback_tag_from_json(tmp_path, monkeypatch):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "docker_release.json").write_text(
+        '{"docker_tag":"0.5.0","org":"luluray"}', encoding="utf-8"
+    )
+    monkeypatch.setattr("lai.paths.embedded_bundle_dir", lambda: bundle)
+    assert embedded_docker_fallback_tag() == "0.5.0"
+
+
+def test_write_registry_env_uses_hub_version(tmp_path: Path, monkeypatch):
+    env_file = tmp_path / ".env"
+    monkeypatch.setattr("lai.registry.fetch_dockerhub_latest_tag", lambda org: "2.0.0")
+    monkeypatch.setattr("lai.registry.registry_org", lambda: "luluray")
+    write_registry_env(env_file, gpu_tier=False)
+    text = env_file.read_text(encoding="utf-8")
+    assert "LAI_RELEASE_VERSION=2.0.0" in text
+    assert "docker.io/luluray/lai-backend:2.0.0" in text
+
+
 def test_is_developer_checkout_with_repo_root(tmp_path: Path, monkeypatch):
     (tmp_path / "docker-compose.yml").write_text("include: []\n")
+    (tmp_path / "backend").mkdir()
     monkeypatch.setattr("lai.paths._package_dir", lambda: tmp_path / "lai")
     (tmp_path / "lai").mkdir()
     assert is_developer_checkout(tmp_path) is True

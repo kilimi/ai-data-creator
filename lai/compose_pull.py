@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from lai.compose_build import _compose_base_cmd, _parse_env_file, uses_local_build
-from lai.registry import GPU_IMAGE_KEYS, gpu_tier_enabled
+from lai.registry import CPU_IMAGE_KEYS, GPU_IMAGE_KEYS, gpu_tier_enabled
 
 
 def _run(cmd: list[str], root: Path) -> int:
@@ -14,7 +14,7 @@ def _run(cmd: list[str], root: Path) -> int:
 
 
 def compose_profiles(root: Path) -> list[str]:
-    env = _parse_env_file(root / ".env")
+    env = _parse_env_file(root)
     raw = (env.get("COMPOSE_PROFILES") or "").strip()
     if not raw:
         return ["gpu"] if gpu_tier_enabled(env) else []
@@ -29,7 +29,7 @@ def pull_services(root: Path) -> list[str] | None:
     """
     if uses_local_build(root):
         return None
-    env = _parse_env_file(root / ".env")
+    env = _parse_env_file(root)
     if gpu_tier_enabled(env):
         return None
     # CPU tier: pull core app images; skip GPU-profile services.
@@ -41,6 +41,10 @@ def pull_stack(root: Path, *, services: list[str] | None = None) -> int:
     if uses_local_build(root):
         print("Local build tags in .env — skipping registry pull.", flush=True)
         return 0
+
+    from lai.registry import refresh_registry_tags
+
+    refresh_registry_tags(root)
 
     cmd = _compose_base_cmd(root)
     for profile in compose_profiles(root):
@@ -54,12 +58,12 @@ def pull_stack(root: Path, *, services: list[str] | None = None) -> int:
 def missing_registry_images(root: Path) -> list[str]:
     """Return configured registry image tags that are not present locally."""
     from lai.compose_build import _image_exists, image_tags
-    from lai.registry import CPU_IMAGE_KEYS, GPU_IMAGE_KEYS
+    from lai.registry import CPU_IMAGE_KEYS, GPU_IMAGE_KEYS, gpu_tier_enabled
 
     if uses_local_build(root):
         return []
 
-    env = _parse_env_file(root / ".env")
+    env = _parse_env_file(root)
     tags = image_tags(root)
     keys = list(CPU_IMAGE_KEYS)
     if gpu_tier_enabled(env):

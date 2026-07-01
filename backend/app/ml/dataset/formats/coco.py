@@ -74,6 +74,18 @@ def _coco_bbox_from_annotation(
     w = float(img_width) or 1.0
     h = float(img_height) or 1.0
 
+    # Prefer normalized bbox_* columns (canonical in LAI DB) over legacy bbox JSON.
+    if ann.bbox_x is not None and ann.bbox_width is not None:
+        bw = float(ann.bbox_width or 0)
+        bh = float(ann.bbox_height or 0)
+        if bw > 0 and bh > 0:
+            return [
+                float(ann.bbox_x) * w,
+                float(ann.bbox_y or 0) * h,
+                bw * w,
+                bh * h,
+            ]
+
     if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
         x, y, bw, bh = (float(v) for v in ann.bbox[:4])
         if max(abs(x), abs(y), abs(bw), abs(bh)) <= 1.5:
@@ -87,13 +99,6 @@ def _coco_bbox_from_annotation(
         if max(abs(x), abs(y), abs(bw), abs(bh)) <= 1.5:
             return [x * w, y * h, bw * w, bh * h]
         return [x, y, bw, bh]
-    if ann.bbox_x is not None and ann.bbox_width is not None:
-        return [
-            float(ann.bbox_x) * w,
-            float(ann.bbox_y or 0) * h,
-            float(ann.bbox_width) * w,
-            float(ann.bbox_height or 0) * h,
-        ]
     poly = _extract_segmentation_polygon(ann)
     if poly is not None:
         return _bbox_xywh_from_polygon(poly, img_width, img_height)

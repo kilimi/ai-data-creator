@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 from app.models import Annotation, AnnotationClass, AnnotationFile, Dataset, Image, ImageCollection
 from app.ml.dataset.builder import generate_safe_output_filename, resolve_source_image_path
+from app.ml.dataset.formats.coco import _coco_bbox_from_annotation
 
 logger = logging.getLogger(__name__)
 
@@ -48,23 +49,12 @@ def _append_yolo_detection_bbox(
     split_name: str,
     class_name: str,
 ) -> bool:
-    """Append a detection label from COCO pixel bbox or normalized bbox_* columns."""
-    x = y = w = h = None
-    coords_are_normalized = False
-
-    if annotation.bbox and isinstance(annotation.bbox, list) and len(annotation.bbox) >= 4:
-        x, y, w, h = annotation.bbox[0], annotation.bbox[1], annotation.bbox[2], annotation.bbox[3]
-        coords_are_normalized = False
-    elif annotation.bbox_x is not None and annotation.bbox_width is not None:
-        x = annotation.bbox_x
-        y = annotation.bbox_y or 0
-        w = annotation.bbox_width
-        h = annotation.bbox_height or 0
-        coords_are_normalized = True
-
-    if x is None or y is None or w is None or h is None:
+    """Append a detection label — prefers normalized bbox_* columns, then COCO bbox JSON, then mask envelope."""
+    coco_bbox = _coco_bbox_from_annotation(annotation, img_width, img_height)
+    if not coco_bbox or coco_bbox[2] <= 0 or coco_bbox[3] <= 0:
         return False
 
+    x, y, w, h = coco_bbox
     label_lines.append(
         _yolo_detection_line_from_bbox(
             class_id,
@@ -72,7 +62,7 @@ def _append_yolo_detection_bbox(
             y=float(y),
             w=float(w),
             h=float(h),
-            coords_are_normalized=coords_are_normalized,
+            coords_are_normalized=False,
             img_width=img_width,
             img_height=img_height,
         )
@@ -82,6 +72,14 @@ def _append_yolo_detection_bbox(
     stats["annotations_per_class"][class_name][split_name] += 1
     stats["total_annotations"][split_name] += 1
     return True
+
+
+def _detection_annotation_exportable(annotation: Annotation, img_width: int, img_height: int) -> bool:
+    """True when this annotation can produce a YOLO detection label line."""
+    if _is_classification_label_annotation(annotation):
+        return False
+    coco_bbox = _coco_bbox_from_annotation(annotation, img_width, img_height)
+    return bool(coco_bbox and coco_bbox[2] > 0 and coco_bbox[3] > 0)
 
 
 def _annotation_has_bbox(annotation: Annotation) -> bool:
@@ -110,6 +108,124 @@ def _is_classification_label_annotation(annotation: Annotation) -> bool:
 def _safe_class_dirname(class_name: str) -> str:
     safe = "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in class_name.strip())
     return safe or "unknown_class"
+
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+
+def _split_dir_has_images(directory: Path) -> bool:
+    if not directory.is_dir():
+        return False
+    return any(
+        p.is_file() and p.suffix.lower() in _IMAGE_EXTENSIONS for p in directory.iterdir()
+    )
+
+
+def _count_labeled_image_pairs(images_dir: Path, labels_dir: Path) -> int:
+    if not images_dir.is_dir() or not labels_dir.is_dir():
+        return 0
+    count = 0
+    for img in images_dir.iterdir():
+        if not img.is_file() or img.suffix.lower() not in _IMAGE_EXTENSIONS:
+            continue
+        label_path = labels_dir / f"{img.stem}.txt"
+        if label_path.is_file() and label_path.stat().st_size > 0:
+            count += 1
+    return count
+
+
+def _compute_split_sizes(total_count: int, split: Dict[str, Any]) -> tuple[int, int, int]:
+    """
+    Compute train/val/test counts from percentages.
+
+    Tiny datasets often round val to 0; Ultralytics 8.4+ requires a non-empty val
+    source, so reserve at least one validation image when possible.
+    """
+    if total_count <= 0:
+        return 0, 0, 0
+
+    train_pct = int(split.get("train", 80))
+    val_pct = int(split.get("val", 20))
+
+    train_count = int(total_count * train_pct / 100)
+    val_count = int(total_count * val_pct / 100)
+    test_count = total_count - train_count - val_count
+
+    if train_count == 0:
+        train_count = 1
+        if val_count > 0:
+            val_count -= 1
+        elif test_count > 0:
+            test_count -= 1
+
+    if val_pct > 0 and val_count == 0 and total_count >= 2:
+        if train_count > 1:
+            train_count -= 1
+            val_count = 1
+        elif test_count > 0:
+            test_count -= 1
+            val_count = 1
+
+    return train_count, val_count, test_count
+
+
+def _resolve_yolo_val_path(output_dir: Path, *, total_val_count: int) -> str:
+    """Return relative val path for data.yaml, falling back to train when val is empty."""
+    val_dir = output_dir / "images" / "val"
+    if total_val_count > 0 and _split_dir_has_images(val_dir):
+        return "images/val"
+    logger.warning(
+        "Validation split is empty; using train images for val in data.yaml "
+        "(Ultralytics requires at least one validation image)."
+    )
+    return "images/train"
+
+
+def _mirror_classification_val_from_train(output_dir: Path) -> None:
+    """Hard-link train class folders into val when the val split would otherwise be empty."""
+    train_root = output_dir / "train"
+    val_root = output_dir / "val"
+    if not train_root.is_dir():
+        return
+    for class_dir in train_root.iterdir():
+        if not class_dir.is_dir():
+            continue
+        target = val_root / class_dir.name
+        target.mkdir(parents=True, exist_ok=True)
+        for img in class_dir.iterdir():
+            if not img.is_file() or img.suffix.lower() not in _IMAGE_EXTENSIONS:
+                continue
+            link = target / img.name
+            if link.exists():
+                continue
+            try:
+                os.link(img, link)
+            except OSError:
+                shutil.copy2(img, link)
+
+
+def _write_yolo_data_yaml(
+    yaml_path: Path,
+    *,
+    abs_path: Path,
+    train: str,
+    val: str,
+    test: str | None,
+    class_mapping: Dict[str, int],
+    is_segmentation_model: bool,
+) -> None:
+    with open(yaml_path, "w") as f:
+        f.write(f"path: {abs_path}\n")
+        f.write(f"train: {train}\n")
+        f.write(f"val: {val}\n")
+        if test:
+            f.write(f"test: {test}\n")
+        if is_segmentation_model:
+            f.write("task: segment\n")
+        f.write(f"nc: {len(class_mapping)}\n")
+        f.write("names:\n")
+        for name, idx in sorted(class_mapping.items(), key=lambda kv: kv[1]):
+            f.write(f"  {idx}: {name}\n")
 
 
 def _prepare_yolo_classification_dataset(
@@ -188,8 +304,7 @@ def _prepare_yolo_classification_dataset(
                 continue
 
         total_count = len(images)
-        train_count = int(total_count * split["train"] / 100)
-        val_count = int(total_count * split["val"] / 100)
+        train_count, val_count, _test_count = _compute_split_sizes(total_count, split)
         train_images = images[:train_count]
         val_images = images[train_count : train_count + val_count]
         test_images = images[train_count + val_count :]
@@ -259,6 +374,12 @@ def _prepare_yolo_classification_dataset(
         raise ValueError(
             "No images were processed. Classification training requires image-level class labels "
             "(no bounding boxes or polygons). Check that your annotation file is a classification export."
+        )
+
+    if not _split_dir_has_images(output_dir / "val") and _split_dir_has_images(output_dir / "train"):
+        _mirror_classification_val_from_train(output_dir)
+        logger.warning(
+            "Classification val split was empty; mirrored train images into val for Ultralytics."
         )
 
     abs_path = output_dir.absolute()
@@ -422,6 +543,18 @@ def prepare_yolo_dataset(
                     Annotation.annotation_file_id == annotation_file_id
                 ).all()
                 
+                img_width = img.width or 0
+                img_height = img.height or 0
+                if img_width <= 0 or img_height <= 0:
+                    src = resolve_source_image_path(img, dataset_id)
+                    if src and src.exists():
+                        try:
+                            from PIL import Image as PILImage
+                            with PILImage.open(src) as pil_img:
+                                img_width, img_height = pil_img.size
+                        except Exception:
+                            img_width, img_height = 1, 1
+
                 # Check if ANY annotation meets the requirements
                 has_valid_annotation = False
                 for annotation in annotations:
@@ -433,13 +566,9 @@ def prepare_yolo_dataset(
                         if has_seg and has_bbox:
                             has_valid_annotation = True
                             break
-                    else:
-                        # For detection models, just need bbox
-                        has_bbox = (annotation.bbox or 
-                                   (annotation.bbox_x is not None and annotation.bbox_width is not None))
-                        if has_bbox:
-                            has_valid_annotation = True
-                            break
+                    elif _detection_annotation_exportable(annotation, img_width, img_height):
+                        has_valid_annotation = True
+                        break
                 
                 if has_valid_annotation:
                     images_with_annotations.append(img)
@@ -457,11 +586,8 @@ def prepare_yolo_dataset(
                 logger.warning(f"No images with annotations found for dataset {dataset_id} after filtering, skipping")
                 continue
         
-        # Calculate split indices
-        total_count = len(images)
-        train_count = int(total_count * split['train'] / 100)
-        val_count = int(total_count * split['val'] / 100)
-        # test gets the remainder
+        # Calculate split indices (ensure tiny datasets still get a val image when possible)
+        train_count, val_count, _test_count = _compute_split_sizes(len(images), split)
         
         # Split images
         train_images = images[:train_count]
@@ -475,114 +601,82 @@ def prepare_yolo_dataset(
             ('test', test_images, test_images_dir, test_labels_dir)
         ]:
             for image in split_images:
-                # Construct image file path from URL or file_name
-                # Images are stored in projects/{dataset_id}/ directory
-                if image.url:
-                    # URL format: /static/projects/{dataset_id}/{filename}
-                    # or could be absolute path
-                    if image.url.startswith('/static/projects/'):
-                        # Convert URL to file path
-                        src_image_path = Path('projects') / image.url.replace('/static/projects/', '')
-                    elif image.url.startswith('projects/'):
-                        src_image_path = Path(image.url)
-                    else:
-                        # Assume it's just the dataset_id/filename
-                        src_image_path = Path('projects') / str(dataset_id) / image.file_name
-                else:
-                    # Fallback to constructing from dataset_id and file_name
-                    src_image_path = Path('projects') / str(dataset_id) / image.file_name
-                
-                if not src_image_path.exists():
-                    logger.warning(f"Image file not found: {src_image_path}")
+                src_image_path = resolve_source_image_path(image, dataset_id)
+                if src_image_path is None or not src_image_path.exists():
+                    logger.warning(f"Image file not found for image {image.id}: {src_image_path}")
                     continue
-                
-                # Generate safe filename with dataset_id to prevent collisions
-                safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
-                safe_stem = Path(safe_filename).stem
-                dst_image_path = img_dir / safe_filename
-                
-                # Create hard link or copy
-                try:
-                    if not dst_image_path.exists():
-                        os.link(src_image_path, dst_image_path)
-                except:
-                    shutil.copy2(src_image_path, dst_image_path)
-                
-                # Get annotations for this image
+
+                img_width = image.width
+                img_height = image.height
+                if not img_width or not img_height or img_width <= 0 or img_height <= 0:
+                    try:
+                        from PIL import Image as PILImage
+                        with PILImage.open(src_image_path) as pil_img:
+                            img_width, img_height = pil_img.size
+                    except Exception as dim_err:
+                        logger.warning(
+                            f"Could not read image dimensions for {src_image_path}: {dim_err}; using 1x1 fallback"
+                        )
+                        img_width, img_height = 1, 1
+
                 annotations = db.query(Annotation).filter(
                     Annotation.image_id == image.id,
                     Annotation.annotation_file_id == annotation_file_id
                 ).all()
-                
-                # At this point, images without annotations have already been filtered out
-                # during the pre-split filtering step if remove_images_without_annotations is True
+
                 if not annotations:
                     if remove_images_without_annotations:
-                        # This shouldn't happen since we filtered before splitting
-                        logger.warning(f"Image {image.id} has no annotations but wasn't filtered - this is unexpected")
+                        logger.warning(
+                            f"Image {image.id} has no annotations but wasn't filtered - this is unexpected"
+                        )
                         continue
-                    else:
-                        # Create empty label file for images without annotations
-                        label_path = lbl_dir / f"{safe_stem}.txt"
-                        label_path.touch()
-                        total_images[split_name] += 1
-                        continue
-                
-                # Create YOLO format label file
-                label_lines = []
+                    safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
+                    safe_stem = Path(safe_filename).stem
+                    dst_image_path = img_dir / safe_filename
+                    try:
+                        if not dst_image_path.exists():
+                            os.link(src_image_path, dst_image_path)
+                    except OSError:
+                        shutil.copy2(src_image_path, dst_image_path)
+                    (lbl_dir / f"{safe_stem}.txt").touch()
+                    continue
+
+                label_lines: List[str] = []
                 for annotation in annotations:
-                    # Get class ID from mapping
                     ann_class = db.query(AnnotationClass).filter(
                         AnnotationClass.annotation_file_id == annotation_file_id,
                         AnnotationClass.category_id == annotation.category_id
                     ).first()
-                    
+
                     if not ann_class:
                         continue
-                    
+
                     class_id = class_mapping.get(ann_class.class_name)
                     if class_id is None:
                         continue
-                    
-                    # For segmentation models, skip annotations without both segmentation and bbox
+
                     if is_segmentation_model:
                         has_seg = annotation.segmentation and len(annotation.segmentation) > 0
-                        has_bbox = (annotation.bbox or 
+                        has_bbox = (annotation.bbox or
                                    (annotation.bbox_x is not None and annotation.bbox_width is not None))
-                        
                         if not (has_seg and has_bbox):
-                            # Track which type of data is missing
                             if not has_seg and not has_bbox:
                                 skipped_annotations['missing_both'] += 1
                             elif not has_seg:
                                 skipped_annotations['missing_seg'] += 1
                             else:
                                 skipped_annotations['missing_bbox'] += 1
-                            logger.debug(f"Skipping annotation {annotation.id} - missing seg or bbox (has_seg={has_seg}, has_bbox={has_bbox})")
-                            continue
-                    
-                    # Get image dimensions. Fall back to reading the real image size
-                    # if DB metadata is missing, otherwise normalized labels become invalid.
-                    img_width = image.width
-                    img_height = image.height
-                    if not img_width or not img_height or img_width <= 0 or img_height <= 0:
-                        try:
-                            from PIL import Image as PILImage
-                            with PILImage.open(dst_image_path) as pil_img:
-                                img_width, img_height = pil_img.size
-                        except Exception as dim_err:
-                            logger.warning(
-                                f"Could not read image dimensions for {dst_image_path}: {dim_err}; using 1x1 fallback"
+                            logger.debug(
+                                f"Skipping annotation {annotation.id} - missing seg or bbox "
+                                f"(has_seg={has_seg}, has_bbox={has_bbox})"
                             )
-                            img_width, img_height = 1, 1
-                    
+                            continue
+
                     class_name = ann_class.class_name
 
-                    # Segmentation labels only for -seg models; detection models use bboxes.
                     if is_segmentation_model and annotation.segmentation:
                         seg = annotation.segmentation
                         if isinstance(seg, list) and len(seg) > 0:
-                            # Polygon format: [[x1, y1, x2, y2, ...]] or [x1, y1, x2, y2, ...]
                             if isinstance(seg[0], list):
                                 polygon = seg[0]
                             else:
@@ -628,25 +722,34 @@ def prepare_yolo_dataset(
                         class_name=class_name,
                     ):
                         has_bbox_only = True
-                
-                # Write label file (create empty file if no annotations but image is kept)
-                if label_lines:
-                    label_path = lbl_dir / f"{safe_stem}.txt"
-                    with open(label_path, 'w') as f:
-                        f.write('\n'.join(label_lines))
-                    # Track image was processed
-                    stats['total_images'][split_name] += 1
-                    stats['images_processed'] += 1
-                elif not remove_images_without_annotations:
-                    # Create empty label file if we're keeping images without annotations
-                    label_path = lbl_dir / f"{safe_stem}.txt"
-                    label_path.touch()
-                    # Track this image too
-                    stats['total_images'][split_name] += 1
-                    stats['images_processed'] += 1
-                
-                total_images[split_name] += 1
+
+                if not label_lines:
+                    continue
+
+                safe_filename = generate_safe_output_filename(src_image_path.name, image.dataset_id)
+                safe_stem = Path(safe_filename).stem
+                dst_image_path = img_dir / safe_filename
+                try:
+                    if not dst_image_path.exists():
+                        os.link(src_image_path, dst_image_path)
+                except OSError:
+                    shutil.copy2(src_image_path, dst_image_path)
+
+                label_path = lbl_dir / f"{safe_stem}.txt"
+                with open(label_path, 'w') as f:
+                    f.write('\n'.join(label_lines))
+                stats['total_images'][split_name] += 1
+                stats['images_processed'] += 1
     
+    # Count image/label pairs with non-empty labels (not orphan images).
+    for split_name, img_dir, lbl_dir in (
+        ("train", train_images_dir, train_labels_dir),
+        ("val", val_images_dir, val_labels_dir),
+        ("test", test_images_dir, test_labels_dir),
+    ):
+        labeled = _count_labeled_image_pairs(img_dir, lbl_dir)
+        total_images[split_name] = labeled
+        stats["total_images"][split_name] = labeled
     # Log annotation type summary
     logger.info(f"Annotation summary - has_segmentation: {has_segmentation}, has_bbox_only: {has_bbox_only}")
     logger.info(f"Model type: {model_type}, is_segmentation_model: {is_segmentation_model}")
@@ -702,38 +805,43 @@ def prepare_yolo_dataset(
         # If path is relative or doesn't start with /app, prepend /app
         abs_path = Path('/app') / output_dir
     
+    val_rel = _resolve_yolo_val_path(output_dir, total_val_count=total_images["val"])
+    test_rel = "images/test" if total_images["test"] > 0 else None
+
     yaml_content = {
         'path': str(abs_path),
         'train': 'images/train',
-        'val': 'images/val',
-        'test': 'images/test' if total_images['test'] > 0 else None,
+        'val': val_rel,
+        'test': test_rel,
         'names': {idx: name for name, idx in class_mapping.items()},
         'nc': len(class_mapping)
     }
     
-    logger.info(f"Dataset summary: {total_images['train']} train, {total_images['val']} val, {total_images['test']} test images")
+    logger.info(
+        "Dataset summary: %s train, %s val, %s test images; data.yaml val=%s",
+        total_images['train'],
+        total_images['val'],
+        total_images['test'],
+        val_rel,
+    )
     logger.info(f"Classes: {class_mapping}")
     
     yaml_path = output_dir / "data.yaml"
-    with open(yaml_path, 'w') as f:
-        # Write YAML manually for better control
-        f.write(f"path: {yaml_content['path']}\n")
-        f.write(f"train: {yaml_content['train']}\n")
-        f.write(f"val: {yaml_content['val']}\n")
-        if yaml_content['test']:
-            f.write(f"test: {yaml_content['test']}\n")
-        # Add task type for segmentation models
-        if is_segmentation_model:
-            f.write("task: segment\n")
-        f.write(f"nc: {yaml_content['nc']}\n")
-        f.write("names:\n")
-        for idx, name in yaml_content['names'].items():
-            f.write(f"  {idx}: {name}\n")
+    _write_yolo_data_yaml(
+        yaml_path,
+        abs_path=abs_path,
+        train=yaml_content["train"],
+        val=yaml_content["val"],
+        test=yaml_content["test"],
+        class_mapping=class_mapping,
+        is_segmentation_model=is_segmentation_model,
+    )
     
     return {
         'yaml_path': str(yaml_path),
         'class_names': sorted_classes,
         'class_count': len(sorted_classes),
         'image_counts': total_images,
-        'dataset_stats': stats  # Include comprehensive statistics
+        'dataset_stats': stats,
+        'val_data_path': val_rel,
     }

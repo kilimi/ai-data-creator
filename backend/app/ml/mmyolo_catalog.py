@@ -10,8 +10,9 @@ MMYOLO_VALID_SIZES: frozenset = frozenset({"tiny", "s", "m", "l", "x"})
 
 MMYOLO_PRETRAINED_DOWNLOAD_NOTICE = (
     "MMYOLO COCO pretrained weights are not cached under /app/models/mmyolo. "
-    "Run `lai download-models --mmyolo <alias>` (e.g. rtmdet_s) while the worker "
-    "has network access, then retry training."
+    "Run `lai download-models --mmyolo <alias>` (e.g. yolov8_s or rtmdet_s) "
+    "while the worker has network access. YOLOv8 weights fall back to converting "
+    "Ultralytics yolov8*.pt when OpenMMLab mim download is unavailable."
 )
 
 
@@ -167,11 +168,17 @@ def resolve_mmyolo_local_pretrained_checkpoint(config_id: str) -> Optional[Path]
     return None
 
 
-def resolve_mmyolo_pretrained_load_from(config_id: str) -> Optional[str]:
-    """Absolute local .pth path when cached; otherwise the OpenMMLab URL."""
+def resolve_mmyolo_pretrained_local_path(config_id: str) -> Optional[str]:
+    """Absolute local .pth path when cached under /app/models/mmyolo; never a URL."""
     local = resolve_mmyolo_local_pretrained_checkpoint(config_id)
-    if local is not None:
-        return str(local)
+    return str(local) if local is not None else None
+
+
+def resolve_mmyolo_pretrained_load_from(config_id: str) -> Optional[str]:
+    """Absolute local .pth path when cached; otherwise the OpenMMLab URL (metadata only)."""
+    local_path = resolve_mmyolo_pretrained_local_path(config_id)
+    if local_path is not None:
+        return local_path
     return mmyolo_pretrained_checkpoint(config_id)
 
 

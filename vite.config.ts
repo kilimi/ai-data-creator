@@ -64,8 +64,16 @@ const wasmPlugin = () => ({
 // https://vitejs.dev/config/
 export default defineConfig(async ({ mode }) => {
   const { componentTagger } = await import("lovable-tagger");
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "package.json"), "utf8"),
+  ) as { version?: string };
+  const appVersion = process.env.VITE_APP_VERSION || pkg.version || "dev";
+  const isCI = Boolean(process.env.CI);
   
   return {
+    define: {
+      "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
+    },
     server: {
       host: "::",
       port: 8080,
@@ -139,6 +147,14 @@ export default defineConfig(async ({ mode }) => {
       include: ["src/**/*.{test,spec}.{ts,tsx}"],
       exclude: ["tests/**", "node_modules/**", "dist/**"],
       silent: true,
+      // CI runners (~7 GB RAM) OOM with parallel jsdom workers (each can use ~4 GB).
+      ...(isCI && {
+        pool: "forks",
+        maxWorkers: 1,
+        minWorkers: 1,
+        fileParallelism: false,
+        sequence: { concurrent: false },
+      }),
     },
   };
 });

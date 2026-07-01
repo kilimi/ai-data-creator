@@ -3,14 +3,16 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lai"
+name = "laivision"
 version = "0.1.0"
-description = "CLI to install and run the LAI annotation stack via Docker Compose."
+description = "LAI: a platform to train and deploy AI vision models — datasets, annotation, training, and evaluation."
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "LAI maintainers" }]
+authors = [{ name = "Lilita Kiforenko", email = "lki@mmmi.sdu.dk" }]
 license = "AGPL-3.0-only"
-license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md", "licenses/*.txt"]
+# certifi: reliable HTTPS on Windows (avoids broken OS cert store entries).
+dependencies = ["certifi>=2024.2.2"]
+license-files = ["LICENSE"]
 keywords = ["annotation", "docker", "segmentation", "dataset"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -28,11 +30,17 @@ classifiers = [
 lai = "lai.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/lulu/lai"
-Documentation = "https://github.com/lulu/lai/blob/main/website/download.html"
-Repository = "https://github.com/lulu/lai"
-Issues = "https://github.com/lulu/lai/issues"
+Homepage = "https://laivision.dk"
+Documentation = "https://github.com/kilimi/lai/blob/main/README.md"
+Repository = "https://github.com/kilimi/lai"
+Issues = "https://github.com/kilimi/lai/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["lai*"]
+
+[tool.setuptools.exclude-package-data]
+lai = ["bin/*", "lib/*", "include/*", "share/*", "pyvenv.cfg"]
+
+[tool.setuptools.package-data]
+lai = ["bundle/**/*"]

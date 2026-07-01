@@ -2,15 +2,154 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
+from app.ml.predictions import from_ultralytics_result, to_eval_dicts
 from app.models import Annotation, AnnotationFile, Image
 
 logger = logging.getLogger(__name__)
 
 MAX_CM_SAMPLES = 20
+
+
+def _normalize_class_names(names: Any) -> List[str]:
+    if isinstance(names, list):
+        return [str(name) for name in names if str(name).strip()]
+    if isinstance(names, dict):
+        try:
+            items = sorted(names.items(), key=lambda item: int(item[0]))
+        except Exception:
+            items = list(names.items())
+        return [str(value) for _, value in items if str(value).strip()]
+    return []
+
+
+def resolve_evaluation_imgsz(
+    task_metadata: Dict[str, Any],
+    image_size_override: Optional[int] = None,
+) -> Tuple[int, str]:
+    """Resolve inference image size from request, training metadata, or env default."""
+    if image_size_override is not None:
+        try:
+            parsed = int(image_size_override)
+            if parsed > 0:
+                return parsed, "request"
+        except (TypeError, ValueError):
+            pass
+
+    for block_key in ("training_params", "training_config"):
+        block = task_metadata.get(block_key) or {}
+        if not isinstance(block, dict):
+            continue
+        for field in ("image_size", "imgsz"):
+            raw = block.get(field)
+            if raw is None:
+                continue
+            try:
+                parsed = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed, f"{block_key}.{field}"
+
+    for field in ("image_size", "imgsz"):
+        raw = task_metadata.get(field)
+        if raw is None:
+            continue
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed, field
+
+    return int(os.environ.get("LAI_EVAL_IMGSZ", "640") or 640), "env_default"
+
+
+def resolve_evaluation_class_names(model: Any, task_metadata: Dict[str, Any]) -> Tuple[List[str], int]:
+    """
+    Resolve class names and class count for evaluation.
+
+    The checkpoint's model.names / model.nc is authoritative for inference output
+    IDs. Training metadata is used for display names when counts match.
+    """
+    meta_names = _normalize_class_names(
+        task_metadata.get("class_names") or task_metadata.get("classes") or []
+    )
+
+    model_names_raw = getattr(model, "names", None)
+    model_names: List[str] = []
+    if model_names_raw:
+        model_names = _normalize_class_names(model_names_raw)
+
+    nc = 0
+    try:
+        nc = int(getattr(getattr(model, "model", None), "nc", 0) or 0)
+    except (TypeError, ValueError):
+        nc = 0
+    if nc <= 0 and model_names:
+        nc = len(model_names)
+
+    if meta_names and nc > 0 and len(meta_names) == nc:
+        return meta_names, nc
+
+    if model_names and nc > 0:
+        if meta_names and len(meta_names) != nc:
+            logger.warning(
+                "Training class_names count (%s) != model nc (%s); using model.names %s",
+                len(meta_names),
+                nc,
+                model_names,
+            )
+        return model_names, nc
+
+    if meta_names:
+        return meta_names, len(meta_names)
+
+    raise ValueError("No class names found in training task or model checkpoint")
+
+
+def extract_yolo_image_predictions(
+    result: Any,
+    *,
+    image_id: int,
+    num_classes: int,
+    is_segmentation_model: bool,
+    conf_threshold: float = 0.0,
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """
+    Parse Ultralytics Results into evaluation dicts.
+
+    Returns (predictions, raw_box_count, dropped_by_class_filter).
+    """
+    records = from_ultralytics_result(
+        result,
+        image_id=image_id,
+        conf_threshold=conf_threshold,
+    )
+    raw_count = len(records)
+    kept = [rec for rec in records if 0 <= rec.class_id < num_classes]
+    dropped = raw_count - len(kept)
+
+    if is_segmentation_model and kept and result is not None:
+        boxes = getattr(result, "boxes", None)
+        masks = getattr(result, "masks", None)
+        if boxes is not None and masks is not None and hasattr(masks, "xy"):
+            for idx, rec in enumerate(kept):
+                try:
+                    if idx < len(masks.xy):
+                        mask = masks.xy[idx]
+                        if mask is not None and len(mask) > 0:
+                            flat = [float(v) for pt in mask for v in pt[:2]]
+                            if len(flat) >= 6:
+                                rec.segmentation = [flat]
+                except (IndexError, AttributeError, TypeError):
+                    continue
+
+    return to_eval_dicts(kept), raw_count, dropped
 
 
 def load_ground_truth_annotations(

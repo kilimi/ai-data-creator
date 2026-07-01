@@ -1,6 +1,6 @@
 # MMYOLO GPU runtime (artifact image; merged into lai-celery and copied into lai-backend).
-# No download.openmmlab.com — mim install mmcv uses that CDN and fails when OpenMMLab is down.
-# Sources: PyPI (mmengine, mmdet), GitHub (mmcv source, mmyolo), optional wheels/ offline.
+# mmcv: source build by default (GPU-compatible via TORCH_CUDA_ARCH_LIST+PTX); optional prebuilt/offline wheels.
+# Sources: PyPI (mmengine, mmdet), OpenMMLab (mmcv prebuilt), GitHub (mmcv source, mmyolo).
 
 FROM nvidia/cuda:11.3.1-devel-ubuntu20.04
 
@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
     FORCE_CUDA=1 \
     MMCV_WITH_OPS=1 \
-    TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6+PTX" \
+    TORCH_CUDA_ARCH_LIST="6.0 6.1 7.0 7.5 8.0 8.6+PTX" \
     PATH=/opt/conda/bin:$PATH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -32,7 +32,12 @@ RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-py39_24.1.2-0-Linux-x
 
 ARG MMCV_VERSION=2.0.1
 ARG MMCV_BUILD_JOBS=2
-COPY wheels /wheels
+# Prebuilt OpenMMLab wheels (default): fast install, GPUs sm_60–sm_86 (most RTX 20/30).
+# RTX 40xx (sm_89+): set MMCV_USE_PREBUILT=0 and allow 30–60+ min source build, or add a custom wheel under wheels/.
+ARG MMCV_USE_PREBUILT=1
+ARG MMCV_WHEEL_INDEX=https://download.openmmlab.com/mmcv/dist/cu113/torch1.10.0/index.html
+# Optional offline wheels in dockers/backend/wheels/ (.gitkeep keeps COPY valid when empty).
+COPY wheels/ /wheels/
 
 RUN conda create -n mmyolo python=3.8 -y
 
@@ -53,8 +58,13 @@ RUN if ls /wheels/mmengine-*.whl >/dev/null 2>&1; then \
 RUN if ls /wheels/mmcv-*.whl >/dev/null 2>&1; then \
         echo "Installing mmcv from wheels/ (offline)"; \
         PYTHONPATH= ${MMYOLO_ENV}/bin/pip install --no-cache-dir /wheels/mmcv-*.whl; \
+    elif [ "${MMCV_USE_PREBUILT}" = "1" ]; then \
+        echo "Installing mmcv v${MMCV_VERSION} from OpenMMLab prebuilt wheel (sm_60–sm_86)"; \
+        echo "  index: ${MMCV_WHEEL_INDEX}"; \
+        PYTHONPATH= ${MMYOLO_ENV}/bin/pip install --no-cache-dir "mmcv==${MMCV_VERSION}" \
+            -f "${MMCV_WHEEL_INDEX}"; \
     else \
-        echo "Building mmcv v${MMCV_VERSION} from GitHub (no OpenMMLab CDN; 20-60+ min)"; \
+        echo "Building mmcv v${MMCV_VERSION} from GitHub for GPU arch ${TORCH_CUDA_ARCH_LIST} (20-60+ min)"; \
         git clone --depth 1 --branch "v${MMCV_VERSION}" https://github.com/open-mmlab/mmcv.git /tmp/mmcv \
         && MAX_JOBS=${MMCV_BUILD_JOBS} PYTHONPATH= ${MMYOLO_ENV}/bin/pip install --no-cache-dir \
             --no-build-isolation -v /tmp/mmcv \
@@ -69,9 +79,14 @@ RUN PYTHONPATH= ${MMYOLO_ENV}/bin/pip install --no-cache-dir -r /opt/mmyolo/requ
 
 RUN PYTHONPATH= ${MMYOLO_ENV}/bin/pip install --no-cache-dir -e /opt/mmyolo
 
-RUN ${MMYOLO_PYTHON} -c "import mmengine, mmcv, mmdet, mmyolo; print('mmyolo stack ok', mmcv.__version__)"
+# RTMDet-R (oriented) requires mmrotate for RotLocalVisualizer, RotatedIoULoss, metrics, etc.
+RUN PYTHONPATH= ${MMYOLO_ENV}/bin/pip install --no-cache-dir "mmrotate==1.0.0rc1"
 
+RUN ${MMYOLO_PYTHON} -c "import mmengine, mmcv, mmdet, mmyolo, mmrotate; print('mmyolo stack ok', mmcv.__version__, mmrotate.__version__)"
+
+# Verify PyTorch loads with GLIBC_TUNABLES (worker subprocess uses this). Do not call
+# init_detector here — mmcv CPU ops can SIGILL (exit 132) on some Docker build VMs (e.g. Windows).
 RUN env -u PYTHONPATH GLIBC_TUNABLES=glibc.rtld.execstack=2 \
-    ${MMYOLO_PYTHON} -c "import torch; from mmdet.apis import init_detector; print('mmyolo torch ok', torch.__version__)"
+    ${MMYOLO_PYTHON} -c "import torch; print('mmyolo torch ok', torch.__version__)"
 
 CMD ["sleep", "infinity"]

@@ -19,7 +19,7 @@ import { ImageDetailModal } from "@/components/ImageDetailModal";
 import { AnnotationChoiceModal } from "@/components/AnnotationChoiceModal";
 import { AddImageTabDialog } from "@/components/AddImageTabDialog";
 import { ChunkedImageCollectionUploadDialog } from "@/components/ChunkedImageCollectionUploadDialog";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { DatasetUiMode } from "@/hooks/useDatasetSettings";
 
 interface TabbedImagesContentProps {
@@ -79,6 +79,7 @@ export function TabbedImagesContent({
   const [isAnnotationChoiceModalOpen, setIsAnnotationChoiceModalOpen] = useState(false);
   const [isAddTabDialogOpen, setIsAddTabDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const gridScrollRef = useRef<HTMLDivElement>(null);
   const [uploadingTabId, setUploadingTabId] = useState<string>("");
   const [uploadingTabName, setUploadingTabName] = useState<string>("");
   const [isUploading, setIsUploading] = useState(false);
@@ -215,25 +216,9 @@ export function TabbedImagesContent({
   };
 
   const selectedImage = selectedClickedImage || (selectedImageIndex !== null ? activeCollectionImages[selectedImageIndex] : null);
-  // Match annotations for modal: by direct imageId, or by groupId / filename across all collections
+  // Annotations are collection-specific; do not mirror from peer layers (RGB/depth).
   const selectedImageAnnotations = selectedImage
-    ? (() => {
-        const direct = annotations.filter((anno) => String(anno.imageId) === String(selectedImage.id));
-        const baseName = (n: string) => n.includes('.') ? n.slice(0, n.lastIndexOf('.')).toLowerCase() : n.toLowerCase();
-        const sameGroupIds = new Set(
-          allImages
-            .filter(img => {
-              if (String(img.id) === String(selectedImage.id)) return false;
-              if (selectedImage.groupId && img.groupId) return img.groupId === selectedImage.groupId;
-              return baseName(img.fileName) === baseName(selectedImage.fileName);
-            })
-            .map(img => String(img.id))
-        );
-        const crossCollection = sameGroupIds.size > 0
-          ? annotations.filter(ann => sameGroupIds.has(String(ann.imageId)) && !direct.some(d => d.id === ann.id))
-          : [];
-        return [...direct, ...crossCollection];
-      })()
+    ? annotations.filter((anno) => String(anno.imageId) === String(selectedImage.id))
     : [];
 
   const annotationsWithFileName = annotations.map((ann) => ({
@@ -426,11 +411,12 @@ export function TabbedImagesContent({
                 {/* Images Grid */}
                 <div className="flex-1 min-h-0">
                   <div className="bg-card/20 rounded-lg border border-border/30 min-h-[400px]">
-                    <ScrollArea className="h-[calc(100vh-400px)]">
+                    <ScrollArea className="h-[calc(100vh-400px)]" viewportRef={gridScrollRef}>
                       <div className="p-4">
                         <ImagesGrid
                           images={filteredImages}
                           imageSize={imageSize}
+                          scrollElementRef={gridScrollRef}
                           onOpenUploadDialog={() => handleUploadClick(collection.id)}
                           onOpenVideoUploadDialog={
                             onOpenVideoUploadDialog
@@ -441,7 +427,6 @@ export function TabbedImagesContent({
                           onImageClick={handleImageClick}
                           annotations={annotationsWithFileName}
                           annotationFiles={annotationFiles}
-                          allCollectionImages={allImages}
                         />
                       </div>
                     </ScrollArea>

@@ -1,199 +1,203 @@
 # LAI
 
-Annotation and dataset stack. The **`lai`** CLI drives **Docker Compose** (Docker Engine + Compose **v2.24+** required).
+[![CI](https://github.com/kilimi/lai/actions/workflows/ci.yml/badge.svg)](https://github.com/kilimi/lai/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/laivision?label=PyPI)](https://pypi.org/project/laivision/)
+[![Docker](https://img.shields.io/docker/v/luluray/lai-backend?label=Docker%20Hub)](https://hub.docker.com/r/luluray/lai-backend)
 
-## Install (end users — pull-only)
+**[laivision.dk](https://laivision.dk)** — project site, workflow overview, and tutorials.
 
-No git clone or image builds required. See [website/download.html](website/download.html) for full docs.
+Self-hosted **computer vision studio**: datasets, SAM-assisted annotation, training (YOLO / MMYOLO / RT-DETR), evaluation, and export.
 
-```bash
-pip install lai          # or: pipx install lai
-lai install-gui          # data folder, port, CPU vs GPU tier
-lai pull                 # pull pre-built images from GHCR
-lai up                   # start stack
+Install a small CLI from **PyPI**, pull pre-built images from **Docker Hub**, and run everything with **`lai`**. No git clone required.
+
+**Tested on:** Linux (Ubuntu) and Windows 10/11 (Docker Desktop + WSL2).
+
+---
+
+## Requirements
+
+| Requirement | Notes |
+|-------------|--------|
+| **OS** | **Linux** or **Windows 10/11** (see platform notes below) |
+| **Docker Engine** + **Compose v2.24+** | `docker compose version` must work |
+| **Python 3.10–3.12** | For the `lai` CLI only — not for running the app itself |
+| **RAM** | 8 GB minimum · 16 GB+ recommended (32 GB with GPU tier) |
+| **Disk** | ~5 GB (CPU stack) · ~20–30 GB (GPU images + models) |
+| **Browser** | For `lai install-gui` and the studio UI |
+| **NVIDIA GPU** *(optional)* | Training, auto-annotate, SAM — GPU tier + [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) (Linux) or WSL2 GPU passthrough (Windows) |
+
+You do **not** need Node.js, a git checkout, or local image builds for the quick start.
+
+### Linux
+
+- [Docker Engine](https://docs.docker.com/engine/install/) + Compose plugin
+- Install CLI with [pipx](https://pipx.pypa.io/) or a venv (recommended on Debian/Ubuntu — do not use system `pip`; [PEP 668](https://peps.python.org/pep-0668/))
+
+### Windows
+
+- [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/) with **WSL2** backend
+- `lai install-gui` works in any browser; terminal `lai install` needs **Git Bash** or **WSL**
+- GPU tier: enable WSL2 integration in Docker Desktop and install NVIDIA drivers for WSL
+
+---
+
+## Quick start
+
+```mermaid
+flowchart LR
+  A["① pip install laivision"] --> B["② lai install-gui"]
+  B --> C["③ lai up"]
+  C --> D["④ lai download-models"]
+  D --> E["Open localhost:8089"]
 ```
 
-Open **`http://localhost:<WEB_PORT>`** (default **8089**). Stop: `lai down`. Upgrade: `lai upgrade`.
-
-**Requires:** Docker Engine + Compose **v2.24+**. GPU tier needs NVIDIA Container Toolkit.
-
-## Develop from source
+### ① Install the CLI
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -U pip && pip install -e .
-
-lai install-gui    # browser wizard: data directory + port (or: lai install)
-lai up             # docker compose up -d (no rebuild)
-lai up --build     # rebuild local images first
+pip install laivision
+# recommended:  pipx install laivision
 ```
 
-**On Debian/Ubuntu:** do not `pip install` on system Python (PEP 668). Use the venv above or **`pipx install -e .`**.
+Installs the **`lai`** command and embeds Docker Compose files inside the package. Your settings live in **`~/.config/lai/.env`** (not in site-packages), so upgrades do not overwrite them.
 
-## Develop the web UI only
+---
+
+### ② First-time setup
 
 ```bash
-npm ci
-npm run dev
+lai install-gui
 ```
 
-Uses Vite (see `package.json`). The full app runs in Docker via `lai up`.
+Opens a **browser wizard** on `http://127.0.0.1:…` where you choose:
 
-## Repo layout
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| Data directory | `~/lai-data` | Databases, datasets, projects, model cache |
+| Web port | `8089` | UI in your browser |
+| GPU tier | off | Enables `worker-gpu` + `sam_service` (NVIDIA required) |
+| SAM 3 folder | `~/lai-data/sam3-models` | Optional checkpoint path (SAM 2 works without it) |
+| DINOv3 folder | `~/lai-data/dinov3-models` | INSID3 weights (ViT-B from [Meta CDN](https://dl.fbaipublicfiles.com/dinov3/dinov3_vitb16/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth) or `python backend/scripts/download_dinov3_models.py`) |
 
-- `src/` — React frontend
-- `backend/` — API, workers, database migrations
-- `dockers/` — Dockerfiles and Compose stack (`docker-compose.yml` at repo root includes `dockers/`)
-- `lai/` — Python CLI (`pip install -e .`)
-- `deploy/` — nginx config for the frontend image
-- `scripts/` — `install.sh`, SAM check helper
+Terminal alternative: `lai install` or `lai install --yes` for non-interactive defaults.
 
-## Background workers
+---
 
-CPU tasks (`worker-general`) and GPU tasks (`worker-gpu`) use separate Docker images and Celery queues. See [docs/WORKERS.md](docs/WORKERS.md) and [docs/BACKGROUND_TASKS.md](docs/BACKGROUND_TASKS.md) (production requires Celery workers).
-
-## Database
-
-Schema policy (`LAI_DB_AUTO_CREATE`, Alembic on container start): [docs/DATABASE.md](docs/DATABASE.md).
-
-Service layer map: [docs/BACKGROUND_TASKS.md](docs/BACKGROUND_TASKS.md#service-layer-p1).
+### ③ Start the stack
 
 ```bash
-docker compose build worker-general worker-gpu
-docker compose up -d worker-general worker-gpu celery-beat
+lai up
 ```
 
-## Tests
+- Pulls images from Docker Hub (`luluray/lai-*`) if they are not local yet  
+- Starts database, API, workers, and web UI  
+- First run may take several minutes while images download  
 
-Run **unit and integration tests on your host** (repo checkout + venv / Node). Do **not** run them inside production Compose images (`backend`, `web`, `worker-*`) — those images omit dev tools (`pytest`, Vitest, Playwright).
-
-**E2E** needs the **API stack in Docker** (`backend`, `db`, `redis`, …). Playwright starts the **Vite dev server on the host** (`:8080`), not the `web` nginx container (`:8089`).
-
-### Prerequisites
-
-| Suite | Host needs | Docker stack (`lai up`) |
-|--------|------------|-------------------------|
-| Frontend unit (Vitest) | Node 18+, `npm ci` | No |
-| Python (`tests/python/`) | Python 3.10+, venv, `pip install -r backend/requirements-backend.txt pytest` | No (most tests); API tests use in-memory SQLite |
-| E2E (Playwright) | Node 18+, `npm ci`, `npx playwright install chromium` | **Yes** — API reachable at `http://localhost:9999` |
-
-From the **repository root** (directory that contains `docker-compose.yml`).
-
-### Python tests (`tests/python/`)
-
-On the **host** (recommended):
+Then run **step ④** (`lai download-models`) before training or auto-annotate. You can open **`http://localhost:8089`** (or the port you chose) while weights download.
 
 ```bash
-python3 -m venv .venv
-# Windows: .venv\Scripts\activate
-source .venv/bin/activate
-
-pip install -U pip
-pip install -r backend/requirements-backend.txt pytest
-
-# All Python tests
-pytest tests/python/
-pytest tests/python -q -m "not training_smoke"
-# GPU training smoke (5 epochs on tests/python/test_dataset/car_dataset):
-# worker-gpu: backend is /app; tests are mounted at /tests (see dockers/backend/docker-compose.yml).
-# Recreate worker after compose changes: docker compose up -d worker-gpu
-#
-# PowerShell (exec does NOT support -v; volume is in compose):
-#   docker compose exec -e LAI_RUN_TRAINING_SMOKE=1 -e LAI_BACKEND_DIR=/app worker-gpu bash -lc 'pip install -q pytest && pytest /tests/python/test_training_smoke_all_models.py -m training_smoke -v'
-# MMYOLO only:
-#   docker compose exec -e LAI_RUN_TRAINING_SMOKE=1 -e LAI_BACKEND_DIR=/app -e LAI_TRAINING_SMOKE_MODELS=mmyolo/rtmdet_s worker-gpu bash -lc 'pip install -q pytest && pytest /tests/python/test_training_smoke_all_models.py -m training_smoke -v'
-
-# Examples
-pytest tests/python/test_projects_api.py
-pytest tests/python/test_celery_*.py -q
-
-`tests/python/conftest.py` adds `backend/` to `PYTHONPATH`; you do **not** need `docker compose exec` into `lai-backend-1` for these.
-
-Optional — run inside the **backend container** only for debugging (install pytest into the running container; not persisted in the image):
-
-```bash
-docker compose exec backend pip install pytest
-docker compose exec backend pytest /app/../tests/python/   # only if tests are bind-mounted
+lai down          # stop containers
+lai doctor        # version, Docker checks, bundle path
+lai upgrade       # after pip install -U laivision
 ```
 
-With `docker-compose.code-mount.yml` enabled, prefer host `pytest` instead.
+---
 
-### Frontend unit tests (Vitest, `npm`)
-
-On the **host**, repo root:
+### ④ Download foundation models *(required — run after `lai up`)*
 
 ```bash
-npm ci
-
-npm run tests              # single run (CI-style)
-npm run test               # watch mode
-npm run test:coverage
-
-# Scope examples
-npm run tests -- src/lib/projects-list.test.ts
-npm run tests -- src/tests/pages/Index.test.tsx
+lai download-models
 ```
 
-Config: `vite.config.ts` (`test` section). No container required.
+Downloads the weights LAI needs for training, auto-annotate, and related workflows into your data directory (`$LAI_DATA_DIR/models` and `ai_models/`). **The studio is not fully usable until this finishes** — without these files, training and auto-annotate will fail or hang waiting for models.
 
-### End-to-end tests (Playwright, `tests/e2e/`)
-
-On the **host**, with the **stack up**:
+Run it once after the stack is up (containers must be running). You can narrow what is fetched:
 
 ```bash
-lai up          # or: docker compose up -d db redis backend
-# API must answer: curl http://localhost:9999/health-check
-
-npm ci
-npx playwright install chromium
-
-npm run test:e2e
-
-# Project page flows only
-npx playwright test tests/e2e/projects
-npx playwright test tests/e2e/test-navigation.spec.ts
+lai download-models --yolo yolov8n.pt      # single Ultralytics weight
+lai download-models --mmyolo minimal         # MMYOLO pretrained checkpoints
+lai download-models --depth minimal          # depth estimation ONNX
 ```
 
-How it works:
+Use `lai download-models --help` for the full matrix. Re-run anytime to add more weights.
 
-- **Global setup** calls `DELETE http://localhost:9999/database/clear` on the running **backend** service (container `lai-backend-1`, host port **9999**).
-- Playwright’s **webServer** runs `npm run dev` → UI at **`http://localhost:8080`** (proxies `/projects`, `/datasets`, … to the API).
-- Override API URL: `TEST_API_URL=http://127.0.0.1:9999`
-- Override UI URL: `TEST_WEB_URL` or `PLAYWRIGHT_BASE_URL` (if not using the built-in Vite server).
+---
 
-Do **not** point E2E only at the `web` service (`:8089`) unless you set `PLAYWRIGHT_BASE_URL` and skip `webServer`; the default flow expects Vite on **8080** + API on **9999**.
+## Optional extras
 
-Workers (`worker-general`, `worker-gpu`) are **not** used to run these test commands.
-
-### Run everything (host)
+**SAM 3** — SAM 2 is included. For SAM 3, place a checkpoint (e.g. from [Hugging Face](https://huggingface.co/facebook/sam3)) at the path from the wizard, then:
 
 ```bash
-pytest tests/python/ && npm run tests && npm run test:e2e
+lai restart sam_service
 ```
 
-Or: `npm run test:all` (Vitest + Playwright; run `pytest` separately).
+**INSID3 (DINOv3)** — *From example* segmentation uses DINOv3 **ViT-B** weights in the folder from install (`DINOV3_WEIGHTS_HOST_PATH`). Default file: `dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth` (~330 MB). Download via `python backend/scripts/download_dinov3_models.py` or [Meta CDN](https://dl.fbaipublicfiles.com/dinov3/dinov3_vitb16/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth). Do not use a ViT-S (`vits16`, 384-dim) file renamed as `vitb16`. Then restart `sam_service`.
 
-### Marketing / demo flows
+**GPU check** (if GPU tier is enabled):
 
 ```bash
-npx playwright test --config=playwright.marketing.config.ts
+docker compose exec worker-gpu nvidia-smi
 ```
 
-Produces screenshots and video under `docs/flows/` (requires API on `:9999` and Vite on `:8080`).
+---
 
-See **GPU training smoke** under [Tests](#tests) above.
+## Where things live
+
+| Path | Contents |
+|------|----------|
+| `~/.config/lai/.env` | Ports, data dir, Docker image tags |
+| `~/lai-data/` *(default)* | Postgres/Redis/Mongo data, projects, models |
+| `~/lai-data/backups/` | Manual backup snapshots (see below) |
+| PyPI package `lai/bundle/` | Read-only compose files (do not edit) |
+
+---
+
+## Backup & restore
+
+LAI can back up **PostgreSQL** and **project files** (`/app/projects`) to local disk when you click **Run Backup** in Settings. This is separate from the JSON/ZIP export in Settings → Database Manager.
+
+### Location
+
+| Host | Container |
+|------|-----------|
+| `$LAI_DATA_DIR/backups/` (default `~/lai-data/backups/`) | `/app/backups` |
+
+To store backups elsewhere, add `BACKUP_PATH=/your/path` to `~/.config/lai/.env`, then run `lai down` and `lai up`. The path is mounted into backend and worker containers.
+
+### Create a backup
+
+1. Open **Settings → Backups**.
+2. **Subdirectory** is optional — leave empty to use the root of the backup directory (e.g. `~/lai-data/backups/`).
+3. Set retention (days), then **Save Settings**.
+4. Click **Run Backup**, or enable **Automatic backups** with a frequency (hours).
+
+Each snapshot is a folder like `backup_YYYYMMDD_HHMMSS/` containing `database/*.dump` and project files.
+
+Backups run on `worker-general` (not the API). Automatic runs are triggered by Celery Beat every 15 minutes when the schedule is due.
+
+### Restore from a snapshot
+
+1. Stop training and other long-running jobs.
+2. In **Settings → Backups**, find a **completed** snapshot and click **Restore**.
+3. Choose database and/or project files, confirm, and type `RESTORE`.
+4. When finished, verify projects and data in the UI.
+5. Previous project files are renamed to `projects.pre_restore_*` under your data directory — delete that folder once you are satisfied.
+
+Restore the **most recent** completed snapshot when possible. Older incremental snapshots may be incomplete if newer backups were deleted.
+
+### Disaster recovery
+
+Copy the entire `$LAI_DATA_DIR` directory off-host regularly (external drive, NAS, etc.). Off-site sync (S3, restic) is not built into LAI yet.
+
+**Not included in snapshot backup v1:** FiftyOne/MongoDB metadata, Redis, training runs (`/app/runs`), or legacy `/app/data` paths. Use database export or separate `mongodump` if you need those.
+
+---
+
+## Advanced setup
+
+**Git checkout, building images locally, running tests, maintainer releases** → see **[README_advanced.md](README_advanced.md)**.
+
+---
 
 ## License
 
-This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
-
-| Component | License | Details |
-|-----------|---------|---------|
-| LAI + Ultralytics YOLO | AGPL-3.0 | [LICENSE](LICENSE) — [Ultralytics Enterprise](https://www.ultralytics.com/license) for closed-source use |
-| MMYOLO / OpenMMLab | GPL-3.0 | [licenses/GPL-3.0.txt](licenses/GPL-3.0.txt) |
-| SAM 2 | Apache-2.0 | [licenses/Apache-2.0.txt](licenses/Apache-2.0.txt) |
-| SAM 3 | Meta SAM License | [licenses/SAM-3-Meta.txt](licenses/SAM-3-Meta.txt) |
-
-Full attribution and redistribution notes: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [NOTICE](NOTICE).
-
-If you distribute Docker images or releases that bundle these ML runtimes, include the license files above and comply with each upstream license (especially AGPL-3.0 for YOLO, GPL-3.0 for MMYOLO, and Meta’s SAM License for SAM 3).
+[AGPL-3.0](LICENSE) — bundled ML runtimes (YOLO, MMYOLO, SAM) have additional upstream licenses. Details in [README_advanced.md#license](README_advanced.md#license).

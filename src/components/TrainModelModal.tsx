@@ -52,6 +52,25 @@ import {
   filterAnnotationFilesForTrainingTask,
   mapAnnotationFileForTrainingPicker,
 } from '@/utils/annotations';
+import type { PickerAnnotationFile } from '@/components/DatasetEvalPicker';
+
+function mapApiAnnotationToPickerFile(ann: any): PickerAnnotationFile {
+  const mapped = mapAnnotationFileForTrainingPicker({
+    id: ann.id || ann.name,
+    name: ann.name,
+    type: ann.type || ann.annotation_type || ann.format || ann.file_type || ann.kind,
+    created_at: ann.created_at || ann.updated_at,
+  });
+  return {
+    id: mapped.id,
+    name: mapped.name,
+    classes: [],
+    taskType: mapped.taskType,
+    annotationType: mapped.annotationType,
+    modifiedAt: mapped.modifiedAt,
+    annotationCount: ann.annotation_count,
+  };
+}
 
 interface TrainModelModalProps {
   open: boolean;
@@ -94,6 +113,23 @@ interface ModelConfig {
 
 type TrainTask = 'detect' | 'segment' | 'oriented' | 'classify';
 type DeployTarget = 'general' | 'edge-drone';
+type TrainModelKey = 'yolo' | 'rf-detr' | 'mmyolo';
+
+function defaultTrainingEpochs(model: TrainModelKey | string | null | undefined): number {
+  return model === 'mmyolo' ? 300 : 100;
+}
+
+function resolvedTrainingEpochs(
+  model: TrainModelKey | string | null | undefined,
+  settings: { epochs?: number | string | null },
+): number {
+  const raw = settings?.epochs;
+  const n = typeof raw === 'string' ? Number(raw) : raw;
+  if (typeof n === 'number' && Number.isFinite(n) && n > 0) {
+    return Math.round(n);
+  }
+  return defaultTrainingEpochs(model);
+}
 
 const TASK_LABELS: Record<TrainTask, string> = {
   detect: 'Detection (boxes)',
@@ -240,6 +276,26 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   
   // Unique ID counter for generating collision-free IDs
   const idCounterRef = useRef(0);
+  const [datasetAnnotationFiles, setDatasetAnnotationFiles] = useState<
+    Map<number, PickerAnnotationFile[]>
+  >(new Map());
+
+  // Preload annotation file metadata (with types) for all datasets when training opens.
+  useEffect(() => {
+    if (!open || !api || datasets.length === 0) return;
+    datasets.forEach((dataset) => {
+      void (async () => {
+        try {
+          const response = await api.getAnnotations(dataset.id);
+          if (!response.success || !response.data) return;
+          const files = response.data.map(mapApiAnnotationToPickerFile);
+          setDatasetAnnotationFiles((prev) => new Map(prev).set(dataset.id, files));
+        } catch (error) {
+          console.error(`Error preloading annotations for dataset ${dataset.id}:`, error);
+        }
+      })();
+    });
+  }, [open, datasets, api]);
 
   // Training started dialog state
   const [showTrainingStarted, setShowTrainingStarted] = useState(false);
@@ -401,62 +457,68 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
       if (abortController.signal.aborted || !isMountedRef.current) return;
       
       const annotations = annotationsResponse.success && annotationsResponse.data
-        ? filterAnnotationFilesForTrainingTask(
-            annotationsResponse.data.map((ann: any) =>
-              mapAnnotationFileForTrainingPicker({
-                id: ann.id || ann.name,
-                name: ann.name,
-                type: ann.type || ann.annotation_type || ann.format || ann.file_type || ann.kind,
-                created_at: ann.created_at || ann.updated_at,
-              }),
-            ),
-            requiredAnnotationTaskType,
-          ).map((ann) => ({
-            id: ann.id,
-            name: ann.name,
-            created_at: ann.modifiedAt || null,
-            type: ann.annotationType,
-          }))
+        ? annotationsResponse.data.map((ann: any) => {
+            const mapped = mapApiAnnotationToPickerFile(ann);
+            return {
+              id: mapped.id,
+              name: mapped.name,
+              created_at: mapped.modifiedAt || null,
+              type: mapped.annotationType,
+            };
+          })
         : [];
-      
+
+      if (isMountedRef.current && annotationsResponse.data) {
+        setDatasetAnnotationFiles((prev) =>
+          new Map(prev).set(datasetId, annotationsResponse.data!.map(mapApiAnnotationToPickerFile)),
+        );
+      }
+
+      const compatibleForTask = filterAnnotationFilesForTrainingTask(
+        annotations.map((a) => ({
+          id: a.id,
+          name: a.name,
+          type: a.type,
+          annotationType: a.type,
+        })),
+        requiredAnnotationTaskType,
+      );
+
       // Update the selection with fetched data and auto-select best defaults
       if (isMountedRef.current) {
         setSelectedDatasets(prev => prev.map(sel => {
           if (sel.id === selectionId) {
-            const updatedSel = { 
-              ...sel, 
+            const updatedSel = {
+              ...sel,
               imageCollections: collections,
-              annotations: annotations,
+              annotations,
               loadingCollections: false,
-              loadingAnnotations: false
+              loadingAnnotations: false,
             };
-            
-            // Always pick first collection if current is missing/invalid
-            const isImageCollectionValid = updatedSel.imageCollection && collections.includes(updatedSel.imageCollection);
+
+            const isImageCollectionValid =
+              updatedSel.imageCollection && collections.includes(updatedSel.imageCollection);
             if (!isImageCollectionValid && collections.length > 0) {
               updatedSel.imageCollection = collections[0];
             }
-            
-            // Pick latest compatible annotation when current is missing/invalid
+
             const isAnnotationValid =
               updatedSel.annotation &&
-              annotations.find((a: any) => a.id === updatedSel.annotation);
-            if (!isAnnotationValid && annotations.length > 0) {
-              const sorted = [...annotations].sort((a: any, b: any) => {
-                if (!a.created_at && !b.created_at) return 0;
-                if (!a.created_at) return 1;
-                if (!b.created_at) return -1;
-                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+              compatibleForTask.some((a) => a.id === updatedSel.annotation);
+            if (!isAnnotationValid && compatibleForTask.length > 0) {
+              const sorted = [...compatibleForTask].sort((a, b) => {
+                const aDate = annotations.find((x) => x.id === a.id)?.created_at;
+                const bDate = annotations.find((x) => x.id === b.id)?.created_at;
+                if (!aDate && !bDate) return 0;
+                if (!aDate) return 1;
+                if (!bDate) return -1;
+                return new Date(bDate).getTime() - new Date(aDate).getTime();
               });
               updatedSel.annotation = sorted[0].id;
-            } else if (
-              updatedSel.annotation &&
-              !isAnnotationValid &&
-              annotations.length === 0
-            ) {
+            } else if (updatedSel.annotation && !isAnnotationValid) {
               updatedSel.annotation = '';
             }
-            
+
             return updatedSel;
           }
           return sel;
@@ -568,32 +630,20 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   // ── Picker integration ────────────────────────────────────────────────────
   const pickerDatasets: PickerDataset[] = useMemo(() => {
     return datasets.map(d => {
+      const cachedFiles = datasetAnnotationFiles.get(d.id) ?? [];
       const sel = selectedDatasets.find(s => s.dataset.id === d.id);
-      const annotationFilesFromProps = filterAnnotationFilesForTrainingTask(
-        (d.annotation_files || []).map((f) =>
-          mapAnnotationFileForTrainingPicker({
-            id: f.id,
-            name: f.name || f.file_name,
-            file_name: f.file_name,
-            type: f.type,
-            created_at: f.created_at,
-          }),
-        ),
-        requiredAnnotationTaskType,
-      );
-      const annotationFiles = sel
-        ? filterAnnotationFilesForTrainingTask(
-            sel.annotations.map((a) =>
-              mapAnnotationFileForTrainingPicker({
-                id: a.id,
-                name: a.name,
-                type: a.type,
-                created_at: (a as any).created_at,
+      const annotationFiles: PickerAnnotationFile[] =
+        cachedFiles.length > 0
+          ? cachedFiles
+          : (d.annotation_files || []).map((f) =>
+              mapApiAnnotationToPickerFile({
+                id: f.id,
+                name: f.name || f.file_name,
+                type: f.type,
+                created_at: f.created_at,
+                annotation_count: f.annotation_count,
               }),
-            ),
-            requiredAnnotationTaskType,
-          )
-        : annotationFilesFromProps;
+            );
       const collections = sel
         ? sel.imageCollections.map(c => ({ id: c, name: c }))
         : [];
@@ -602,14 +652,14 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
         name: d.name,
         description: d.description || undefined,
         imageCount: d.image_count ?? 0,
-        annotationFileCount: annotationFiles.length,
+        annotationFileCount: d.annotation_file_count ?? annotationFiles.length,
         thumbnailUrl: resolveBackendMediaUrl(d.thumbnailUrl) ?? d.thumbnailUrl,
         annotationFiles,
         collections,
         tags: d.tags,
       };
     });
-  }, [datasets, selectedDatasets, requiredAnnotationTaskType]);
+  }, [datasets, selectedDatasets, datasetAnnotationFiles]);
 
   const pickerGroups: PickerGroup[] = useMemo(
     () => datasetGroups.map(g => ({
@@ -895,6 +945,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
 
       let response;
       let modelName = '';
+      const trainingEpochs = resolvedTrainingEpochs(selectedModel, modelSettings);
 
       if (selectedModel === 'yolo') {
         // Always derive model_type from the active task selection in this modal.
@@ -922,7 +973,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           project_id: parseInt(projectId),
           dataset_configs: datasetConfigs,
           model_type: modelType,
-          epochs: modelSettings.epochs || 100,
+          epochs: trainingEpochs,
           batch_size: modelSettings.batchSize || 16,
           image_size: modelSettings.imageSize || 640,
           device: modelSettings.device || '0',
@@ -955,7 +1006,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           project_id: parseInt(projectId),
           dataset_configs: datasetConfigs,
           model_type: modelType.endsWith('.pt') ? modelType : `${modelType}.pt`,
-          epochs: modelSettings.epochs || 100,
+          epochs: trainingEpochs,
           batch_size: modelSettings.batchSize || 16,
           image_size: modelSettings.imageSize || 640,
           device: modelSettings.device || '0',
@@ -990,7 +1041,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           arch,
           size,
           task: mmyoloTask,
-          epochs: modelSettings.epochs || 300,
+          epochs: trainingEpochs,
           batch_size: modelSettings.batchSize || 16,
           image_size: modelSettings.imageSize || 640,
           device: modelSettings.device || '0',
@@ -1032,7 +1083,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
           taskId: taskId || 'unknown',
           modelName: modelName,
           datasetsCount: selectedDatasets.length,
-          epochs: modelSettings.epochs || 100,
+          epochs: trainingEpochs,
           weightsDownloadNotice: downloadNotice
         });
 
@@ -1352,7 +1403,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto bg-background z-50">
+        <DialogContent className="w-[min(96vw,1680px)] max-w-none h-[min(92vh,1200px)] overflow-y-auto bg-background z-50">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Brain className="h-5 w-5" />
@@ -1437,6 +1488,8 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                   datasets={pickerDatasets}
                   groups={pickerGroups}
                   modelClasses={[]}
+                  pickerMode="train"
+                  requireAnnotationSelection={true}
                   requiredTaskType={requiredAnnotationTaskType}
                   value={pickerValue}
                   onChange={handlePickerChange}
@@ -2245,7 +2298,7 @@ export function TrainModelModal({ open, onOpenChange, datasets = [], datasetGrou
                         )}
                         <div>
                           <span className="text-muted-foreground text-xs">Epochs</span>
-                          <p className="font-medium">{modelSettings.epochs || 100}</p>
+                          <p className="font-medium">{resolvedTrainingEpochs(selectedModel, modelSettings)}</p>
                         </div>
                         <div>
                           <span className="text-muted-foreground text-xs">Datasets</span>

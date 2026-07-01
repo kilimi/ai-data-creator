@@ -1,13 +1,16 @@
 import { Link, useLocation, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Settings, Sparkles, Sun, Moon, Cpu, Loader2 } from "lucide-react";
+import { Settings, Sun, Moon, Cpu, Loader2, BookOpen } from "lucide-react";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { TasksPopover } from "./TasksPopover";
 import { useTheme } from "./ThemeProvider";
 import { useApi } from "@/hooks/use-api";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import { LAI_TUTORIALS_URL } from "@/constants/externalLinks";
+
+const APP_LOGO_SRC = "/lai_logo.png";
 
 type GpuStatus = {
   has_gpu: boolean;
@@ -17,6 +20,8 @@ type GpuStatus = {
   memory_total_mb: number;
   source?: string;
   status?: string;
+  gpu_tier_configured?: boolean;
+  gpu_features_message?: string | null;
 };
 
 export function Navbar() {
@@ -82,6 +87,15 @@ export function Navbar() {
   }, []);
 
   const formatMb = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+  const gpuStatusText = gpuLoading
+    ? "Checking"
+    : gpuStatus?.has_gpu
+      ? `${formatMb(gpuStatus.memory_used_mb)} / ${formatMb(gpuStatus.memory_total_mb)}`
+      : gpuStatus?.status === "unknown" || gpuStatus?.source === "unknown"
+        ? "Detecting"
+        : gpuStatus?.gpu_tier_configured
+          ? "Worker offline"
+          : "No GPU";
 
   return (
     <header
@@ -96,13 +110,11 @@ export function Navbar() {
             to="/" 
             className="flex items-center gap-3 text-xl font-bold tracking-tight group"
           >
-            <div className="relative">
-              <Sparkles className="w-6 h-6 text-primary animate-pulse-soft group-hover:animate-spin transition-all duration-300" />
-              <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-            </div>
-            <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent group-hover:from-accent group-hover:via-primary group-hover:to-secondary transition-all duration-300">
-              LAI
-            </span>
+            <img
+              src={APP_LOGO_SRC}
+              alt="LAI"
+              className="h-9 w-auto max-w-[180px] object-contain drop-shadow-[0_0_16px_rgba(143,200,230,0.28)] transition-transform duration-300 group-hover:scale-105"
+            />
           </Link>
         </div>
         
@@ -122,13 +134,7 @@ export function Navbar() {
                 ) : (
                   <Cpu className="h-3.5 w-3.5" />
                 )}
-                {gpuStatus?.has_gpu ? (
-                  <span className="hidden sm:inline">
-                    {formatMb(gpuStatus.memory_used_mb)} / {formatMb(gpuStatus.memory_total_mb)}
-                  </span>
-                ) : gpuStatus && !gpuStatus.has_gpu ? (
-                  <span className="hidden sm:inline text-muted-foreground">No GPU</span>
-                ) : null}
+                <span className="hidden sm:inline text-muted-foreground">{gpuStatusText}</span>
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-0" align="end">
@@ -138,8 +144,8 @@ export function Navbar() {
                   {gpuStatus?.has_gpu
                     ? `${gpuStatus.gpu_count} GPU${gpuStatus.gpu_count > 1 ? "s" : ""} · ${formatMb(gpuStatus.memory_used_mb)} / ${formatMb(gpuStatus.memory_total_mb)} used`
                     : gpuStatus?.status === "unknown"
-                      ? "GPU status unavailable"
-                      : "No GPU detected"}
+                      ? "Detecting GPU worker status"
+                      : (gpuStatus?.gpu_features_message || "No GPU detected")}
                 </p>
               </div>
               {gpuStatus?.gpus && gpuStatus.gpus.length > 0 && (
@@ -166,6 +172,39 @@ export function Navbar() {
             </PopoverContent>
           </Popover>
           
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 px-2.5 text-xs font-medium hidden sm:inline-flex"
+            asChild
+          >
+            <a
+              href={LAI_TUTORIALS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Tutorials and workflow guides"
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              Tutorials
+            </a>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 sm:hidden"
+            asChild
+          >
+            <a
+              href={LAI_TUTORIALS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Tutorials"
+            >
+              <BookOpen className="h-4 w-4" />
+            </a>
+          </Button>
+
           <Button
             variant="outline"
             size="icon"

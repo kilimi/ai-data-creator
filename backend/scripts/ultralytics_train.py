@@ -13,14 +13,21 @@ def main() -> int:
     parser.add_argument("--config", required=True, help="JSON file with model_class, model_path, train_args")
     args = parser.parse_args()
 
-    from app.ml.ultralytics_compat import patch_ultralytics_lazy_exports
+    from app.ml.ultralytics_compat import (
+        assert_ultralytics_supports_model,
+        patch_matplotlib_for_headless,
+        patch_ultralytics_lazy_exports,
+    )
 
+    patch_matplotlib_for_headless()
     patch_ultralytics_lazy_exports()
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
     model_class = cfg.get("model_class", "yolo")
     model_path = cfg["model_path"]
     train_args = cfg["train_args"]
+
+    assert_ultralytics_supports_model(model_path)
 
     from app.model_weights_presence import resolve_training_base_weights_path
 

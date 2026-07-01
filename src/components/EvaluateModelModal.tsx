@@ -17,6 +17,7 @@ import {
   type PickerGroup,
 } from "@/components/DatasetEvalPicker";
 import { getApiBaseUrl } from "@/config/api";
+import { mapAnnotationFileForTrainingPicker } from "@/utils/annotations";
 
 interface AnnotationClass {
   className: string;
@@ -237,18 +238,35 @@ export function EvaluateModelModal({
     }
   }, [fileClassesMap]);
 
+  // Preload annotation files + collections for every dataset when the modal opens.
+  useEffect(() => {
+    if (!open || datasets.length === 0) return;
+    datasets.forEach((dataset) => {
+      void enrichDataset(dataset);
+    });
+  }, [open, datasets, enrichDataset]);
+
   // Build picker datasets from props + enriched data
   const pickerDatasets: PickerDataset[] = useMemo(() => {
     return datasets.map(d => {
       const enriched = enrichedDatasets.get(d.id) || d;
-      const files = (enriched.annotation_files || []).map((f: any) => ({
-        id: String(f.id),
-        name: f.file_name || f.name,
-        classes: fileClassesMap.get(String(f.id)) || [],
-        taskType: f.task_type as any,
-        modifiedAt: f.created_at,
-        annotationCount: f.annotation_count,
-      }));
+      const files = (enriched.annotation_files || []).map((f: any) => {
+        const mapped = mapAnnotationFileForTrainingPicker({
+          id: f.id,
+          name: f.file_name || f.name,
+          type: f.type || f.annotation_type,
+          created_at: f.created_at,
+        });
+        return {
+          id: mapped.id,
+          name: mapped.name,
+          classes: fileClassesMap.get(String(f.id)) || [],
+          taskType: mapped.taskType,
+          annotationType: mapped.annotationType,
+          modifiedAt: mapped.modifiedAt,
+          annotationCount: f.annotation_count,
+        };
+      });
       const collections = (datasetCollections.get(d.id) || []).map((c: any) => ({
         id: String(c.id),
         name: c.name,
@@ -304,7 +322,7 @@ export function EvaluateModelModal({
   const selectedModelImageSize = useMemo(() => {
     const task = trainingTasks.find((t) => t.id.toString() === selectedModel);
     const md = task?.task_metadata || {};
-    const tp = md.training_params || {};
+    const tp = md.training_params || md.training_config || {};
     const raw =
       tp.image_size ??
       tp.imgsz ??
@@ -316,9 +334,10 @@ export function EvaluateModelModal({
 
   const evaluationCandidateTasks = useMemo(
     () => trainingTasks.filter((task) => {
-      if (task.status !== 'completed') return false;
+      const hasCheckpoint = !!(task.task_metadata?.best_model || task.task_metadata?.last_model);
+      if (task.status !== 'completed' && !(task.status === 'stopped' && hasCheckpoint)) return false;
       if (task.task_type === 'yolo_training') return true;
-      return !!(task.task_metadata?.best_model || task.task_metadata?.last_model);
+      return hasCheckpoint;
     }),
     [trainingTasks]
   );
@@ -361,7 +380,7 @@ export function EvaluateModelModal({
           const { annotationFiles } = await enrichDataset(dataset);
           annotationFiles.forEach((f: any) => void loadFileClasses(sel.datasetId, String(f.id)));
 
-          // Apply defaults: first annotation file (if exists) and first/default collection
+          // Apply defaults: first/default image collection only.
           const colsResp = await api.getImageCollections(sel.datasetId).catch(() => null);
           const cols = (colsResp && (colsResp as any).success && (colsResp as any).data) || [];
           setDatasetCollections(prev => {
@@ -369,25 +388,20 @@ export function EvaluateModelModal({
             n.set(sel.datasetId, cols as any[]);
             return n;
           });
-          const defaultFileId = sel.annotationFileId
-            ?? (annotationFiles.length > 0 ? String(annotationFiles[0].id) : null);
           const defaultColl = (cols as any[]).find((c: any) => c.is_default) || (cols as any[])[0];
           const defaultCollId = sel.collectionId ?? (defaultColl ? String(defaultColl.id) : null);
 
-          if (defaultFileId !== sel.annotationFileId || defaultCollId !== sel.collectionId) {
-            const file = annotationFiles.find((f: any) => String(f.id) === defaultFileId);
+          if (defaultCollId !== sel.collectionId) {
             setSelectedDatasets(prev => prev.map(s =>
               s.datasetId === sel.datasetId
                 ? {
                     ...s,
-                    annotationFileId: defaultFileId,
-                    annotationFileName: file ? (file.file_name || file.name) : s.annotationFileName,
                     collectionId: defaultCollId,
                   }
                 : s
             ));
           }
-          if (defaultFileId) void fetchCollectionCountsForSelection(sel.datasetId, defaultFileId);
+          if (sel.annotationFileId) void fetchCollectionCountsForSelection(sel.datasetId, sel.annotationFileId);
           continue;
         }
       }
@@ -485,7 +499,7 @@ export function EvaluateModelModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[min(96vw,1680px)] max-w-none h-[min(92vh,1200px)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Brain className="h-5 w-5" />
@@ -546,12 +560,12 @@ export function EvaluateModelModal({
                 </Label>
                 {selectedDatasets.length > 0 && (
                   <span className="text-xs text-muted-foreground">
-                    {selectedDatasets.filter((s) => s.annotationFileId).length} with ground truth
+                    Annotation file selection is optional per dataset
                   </span>
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                Pick one or more datasets. Compatibility badges check whether the annotation file's classes match the selected model.
+                Pick one or more datasets and choose image collections. Annotation file selection is not required per dataset.
               </p>
 
               {datasets.length === 0 && datasetGroups.length === 0 ? (
@@ -565,6 +579,8 @@ export function EvaluateModelModal({
                   groups={pickerGroups}
                   modelClasses={modelClasses}
                   modelTaskType={modelTaskType}
+                  pickerMode="evaluate"
+                  requireAnnotationSelection={false}
                   value={pickerValue}
                   onChange={handlePickerChange}
                 />

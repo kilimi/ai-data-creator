@@ -18,7 +18,7 @@
  *    previously-saved annotations.
  */
 import * as React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Layers,
   AlertTriangle,

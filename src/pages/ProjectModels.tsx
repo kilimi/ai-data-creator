@@ -109,6 +109,8 @@ export default function ProjectModels() {
   const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
   const [pendingStopTask, setPendingStopTask] = useState<any | null>(null);
   const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [deletingAllTasks, setDeletingAllTasks] = useState(false);
   const [showImportModelModal, setShowImportModelModal] = useState(false);
 
   const trainingTasksRef = useRef<any[]>([]);
@@ -224,6 +226,35 @@ export default function ProjectModels() {
     }
   };
 
+  const handleDeleteAllTasks = async () => {
+    if (trainingTasks.length === 0) return;
+
+    setDeletingAllTasks(true);
+    try {
+      for (const task of trainingTasks) {
+        const response = await fetch(buildApiUrl(`/tasks/${task.id}`), { method: 'DELETE' });
+        if (!response.ok) {
+          throw new Error(`Failed to delete task ${task.id}`);
+        }
+      }
+      toast({
+        title: "All Models Deleted",
+        description: `${trainingTasks.length} training task(s) have been deleted.`,
+      });
+      setSelectedTaskId(null);
+      fetchTrainingTasks();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete some tasks",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAllTasks(false);
+      setShowDeleteAllConfirm(false);
+    }
+  };
+
   // Filter tasks based on search
   const filteredTasks = trainingTasks.filter(task => {
     if (!modelsSearchQuery) return true;
@@ -252,6 +283,9 @@ export default function ProjectModels() {
   });
 
   const failedTasksCount = trainingTasks.filter(t => t.status === 'failed').length;
+  const runningTasksCount = trainingTasks.filter(
+    (t) => t.status === 'running' || t.status === 'pending'
+  ).length;
 
   const statusCounts = {
     all: trainingTasks.length,
@@ -410,13 +444,26 @@ export default function ProjectModels() {
             Train Model
           </Button>
           
+          {trainingTasks.length > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="whitespace-nowrap ml-2"
+              onClick={() => setShowDeleteAllConfirm(true)}
+              disabled={deletingAllTasks || deletingFailedTasks}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              {deletingAllTasks ? 'Deleting...' : `Delete All (${trainingTasks.length})`}
+            </Button>
+          )}
+
           {failedTasksCount > 0 && (
             <Button 
-              variant="destructive" 
+              variant="outline" 
               size="sm" 
-              className="whitespace-nowrap ml-2"
+              className="whitespace-nowrap ml-2 text-destructive hover:text-destructive"
               onClick={() => setShowDeleteFailedConfirm(true)}
-              disabled={deletingFailedTasks}
+              disabled={deletingFailedTasks || deletingAllTasks}
             >
               <Trash2 className="w-4 h-4 mr-2" />
               {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${failedTasksCount})`}
@@ -717,6 +764,35 @@ export default function ProjectModels() {
         confirmLabel={`Delete ${failedTasksCount} task${failedTasksCount !== 1 ? 's' : ''}`}
         isLoading={deletingFailedTasks}
         onConfirm={handleDeleteFailedTasks}
+      />
+
+      {/* Delete all training tasks confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteAllConfirm}
+        onOpenChange={setShowDeleteAllConfirm}
+        title="Delete all trained models?"
+        description={
+          <>
+            This will permanently delete all{" "}
+            <span className="font-semibold text-foreground">{trainingTasks.length}</span>{" "}
+            training task{trainingTasks.length !== 1 ? "s" : ""} in this project, including
+            checkpoints and model files.
+            {runningTasksCount > 0 && (
+              <>
+                {" "}
+                <span className="font-semibold text-foreground">{runningTasksCount}</span>{" "}
+                running task{runningTasksCount !== 1 ? "s" : ""} will be cancelled first.
+              </>
+            )}
+          </>
+        }
+        consequences={[
+          "All trained model weights and training artifacts will be removed.",
+          "This action cannot be undone.",
+        ]}
+        confirmLabel={`Delete all ${trainingTasks.length} model${trainingTasks.length !== 1 ? "s" : ""}`}
+        isLoading={deletingAllTasks}
+        onConfirm={handleDeleteAllTasks}
       />
     </div>
   );

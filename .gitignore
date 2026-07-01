@@ -7,12 +7,25 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 backend_debug.log
+mmyolo-build.log
 backend/backups/
 node_modules
+bun.lock
+
+# Foreign / local clones (not part of LAI)
+geti/
+
+# Test artifacts
+playwright-report/
+test-results/
 backend/.bash_history
+backend/.config/
 # Local Docker / data (compose defaults)
 .lai-data/
 .lai/
+
+
+
 
 # Never commit a virtualenv inside the `lai` Python package directory
 lai/bin/
@@ -21,6 +34,9 @@ lai/include/
 lai/lib64/
 lai/pyvenv.cfg
 lai/share/
+
+# Generated compose bundle for PyPI wheel (scripts/build_dist_bundle.sh)
+lai/bundle/
 
 dist
 dist-ssr
@@ -63,7 +79,8 @@ htmlcov/
 .tox/
 .nox/
 .cache
-
+*.pt
+*.pth
 # Backend runtime data & caches
 backend/data/
 backend/projects/

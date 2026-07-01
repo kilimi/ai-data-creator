@@ -62,6 +62,7 @@ def build_ultralytics_subprocess_env(*, device: str = "") -> Dict[str, str]:
     env["ULTRALYTICS_PYTHON"] = ULTRALYTICS_PYTHON
     env["ULTRALYTICS_SITE"] = ULTRALYTICS_SITE
     env["PYTHONPATH"] = build_ultralytics_pythonpath()
+    env.setdefault("MPLBACKEND", "Agg")
     if device not in ("", "cpu"):
         env["CUDA_VISIBLE_DEVICES"] = str(device)
     return env

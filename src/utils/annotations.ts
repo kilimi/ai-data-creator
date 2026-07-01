@@ -169,7 +169,7 @@ export function detectAnnotationDisplayType(file: AnnotationFile): AnnotationDis
   if (file.name || (file as { fileName?: string }).fileName) {
     const nameLower = String(file.name || (file as { fileName?: string }).fileName).toLowerCase();
     if (nameLower.startsWith('augmented_')) return 'Segmentation (mask+bbox)';
-    if (nameLower.includes('classification') || nameLower.includes('class')) {
+    if (nameLower.includes('classification') || nameLower.includes('classify')) {
       return 'Classification';
     }
     if (nameLower.includes('mask') && nameLower.includes('bbox')) {
@@ -227,7 +227,7 @@ export function normalizeTrainingTaskType(
 
 /**
  * Whether an annotation file can train the given task.
- * Detection needs bbox data (Boxes or Masks + Boxes); segmentation needs masks.
+ * Detection accepts any spatial annotations (boxes / masks); only Classification is excluded.
  */
 export function annotationFileSupportsTrainingTask(
   file: Pick<AnnotationFile, 'type' | 'name' | 'samples'> & {
@@ -239,9 +239,7 @@ export function annotationFileSupportsTrainingTask(
     file.annotationType ?? detectAnnotationDisplayType(file as AnnotationFile);
   const normalized = normalizeTrainingTaskType(task);
   if (normalized === 'detection') {
-    return (
-      displayType === 'Segmentation (bbox)' || displayType === 'Segmentation (mask+bbox)'
-    );
+    return displayType !== 'Classification';
   }
   if (normalized === 'segmentation') {
     return (
@@ -254,14 +252,14 @@ export function annotationFileSupportsTrainingTask(
   return false;
 }
 
-/** Primary task badge for picker rows (mask+bbox files report as segmentation-capable). */
+/** Primary task badge for picker rows. */
 export function primaryTrainingTaskTypeForAnnotationFile(
   file: Pick<AnnotationFile, 'type' | 'name' | 'samples'>,
 ): 'detection' | 'segmentation' | 'classification' | undefined {
   const displayType = detectAnnotationDisplayType(file as AnnotationFile);
   if (displayType === 'Segmentation (bbox)') return 'detection';
+  if (displayType === 'Segmentation (mask+bbox)') return 'detection';
   if (displayType === 'Segmentation (mask)') return 'segmentation';
-  if (displayType === 'Segmentation (mask+bbox)') return 'segmentation';
   if (displayType === 'Classification') return 'classification';
   return undefined;
 }

@@ -1,53 +1,101 @@
 #!/usr/bin/env bash
-# Build slim compose-only distribution tarball for GitHub Releases.
+# Build slim compose-only distribution bundle for PyPI wheel and optional GitHub Release tarball.
 # Usage: bash scripts/build_dist_bundle.sh [version]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-$(python -c 'import lai; print(lai.__version__)' 2>/dev/null || echo 0.1.0)}"
+VERSION="${1:-$(python3 -c 'import lai; print(lai.__version__)' 2>/dev/null || echo 0.1.0)}"
 VERSION="${VERSION#v}"
-OUT_DIR="${ROOT}/dist"
-ARCHIVE="${OUT_DIR}/lai-dist-${VERSION}.tar.gz"
-STAGE="${OUT_DIR}/lai-dist-${VERSION}"
+# Keep bundle staging out of dist/ so twine upload dist/* does not pick up lai-dist-*.
+BUNDLE_DIR="${ROOT}/build/release"
+ARCHIVE="${BUNDLE_DIR}/lai-dist-${VERSION}.tar.gz"
+STAGE="${BUNDLE_DIR}/lai-dist-${VERSION}"
+EMBED="${ROOT}/lai/bundle"
 
-rm -rf "$STAGE"
-mkdir -p "$STAGE/dockers/backend" "$STAGE/scripts" "$STAGE/licenses"
+REGISTRY="${LAI_REGISTRY:-docker.io}"
+ORG="${LAI_DOCKERHUB_USER:-${LAI_GHCR_ORG:-luluray}}"
+if [[ "$REGISTRY" == "docker.io" ]]; then
+  IMAGE_PREFIX="docker.io/${ORG}"
+else
+  IMAGE_PREFIX="${REGISTRY}/${ORG}"
+fi
 
-# Compose stack (pull-only; no application source).
-cp "$ROOT/docker-compose.yml" "$STAGE/"
-cp "$ROOT/docker-compose.code-mount.yml" "$STAGE/"
-cp "$ROOT/dockers/docker-compose.yml" "$STAGE/dockers/"
-cp "$ROOT/dockers/docker-compose.code-mount.yml" "$STAGE/dockers/"
-cp "$ROOT/dockers/backend/docker-compose.yml" "$STAGE/dockers/backend/"
+# Query Docker Hub at publish time; install-time lookup uses the same helpers.
+DOCKER_TAG=""
+if command -v python3 >/dev/null 2>&1; then
+  DOCKER_TAG="$(python3 -c "
+import sys
+sys.path.insert(0, '${ROOT}')
+from lai.registry import fetch_dockerhub_latest_tag
+print(fetch_dockerhub_latest_tag('${ORG}') or '')
+" 2>/dev/null || true)"
+fi
+if [[ -z "$DOCKER_TAG" ]]; then
+  DOCKER_TAG="${LAI_DOCKER_TAG:-}"
+fi
+if [[ -z "$DOCKER_TAG" ]]; then
+  echo "ERROR: could not resolve a Docker image tag from Docker Hub for ${ORG}/lai-backend." >&2
+  echo "Set LAI_DOCKER_TAG (e.g. 0.1.0) and re-run." >&2
+  exit 1
+fi
+echo "Bundling Docker image tag: ${DOCKER_TAG} (PyPI package version: ${VERSION})"
 
-# Install helpers and legal files.
-cp "$ROOT/scripts/install.sh" "$STAGE/scripts/"
-cp "$ROOT/scripts/write_registry_env.py" "$STAGE/scripts/"
-cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/THIRD_PARTY_LICENSES.md" "$STAGE/"
-cp "$ROOT/licenses/"*.txt "$STAGE/licenses/"
+populate_stage() {
+  local dest="$1"
+  rm -rf "$dest"
+  mkdir -p "$dest/dockers/backend" "$dest/scripts" "$dest/licenses"
 
-# Pre-filled .env example (registry tags filled at release time in CI).
-ORG="${LAI_GHCR_ORG:-lulu}"
-cat > "$STAGE/.env.example" <<EOF
-# LAI pull-only install — copy to .env via: lai install-gui  or  lai install
+  cp "$ROOT/docker-compose.yml" "$dest/"
+  cp "$ROOT/docker-compose.code-mount.yml" "$dest/"
+  cp "$ROOT/dockers/docker-compose.yml" "$dest/dockers/"
+  cp "$ROOT/dockers/docker-compose.code-mount.yml" "$dest/dockers/"
+  cp "$ROOT/dockers/backend/docker-compose.yml" "$dest/dockers/backend/"
+  # End-user bundle: no host test mount (path does not exist on PyPI installs).
+  sed -i '/\.\.\/\.\.\/tests:\/tests:ro/d' "$dest/dockers/backend/docker-compose.yml" 2>/dev/null || \
+    sed -i '' '/\.\.\/\.\.\/tests:\/tests:ro/d' "$dest/dockers/backend/docker-compose.yml"
+
+  cp "$ROOT/scripts/install.sh" "$dest/scripts/"
+  cp "$ROOT/scripts/write_registry_env.py" "$dest/scripts/"
+  cp "$ROOT/LICENSE" "$dest/"
+  [[ -f "$ROOT/NOTICE" ]] && cp "$ROOT/NOTICE" "$dest/"
+  [[ -f "$ROOT/THIRD_PARTY_LICENSES.md" ]] && cp "$ROOT/THIRD_PARTY_LICENSES.md" "$dest/"
+  if [[ -d "$ROOT/licenses" ]]; then
+    cp "$ROOT/licenses/"*.txt "$dest/licenses/" 2>/dev/null || true
+  fi
+
+  cat > "$dest/docker_release.json" <<EOF
+{"docker_tag":"${DOCKER_TAG}","org":"${ORG}","registry":"${REGISTRY}"}
+EOF
+
+  cat > "$dest/.env.example" <<EOF
+# LAI pull-only install — run: lai install-gui  or  lai install
 LAI_DATA_DIR=\${HOME}/lai-data
 WEB_PORT=8089
 VITE_API_URL=SAME_ORIGIN
 LAI_BIND_CODE=0
-LAI_GPU_TIER=0
+LAI_GPU_TIER=1
+COMPOSE_PROJECT_NAME=lai
 COMPOSE_FILE=docker-compose.yml
-LAI_RELEASE_VERSION=${VERSION}
-LAI_BACKEND_IMAGE=ghcr.io/${ORG}/lai-backend:${VERSION}
-LAI_WORKER_GENERAL_IMAGE=ghcr.io/${ORG}/lai-worker-general:${VERSION}
-LAI_WORKER_GPU_IMAGE=ghcr.io/${ORG}/lai-worker-gpu:${VERSION}
-LAI_FRONTEND_IMAGE=ghcr.io/${ORG}/lai-frontend:${VERSION}
-LAI_SAM_IMAGE=ghcr.io/${ORG}/lai-sam:${VERSION}
-LAI_ULTRALYTICS_IMAGE=ghcr.io/${ORG}/lai-ultralytics:${VERSION}
-LAI_MMYOLO_IMAGE=ghcr.io/${ORG}/lai-mmyolo:${VERSION}
+COMPOSE_PROFILES=gpu
+LAI_AUTO_DOCKER_LATEST=1
+LAI_RELEASE_VERSION=${DOCKER_TAG}
+LAI_BACKEND_IMAGE=${IMAGE_PREFIX}/lai-backend:${DOCKER_TAG}
+LAI_WORKER_GENERAL_IMAGE=${IMAGE_PREFIX}/lai-worker-general:${DOCKER_TAG}
+LAI_WORKER_GPU_IMAGE=${IMAGE_PREFIX}/lai-worker-gpu:${DOCKER_TAG}
+LAI_FRONTEND_IMAGE=${IMAGE_PREFIX}/lai-frontend:${DOCKER_TAG}
+LAI_SAM_IMAGE=${IMAGE_PREFIX}/lai-sam:${DOCKER_TAG}
+LAI_ULTRALYTICS_IMAGE=${IMAGE_PREFIX}/lai-ultralytics:${DOCKER_TAG}
+LAI_MMYOLO_IMAGE=${IMAGE_PREFIX}/lai-mmyolo:${DOCKER_TAG}
 SAM3_MODELS_HOST_PATH=\${HOME}/lai-data/sam3-models
 SAM3_CHECKPOINT_FILENAME=sam3.pt
+DINOV3_WEIGHTS_HOST_PATH=\${HOME}/lai-data/dinov3-models
 EOF
+}
 
-mkdir -p "$OUT_DIR"
-tar -czf "$ARCHIVE" -C "$OUT_DIR" "lai-dist-${VERSION}"
+populate_stage "$STAGE"
+populate_stage "$EMBED"
+
+mkdir -p "$BUNDLE_DIR"
+tar -czf "$ARCHIVE" -C "$BUNDLE_DIR" "lai-dist-${VERSION}"
 echo "Created $ARCHIVE"
+echo "Embedded wheel bundle at $EMBED"

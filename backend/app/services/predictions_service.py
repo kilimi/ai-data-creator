@@ -21,6 +21,7 @@ from app.database import get_db
 from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.evaluation_artifacts import load_merged_evaluation_results
 from app.models import Dataset, Image, ImageCollection, Task
+from app.services.annotation_processing import segmentation_to_coco_polygons
 
 logger = logging.getLogger(__name__)
 
@@ -144,18 +145,9 @@ def _build_fiftyone_ground_truth_by_image(
         h = float(img.height or 1) or 1.0
 
         bbox_norm: Optional[List[float]] = None
-        if (
-            ann.bbox_x is not None
-            and ann.bbox_y is not None
-            and ann.bbox_width is not None
-            and ann.bbox_height is not None
-        ):
-            # DB columns are normalized [0, 1] — FiftyOne expects the same
-            bbox_norm = [ann.bbox_x, ann.bbox_y, ann.bbox_width, ann.bbox_height]
-        elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
-            # Legacy JSON bbox: pixel xywh (same convention as evaluation_helpers)
-            bx, by, bw, bh = ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]
-            bbox_norm = [bx / w, by / h, bw / w, bh / h]
+        from app.services.dataset_fiftyone_service import _fiftyone_bbox_norm_from_annotation
+
+        bbox_norm = _fiftyone_bbox_norm_from_annotation(ann, w, h)
 
         if bbox_norm is None:
             continue
@@ -607,9 +599,7 @@ def build_thresholded_evaluation_coco_bundle(
         if not (isinstance(bbox_xywh, list) and len(bbox_xywh) >= 4):
             bbox_xyxy = _prediction_xyxy(pred)
             bbox_xywh = _xyxy_to_xywh(bbox_xyxy or [0.0, 0.0, 0.0, 0.0])
-        segmentation = pred.get("segmentation", [])
-        if segmentation and len(segmentation) > 0:
-            segmentation = [segmentation]
+        segmentation = segmentation_to_coco_polygons(pred.get("segmentation"))
         coco_output["annotations"].append(
             {
                 "id": idx,
@@ -718,8 +708,10 @@ async def evaluate_model(
     try:
         # Validate training task exists
         training_task = db.query(Task).filter(Task.id == request.task_id).first()
-        if not training_task or training_task.status != 'completed':
-            raise HTTPException(status_code=404, detail="Training task not found or not completed")
+        training_meta = (training_task.task_metadata or {}) if training_task else {}
+        has_saved_checkpoint = bool(training_meta.get('best_model') or training_meta.get('last_model'))
+        if not training_task or (training_task.status != 'completed' and not has_saved_checkpoint):
+            raise HTTPException(status_code=404, detail="Training task not found or has no saved checkpoint")
         
         # Validate dataset exists
         dataset = db.query(Dataset).filter(Dataset.id == request.dataset_id).first()
@@ -737,7 +729,7 @@ async def evaluate_model(
             selected_collection_name = selected_collection.name
         
         # Get model info from training task
-        task_metadata = training_task.task_metadata or {}
+        task_metadata = training_meta
         model_type = task_metadata.get('model_type', 'Unknown')
         from app.ml.dispatch import framework_label_for_task
 
@@ -841,14 +833,16 @@ async def evaluate_model_multiple_datasets(
     try:
         # Validate training task exists
         training_task = db.query(Task).filter(Task.id == request.task_id).first()
-        if not training_task or training_task.status != 'completed':
-            raise HTTPException(status_code=404, detail="Training task not found or not completed")
+        training_meta = (training_task.task_metadata or {}) if training_task else {}
+        has_saved_checkpoint = bool(training_meta.get('best_model') or training_meta.get('last_model'))
+        if not training_task or (training_task.status != 'completed' and not has_saved_checkpoint):
+            raise HTTPException(status_code=404, detail="Training task not found or has no saved checkpoint")
         
         if not request.datasets or len(request.datasets) == 0:
             raise HTTPException(status_code=400, detail="At least one dataset is required")
         
         # Get model info from training task
-        task_metadata = training_task.task_metadata or {}
+        task_metadata = training_meta
         model_type = task_metadata.get('model_type', 'Unknown')
         from app.ml.dispatch import framework_label_for_task
 
@@ -1341,10 +1335,8 @@ async def export_all_coco_results(
                 
                 # Add predictions
                 for idx, pred in enumerate(predictions, start=1):
-                    segmentation = pred.get('segmentation', [])
-                    if segmentation and len(segmentation) > 0:
-                        segmentation = [segmentation]
-                    
+                    segmentation = segmentation_to_coco_polygons(pred.get("segmentation"))
+
                     coco_output["annotations"].append({
                         "id": idx,
                         "image_id": pred['image_id'],
@@ -1472,7 +1464,9 @@ async def view_in_fiftyone(
         
         image_dict = {}
         for img in images:
-            fs = _filesystem_path_for_image(img, project_id, dataset_id)
+            fs = _filesystem_path_for_image(
+                img, project_id, dataset_id, collection_id=collection_id
+            )
             entry = {
                 "file_name": img.file_name,
                 "width": img.width or 1,

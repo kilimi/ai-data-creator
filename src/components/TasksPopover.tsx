@@ -28,7 +28,9 @@ import {
   Brain,
   Copy,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Download,
+  Search,
 } from 'lucide-react';
 
 interface TasksPopoverProps {
@@ -99,6 +101,10 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return <Layers className="w-4 h-4 text-sky-500" />;
       case 'model_export':
         return <Copy className="w-4 h-4 text-slate-500" />;
+      case 'database_export':
+        return <Download className="w-4 h-4 text-emerald-500" />;
+      case 'insid3_propagate':
+        return <Search className="w-4 h-4 text-amber-500" />;
       default:
         return <ListTodo className="w-4 h-4 text-gray-500" />;
     }
@@ -128,7 +134,11 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
       case 'depth_estimation':
         return 'Depth';
       case 'model_export':
-        return 'Export';
+        return 'Model export';
+      case 'database_export':
+        return 'DB export';
+      case 'insid3_propagate':
+        return 'Find similar';
       default:
         return taskType.replace(/_/g, ' ');
     }
@@ -189,6 +199,8 @@ export const TasksPopover = ({ projectId }: TasksPopoverProps) => {
         return 'bg-sky-100 text-sky-800 border-sky-200';
       case 'model_export':
         return 'bg-slate-100 text-slate-800 border-slate-200';
+      case 'insid3_propagate':
+        return 'bg-amber-100 text-amber-800 border-amber-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
     }

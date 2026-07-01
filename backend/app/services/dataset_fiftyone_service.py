@@ -27,7 +27,9 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import SessionLocal
+from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.services.dataset_schemas import ViewFiftyOneRequest
+
 logger = logging.getLogger(__name__)
 
 def _sanitize_fiftyone_field_name(name: str) -> str:
@@ -98,34 +100,124 @@ def _remap_annotation_image_to_layer(
     return src
 
 
-def _filesystem_path_for_image(img: models.Image, project_id: int, dataset_id: int) -> Optional[Path]:
-    u = (img.url or "").replace("\\", "/")
-    m = re.search(r"/projects/(\d+)/(\d+)/images/(.+)$", u)
-    if m:
-        rel = Path("projects") / m.group(1) / m.group(2) / "images" / m.group(3)
-        for base in (Path("."), Path("/app")):
-            cand = (base / rel).resolve()
-            if cand.exists():
-                return cand
-    for root in (Path("projects"), Path("/app/projects")):
-        cand = root / str(project_id) / str(dataset_id) / "images" / (img.file_name or "")
-        if cand.exists():
-            return cand.resolve()
-    legacy = Path("data") / "images" / str(dataset_id) / (img.file_name or "")
-    if legacy.exists():
-        return legacy.resolve()
+def _filesystem_path_for_image(
+    img: models.Image,
+    project_id: int,
+    dataset_id: int,
+    *,
+    collection_id: Optional[int] = None,
+) -> Optional[Path]:
+    """Resolve on-disk image path (collection subdirs, URL tails, project scan)."""
+    pid = int(project_id) if project_id else None
+    coll = collection_id
+    if coll is None and getattr(img, "collection_id", None) is not None:
+        coll = int(img.collection_id)
+    return resolve_dataset_image_path_from_models(
+        img,
+        dataset_id=int(dataset_id),
+        project_id=pid,
+        collection_id=coll,
+    )
+
+
+def _can_resolve_fiftyone_image(
+    img: models.Image,
+    project_id: int,
+    dataset_id: int,
+    *,
+    collection_id: Optional[int] = None,
+) -> bool:
+    return _filesystem_path_for_image(
+        img, project_id, dataset_id, collection_id=collection_id
+    ) is not None
+
+
+def _annotation_bbox_pixel_xywh(
+    ann: models.Annotation,
+    img_width: float,
+    img_height: float,
+) -> Optional[List[float]]:
+    """
+    COCO pixel bbox [x, y, w, h] from DB columns or legacy JSON.
+
+    ``bbox_*`` columns are usually normalized 0–1; auto-annotate may store pixels.
+    """
+    w = float(img_width or 1) or 1.0
+    h = float(img_height or 1) or 1.0
+
+    if (
+        ann.bbox_x is not None
+        and ann.bbox_y is not None
+        and ann.bbox_width is not None
+        and ann.bbox_height is not None
+    ):
+        x, y, bw, bh = (
+            float(ann.bbox_x),
+            float(ann.bbox_y),
+            float(ann.bbox_width),
+            float(ann.bbox_height),
+        )
+        if max(x, y, bw, bh) <= 1.0:
+            return [x * w, y * h, bw * w, bh * h]
+        return [x, y, bw, bh]
+
+    if ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
+        x, y, bw, bh = (float(v) for v in ann.bbox[:4])
+        if max(x, y, bw, bh) <= 1.0:
+            return [x * w, y * h, bw * w, bh * h]
+        return [x, y, bw, bh]
+
     return None
 
 
-def _can_resolve_fiftyone_image(img: models.Image, project_id: int, dataset_id: int) -> bool:
-    if _filesystem_path_for_image(img, project_id, dataset_id) is not None:
-        return True
-    for root in (Path("projects"), Path("/app/projects")):
-        p = root / str(project_id) / str(dataset_id) / "images" / (img.file_name or "")
-        if p.exists():
-            return True
-    legacy = Path("data") / "images" / str(dataset_id) / (img.file_name or "")
-    return legacy.exists()
+def _fiftyone_bbox_norm_from_annotation(
+    ann: models.Annotation,
+    img_width: float,
+    img_height: float,
+) -> Optional[List[float]]:
+    """FiftyOne Detection.bounding_box: normalized [x, y, w, h] in [0, 1]."""
+    w = float(img_width or 1) or 1.0
+    h = float(img_height or 1) or 1.0
+    pixel = _annotation_bbox_pixel_xywh(ann, w, h)
+    if pixel is not None:
+        return [pixel[0] / w, pixel[1] / h, pixel[2] / w, pixel[3] / h]
+
+    seg = ann.segmentation
+    if not seg:
+        return None
+
+    # COCO segmentation: [[x1,y1,...]] or flat [x1,y1,...]
+    rings: List[List[float]] = []
+    if isinstance(seg, list) and seg:
+        if seg and isinstance(seg[0], (int, float)):
+            rings.append([float(v) for v in seg])
+        else:
+            for ring in seg:
+                if isinstance(ring, list) and len(ring) >= 6:
+                    rings.append([float(v) for v in ring])
+
+    xs: List[float] = []
+    ys: List[float] = []
+    for ring in rings:
+        for i in range(0, len(ring) - 1, 2):
+            xs.append(ring[i])
+            ys.append(ring[i + 1])
+    if not xs:
+        return None
+
+    if max(xs + ys) <= 1.0:
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        return [min_x, min_y, max(0.0, max_x - min_x), max(0.0, max_y - min_y)]
+
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    return [
+        min_x / w,
+        min_y / h,
+        max(0.0, max_x - min_x) / w,
+        max(0.0, max_y - min_y) / h,
+    ]
 
 
 # was router.post("/datasets/{dataset_id}/annotations/view-fiftyone")
@@ -133,7 +225,6 @@ async def view_annotations_in_fiftyone(
     db: Session, dataset_id: int, body: ViewFiftyOneRequest
 ) -> dict:
     """Open selected annotation files in FiftyOne, shown as predictions (one field per file)."""
-    logger = logging.getLogger(__name__)
     if not body.annotation_file_ids:
         raise HTTPException(status_code=400, detail="Select at least one annotation file")
 
@@ -195,22 +286,30 @@ async def view_annotations_in_fiftyone(
             w_disp = float(disp.width or 1) or 1.0
             h_disp = float(disp.height or 1) or 1.0
 
-            x, y, ww, hh = None, None, None, None
-            if ann.bbox_x is not None and ann.bbox_y is not None and ann.bbox_width is not None and ann.bbox_height is not None:
-                x, y, ww, hh = ann.bbox_x, ann.bbox_y, ann.bbox_width, ann.bbox_height
-            elif ann.bbox and isinstance(ann.bbox, list) and len(ann.bbox) >= 4:
-                x, y, ww, hh = ann.bbox[0], ann.bbox[1], ann.bbox[2], ann.bbox[3]
-            if x is None:
-                continue
-
-            if src.id != disp.id:
-                sx = w_disp / w_src
-                sy = h_disp / h_src
-                x, y, ww, hh = x * sx, y * sy, ww * sx, hh * sy
+            pixel = _annotation_bbox_pixel_xywh(ann, w_src, h_src)
+            if pixel is None:
+                bbox_norm = _fiftyone_bbox_norm_from_annotation(ann, w_disp, h_disp)
+                if bbox_norm is None:
+                    continue
+            else:
+                if src.id != disp.id:
+                    sx = w_disp / w_src
+                    sy = h_disp / h_src
+                    pixel = [
+                        pixel[0] * sx,
+                        pixel[1] * sy,
+                        pixel[2] * sx,
+                        pixel[3] * sy,
+                    ]
+                bbox_norm = [
+                    pixel[0] / w_disp,
+                    pixel[1] / h_disp,
+                    pixel[2] / w_disp,
+                    pixel[3] / h_disp,
+                ]
 
             label = ann.category or "unknown"
             conf = float(ann.confidence) if ann.confidence is not None else 1.0
-            bbox_norm = [x / w_disp, y / h_disp, ww / w_disp, hh / h_disp]
             if disp_key not in by_image:
                 by_image[disp_key] = []
             by_image[disp_key].append({"label": label, "bbox": bbox_norm, "confidence": conf})
@@ -229,7 +328,9 @@ async def view_annotations_in_fiftyone(
         img = by_id.get(iid)
         if not img:
             continue
-        fs = _filesystem_path_for_image(img, eff_project_id, dataset_id)
+        fs = _filesystem_path_for_image(
+            img, eff_project_id, dataset_id, collection_id=target_col_id
+        )
         entry = {
             "file_name": img.file_name,
             "width": img.width or 1,
@@ -240,7 +341,10 @@ async def view_annotations_in_fiftyone(
         image_dict[iid] = entry
 
     if not any(
-        iid in by_id and _can_resolve_fiftyone_image(by_id[iid], eff_project_id, dataset_id)
+        iid in by_id
+        and _can_resolve_fiftyone_image(
+            by_id[iid], eff_project_id, dataset_id, collection_id=target_col_id
+        )
         for iid in needed_ids
     ):
         raise HTTPException(
@@ -304,6 +408,11 @@ for img_id, img_info in image_dict.items():
     script_content += "\n".join(field_blocks)
     script_content += """
     samples.append(sample)
+
+if not samples:
+    import sys
+    print("ERROR: No image files found on disk for FiftyOne", file=sys.stderr)
+    sys.exit(1)
 
 dataset.add_samples(samples)
 print(f"Loaded {len(samples)} samples, {len(predictions_by_field)} prediction fields")

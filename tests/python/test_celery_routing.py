@@ -7,6 +7,7 @@ def test_known_tasks_have_expected_queue():
     assert KNOWN_TASK_QUEUES["app.tasks.export_tasks.export_yolo_model"] == "gpu"
     assert KNOWN_TASK_QUEUES["app.tasks.training_tasks.train_mmyolo_model"] == "mmyolo"
     assert KNOWN_TASK_QUEUES["app.tasks.depth_estimation_tasks.generate_depth_maps"] == "general"
+    assert KNOWN_TASK_QUEUES["app.tasks.preannotate_tasks.run_yolo_preannotate"] == "general"
     assert KNOWN_TASK_QUEUES["app.tasks.annotation_tasks.process_annotation_file"] == "general"
 
 

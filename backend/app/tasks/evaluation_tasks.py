@@ -20,6 +20,11 @@ from app.celery.gpu_app import celery_app
 from app.dataset_media_paths import resolve_dataset_image_path_from_models
 from app.evaluation_artifacts import write_evaluation_blobs
 from app.models import Task as TaskModel, Annotation, AnnotationClass, AnnotationFile, Dataset, Image
+from app.tasks.evaluation_helpers import (
+    extract_yolo_image_predictions,
+    resolve_evaluation_class_names,
+    resolve_evaluation_imgsz,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -360,8 +365,10 @@ def evaluate_model(
         YOLO = get_ultralytics_yolo()
         # Get the training task
         training_task = db.query(TaskModel).filter(TaskModel.id == training_task_id).first()
-        if not training_task or training_task.status != 'completed':
-            raise ValueError("Training task not found or not completed")
+        training_meta = (training_task.task_metadata or {}) if training_task else {}
+        has_saved_checkpoint = bool(training_meta.get('best_model') or training_meta.get('last_model'))
+        if not training_task or (training_task.status != 'completed' and not has_saved_checkpoint):
+            raise ValueError("Training task not found or has no saved checkpoint")
 
         from app.ml.dispatch import get_model_backend
 
@@ -390,7 +397,7 @@ def evaluate_model(
             )
         
         # Get model path from training task metadata
-        task_metadata = training_task.task_metadata or {}
+        task_metadata = training_meta
         model_path = None
         
         if checkpoint == "best":
@@ -416,6 +423,11 @@ def evaluate_model(
         # Detect model type (detection vs segmentation)
         model_task_type = getattr(model, 'task', 'detect')
         is_segmentation_model = 'seg' in str(model_path).lower() or model_task_type == 'segment'
+        if model_task_type == 'classify':
+            raise ValueError(
+                "Classification models cannot be evaluated with the detection evaluation pipeline. "
+                "Use a detect or segment checkpoint."
+            )
         logger.info(f"Model type: {model_task_type}, is_segmentation: {is_segmentation_model}, path: {model_path}")
         
         # Get dataset
@@ -423,12 +435,9 @@ def evaluate_model(
         if not dataset:
             raise ValueError("Dataset not found")
         
-        # Get class names from training task
-        class_names = task_metadata.get('class_names', [])
-        if not class_names:
-            raise ValueError("No class names found in training task")
-        
-        num_classes = len(class_names)
+        # Prefer checkpoint model.names / nc; training metadata can be stale.
+        class_names, num_classes = resolve_evaluation_class_names(model, task_metadata)
+        logger.info("Evaluation classes: nc=%s names=%s", num_classes, class_names)
         
         task.progress = 20
         task.task_metadata = {**task.task_metadata, 'stage': 'loading_annotations'}
@@ -564,6 +573,8 @@ def evaluate_model(
         false_positives = 0
         false_negatives = 0
         predictions_count = 0
+        filtered_by_class_total = 0
+        raw_box_total = 0
         
         # Per-cell samples for interactive confusion matrix drill-down
         # Key: "row_col", value: list of up to MAX_CM_SAMPLES example dicts
@@ -582,6 +593,7 @@ def evaluate_model(
         
         start_time = time.time()
         total_images = len(images)
+        eval_imgsz, eval_imgsz_source = resolve_evaluation_imgsz(task_metadata, image_size)
 
         # Inference path:
         # - grid mode: keep existing per-image/tile behavior
@@ -645,52 +657,38 @@ def evaluate_model(
 
                     result = results[0]
 
-                    # Process predictions from this tile
-                    if result.boxes:
-                        for box_idx, box in enumerate(result.boxes):
-                            pred_class_id = int(box.cls.item())
-                            if pred_class_id < num_classes:
-                                xyxy = box.xyxy[0].cpu().numpy()
-                                tile_x1, tile_y1, tile_x2, tile_y2 = xyxy
-
-                                x1 = float(tile['x'] + tile_x1)
-                                y1 = float(tile['y'] + tile_y1)
-                                x2 = float(tile['x'] + tile_x2)
-                                y2 = float(tile['y'] + tile_y2)
-
-                                bbox_xywh = [x1, y1, x2 - x1, y2 - y1]
-
-                                segmentation = []
-                                if hasattr(result, 'masks') and result.masks is not None:
-                                    try:
-                                        if hasattr(result.masks, 'xy') and len(result.masks.xy) > box_idx:
-                                            mask = result.masks.xy[box_idx]
-                                            if len(mask) > 0:
-                                                for point in mask:
-                                                    segmentation.extend([
-                                                        float(tile['x'] + point[0]),
-                                                        float(tile['y'] + point[1])
-                                                    ])
-                                                logger.debug(f"Extracted mask with {len(mask)} points for box {box_idx}")
-                                            else:
-                                                logger.debug(f"Empty mask for box {box_idx}")
-                                        else:
-                                            logger.debug(f"No mask.xy or index {box_idx} out of range")
-                                    except (IndexError, AttributeError) as e:
-                                        logger.warning(f"Failed to extract mask for box {box_idx}: {e}")
-                                elif is_segmentation_model:
-                                    # Log once per image if segmentation model but no masks
-                                    if box_idx == 0:
-                                        logger.warning(f"Segmentation model but no masks in result for image {img.id}")
-
-                                image_predictions.append({
-                                    'image_id': img.id,
-                                    'class_id': pred_class_id,
-                                    'bbox': bbox_xywh,
-                                    'bbox_xyxy': [x1, y1, x2, y2],
-                                    'conf': float(box.conf.item()),
-                                    'segmentation': segmentation
-                                })
+                    preds, raw_n, dropped_n = extract_yolo_image_predictions(
+                        result,
+                        image_id=img.id,
+                        num_classes=num_classes,
+                        is_segmentation_model=is_segmentation_model,
+                        conf_threshold=0.0,
+                    )
+                    raw_box_total += raw_n
+                    filtered_by_class_total += dropped_n
+                    for pred in preds:
+                        x, y, w, h = pred["bbox"]
+                        pred["bbox"] = [
+                            float(tile["x"] + x),
+                            float(tile["y"] + y),
+                            float(w),
+                            float(h),
+                        ]
+                        if pred.get("bbox_xyxy"):
+                            x1, y1, x2, y2 = pred["bbox_xyxy"]
+                            pred["bbox_xyxy"] = [
+                                float(tile["x"] + x1),
+                                float(tile["y"] + y1),
+                                float(tile["x"] + x2),
+                                float(tile["y"] + y2),
+                            ]
+                        seg = pred.get("segmentation") or []
+                        if seg and isinstance(seg[0], list):
+                            pred["segmentation"] = [
+                                [float(pt[0] + tile["x"]), float(pt[1] + tile["y"])]
+                                for pt in seg
+                            ]
+                        image_predictions.append(pred)
 
                 if image_predictions:
                     image_predictions = nms_predictions(image_predictions, iou_threshold=0.5)
@@ -798,16 +796,7 @@ def evaluate_model(
 
         else:
             # Batched full-image inference
-            # Resolve evaluation image size in this order:
-            # request override -> trained model config -> env default.
-            trained_imgsz = (
-                (task_metadata.get("training_params") or {}).get("image_size")
-                or (task_metadata.get("training_params") or {}).get("imgsz")
-                or task_metadata.get("image_size")
-            )
-            eval_imgsz_raw = image_size or trained_imgsz or os.environ.get("LAI_EVAL_IMGSZ", "640")
-            eval_imgsz = int(eval_imgsz_raw or 640)
-            eval_half = _env_bool("LAI_EVAL_HALF", True)
+            eval_half = _env_bool("LAI_EVAL_HALF", False)
             eval_device = _resolve_eval_device()
             eval_batch = _choose_eval_batch_size(imgsz=eval_imgsz, half=eval_half)
             max_batch = max(1, int(os.environ.get("LAI_EVAL_BATCH_MAX", "512") or 512))
@@ -836,11 +825,7 @@ def evaluate_model(
                 **(task.task_metadata or {}),
                 "eval_batch_size": eval_batch,
                 "eval_imgsz": eval_imgsz,
-                "eval_imgsz_source": (
-                    "request"
-                    if image_size
-                    else ("training_task" if trained_imgsz else "env_default")
-                ),
+                "eval_imgsz_source": eval_imgsz_source,
                 "eval_half": eval_half,
                 "eval_device": eval_device,
                 "eval_decode_workers": decode_workers,
@@ -895,27 +880,10 @@ def evaluate_model(
             successful_chunks = 0
             t_inference_start = time.time()
 
-            # Parallel decode + prefetch: overlaps disk I/O and JPEG decode with
-            # GPU forward passes. `get_batch_size` is consulted at submit time so
-            # ramp-up/back-off below adjusts the next chunk.
-            chunk_iter = _iter_prefetched_chunks(
-                valid_items,
-                get_batch_size=lambda: eval_batch,
-                decode_workers=decode_workers,
-                prefetch=prefetch_chunks,
-            )
-
-            for chunk, decoded_arrays in chunk_iter:
-                # Build inference inputs: prefer decoded arrays; fall back to
-                # path strings for any image that failed to decode (Ultralytics
-                # accepts a heterogeneous list).
-                infer_inputs: List[Any] = []
-                for (img, p), arr in zip(chunk, decoded_arrays):
-                    if isinstance(arr, np.ndarray):
-                        infer_inputs.append(arr)
-                    else:
-                        infer_inputs.append(str(p))
-
+            # Batch by file path (same as auto-annotate). Decoded numpy batches were
+            # unreliable across Ultralytics versions and channel-order edge cases.
+            for chunk in _chunked(valid_items, eval_batch):
+                infer_inputs = [str(p) for _img, p in chunk]
                 run_batch = min(eval_batch, len(infer_inputs))
                 results = None
                 while run_batch >= 1:
@@ -931,8 +899,6 @@ def evaluate_model(
                             batch=run_batch,
                         )
                         successful_chunks += 1
-                        # Ramp up aggressively for the first few successful chunks
-                        # (cuDNN/alloc steady state reached) while VRAM allows.
                         if eval_batch < max_batch:
                             free_now, total_now = _get_gpu_mem_info_gb()
                             free_ratio = (free_now / total_now) if total_now > 0 else 0.0
@@ -951,7 +917,7 @@ def evaluate_model(
                         if oom_like and run_batch > 1:
                             run_batch = max(1, run_batch // 2)
                             eval_batch = run_batch
-                            successful_chunks = 0  # reset ramp-up
+                            successful_chunks = 0
                             logger.warning(
                                 "Evaluation batch OOM/backoff: retrying with batch=%s (task=%s)",
                                 run_batch,
@@ -976,43 +942,16 @@ def evaluate_model(
                     results = [None] * len(infer_inputs)
 
                 for (img, _img_path), result in zip(chunk, results):
-                    image_predictions = []
-                    if result is not None and getattr(result, "boxes", None):
-                        for box_idx, box in enumerate(result.boxes):
-                            pred_class_id = int(box.cls.item())
-                            if pred_class_id < num_classes:
-                                xyxy = box.xyxy[0].cpu().numpy()
-                                x1, y1, x2, y2 = xyxy
-                                bbox_xywh = [float(x1), float(y1), float(x2 - x1), float(y2 - y1)]
-
-                                segmentation = []
-                                if hasattr(result, 'masks') and result.masks is not None:
-                                    try:
-                                        if hasattr(result.masks, 'xy') and len(result.masks.xy) > box_idx:
-                                            mask = result.masks.xy[box_idx]
-                                            if len(mask) > 0:
-                                                segmentation = [float(coord) for point in mask for coord in point]
-                                                logger.debug(f"Extracted mask with {len(mask)} points for box {box_idx}")
-                                            else:
-                                                logger.debug(f"Empty mask for box {box_idx}")
-                                        else:
-                                            logger.debug(f"No mask.xy or index {box_idx} out of range")
-                                    except (IndexError, AttributeError) as e:
-                                        logger.warning(f"Failed to extract mask for box {box_idx}: {e}")
-                                elif is_segmentation_model:
-                                    # Log once per image if segmentation model but no masks
-                                    if box_idx == 0:
-                                        logger.warning(f"Segmentation model but no masks in result for image {img.id}")
-
-                                image_predictions.append({
-                                    'image_id': img.id,
-                                    'class_id': pred_class_id,
-                                    'bbox': bbox_xywh,
-                                    'bbox_xyxy': [float(x1), float(y1), float(x2), float(y2)],
-                                    'conf': float(box.conf.item()),
-                                    'segmentation': segmentation
-                                })
-                                predictions_count += 1
+                    image_predictions, raw_n, dropped_n = extract_yolo_image_predictions(
+                        result,
+                        image_id=img.id,
+                        num_classes=num_classes,
+                        is_segmentation_model=is_segmentation_model,
+                        conf_threshold=0.0,
+                    )
+                    raw_box_total += raw_n
+                    filtered_by_class_total += dropped_n
+                    predictions_count += len(image_predictions)
 
                     if image_predictions:
                         all_predictions.extend(image_predictions)
@@ -1153,6 +1092,22 @@ def evaluate_model(
         
         # Calculate final metrics
         logger.info(f"Final counts: TP={true_positives}, FP={false_positives}, FN={false_negatives}")
+        if raw_box_total > 0 and predictions_count == 0:
+            logger.error(
+                "Evaluation produced 0 stored predictions but %s raw detections "
+                "(%s dropped by class filter, nc=%s, names=%s)",
+                raw_box_total,
+                filtered_by_class_total,
+                num_classes,
+                class_names,
+            )
+        elif filtered_by_class_total > 0:
+            logger.warning(
+                "Dropped %s/%s detections outside model class range (nc=%s)",
+                filtered_by_class_total,
+                raw_box_total,
+                num_classes,
+            )
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
         recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
         f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
@@ -1193,6 +1148,10 @@ def evaluate_model(
             'project_id': project_id,
             'image_id_to_filename': {str(k): v for k, v in image_id_to_filename.items()},
             'predictions_count': predictions_count,
+            'raw_detection_count': raw_box_total,
+            'filtered_detection_count': filtered_by_class_total,
+            'eval_imgsz': eval_imgsz,
+            'eval_imgsz_source': eval_imgsz_source,
             'has_ground_truth': has_ground_truth,
             'avg_confidence': avg_confidence,
             'predictions_per_image': predictions_per_image,

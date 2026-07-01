@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import SessionLocal
+from app.services.annotation_processing import segmentation_to_coco_polygons
 from app.task_dispatch import ensure_inline_dispatch_allowed, use_celery_enabled
 logger = logging.getLogger(__name__)
 
@@ -892,17 +893,28 @@ async def get_dataset_annotation_content(
                 # Build image dimension map for coordinate conversion
                 image_dims = {}
                 if image_ids:
+                    afi_rows = db.query(models.AnnotationFileImage).filter(
+                        models.AnnotationFileImage.annotation_file_id == annotation_id,
+                        models.AnnotationFileImage.dataset_image_id.in_(list(image_ids)),
+                    ).all()
+                    for afi in afi_rows:
+                        if afi.dataset_image_id and afi.width and afi.height:
+                            image_dims[afi.dataset_image_id] = (afi.width, afi.height)
                     images_for_dims = db.query(models.Image).filter(
                         models.Image.id.in_(list(image_ids))
                     ).all()
                     for img in images_for_dims:
-                        image_dims[img.id] = (img.width or 1, img.height or 1)
+                        if img.id not in image_dims:
+                            image_dims[img.id] = (img.width or 1, img.height or 1)
                 
                 for ann in all_annotation_rows:
                     image_id = ann["imageId"]
                     
                     # Get image dimensions for this annotation
                     img_width, img_height = image_dims.get(image_id, (1, 1))
+                    if ann.get("imageWidth") and ann.get("imageHeight"):
+                        img_width = ann["imageWidth"] or img_width
+                        img_height = ann["imageHeight"] or img_height
                     
                     # Build base annotation (use primary key when cocoAnnotationId is null)
                     coco_ann = {
@@ -922,25 +934,30 @@ async def get_dataset_annotation_content(
                             # RLE payload
                             coco_ann["segmentation"] = seg_raw
                         elif isinstance(seg_raw, list):
-                            first = seg_raw[0] if len(seg_raw) > 0 else None
-                            if isinstance(first, (int, float)):
-                                # Flat polygon -> wrap once for COCO polygon format
-                                if len(seg_raw) >= 6:
-                                    coco_ann["segmentation"] = [seg_raw]
-                            else:
-                                # Already polygon list; keep only valid polygons
-                                valid_polys = [
-                                    poly
-                                    for poly in seg_raw
-                                    if isinstance(poly, list) and len(poly) >= 6
-                                ]
-                                if valid_polys:
-                                    coco_ann["segmentation"] = valid_polys
+                            valid_polys = segmentation_to_coco_polygons(seg_raw)
+                            if valid_polys:
+                                coco_ann["segmentation"] = valid_polys
 
-                    # Handle bbox - coordinates are stored as pixels, use directly
+                    # Handle bbox — API rows are normalized 0–1; COCO JSON uses pixels
                     if ann.get("bbox") and len(ann["bbox"]) == 4:
-                        coco_ann["bbox"] = ann["bbox"]
-                        coco_ann["area"] = ann.get("area") if ann.get("area") is not None else (coco_ann["bbox"][2] * coco_ann["bbox"][3])
+                        bx, by, bw, bh = (float(v) for v in ann["bbox"][:4])
+                        w_dim = float(img_width or 1) or 1.0
+                        h_dim = float(img_height or 1) or 1.0
+                        if max(bx, by, bw, bh) <= 1.0:
+                            pixel_bbox = [bx * w_dim, by * h_dim, bw * w_dim, bh * h_dim]
+                        else:
+                            # Legacy rows stored absolute pixels in bbox columns
+                            pixel_bbox = [bx, by, bw, bh]
+                        coco_ann["bbox"] = pixel_bbox
+                        stored_area = ann.get("area")
+                        if stored_area is not None and stored_area <= 1.0:
+                            coco_ann["area"] = float(stored_area) * w_dim * h_dim
+                        else:
+                            coco_ann["area"] = (
+                                stored_area
+                                if stored_area is not None
+                                else (pixel_bbox[2] * pixel_bbox[3])
+                            )
                         coco_ann["iscrowd"] = 0
                     elif coco_ann.get("segmentation"):
                         # Mask-only: ensure area/iscrowd and bbox from polygon bounds

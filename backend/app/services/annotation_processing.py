@@ -263,6 +263,82 @@ def resolve_dataset_image_by_filename(
     )
 
 
+def _flatten_polygon_coords(polygon: Any) -> Optional[List[float]]:
+    """Convert a polygon to flat COCO coords [x1, y1, x2, y2, ...]."""
+    if not isinstance(polygon, list) or len(polygon) < 3:
+        return None
+    if polygon and isinstance(polygon[0], (int, float)):
+        if len(polygon) < 6:
+            return None
+        try:
+            return [float(v) for v in polygon]
+        except (TypeError, ValueError):
+            return None
+    if polygon and isinstance(polygon[0], (list, tuple)):
+        flat: List[float] = []
+        for pt in polygon:
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+                try:
+                    flat.extend([float(pt[0]), float(pt[1])])
+                except (TypeError, ValueError):
+                    continue
+        return flat if len(flat) >= 6 else None
+    return None
+
+
+def segmentation_to_coco_polygons(segmentation: Any) -> List[List[float]]:
+    """
+    Normalize segmentation to COCO polygon list ``[[x1, y1, x2, y2, ...], ...]``.
+
+    Accepts flat polygons, YOLO/Ultralytics point pairs ``[[x, y], ...]``, and
+    over-wrapped exports ``[[[x, y], ...]]``.
+    """
+    if not segmentation or isinstance(segmentation, dict):
+        return []
+    if not isinstance(segmentation, list):
+        return []
+
+    work: Any = segmentation
+    while (
+        isinstance(work, list)
+        and len(work) == 1
+        and isinstance(work[0], list)
+        and work[0]
+        and isinstance(work[0][0], (list, tuple))
+        and len(work[0][0]) >= 2
+        and isinstance(work[0][0][0], (int, float))
+    ):
+        work = work[0]
+
+    polygons: List[List[float]] = []
+    if work and isinstance(work[0], (int, float)):
+        flat = _flatten_polygon_coords(work)
+        if flat:
+            polygons.append(flat)
+        return polygons
+
+    if not work or not isinstance(work[0], list):
+        return polygons
+
+    first = work[0]
+    if first and isinstance(first[0], (int, float)):
+        if len(first) >= 6:
+            for poly in work:
+                flat = _flatten_polygon_coords(poly)
+                if flat:
+                    polygons.append(flat)
+        else:
+            flat = _flatten_polygon_coords(work)
+            if flat:
+                polygons.append(flat)
+        return polygons
+
+    flat = _flatten_polygon_coords(work)
+    if flat:
+        polygons.append(flat)
+    return polygons
+
+
 def validate_and_normalize_segmentation(
     segmentation: Any,
     image_width: Optional[int] = None,
@@ -292,23 +368,20 @@ def validate_and_normalize_segmentation(
     if isinstance(segmentation, dict):
         return segmentation
     
-    # Handle list of polygons
+    # Handle list of polygons (flat COCO, point pairs, or over-wrapped YOLO exports)
     if isinstance(segmentation, list):
         validated_polygons = []
-        
-        for polygon in segmentation:
-            if not isinstance(polygon, list) or len(polygon) < 6:  # Need at least 3 points (6 values)
-                continue
-            
+
+        for flat_polygon in segmentation_to_coco_polygons(segmentation):
             validated_polygon = []
-            
+
             # Process coordinates in pairs (x, y)
-            for i in range(0, len(polygon), 2):
-                if i + 1 >= len(polygon):
+            for i in range(0, len(flat_polygon), 2):
+                if i + 1 >= len(flat_polygon):
                     break
-                
-                x = polygon[i]
-                y = polygon[i + 1]
+
+                x = flat_polygon[i]
+                y = flat_polygon[i + 1]
                 
                 # Convert to float first
                 try:
@@ -376,6 +449,17 @@ def validate_and_normalize_segmentation(
     return None
 
 
+def _has_meaningful_bbox(bbox: Any) -> bool:
+    """True when bbox is [x, y, w, h] with at least one non-zero dimension."""
+    if not bbox or not isinstance(bbox, list) or len(bbox) < 4:
+        return False
+    try:
+        x, y, w, h = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (TypeError, ValueError):
+        return False
+    return w > 0 and h > 0 and (x != 0 or y != 0 or w != 0 or h != 0)
+
+
 def _has_meaningful_segmentation(seg: Any) -> bool:
     """True when segmentation contains a polygon with at least 3 points (6 coords)."""
     if not seg or not isinstance(seg, list) or len(seg) == 0:
@@ -414,9 +498,7 @@ def detect_annotation_type(coco_data: Dict[str, Any]) -> Optional[str]:
                 if _has_meaningful_segmentation(seg):
                     has_segmentation = True
             if not has_bbox and ann.get('bbox') and len(ann['bbox']) >= 4:
-                # Check if bbox is not just zero values
-                bbox = ann['bbox']
-                if any(val > 0 for val in bbox):
+                if _has_meaningful_bbox(ann['bbox']):
                     has_bbox = True
             if has_segmentation and has_bbox:
                 break  # early exit – no need to scan further
@@ -1234,8 +1316,8 @@ async def get_annotation_data(
             "confidence": ann.confidence,
             "cocoImageId": ann.coco_image_id,
             "cocoAnnotationId": ann.coco_annotation_id,
-            "imageWidth": dims[0],
-            "imageHeight": dims[1]
+            "imageWidth": img_w,
+            "imageHeight": img_h,
         })
     
     return {
@@ -1276,6 +1358,21 @@ async def get_annotations_for_image(
     if not image:
         raise HTTPException(status_code=404, detail=f"Image '{image_filename}' not found in dataset")
 
+    ann_file_img = db.query(AnnotationFileImage).filter(
+        AnnotationFileImage.annotation_file_id == annotation_file_id,
+        AnnotationFileImage.dataset_image_id == image.id,
+    ).first()
+    img_w = (
+        ann_file_img.width
+        if ann_file_img and ann_file_img.width
+        else (image.width or 1)
+    )
+    img_h = (
+        ann_file_img.height
+        if ann_file_img and ann_file_img.height
+        else (image.height or 1)
+    )
+
     annotations = db.query(Annotation).filter(
         and_(
             Annotation.annotation_file_id == annotation_file_id,
@@ -1297,12 +1394,15 @@ async def get_annotations_for_image(
             flat = seg if isinstance(first, (int, float)) else (first if isinstance(first, list) else seg)
         else:
             flat = []
+        pixel_bbox = annotation_bbox_pixel_xywh(
+            ann, img_width=img_w, img_height=img_h
+        )
         result.append({
             "id": ann.id,
             "className": cls_info["name"],
             "color": cls_info["color"],
             "segmentation": flat,
-            "bbox": ann.bbox,
+            "bbox": pixel_bbox,
             "area": ann.area,
             "confidence": ann.confidence,
         })
@@ -1311,8 +1411,8 @@ async def get_annotations_for_image(
         "success": True,
         "data": {
             "annotations": result,
-            "imageWidth": image.width or 1,
-            "imageHeight": image.height or 1,
+            "imageWidth": img_w,
+            "imageHeight": img_h,
             "imageFilename": image.file_name,
             "imageId": image.id,
         }

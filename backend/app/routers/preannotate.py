@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 import json
@@ -184,6 +184,9 @@ def create_annotation_from_yolo_detection(
     annotation_file_id: str,
     image_id: int,
     dataset_id: int,
+    *,
+    img_width: int,
+    img_height: int,
 ):
     """Create annotation object from YOLO ONNX detection."""
     class_id = det.class_id
@@ -194,15 +197,17 @@ def create_annotation_from_yolo_detection(
 
     class_name = COCO_CLASSES[class_id]
     x1, y1, x2, y2 = det.bbox_xyxy
-    bbox_x = float(x1)
-    bbox_y = float(y1)
-    bbox_width = float(x2 - x1)
-    bbox_height = float(y2 - y1)
+    w = float(img_width or 1) or 1.0
+    h = float(img_height or 1) or 1.0
+    bbox_x = float(x1) / w
+    bbox_y = float(y1) / h
+    bbox_width = float(x2 - x1) / w
+    bbox_height = float(y2 - y1) / h
     bbox = [bbox_x, bbox_y, bbox_width, bbox_height]
     area = bbox_width * bbox_height
     segmentation = det.segmentation
     if segmentation:
-        area = calculate_polygon_area(segmentation)
+        area = calculate_polygon_area(segmentation) / (w * h)
 
     annotation = models.Annotation(
         annotation_file_id=annotation_file_id,
@@ -223,43 +228,33 @@ def create_annotation_from_yolo_detection(
     return class_name
 
 
+def _resolve_image_path(img, project_id: int, dataset_id: int) -> Optional[Path]:
+    """Resolve on-disk path for a dataset image (collection subdirs, URL tails)."""
+    from app.dataset_media_paths import resolve_dataset_image_path_from_models
+
+    return resolve_dataset_image_path_from_models(
+        img,
+        dataset_id=int(dataset_id),
+        project_id=int(project_id) if project_id else None,
+    )
+
+
 def process_single_image(db, runner, img, project_id: int, dataset_id: int,
                         annotation_file_id: str, class_counts: dict,
                         conf_threshold: float = 0.25):
     """Process a single image with YOLO ONNX inference and create annotations."""
-    import uuid
-    
-    # Construct image path - try multiple locations
-    img_path = Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name
-    logger.info(f"Trying image path: {img_path} (exists: {img_path.exists()})")
-    if not img_path.exists():
-        img_path = Path("data") / "images" / str(dataset_id) / img.file_name
-        logger.info(f"Trying fallback path: {img_path} (exists: {img_path.exists()})")
-    if not img_path.exists():
-        # Try absolute path from img.url if available
-        if img.url:
-            # url is like /static/projects/1/2/images/file.png - strip /static/ prefix
-            url_path = img.url.lstrip('/')
-            if url_path.startswith('static/'):
-                url_path = url_path[len('static/'):]
-            alt_path = Path(url_path)
-            logger.info(f"Trying URL-based path: {alt_path} (exists: {alt_path.exists()})")
-            if alt_path.exists():
-                img_path = alt_path
-            else:
-                logger.warning(f"Image not found at any path for {img.file_name} (id={img.id}, url={img.url})")
-                # List what actually exists in the expected directory
-                expected_dir = Path("projects") / str(project_id) / str(dataset_id) / "images"
-                if expected_dir.exists():
-                    files = list(expected_dir.iterdir())[:5]
-                    logger.warning(f"  Directory {expected_dir} exists with {len(list(expected_dir.iterdir()))} files, first 5: {[f.name for f in files]}")
-                else:
-                    logger.warning(f"  Directory {expected_dir} does NOT exist")
-                return 0
-        else:
-            logger.warning(f"Image not found and no URL: {img.file_name} (id={img.id})")
-            return 0
-    
+    img_path = _resolve_image_path(img, project_id, dataset_id)
+    if img_path is None:
+        logger.warning(
+            "Image not found for %s (id=%s, project_id=%s, dataset_id=%s, url=%s)",
+            img.file_name,
+            img.id,
+            project_id,
+            dataset_id,
+            getattr(img, "url", None),
+        )
+        return 0
+
     logger.info(f"Processing image: {img_path} (size: {img_path.stat().st_size} bytes)")
     
     # Run ONNX inference
@@ -270,6 +265,10 @@ def process_single_image(db, runner, img, project_id: int, dataset_id: int,
     except Exception as e:
         logger.error(f"Inference failed on {img_path}: {e}", exc_info=True)
         return 0
+
+    if img.width != img_width or img.height != img_height:
+        img.width = img_width
+        img.height = img_height
 
     logger.info(f"Image {img.file_name}: shape=({img_height}, {img_width}), detections={len(detections)}")
     for i, det in enumerate(detections[:5]):
@@ -292,7 +291,13 @@ def process_single_image(db, runner, img, project_id: int, dataset_id: int,
     annotations_count = 0
     for det in detections:
         class_name = create_annotation_from_yolo_detection(
-            db, det, annotation_file_id, img.id, dataset_id
+            db,
+            det,
+            annotation_file_id,
+            img.id,
+            dataset_id,
+            img_width=img_width,
+            img_height=img_height,
         )
         if class_name:
             class_counts[class_name] += 1
@@ -300,34 +305,6 @@ def process_single_image(db, runner, img, project_id: int, dataset_id: int,
     
     logger.info(f"Image {img.file_name}: created {annotations_count} annotations")
     return annotations_count
-
-
-def _resolve_image_path(img, project_id: int, dataset_id: int) -> Optional[Path]:
-    """Resolve image path using same order as process_single_image. Returns None if not found."""
-    img_path = Path("projects") / str(project_id) / str(dataset_id) / "images" / img.file_name
-    logger.info(f"Classification: trying image path {img_path} (exists={img_path.exists()})")
-    if img_path.exists():
-        return img_path.resolve()
-    img_path = Path("data") / "images" / str(dataset_id) / img.file_name
-    logger.info(f"Classification: fallback path {img_path} (exists={img_path.exists()})")
-    if img_path.exists():
-        return img_path.resolve()
-    if img.url:
-        url_path = img.url.lstrip("/")
-        if url_path.startswith("static/"):
-            url_path = url_path[len("static/"):]
-        alt_path = Path(url_path)
-        if alt_path.exists():
-            logger.info(f"Classification: using URL-based path {alt_path}")
-            return alt_path.resolve()
-        # Try projects/ relative to CWD in case url is like "projects/1/2/images/file.jpg"
-        if not url_path.startswith("projects"):
-            alt_path = Path("projects") / url_path
-        else:
-            alt_path = Path(url_path)
-        if alt_path.exists():
-            return alt_path.resolve()
-    return None
 
 
 def process_single_image_classification(
@@ -462,140 +439,9 @@ def finalize_annotation_file(db, annotation_file_id: str, total_annotations: int
     db.commit()
 
 
-async def preannotate_with_foundation_model_task(task_id: int, db_path: str, model_name: str, dataset_id: int, conf_threshold: float = 0.25, task_type: str = "detect"):
-    """Background task to run YOLO inference and create annotations"""
-    logger.info(f"Starting preannotate task {task_id} with model {model_name}")
-    
-    from ..database import SessionLocal
-    
-    db = SessionLocal()
-    try:
-        # Get and validate task
-        task = db.query(models.Task).filter(models.Task.id == task_id).first()
-        if not task:
-            logger.error(f"Task {task_id} not found")
-            return
-        
-        if task.status == 'cancelled':
-            logger.info(f"Task {task_id}: Task was cancelled")
-            return
-        
-        # Update task to running
-        task.status = 'running'
-        task.started_at = datetime.utcnow()
-        task.progress = 0.0
-        db.commit()
-        logger.info(f"Task {task_id}: Status set to running")
-        
-        # Get dataset and images
-        dataset = db.query(models.Dataset).filter(models.Dataset.id == dataset_id).first()
-        if not dataset:
-            raise Exception(f"Dataset {dataset_id} not found")
-        
-        md = task.task_metadata or {}
-        cid = md.get("collection_id")
-        if cid is not None:
-            try:
-                cid = int(cid)
-            except (TypeError, ValueError):
-                cid = None
-        q_img = db.query(models.Image).filter(models.Image.dataset_id == dataset_id)
-        if cid is not None:
-            q_img = q_img.filter(models.Image.collection_id == cid)
-        images = q_img.order_by(models.Image.id.asc()).all()
-        logger.info(
-            f"Task {task_id}: Found {len(images)} images to process in dataset {dataset_id}"
-            + (f" collection_id={cid}" if cid is not None else " (all collections)")
-            + f" (project {dataset.project_id})"
-        )
-        
-        if len(images) > 0:
-            # Log first few image details for debugging
-            for i, img in enumerate(images[:3]):
-                logger.info(f"  Image {i}: id={img.id}, file_name={img.file_name}, url={img.url}")
-        
-        if len(images) == 0:
-            raise Exception("No images found in dataset")
-        
-        task.progress = 10.0
-        db.commit()
-        
-        # Load YOLO model
-        model, use_segmentation, is_classification = load_yolo_onnx_runner(model_name, task_id, task_type)
-        task.progress = 20.0
-        db.commit()
-        
-        # Create annotation file with tags: model type, size, task (detection/segmentation/classification)
-        annotation_file_name = task.task_metadata.get('annotation_file_name', f'Auto_{model_name}')
-        auto_tags = _auto_annotate_tags(model_name, task_type)
-        annotation_file_id = create_annotation_file_with_classes(
-            db, dataset_id, annotation_file_name, use_segmentation, task_id, tags=auto_tags,
-            is_classification=is_classification,
-        )
-        
-        # Process all images
-        total_annotations = 0
-        class_counts = {} if is_classification else {name: 0 for name in COCO_CLASSES}
-        processed_images = 0
-        project_id = dataset.project_id or 0
-        
-        for img_idx, img in enumerate(images):
-            if is_classification:
-                annotations_count = process_single_image_classification(
-                    db, runner, img, project_id, annotation_file_id, dataset_id, class_counts
-                )
-            else:
-                annotations_count = process_single_image(
-                    db, runner, img, project_id, dataset_id,
-                    annotation_file_id, class_counts,
-                    conf_threshold=conf_threshold
-                )
-            
-            total_annotations += annotations_count
-            processed_images += 1
-            
-            # Update progress
-            if (img_idx + 1) % 10 == 0 or (img_idx + 1) == len(images):
-                progress = 20.0 + (processed_images / len(images)) * 70.0
-                task.progress = progress
-                db.commit()
-                logger.info(f"Task {task_id}: Processed {processed_images}/{len(images)} images")
-        
-        # Finalize annotation file
-        finalize_annotation_file(db, annotation_file_id, total_annotations, processed_images, class_counts)
-        
-        # Complete task
-        task.status = 'completed'
-        task.progress = 100.0
-        task.completed_at = datetime.utcnow()
-        task.task_metadata = {
-            **task.task_metadata,
-            'total_annotations': total_annotations,
-            'processed_images': processed_images,
-            'annotation_file_id': annotation_file_id
-        }
-        db.commit()
-        logger.info(f"Task {task_id}: Completed with {total_annotations} annotations")
-        
-    except Exception as e:
-        logger.error(f"Task {task_id}: Error - {str(e)}", exc_info=True)
-        task = db.query(models.Task).filter(models.Task.id == task_id).first()
-        if task and task.status != 'cancelled':
-            task.status = 'failed'
-            task.error_message = str(e)
-            task.completed_at = datetime.utcnow()
-            db.commit()
-    finally:
-        db.close()
-
-
-
-
-
 @router.post("/preannotate")
 async def start_preannotate(
     request: Dict[str, Any],
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db)
 ):
     """Start auto-annotation with foundation model or depth estimation"""
@@ -675,43 +521,49 @@ async def start_preannotate(
         )
         db.add(task)
         db.commit()
+        db.commit()
         db.refresh(task)
-        
-        # Get database URL from environment
-        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db/lai_db")
-        
-        # Start appropriate background task
+
         if is_depth_estimation:
-            # Import depth estimation task
             from ..tasks.depth_estimation_tasks import generate_depth_maps
-            
-            # Start depth estimation task
+
             celery_task = generate_depth_maps.delay(
                 task.id,
                 dataset_id,
                 model_size,
                 environment,
                 save_as or "collection",
-                new_dataset_name
+                new_dataset_name,
             )
             task.task_metadata = {**(task.task_metadata or {}), "celery_task_id": celery_task.id}
             db.commit()
 
-            logger.info(f"Started depth estimation task {task.id} for dataset {dataset_id} with model {model_name}")
+            logger.info(
+                "Started depth estimation task %s for dataset %s with model %s",
+                task.id,
+                dataset_id,
+                model_name,
+            )
             message = f"Depth estimation started with {model_name}"
         else:
-            # Start YOLO auto-annotation task
-            background_tasks.add_task(
-                preannotate_with_foundation_model_task,
+            from ..tasks.preannotate_tasks import run_yolo_preannotate
+
+            celery_task = run_yolo_preannotate.delay(
                 task.id,
-                db_url,
                 model_name,
                 dataset_id,
                 conf_threshold,
-                task_type
+                task_type,
             )
-            
-            logger.info(f"Started preannotate task {task.id} for dataset {dataset_id} with model {model_name}")
+            task.task_metadata = {**(task.task_metadata or {}), "celery_task_id": celery_task.id}
+            db.commit()
+
+            logger.info(
+                "Started preannotate task %s for dataset %s with model %s",
+                task.id,
+                dataset_id,
+                model_name,
+            )
             message = f"Auto-annotation started with {model_name}"
 
         weights_cached = (

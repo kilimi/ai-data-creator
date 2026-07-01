@@ -16,22 +16,29 @@ ENV HUGGINGFACE_HUB_DISABLE_TELEMETRY=1
 
 # SAM-2's pyproject often fails inside pip's isolated build env (missing/wrong torch).
 # Install wheels first, then git deps with --no-build-isolation so setup.py sees image PyTorch.
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel packaging \
+RUN pip install --no-cache-dir --upgrade pip 'setuptools>=69,<82' wheel packaging \
     && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir --no-build-isolation -r requirements-git.txt
+    && pip install --no-cache-dir --no-build-isolation -r requirements-git.txt \
+    && pip install --no-cache-dir 'setuptools>=69,<82'
 
 # SAM 2: pre-download checkpoint at build. SAM 3: use runtime volume or HF (SAM3_CHECKPOINT_PATH / HF_TOKEN).
 RUN mkdir -p /models/hf_cache /models/sam3 \
     && python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='facebook/sam2.1-hiera-small', filename='sam2.1_hiera_small.pt'); print('SAM 2 checkpoint downloaded.')"
 
-COPY app.py utils.py ./
+RUN git clone --depth 1 https://github.com/visinf/INSID3.git /opt/insid3
+
+COPY app.py sam_utils.py insid3_runner.py insid3_mask_utils.py dinov3_weight_utils.py ./
 
 ENV FLASK_APP=app.py
 ENV FLASK_RUN_HOST=0.0.0.0
 ENV SAM2_MODEL_ID=facebook/sam2.1-hiera-small
+ENV INSID3_CODE_PATH=/opt/insid3
+ENV INSID3_ENABLED=1
+ENV DINOV3_WEIGHTS_DIR=/models/dinov3
+ENV PYTHONPATH=/opt/insid3
 # Optional: set to /models/sam3/sam3.pt when mounting a volume with local checkpoint
 ENV SAM3_CHECKPOINT_PATH=/models/sam3/sam3.pt
 
 EXPOSE 8081
 
-CMD ["gunicorn", "-b", "0.0.0.0:8081", "app:app", "--workers", "1", "--timeout", "120"]
+CMD ["gunicorn", "-b", "0.0.0.0:8081", "app:app", "--workers", "1", "--timeout", "300", "--access-logfile", "-", "--error-logfile", "-", "--capture-output", "--log-level", "info"]

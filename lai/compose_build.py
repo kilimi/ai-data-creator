@@ -67,7 +67,10 @@ def _is_local_build_tag(tag: str) -> bool:
     return False
 
 
-def _parse_env_file(path: Path) -> dict[str, str]:
+def _parse_env_file(root: Path) -> dict[str, str]:
+    from lai.paths import resolve_env_file
+
+    path = resolve_env_file(root)
     out: dict[str, str] = {}
     if not path.is_file():
         return out
@@ -82,7 +85,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 def image_tags(root: Path) -> dict[str, str]:
     """Resolved image tags from .env with compose defaults."""
-    env = _parse_env_file(root / ".env")
+    env = _parse_env_file(root)
     tags = dict(DEFAULT_TAGS)
     legacy = env.get(_LEGACY_CELERY_KEY, "").strip()
     if legacy:
@@ -100,7 +103,7 @@ def image_tags(root: Path) -> dict[str, str]:
 
 def uses_local_build(root: Path) -> bool:
     """True when any stack image is configured for local build."""
-    env = _parse_env_file(root / ".env")
+    env = _parse_env_file(root)
     tags = image_tags(root)
     keys = list(IMAGE_ENV_KEYS) + [_LEGACY_CELERY_KEY]
     configured = [k for k in keys if k in env and env[k].strip()]
@@ -148,6 +151,80 @@ def should_build_stack(root: Path, *, force: bool = False) -> bool:
     return bool(missing_runtime_images(root))
 
 
+def ensure_developer_build_env(root: Path) -> bool:
+    """
+    In a git developer checkout, ensure .env uses :local image tags.
+
+    Registry tags (docker.io/...) break ``docker compose build`` because ML runtime
+    images must be built locally first. Returns True if .env was modified.
+    """
+    from lai.registry import is_developer_checkout
+    from lai.paths import resolve_env_file
+
+    if not is_developer_checkout(root):
+        return False
+
+    env_path = resolve_env_file(root)
+    env = _parse_env_file(root)
+    updates: dict[str, str] = {}
+    for key in IMAGE_ENV_KEYS:
+        current = env.get(key, "").strip()
+        if not current or not _is_local_build_tag(current):
+            updates[key] = DEFAULT_TAGS[key]
+
+    for key, default in (("MMCV_USE_PREBUILT", "1"), ("MMCV_BUILD_JOBS", "2")):
+        if not env.get(key, "").strip():
+            updates[key] = default
+
+    if not updates:
+        return False
+
+    lines: list[str] = []
+    if env_path.is_file():
+        lines = env_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+
+    changed = False
+    for key, val in updates.items():
+        prefix = f"{key}="
+        new_line = f"{key}={val}"
+        found = False
+        out: list[str] = []
+        for ln in lines:
+            if ln.strip().startswith(prefix):
+                if ln.strip() != new_line:
+                    out.append(new_line)
+                    changed = True
+                else:
+                    out.append(ln)
+                found = True
+            else:
+                out.append(ln)
+        if not found:
+            out.append(new_line)
+            changed = True
+        lines = out
+
+    if changed:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return changed
+
+
+def developer_build_status(root: Path) -> dict[str, object]:
+    """Summary for lai doctor — local tags, missing images, pipeline hint."""
+    from lai.registry import is_developer_checkout
+
+    dev = is_developer_checkout(root)
+    local = uses_local_build(root)
+    missing = missing_runtime_images(root) if local else []
+    return {
+        "developer_checkout": dev,
+        "local_build": local,
+        "missing_images": missing,
+        "pipeline_cmd": "lai dev" if dev else "lai build && lai up",
+    }
+
+
 def _services_needing_build(
     root: Path,
     service_names: Iterable[str],
@@ -173,11 +250,16 @@ def _services_needing_build(
 
 def _compose_base_cmd(root: Path) -> list[str]:
     from lai.compose_files import compose_file_flag_args, ensure_compose_env
+    from lai.paths import resolve_env_file
 
     ensure_compose_env(root)
-    env = _parse_env_file(root / ".env")
+    env = _parse_env_file(root)
     compose_file = env.get("COMPOSE_FILE", "docker-compose.yml")
-    return ["docker", "compose", *compose_file_flag_args(root, compose_file)]
+    cmd = ["docker", "compose", *compose_file_flag_args(root, compose_file)]
+    env_path = resolve_env_file(root)
+    if env_path.is_file():
+        cmd.extend(["--env-file", str(env_path)])
+    return cmd
 
 
 def _run_build(
@@ -214,6 +296,12 @@ def build_stack(root: Path, *, no_cache: bool = False) -> int:
         print("Using registry images from .env; skipping local build.", flush=True)
         return 0
 
+    from lai.registry import is_developer_checkout
+
+    if is_developer_checkout(root):
+        if ensure_developer_build_env(root):
+            print("Updated .env to use local :local image tags for developer builds.", flush=True)
+
     rebuild_all = no_cache
     profile_services = _services_needing_build(
         root, _BUILD_PROFILE_SERVICES, _RUNTIME_SERVICE_IMAGE_KEYS, rebuild_all=rebuild_all
@@ -238,7 +326,8 @@ def build_stack(root: Path, *, no_cache: bool = False) -> int:
             profile_build=True,
             step_label=(
                 f"[{step}/{total_steps}] ML runtime images ({', '.join(profile_services)}) — "
-                "first build can take 30–60+ minutes; then backend and workers build."
+                "mmyolo uses OpenMMLab prebuilt mmcv by default (MMCV_USE_PREBUILT=1). "
+                "RTX 40xx: set MMCV_USE_PREBUILT=0 in .env or run scripts/fetch_mmyolo_mmcv_wheel.ps1"
             ),
         )
         if rc != 0:

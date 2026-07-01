@@ -4,6 +4,7 @@ Unified SAM service: Segment Anything Model 2 and 3 in one container.
 - SAM 3: point / box / text prompts (facebookresearch/sam3).
 POST /segment accepts "model": "sam2" | "sam3" (default sam2). GET /health returns both flags.
 """
+import contextlib
 import os
 import hashlib
 from flask import Flask, request, jsonify
@@ -13,7 +14,13 @@ import numpy as np
 import requests
 import io
 
-from utils import decode_base64_image, encode_image_to_dataurl, mask_to_polygons
+from sam_utils import (
+    decode_base64_image,
+    encode_image_to_dataurl,
+    mask_to_polygons,
+    polygons_from_instance_masks,
+    combine_instance_masks,
+)
 
 import torch  # used by both SAM 2 and SAM 3
 
@@ -52,6 +59,19 @@ except Exception as e:
     SAM_AVAILABLE = False
 
 app = Flask(__name__)
+
+
+def _log(msg: str) -> None:
+    """Stdout for Docker; flush so lines appear immediately under gunicorn."""
+    print(msg, flush=True)
+
+
+@app.before_request
+def _log_incoming_request():
+    if request.path.startswith("/health"):
+        return
+    _log(f"[sam_service] {request.method} {request.path}")
+
 
 MAX_INFER_SIZE = int(os.environ.get("SAM_MAX_SIZE", "1024"))
 DEFAULT_MODEL_ID = os.environ.get("SAM2_MODEL_ID", "facebook/sam2.1-hiera-small")
@@ -103,6 +123,13 @@ else:
     print("[SAM3] SAM3_CHECKPOINT_PATH not set")
 print(f"[SAM3] SAM3_ALLOW_HF_DOWNLOAD={SAM3_ALLOW_HF_DOWNLOAD}, ready_for_api={sam3_ready_for_api()}")
 
+try:
+    from insid3_runner import log_dinov3_startup_status
+
+    log_dinov3_startup_status()
+except Exception as e:
+    print("[INSID3] Startup check failed:", e)
+
 
 def _get_device():
     """
@@ -123,6 +150,18 @@ def _get_device():
     except Exception as e:
         print(f"[SAM] CUDA not usable ({e!r}); using CPU.")
         return torch.device("cpu")
+
+
+def _sam3_autocast(device: torch.device):
+    """
+    SAM 3 ViTDet uses fused ops that emit bfloat16; without autocast, matmul dtypes
+    mismatch (sam3#507). Official notebooks wrap inference in bf16 autocast.
+    """
+    if device.type == "cuda":
+        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if device.type == "cpu":
+        return torch.autocast(device_type="cpu", dtype=torch.bfloat16)
+    return contextlib.nullcontext()
 
 
 # ---------- SAM 2 ----------
@@ -162,11 +201,51 @@ def _load_sam3_model():
             "(set SAM3_MODELS_HOST_PATH + SAM3_CHECKPOINT_FILENAME in .env, or use install), or set SAM3_ALLOW_HF_DOWNLOAD=true to download from Hugging Face."
         )
     print("[SAM3] Loading on", device, "...")
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     SAM3_MODEL = _build_sam3_image_model(checkpoint_path=checkpoint_path, load_from_HF=load_from_hf)
     SAM3_MODEL.to(device)
+    SAM3_MODEL.eval()
     SAM3_PROCESSOR = _Sam3Processor(SAM3_MODEL)
     print("[SAM3] Model loaded.")
     return SAM3_MODEL, SAM3_PROCESSOR
+
+
+def _points_to_normalized_box(points, w, h, padding=None):
+    """SAM3 add_geometric_prompt expects [cx, cy, w, h] normalized to [0, 1]."""
+    box_xyxy = _points_to_box(points, w, h, padding)
+    if box_xyxy is None:
+        return None
+    x1, y1, x2, y2 = box_xyxy
+    cx = ((x1 + x2) / 2.0) / max(w, 1)
+    cy = ((y1 + y2) / 2.0) / max(h, 1)
+    bw = (x2 - x1) / max(w, 1)
+    bh = (y2 - y1) / max(h, 1)
+    return [cx, cy, bw, bh]
+
+
+def _get_sam3_image_state(processor, img_rgb, img_np):
+    """Image backbone state; reset stale prompts/masks before each new request."""
+    global SAM3_LAST_IMAGE_HASH, SAM3_LAST_STATE
+    current_hash = hashlib.sha256(img_np.tobytes()).hexdigest()
+    if current_hash != SAM3_LAST_IMAGE_HASH or SAM3_LAST_STATE is None:
+        SAM3_LAST_STATE = processor.set_image(img_rgb)
+        SAM3_LAST_IMAGE_HASH = current_hash
+    else:
+        processor.reset_all_prompts(SAM3_LAST_STATE)
+    return SAM3_LAST_STATE
+
+
+def _run_sam3_text_prompt(processor, state, text_prompt: str):
+    return processor.set_text_prompt(text_prompt.strip(), state)
+
+
+def _run_sam3_box_prompt(processor, state, points, orig_w, orig_h):
+    box = _points_to_normalized_box(points, orig_w, orig_h)
+    if box is None:
+        return None
+    return processor.add_geometric_prompt(box, True, state)
 
 
 def _points_to_box(points, w, h, padding=None):
@@ -190,10 +269,15 @@ def _points_to_box(points, w, h, padding=None):
 # ---------- Routes ----------
 @app.route("/health", methods=["GET"])
 def health():
+    from insid3_runner import insid3_status_for_health
+
+    insid3 = insid3_status_for_health()
     return jsonify({
         "status": "ok",
         "sam_available": SAM_AVAILABLE,
         "sam3_available": sam3_ready_for_api(),
+        "insid3_available": insid3["available"],
+        "insid3": insid3,
     }), 200
 
 
@@ -213,6 +297,12 @@ def _get_image_from_request(data):
 def segment():
     data = request.get_json(force=True)
     model = (data.get("model") or "sam2").strip().lower()
+    points = data.get("points") if isinstance(data.get("points"), list) else []
+    _log(
+        f"[SAM] /segment request model={model} "
+        f"imageB64={bool(data.get('imageB64'))} imageUrl={bool(data.get('imageUrl'))} "
+        f"points={len(points)} text={bool((data.get('text') or '').strip()) if isinstance(data.get('text'), str) else bool(data.get('text'))}"
+    )
     if model == "sam3":
         data = {k: v for k, v in data.items() if k != "model"}
         return _segment_sam3(data)
@@ -265,9 +355,10 @@ def _segment_sam2(data):
         polys_out = [[[int(x), int(y)] for (x, y) in poly] for poly in polygons]
         mask_pil = Image.fromarray(mask).convert("RGBA")
         mask_dataurl = encode_image_to_dataurl(mask_pil)
+        _log(f"[SAM2] OK polygons={len(polys_out)} size={orig_w}x{orig_h}")
         return jsonify({"polygons": polys_out, "maskBase64": mask_dataurl, "source": "sam2"})
     except Exception as e:
-        print("[SAM2] Inference error:", e)
+        _log(f"[SAM2] Inference error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Segmentation failed", "detail": str(e)}), 500
@@ -293,76 +384,50 @@ def _segment_sam3(data):
         return jsonify({
             "error": "SAM 3 not available",
             "detail": (
-                "Provide local SAM 3 weights (SAM3_MODELS_HOST_PATH + SAM3_CHECKPOINT_FILENAME in .env), "
-                "or set SAM3_ALLOW_HF_DOWNLOAD=true (and HF_TOKEN if required) to load from Hugging Face."
+                "Provide local SAM 3 weights (SAM3_MODELS_HOST_PATH + SAM3_CHECKPOINT_FILENAME in .env). "
+                "Download from https://huggingface.co/facebook/sam3 after Hugging Face license approval."
             ),
         }), 503
 
     try:
         model, processor = _load_sam3_model()
-        global SAM3_LAST_IMAGE_HASH, SAM3_LAST_STATE
-        current_hash = hashlib.sha256(img_np.tobytes()).hexdigest()
-        if current_hash != SAM3_LAST_IMAGE_HASH or SAM3_LAST_STATE is None:
-            inference_state = processor.set_image(img_rgb)
-            SAM3_LAST_IMAGE_HASH = current_hash
-            SAM3_LAST_STATE = inference_state
-        else:
-            inference_state = SAM3_LAST_STATE
+        device = next(model.parameters()).device
 
-        masks_np = None
-        if text_prompt and isinstance(text_prompt, str) and text_prompt.strip():
-            output = processor.set_text_prompt(state=inference_state, prompt=text_prompt.strip())
-            masks_np = output.get("masks")
-        if masks_np is None or (isinstance(masks_np, (list, tuple)) and len(masks_np) == 0):
-            pts = points if points and len(points) > 0 else [point] if point else None
-            box = _points_to_box(pts, orig_w, orig_h) if pts else None
-            if box is not None:
-                try:
-                    output = processor.set_box_prompt(state=inference_state, box=box)
-                    masks_np = output.get("masks") if isinstance(output, dict) else None
-                except Exception:
-                    pass
-            if masks_np is None or (isinstance(masks_np, (list, tuple)) and len(masks_np) == 0):
-                output = processor.set_text_prompt(state=inference_state, prompt="object")
-                masks_np = output.get("masks")
+        with torch.inference_mode(), _sam3_autocast(device):
+            inference_state = _get_sam3_image_state(processor, img_rgb, img_np)
+            result_state = None
 
-        if masks_np is None or (isinstance(masks_np, (list, tuple)) and len(masks_np) == 0):
+            if text_prompt and isinstance(text_prompt, str) and text_prompt.strip():
+                result_state = _run_sam3_text_prompt(processor, inference_state, text_prompt)
+
+            masks_np = result_state.get("masks") if isinstance(result_state, dict) else None
+            if masks_np is None or (hasattr(masks_np, "numel") and masks_np.numel() == 0):
+                pts = points if points and len(points) > 0 else [point] if point else None
+                if pts:
+                    # Fresh prompt state for geometric fallback (avoid stale text masks).
+                    inference_state = _get_sam3_image_state(processor, img_rgb, img_np)
+                    result_state = _run_sam3_box_prompt(processor, inference_state, pts, orig_w, orig_h)
+                    masks_np = result_state.get("masks") if isinstance(result_state, dict) else None
+
+            if masks_np is None or (hasattr(masks_np, "numel") and masks_np.numel() == 0):
+                inference_state = _get_sam3_image_state(processor, img_rgb, img_np)
+                result_state = _run_sam3_text_prompt(processor, inference_state, "object")
+                masks_np = result_state.get("masks") if isinstance(result_state, dict) else None
+
+        if masks_np is None or (hasattr(masks_np, "numel") and masks_np.numel() == 0):
             return jsonify({"error": "No mask produced"}), 500
 
-        mask = masks_np[0] if isinstance(masks_np, (list, tuple)) else masks_np
-        if hasattr(mask, "cpu"):
-            mask = mask.cpu().numpy()
-        mask = np.asarray(mask)
-        # SAM 3 can return (1, 1, H*W) or (1, H, W) or (0, H, W) when no mask; ensure we have data
-        if mask.size == 0 or (mask.ndim >= 1 and mask.shape[0] == 0):
+        polys_out = polygons_from_instance_masks(masks_np, orig_w, orig_h)
+        if not polys_out:
             return jsonify({"error": "No mask produced"}), 500
-        mask = np.squeeze(mask)
-        if mask.size == 0 or (mask.ndim >= 1 and mask.shape[0] == 0):
-            return jsonify({"error": "No mask produced"}), 500
-        while mask.ndim > 2:
-            if mask.shape[0] == 0:
-                return jsonify({"error": "No mask produced"}), 500
-            mask = mask[0]
-        if mask.ndim == 1:
-            mask = mask.reshape(1, -1)
-        mask = (mask > 0.5).astype(np.uint8) * 255
-        # PIL requires 2D (H, W); force it in case of (1, 1, N) etc.
-        mask = np.squeeze(mask)
-        if mask.ndim == 1:
-            mask = mask.reshape(1, -1)
-        if mask.ndim > 2:
-            mask = mask.reshape(mask.shape[0], -1)
-        if mask.shape[0] != orig_h or mask.shape[1] != orig_w:
-            mask_pil = Image.fromarray(mask).resize((orig_w, orig_h), Image.NEAREST)
-            mask = np.array(mask_pil)
 
-        polygons = mask_to_polygons(mask)
-        polys_out = [[[int(x), int(y)] for (x, y) in poly] for poly in polygons]
-        mask_pil = Image.fromarray(mask).convert("RGBA")
+        combined = combine_instance_masks(masks_np, orig_w, orig_h)
+        mask_pil = Image.fromarray(combined).convert("RGBA")
         mask_dataurl = encode_image_to_dataurl(mask_pil)
+        _log(f"[SAM3] OK polygons={len(polys_out)} size={orig_w}x{orig_h}")
         return jsonify({"polygons": polys_out, "maskBase64": mask_dataurl, "source": "sam3"})
     except Exception as e:
-        print("[SAM3] Inference error:", e)
+        _log(f"[SAM3] Inference error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": "Segmentation failed", "detail": str(e)}), 500
@@ -376,6 +441,122 @@ def segment_text():
     data.setdefault("points", [])
     data.setdefault("point", {})
     return segment()
+
+
+@app.route("/segment/insid3", methods=["POST"])
+def segment_insid3():
+    """INSID3 in-context segmentation from 1+ reference masks."""
+    _log("[INSID3] POST /segment/insid3 received")
+    from insid3_runner import insid3_ready_for_api, segment_from_references
+
+    data = request.get_json(force=True) or {}
+    references = data.get("references") or []
+    if not references and data.get("referenceImageUrl"):
+        references = [{
+            "imageUrl": data.get("referenceImageUrl"),
+            "polygon": data.get("referenceMask") or data.get("polygon"),
+            "width": data.get("referenceWidth"),
+            "height": data.get("referenceHeight"),
+        }]
+    if not references:
+        _log("[INSID3] rejected: no references")
+        return jsonify({"error": "At least one reference is required (references[])"}), 400
+
+    target = {
+        "imageUrl": data.get("targetImageUrl"),
+        "imageB64": data.get("targetImageB64") or data.get("imageB64"),
+        "width": data.get("targetWidth"),
+        "height": data.get("targetHeight"),
+    }
+    if not target.get("imageUrl") and not target.get("imageB64"):
+        _log("[INSID3] rejected: no target image")
+        return jsonify({"error": "targetImageUrl or targetImageB64 required"}), 400
+
+    model_size = (data.get("model_size") or "base").strip().lower()
+    if not insid3_ready_for_api(model_size):
+        _log(f"[INSID3] rejected: not ready (model={model_size})")
+        return jsonify({
+            "error": "INSID3 not available",
+            "detail": "Set INSID3_CODE_PATH, DINOV3_WEIGHTS_DIR, and install INSID3 dependencies.",
+        }), 503
+
+    try:
+        image_size = int(data.get("image_size") or 768)
+        min_area = float(data.get("min_area") or 0)
+        ref_names = [
+            (r.get("imageName") or r.get("annotationId") or f"ref{i}")
+            for i, r in enumerate(references)
+        ]
+        _log(
+            f"[INSID3] /segment/insid3 request: refs={len(references)} {ref_names} "
+            f"target={'b64' if target.get('imageB64') else 'url'} "
+            f"target_size={target.get('width')}x{target.get('height')} "
+            f"image_size={image_size} min_area={min_area} model={model_size}"
+        )
+        result = segment_from_references(
+            references,
+            target,
+            image_size=image_size,
+            model_size=model_size,
+            min_area=min_area,
+        )
+        _log(
+            f"[INSID3] /segment/insid3 response: polygons={len(result.get('polygons') or [])} "
+            f"size={result.get('width')}x{result.get('height')}"
+        )
+        return jsonify(result)
+    except Exception as e:
+        _log(f"[INSID3] Inference error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "INSID3 segmentation failed", "detail": str(e)}), 500
+
+
+@app.route("/segment/insid3/session", methods=["POST"])
+def insid3_create_session():
+    from insid3_runner import create_session, insid3_ready_for_api
+
+    data = request.get_json(force=True) or {}
+    references = data.get("references") or []
+    if not references:
+        return jsonify({"error": "references[] required"}), 400
+    model_size = (data.get("model_size") or "base").strip().lower()
+    if not insid3_ready_for_api(model_size):
+        return jsonify({"error": "INSID3 not available"}), 503
+    try:
+        sid = create_session(
+            references,
+            image_size=int(data.get("image_size") or 768),
+            model_size=model_size,
+            min_area=float(data.get("min_area") or 0),
+        )
+        return jsonify({"sessionId": sid, "referenceCount": len(references)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/segment/insid3/session/<session_id>/segment", methods=["POST"])
+def insid3_session_segment(session_id: str):
+    from insid3_runner import segment_with_session
+
+    data = request.get_json(force=True) or {}
+    target = {
+        "imageUrl": data.get("targetImageUrl"),
+        "imageB64": data.get("targetImageB64") or data.get("imageB64"),
+        "width": data.get("targetWidth"),
+        "height": data.get("targetHeight"),
+    }
+    if not target.get("imageUrl") and not target.get("imageB64"):
+        return jsonify({"error": "targetImageUrl or targetImageB64 required"}), 400
+    try:
+        return jsonify(segment_with_session(session_id, target))
+    except KeyError:
+        return jsonify({"error": "Session not found or expired"}), 404
+    except Exception as e:
+        print("[INSID3] Session segment error:", e)
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": "INSID3 segmentation failed", "detail": str(e)}), 500
 
 
 if __name__ == "__main__":

@@ -17,12 +17,12 @@ import {
   Zap,
   ExternalLink,
   Save,
-  Clock,
   FolderOpen,
   Play,
   Info,
   Copy,
-  Check
+  Check,
+  RotateCcw,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState, useEffect } from "react";
@@ -38,8 +38,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { DatabaseManager } from "@/components/DatabaseManager";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 
 export const ApiSettings = () => {
   const { toast } = useToast();
@@ -52,18 +53,26 @@ export const ApiSettings = () => {
   const [showDatasetsDialog, setShowDatasetsDialog] = useState(false);
   
   // Backup settings state
-  const [backupEnabled, setBackupEnabled] = useState(false);
   const [backupPath, setBackupPath] = useState("");
   const [backupPathEnv, setBackupPathEnv] = useState<string | null>(null);
   const [copiedText, setCopiedText] = useState<string | null>(null);
-  const [frequencyHours, setFrequencyHours] = useState(24);
   const [retentionDays, setRetentionDays] = useState(30);
-  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
+  const [backupFrequencyHours, setBackupFrequencyHours] = useState(24);
   const [nextBackupAt, setNextBackupAt] = useState<string | null>(null);
+  const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
   const [isLoadingBackupSettings, setIsLoadingBackupSettings] = useState(false);
   const [isSavingBackupSettings, setIsSavingBackupSettings] = useState(false);
   const [isRunningBackup, setIsRunningBackup] = useState(false);
   const [backups, setBackups] = useState<any[]>([]);
+  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<any | null>(null);
+  const [restoreDetail, setRestoreDetail] = useState<any | null>(null);
+  const [restoreConfirmText, setRestoreConfirmText] = useState("");
+  const [restoreDatabase, setRestoreDatabase] = useState(true);
+  const [restoreFiles, setRestoreFiles] = useState(true);
+  const [restoreAcknowledged, setRestoreAcknowledged] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   useEffect(() => {
     checkConnection();
@@ -141,10 +150,10 @@ export const ApiSettings = () => {
       });
       
       if (response.success && response.data) {
-        setBackupEnabled(response.data.enabled || false);
         setBackupPath(response.data.backup_path || "");
         setBackupPathEnv(response.data.backup_path_env || null);
-        setFrequencyHours(response.data.frequency_hours || 24);
+        setAutoBackupEnabled(Boolean(response.data.enabled));
+        setBackupFrequencyHours(response.data.frequency_hours || 24);
         setRetentionDays(response.data.retention_days || 30);
         setLastBackupAt(response.data.last_backup_at || null);
         setNextBackupAt(response.data.next_backup_at || null);
@@ -178,9 +187,9 @@ export const ApiSettings = () => {
       const response = await apiClient.request<any>('/backup/settings', {
         method: 'POST',
         body: JSON.stringify({
-          enabled: backupEnabled,
           backup_path: backupPath,
-          frequency_hours: frequencyHours,
+          enabled: autoBackupEnabled,
+          frequency_hours: backupFrequencyHours,
           retention_days: retentionDays,
         }),
       });
@@ -234,6 +243,91 @@ export const ApiSettings = () => {
       });
     } finally {
       setIsRunningBackup(false);
+    }
+  };
+
+  const openRestoreDialog = async (backup: any) => {
+    if (!backup.record_id) {
+      toast({
+        title: "Cannot restore",
+        description: "This snapshot has no backup record. Run a new backup and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setRestoreTarget(backup);
+    setRestoreDetail(null);
+    setRestoreConfirmText("");
+    setRestoreDatabase(true);
+    setRestoreFiles(true);
+    setRestoreAcknowledged(false);
+    setShowRestoreDialog(true);
+
+    try {
+      const apiClient = new ApiClient({ ...API_CONFIG, baseUrl: apiUrl });
+      const response = await apiClient.request<any>(`/backup/${backup.record_id}`, {
+        method: "GET",
+      });
+      const detail = response.data ?? response;
+      if (response.success !== false && detail) {
+        setRestoreDetail(detail);
+        setRestoreDatabase(detail.can_restore_database !== false);
+        setRestoreFiles(detail.can_restore_files !== false);
+      }
+    } catch (error) {
+      console.error("Failed to load backup details:", error);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (!restoreTarget?.record_id) return;
+    if (restoreConfirmText !== "RESTORE" || !restoreAcknowledged) return;
+    if (!restoreDatabase && !restoreFiles) {
+      toast({
+        title: "Select restore options",
+        description: "Choose at least database or project files to restore.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsRestoring(true);
+    try {
+      const apiClient = new ApiClient({ ...API_CONFIG, baseUrl: apiUrl });
+      const response = await apiClient.request<any>(
+        `/backup/${restoreTarget.record_id}/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            restore_database: restoreDatabase,
+            restore_files: restoreFiles,
+            confirm: "RESTORE",
+          }),
+        }
+      );
+
+      if (response.success !== false) {
+        setShowRestoreDialog(false);
+        setRestoreTarget(null);
+        setRestoreDetail(null);
+        toast({
+          title: "Restore started",
+          description:
+            "Your current data will be replaced by the snapshot. Stop training jobs and refresh the app when the restore finishes.",
+        });
+        setTimeout(() => loadBackups(), 3000);
+      } else {
+        throw new Error(response.error || "Failed to start restore");
+      }
+    } catch (error) {
+      toast({
+        title: "Restore failed",
+        description: error instanceof Error ? error.message : "Failed to start restore",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -526,7 +620,7 @@ export const ApiSettings = () => {
               </CardContent>
             </Card>
 
-            {/* Automatic Backup Settings */}
+            {/* Manual Backup */}
             <Card className="border-2 shadow-lg overflow-hidden">
               <CardHeader className="bg-gradient-to-r from-emerald-500/5 to-transparent border-b">
                 <div className="flex items-center gap-3">
@@ -534,43 +628,15 @@ export const ApiSettings = () => {
                     <HardDrive className="h-5 w-5 text-emerald-500" />
                   </div>
                   <div>
-                    <CardTitle className="text-xl">Automatic Backup</CardTitle>
+                    <CardTitle className="text-xl">Backup</CardTitle>
                     <CardDescription className="text-base">
-                      Configure automatic incremental backups (ZFS-like snapshots)
+                      Incremental snapshots of the database and project files (manual or scheduled)
                     </CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="p-6 space-y-6">
-                {/* Enable/Disable Backup */}
-                <div className="flex items-center justify-between p-4 rounded-xl border-2 bg-muted/20">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-primary/10">
-                      <Zap className="h-4 w-4 text-primary" />
-                    </div>
-                    <div>
-                      <Label htmlFor="backup-enabled" className="text-base font-medium cursor-pointer">
-                        Enable Automatic Backups
-                      </Label>
-                      <p className="text-sm text-muted-foreground">
-                        Automatically backup database and files at configured intervals
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    id="backup-enabled"
-                    checked={backupEnabled}
-                    onCheckedChange={setBackupEnabled}
-                    disabled={isLoadingBackupSettings}
-                  />
-                </div>
-
-                {backupEnabled && (
-                  <>
-                    <Separator />
-                    
-                    {/* Backup Path Configuration */}
-                    <div className="space-y-4">
+                <div className="space-y-4">
                       {/* Current BACKUP_PATH Environment Variable */}
                       {backupPathEnv && (
                         <div className="p-4 rounded-xl border-2 bg-emerald-500/5 border-emerald-500/20">
@@ -630,12 +696,12 @@ export const ApiSettings = () => {
                           <br />
                           <strong>Examples:</strong>
                           <br />• Leave empty → Root of backup directory
-                          <br />• "daily" → <code className="text-xs bg-muted px-1 py-0.5 rounded">{backupPathEnv || './backups'}/daily/</code>
-                          <br />• "2024/january" → <code className="text-xs bg-muted px-1 py-0.5 rounded">{backupPathEnv || './backups'}/2024/january/</code>
+                          <br />• "daily" → <code className="text-xs bg-muted px-1 py-0.5 rounded">{backupPathEnv || "~/lai-data/backups"}/daily/</code>
+                          <br />• "2024/january" → <code className="text-xs bg-muted px-1 py-0.5 rounded">{backupPathEnv || "~/lai-data/backups"}/2024/january/</code>
                         </p>
                       </div>
 
-                      {/* Custom Path Setup Instructions */}
+                      {/* Custom backup path (via ~/.config/lai/.env) */}
                       {!backupPathEnv && (
                         <div className="p-4 rounded-xl border-2 bg-blue-500/5 border-blue-500/20">
                           <div className="flex items-start gap-3">
@@ -643,34 +709,47 @@ export const ApiSettings = () => {
                             <div className="flex-1 space-y-3">
                               <div>
                                 <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-1">
-                                  Want to store backups outside the project folder?
+                                  Want to store backups outside the default data folder?
                                 </p>
                                 <p className="text-sm text-muted-foreground">
-                                  Set the <code className="text-xs bg-muted px-1 py-0.5 rounded">BACKUP_PATH</code> environment variable before starting Docker.
+                                  By default, snapshots go to{" "}
+                                  <code className="text-xs bg-muted px-1 py-0.5 rounded">~/lai-data/backups</code>{" "}
+                                  (your <code className="text-xs bg-muted px-1 py-0.5 rounded">LAI_DATA_DIR</code>).
+                                  To use another folder, add{" "}
+                                  <code className="text-xs bg-muted px-1 py-0.5 rounded">BACKUP_PATH</code> to your LAI
+                                  config file, then restart the stack.
                                 </p>
                               </div>
                               
                               <div className="space-y-2">
                                 <div>
-                                  <p className="text-xs font-medium text-muted-foreground mb-1">Step 1: Set the environment variable</p>
+                                  <p className="text-xs font-medium text-muted-foreground mb-1">
+                                    Step 1: Edit your LAI config
+                                  </p>
+                                  <p className="text-xs text-muted-foreground mb-1">
+                                    File:{" "}
+                                    <code className="bg-muted px-1 py-0.5 rounded">~/.config/lai/.env</code>{" "}
+                                    (Windows:{" "}
+                                    <code className="bg-muted px-1 py-0.5 rounded">%USERPROFILE%\.config\lai\.env</code>)
+                                  </p>
                                   <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
-                                    <code className="text-xs font-mono flex-1 break-all">export BACKUP_PATH=/path/to/your/backups</code>
+                                    <code className="text-xs font-mono flex-1 break-all">BACKUP_PATH=/path/to/your/backups</code>
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => {
-                                        const cmd = 'export BACKUP_PATH=/path/to/your/backups';
+                                        const cmd = 'BACKUP_PATH=/path/to/your/backups';
                                         navigator.clipboard.writeText(cmd);
                                         setCopiedText(cmd);
                                         setTimeout(() => setCopiedText(null), 2000);
                                         toast({
                                           title: "Copied!",
-                                          description: "Command copied to clipboard",
+                                          description: "Line copied — paste into your .env file",
                                         });
                                       }}
                                       className="h-7 w-7 p-0 flex-shrink-0"
                                     >
-                                      {copiedText === 'export BACKUP_PATH=/path/to/your/backups' ? (
+                                      {copiedText === 'BACKUP_PATH=/path/to/your/backups' ? (
                                         <Check className="h-3.5 w-3.5 text-emerald-500" />
                                       ) : (
                                         <Copy className="h-3.5 w-3.5" />
@@ -680,25 +759,25 @@ export const ApiSettings = () => {
                                 </div>
                                 
                                 <div>
-                                  <p className="text-xs font-medium text-muted-foreground mb-1">Step 2: Restart Docker containers</p>
+                                  <p className="text-xs font-medium text-muted-foreground mb-1">Step 2: Restart LAI</p>
                                   <div className="flex items-center gap-2 p-2 bg-muted rounded-lg">
-                                    <code className="text-xs font-mono flex-1 break-all">cd backend && docker compose down && docker compose up -d</code>
+                                    <code className="text-xs font-mono flex-1 break-all whitespace-pre">lai down{"\n"}lai up</code>
                                     <Button
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => {
-                                        const cmd = 'cd backend && docker compose down && docker compose up -d';
+                                        const cmd = 'lai down\nlai up';
                                         navigator.clipboard.writeText(cmd);
                                         setCopiedText(cmd);
                                         setTimeout(() => setCopiedText(null), 2000);
                                         toast({
                                           title: "Copied!",
-                                          description: "Command copied to clipboard",
+                                          description: "Commands copied to clipboard",
                                         });
                                       }}
                                       className="h-7 w-7 p-0 flex-shrink-0"
                                     >
-                                      {copiedText === 'cd backend && docker compose down && docker compose up -d' ? (
+                                      {copiedText === 'lai down\nlai up' ? (
                                         <Check className="h-3.5 w-3.5 text-emerald-500" />
                                       ) : (
                                         <Copy className="h-3.5 w-3.5" />
@@ -710,9 +789,9 @@ export const ApiSettings = () => {
                                 <div className="pt-2 border-t">
                                   <p className="text-xs font-medium text-muted-foreground mb-1">Example locations:</p>
                                   <ul className="text-xs text-muted-foreground space-y-1 ml-4 list-disc">
-                                    <li><code className="bg-muted px-1 py-0.5 rounded">/home/user/backups</code></li>
-                                    <li><code className="bg-muted px-1 py-0.5 rounded">/mnt/external-drive/backups</code></li>
-                                    <li><code className="bg-muted px-1 py-0.5 rounded">/var/backups/lai</code></li>
+                                    <li><code className="bg-muted px-1 py-0.5 rounded">~/lai-data/backups</code> (default)</li>
+                                    <li><code className="bg-muted px-1 py-0.5 rounded">/mnt/external-drive/lai-backups</code></li>
+                                    <li><code className="bg-muted px-1 py-0.5 rounded">E:\LaiBackups</code> (Windows)</li>
                                   </ul>
                                 </div>
                               </div>
@@ -720,30 +799,49 @@ export const ApiSettings = () => {
                           </div>
                         </div>
                       )}
-                    </div>
+                </div>
 
-                    {/* Frequency */}
+                {/* Retention */}
                     <div className="space-y-3">
-                      <Label htmlFor="frequency-hours" className="text-sm font-medium flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-primary" />
-                        Backup Frequency (hours)
-                      </Label>
-                      <Input
-                        id="frequency-hours"
-                        type="number"
-                        min="1"
-                        max="168"
-                        value={frequencyHours}
-                        onChange={(e) => setFrequencyHours(parseInt(e.target.value) || 24)}
-                        className="h-12 bg-muted/30 border-2 focus:border-primary/50"
-                        disabled={isLoadingBackupSettings}
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        How often to create a new backup (1-168 hours, e.g., 24 = daily)
-                      </p>
+                      <div className="flex items-center justify-between gap-4 p-4 rounded-xl border-2 bg-muted/20">
+                        <div className="space-y-1">
+                          <Label htmlFor="auto-backup" className="text-sm font-medium">
+                            Automatic backups
+                          </Label>
+                          <p className="text-sm text-muted-foreground">
+                            Run on a schedule via Celery Beat (worker-general). Manual Run Backup still works anytime.
+                          </p>
+                        </div>
+                        <Switch
+                          id="auto-backup"
+                          checked={autoBackupEnabled}
+                          onCheckedChange={setAutoBackupEnabled}
+                          disabled={isLoadingBackupSettings}
+                        />
+                      </div>
+
+                      {autoBackupEnabled && (
+                        <div className="space-y-3">
+                          <Label htmlFor="backup-frequency" className="text-sm font-medium flex items-center gap-2">
+                            <RefreshCw className="h-4 w-4 text-primary" />
+                            Frequency (hours)
+                          </Label>
+                          <Input
+                            id="backup-frequency"
+                            type="number"
+                            min="1"
+                            value={backupFrequencyHours}
+                            onChange={(e) => setBackupFrequencyHours(parseInt(e.target.value, 10) || 24)}
+                            className="h-12 bg-muted/30 border-2 focus:border-primary/50"
+                            disabled={isLoadingBackupSettings}
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            How often to run automatic backups (checked every 15 minutes)
+                          </p>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Retention */}
                     <div className="space-y-3">
                       <Label htmlFor="retention-days" className="text-sm font-medium flex items-center gap-2">
                         <Database className="h-4 w-4 text-primary" />
@@ -759,51 +857,46 @@ export const ApiSettings = () => {
                         disabled={isLoadingBackupSettings}
                       />
                       <p className="text-sm text-muted-foreground">
-                        How many days to keep backups before automatic deletion
+                        How many days to keep snapshots before old ones are deleted
                       </p>
                     </div>
 
-                    {/* Backup Status */}
-                    {(lastBackupAt || nextBackupAt) && (
-                      <div className="p-4 rounded-xl border-2 bg-muted/20 space-y-2">
-                        <p className="text-sm font-medium">Backup Status</p>
-                        {lastBackupAt && (
-                          <p className="text-sm text-muted-foreground">
-                            Last backup: {new Date(lastBackupAt).toLocaleString()}
-                          </p>
-                        )}
-                        {nextBackupAt && (
-                          <p className="text-sm text-muted-foreground">
-                            Next backup: {new Date(nextBackupAt).toLocaleString()}
-                          </p>
-                        )}
-                      </div>
+                {(lastBackupAt || (autoBackupEnabled && nextBackupAt)) && (
+                  <div className="p-4 rounded-xl border-2 bg-muted/20 space-y-1">
+                    {lastBackupAt && (
+                      <p className="text-sm text-muted-foreground">
+                        Last backup: {new Date(lastBackupAt).toLocaleString()}
+                      </p>
                     )}
-
-                    <Separator />
-
-                    {/* Actions */}
-                    <div className="flex gap-3">
-                      <Button
-                        onClick={saveBackupSettings}
-                        disabled={isSavingBackupSettings || isLoadingBackupSettings || !backupPath}
-                        className="flex-1"
-                      >
-                        <Save className="h-4 w-4 mr-2" />
-                        {isSavingBackupSettings ? "Saving..." : "Save Settings"}
-                      </Button>
-                      <Button
-                        onClick={runBackup}
-                        disabled={isRunningBackup || !backupEnabled || !backupPath}
-                        variant="outline"
-                        className="flex-1"
-                      >
-                        <Play className="h-4 w-4 mr-2" />
-                        {isRunningBackup ? "Running..." : "Run Backup Now"}
-                      </Button>
-                    </div>
-                  </>
+                    {autoBackupEnabled && nextBackupAt && (
+                      <p className="text-sm text-muted-foreground">
+                        Next scheduled backup: {new Date(nextBackupAt).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
                 )}
+
+                <Separator />
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={saveBackupSettings}
+                    disabled={isSavingBackupSettings || isLoadingBackupSettings}
+                    className="flex-1"
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    {isSavingBackupSettings ? "Saving..." : "Save Settings"}
+                  </Button>
+                  <Button
+                    onClick={runBackup}
+                    disabled={isRunningBackup || isLoadingBackupSettings}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    <Play className="h-4 w-4 mr-2" />
+                    {isRunningBackup ? "Running..." : "Run Backup"}
+                  </Button>
+                </div>
 
                 {/* Backup List */}
                 {backups.length > 0 && (
@@ -811,44 +904,70 @@ export const ApiSettings = () => {
                     <Separator />
                     <div className="space-y-3">
                       <Label className="text-sm font-medium">Recent Backups</Label>
-                      <ScrollArea className="h-48 rounded-lg border p-4">
+                      <ScrollArea className="h-56 rounded-lg border p-4">
                         <div className="space-y-2">
-                          {backups.slice(0, 10).map((backup: any, idx: number) => (
-                            <div key={idx} className="flex items-start justify-between p-3 rounded-lg border bg-muted/20 gap-3">
-                              <div className="flex-1">
-                                <p className="text-sm font-medium">
-                                  {backup.backup_name || backup.backup_path?.split('/').pop()}
+                          {backups.slice(0, 10).map((backup: any) => {
+                            const canRestore =
+                              backup.record_id &&
+                              (backup.status === "completed" || backup.status === "partial");
+                            const displayDate =
+                              backup.created_at || backup.started_at || backup.completed_at;
+
+                            return (
+                            <div
+                              key={backup.record_id ?? backup.backup_path}
+                              className="flex items-start justify-between p-3 rounded-lg border bg-muted/20 gap-3"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">
+                                  {backup.backup_name || backup.backup_path?.split(/[/\\]/).pop()}
                                 </p>
                                 <p className="text-xs text-muted-foreground mt-1">
-                                  {backup.created_at && new Date(backup.created_at).toLocaleString()}
-                                  {backup.actual_size_bytes && ` • ${(backup.actual_size_bytes / 1024 / 1024).toFixed(2)} MB`}
+                                  {displayDate && new Date(displayDate).toLocaleString()}
+                                  {backup.total_size_bytes
+                                    ? ` • ${(backup.total_size_bytes / 1024 / 1024).toFixed(2)} MB`
+                                    : backup.actual_size_bytes
+                                    ? ` • ${(backup.actual_size_bytes / 1024 / 1024).toFixed(2)} MB`
+                                    : ""}
                                 </p>
-                                <div className="flex items-center gap-3 mt-2 text-xs">
-                                  <span className={`flex items-center gap-1 ${backup.status === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
-                                    {backup.status === 'completed' ? (
+                                <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
+                                  <span className={`flex items-center gap-1 ${backup.status === 'completed' ? 'text-emerald-600 dark:text-emerald-400' : backup.status === 'partial' ? 'text-amber-600 dark:text-amber-400' : backup.status === 'in_progress' ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`}>
+                                    {backup.status === 'completed' || backup.status === 'partial' ? (
                                       <CheckCircle2 className="h-3 w-3" />
+                                    ) : backup.status === 'in_progress' ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
                                     ) : (
                                       <XCircle className="h-3 w-3" />
                                     )}
                                     {backup.status || 'unknown'}
                                   </span>
-                                  {backup.backup_metadata && (
-                                    <>
-                                      {backup.backup_metadata.files_backed_up !== false && (
-                                        <span className="text-muted-foreground">Files ✓</span>
-                                      )}
-                                      {backup.backup_metadata.database_backed_up !== false && (
-                                        <span className="text-muted-foreground">Database ✓</span>
-                                      )}
-                                    </>
+                                  {backup.files_backed_up !== false && (
+                                    <span className="text-muted-foreground">Files ✓</span>
+                                  )}
+                                  {backup.database_backed_up !== false && (
+                                    <span className="text-muted-foreground">Database ✓</span>
                                   )}
                                 </div>
                               </div>
-                              <Badge variant={backup.status === 'completed' ? 'default' : 'secondary'}>
-                                {backup.status || 'unknown'}
-                              </Badge>
+                              <div className="flex flex-col items-end gap-2 shrink-0">
+                                {canRestore ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs border-red-500/30 text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                    onClick={() => void openRestoreDialog(backup)}
+                                    disabled={isRestoring}
+                                  >
+                                    <RotateCcw className="h-3 w-3 mr-1" />
+                                    Restore
+                                  </Button>
+                                ) : backup.status === "in_progress" ? (
+                                  <span className="text-xs text-muted-foreground">Running…</span>
+                                ) : null}
+                              </div>
                             </div>
-                          ))}
+                          );
+                          })}
                         </div>
                       </ScrollArea>
                     </div>
@@ -915,6 +1034,141 @@ export const ApiSettings = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Restore Backup Dialog */}
+      <Dialog open={showRestoreDialog} onOpenChange={(open) => {
+        if (!open) {
+          setRestoreTarget(null);
+          setRestoreDetail(null);
+        }
+        setShowRestoreDialog(open);
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Restore from backup?
+            </DialogTitle>
+            <DialogDescription>
+              This replaces your current LAI data with the selected snapshot. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {restoreTarget && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg border-2 border-red-500/30 bg-red-500/5 text-sm space-y-2">
+                <p className="font-semibold text-red-700 dark:text-red-400">
+                  Warning: all current data will be overwritten
+                </p>
+                <p className="text-muted-foreground leading-relaxed">
+                  Restoring will replace your live database and/or project files with this backup.
+                  Projects, datasets, annotations, and images that exist now but are not in this
+                  snapshot will be lost. Stop training and other jobs before continuing.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-muted/50 text-sm">
+                <p className="font-medium">
+                  {restoreTarget.backup_name || restoreTarget.backup_path?.split(/[/\\]/).pop()}
+                </p>
+                {(restoreTarget.created_at || restoreTarget.started_at) && (
+                  <p className="text-muted-foreground text-xs mt-1">
+                    {new Date(restoreTarget.created_at || restoreTarget.started_at).toLocaleString()}
+                  </p>
+                )}
+                {restoreDetail && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {restoreDetail.can_restore_database ? "Database dump available" : "No database dump"}
+                    {" · "}
+                    {restoreDetail.can_restore_files ? "Project files available" : "No project files"}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="restore-db"
+                    checked={restoreDatabase}
+                    onCheckedChange={(v) => setRestoreDatabase(v === true)}
+                    disabled={restoreDetail?.can_restore_database === false}
+                  />
+                  <Label htmlFor="restore-db" className="cursor-pointer">
+                    Restore database (PostgreSQL)
+                    {restoreDetail?.can_restore_database === false && (
+                      <span className="text-muted-foreground"> — not available in this snapshot</span>
+                    )}
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="restore-files"
+                    checked={restoreFiles}
+                    onCheckedChange={(v) => setRestoreFiles(v === true)}
+                    disabled={restoreDetail?.can_restore_files === false}
+                  />
+                  <Label htmlFor="restore-files" className="cursor-pointer">
+                    Restore project files
+                    {restoreDetail?.can_restore_files === false && (
+                      <span className="text-muted-foreground"> — not available in this snapshot</span>
+                    )}
+                  </Label>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="restore-ack"
+                  checked={restoreAcknowledged}
+                  onCheckedChange={(v) => setRestoreAcknowledged(v === true)}
+                />
+                <Label htmlFor="restore-ack" className="text-sm cursor-pointer leading-snug">
+                  I understand this will delete and replace my current data with the backup contents.
+                  Existing project files are renamed to{" "}
+                  <code className="text-xs bg-muted px-1 rounded">projects.pre_restore_*</code> before
+                  restore when possible.
+                </Label>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="restore-confirm" className="text-sm">
+                  Type <strong>RESTORE</strong> to confirm
+                </Label>
+                <Input
+                  id="restore-confirm"
+                  value={restoreConfirmText}
+                  onChange={(e) => setRestoreConfirmText(e.target.value)}
+                  placeholder="RESTORE"
+                  className="font-mono"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setShowRestoreDialog(false)}
+                  disabled={isRestoring}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={handleRestore}
+                  disabled={
+                    isRestoring ||
+                    restoreConfirmText !== "RESTORE" ||
+                    !restoreAcknowledged ||
+                    (!restoreDatabase && !restoreFiles)
+                  }
+                >
+                  {isRestoring ? "Starting restore…" : "Yes, restore backup"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Datasets Dialog */}
       <Dialog open={showDatasetsDialog} onOpenChange={setShowDatasetsDialog}>

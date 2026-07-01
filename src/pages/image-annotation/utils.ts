@@ -25,6 +25,25 @@ export const bboxToRectPoints = (bbox: number[]): Point[] => {
   ];
 };
 
+/** Convert COCO/API bbox to rectangle corners in pixel space (handles normalized 0–1). */
+export const bboxToRectPointsInPixelSpace = (
+  bbox: number[],
+  imageWidth?: number,
+  imageHeight?: number,
+): Point[] => {
+  if (!Array.isArray(bbox) || bbox.length < 4) return [];
+  let [x, y, w, h] = bbox.map((v) => Number(v) || 0);
+  const iw = imageWidth && imageWidth > 0 ? imageWidth : 0;
+  const ih = imageHeight && imageHeight > 0 ? imageHeight : 0;
+  if (iw > 1 && ih > 1 && x <= 1 && y <= 1 && w <= 1 && h <= 1) {
+    x *= iw;
+    y *= ih;
+    w *= iw;
+    h *= ih;
+  }
+  return bboxToRectPoints([x, y, w, h]);
+};
+
 export function isDepthLikeCollectionName(name: string): boolean {
   const n = name.toLowerCase();
   return /\bdepth\b/.test(n) || n.includes('depth map') || n.includes('depth-map');
@@ -87,20 +106,49 @@ function baseNameNoExt(fileName: string): string {
   return fileName.slice(0, fileName.lastIndexOf('.')).toLowerCase();
 }
 
+/** Cache key for per-collection image dimensions (avoids cross-layer bleed for shared names like 0001.jpg). */
+export function imageLayerDimsKey(collectionId: string, fileName: string): string {
+  return `${collectionId}::${fileName}`;
+}
+
+/** When video re-uploads create duplicate DB rows with the same file_name, prefer the newest. */
+export function pickNewestImageByFileName(images: Image[], fileName: string): Image | null {
+  const matches = images.filter((img) => img.fileName === fileName);
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+  return matches.reduce((best, cur) =>
+    (Number(cur.id) > Number(best.id) ? cur : best),
+  );
+}
+
 export function findCorrespondingImageInCollection(
   collection: ImageCollection,
   imageName: string,
   referenceImage: Image | null,
 ): Image | null {
-  const exact = collection.images.find((img) => img.fileName === imageName);
+  const exact = pickNewestImageByFileName(collection.images, imageName);
   if (exact) return exact;
   const targetBase = baseNameNoExt(imageName);
-  const byBase = collection.images.find((img) => baseNameNoExt(img.fileName ?? '') === targetBase);
-  if (byBase) return byBase;
+  const baseMatches = collection.images.filter(
+    (img) => baseNameNoExt(img.fileName ?? '') === targetBase,
+  );
+  if (baseMatches.length === 1) return baseMatches[0];
+  if (baseMatches.length > 1) {
+    return baseMatches.reduce((best, cur) =>
+      (Number(cur.id) > Number(best.id) ? cur : best),
+    );
+  }
   if (referenceImage?.groupId) {
     const gid = referenceImage.groupId;
-    const byGroup = collection.images.find((img) => img.groupId && img.groupId === gid);
-    if (byGroup) return byGroup;
+    const byGroup = collection.images.filter((img) => img.groupId && img.groupId === gid);
+    if (byGroup.length === 1) return byGroup[0];
+    if (byGroup.length > 1) {
+      const sameName = byGroup.find((img) => img.fileName === imageName);
+      if (sameName) return sameName;
+      return byGroup.reduce((best, cur) =>
+        (Number(cur.id) > Number(best.id) ? cur : best),
+      );
+    }
   }
   return null;
 }

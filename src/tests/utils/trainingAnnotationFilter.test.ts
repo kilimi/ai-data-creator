@@ -21,13 +21,13 @@ function stub(id: string, type: string): AnnotationFile {
 }
 
 describe('training annotation file filtering', () => {
-  it('allows bbox-only and mask+bbox for detection', () => {
+  it('allows bbox, mask, and mask+bbox for detection', () => {
     expect(annotationFileSupportsTrainingTask(stub('a', 'Segmentation (bbox)'), 'detection')).toBe(true);
     expect(
       annotationFileSupportsTrainingTask(stub('b', 'Segmentation (mask+bbox)'), 'detection'),
     ).toBe(true);
     expect(annotationFileSupportsTrainingTask(stub('c', 'Segmentation (mask)'), 'detection')).toBe(
-      false,
+      true,
     );
   });
 
@@ -43,6 +43,19 @@ describe('training annotation file filtering', () => {
     ).toBe(false);
   });
 
+  it('excludes classification-only files for detection', () => {
+    expect(
+      annotationFileSupportsTrainingTask(stub('a', 'Classification'), 'detection'),
+    ).toBe(false);
+    expect(annotationFileSupportsTrainingTask(stub('a', 'classification'), 'detection')).toBe(
+      false,
+    );
+  });
+
+  it('allows Other type for detection', () => {
+    expect(annotationFileSupportsTrainingTask(stub('a', 'Other'), 'detection')).toBe(true);
+  });
+
   it('filters picker files for detection training', () => {
     const files = [
       mapAnnotationFileForTrainingPicker({ id: 1, name: 'boxes', type: 'Segmentation (bbox)' }),
@@ -52,8 +65,9 @@ describe('training annotation file filtering', () => {
         name: 'both',
         type: 'Segmentation (mask+bbox)',
       }),
+      mapAnnotationFileForTrainingPicker({ id: 4, name: 'labels', type: 'Classification' }),
     ];
     const filtered = filterAnnotationFilesForTrainingTask(files, 'detection');
-    expect(filtered.map((f) => f.id)).toEqual(['1', '3']);
+    expect(filtered.map((f) => f.id)).toEqual(['1', '2', '3']);
   });
 });

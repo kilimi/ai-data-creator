@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
@@ -41,6 +42,7 @@ from app.services.training_checkpoints_service import (
     list_training_checkpoints,
     resolve_checkpoint_path,
 )
+from app.services.training_dataset_config import reconstruct_dataset_configs_from_metadata
 from app.services.training_schemas import (
     MMYOLOTrainingRequest,
     RTDETRTrainingRequest,
@@ -476,39 +478,19 @@ async def rerun_training(
             logger.info(f"Rerun task {task_id}: First dataset_config sample = {dataset_configs[0] if len(dataset_configs) > 0 else 'N/A'}")
         
         # Reconstruct dataset_configs (remove names, keep only IDs and config)
-        reconstructed_configs = []
-        
-        # First, try to use dataset_configs from metadata
+        reconstructed_configs = reconstruct_dataset_configs_from_metadata(dataset_configs)
         if dataset_configs and isinstance(dataset_configs, list) and len(dataset_configs) > 0:
             logger.info(f"Processing {len(dataset_configs)} dataset configs from metadata")
-            for idx, config in enumerate(dataset_configs):
-                if not isinstance(config, dict):
-                    logger.warning(f"Dataset config {idx} is not a dict: {type(config)}")
-                    continue
-                    
-                dataset_id = config.get('dataset_id')
-                annotation_file_id = config.get('annotation_file_id')
-                
-                # Validate required fields - handle both int and string types
-                if not dataset_id or annotation_file_id is None:
-                    logger.warning(f"Dataset config {idx} missing required fields: dataset_id={dataset_id}, annotation_file_id={annotation_file_id}")
-                    continue
-                
-                # Convert annotation_file_id to int if it's a string
-                try:
-                    annotation_file_id = int(annotation_file_id) if isinstance(annotation_file_id, str) else annotation_file_id
-                    dataset_id = int(dataset_id) if isinstance(dataset_id, str) else dataset_id
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Invalid dataset_id or annotation_file_id in config {idx}: {config}, error: {e}")
-                    continue
-                
-                reconstructed_configs.append({
-                    'dataset_id': dataset_id,
-                    'annotation_file_id': annotation_file_id,
-                    'image_collection': config.get('image_collection'),
-                    'split': config.get('split', {'train': 80, 'val': 20, 'test': 0})
-                })
-                logger.info(f"Reconstructed config {idx}: dataset_id={dataset_id}, annotation_file_id={annotation_file_id}")
+            for idx, normalized in enumerate(reconstructed_configs):
+                logger.info(
+                    f"Reconstructed config {idx}: dataset_id={normalized['dataset_id']}, "
+                    f"annotation_file_id={normalized['annotation_file_id']}"
+                )
+            skipped = len(dataset_configs) - len(reconstructed_configs)
+            if skipped:
+                logger.warning(
+                    f"Rerun task {task_id}: skipped {skipped} invalid dataset config(s)"
+                )
         
         # If dataset_configs is empty or invalid, try to reconstruct from dataset_ids
         if not reconstructed_configs:
@@ -533,19 +515,29 @@ async def rerun_training(
                         selected_ann_file = None
                         
                         for ann_file in ann_files:
-                            # Check if this annotation file has segmentation data
                             has_segmentation = db.query(Annotation).filter(
                                 Annotation.annotation_file_id == ann_file.id,
-                                Annotation.segmentation.isnot(None)
+                                Annotation.segmentation.isnot(None),
                             ).first() is not None
-                            
+                            has_bbox = db.query(Annotation).filter(
+                                Annotation.annotation_file_id == ann_file.id,
+                                or_(
+                                    Annotation.bbox.isnot(None),
+                                    Annotation.bbox_x.isnot(None),
+                                ),
+                            ).first() is not None
+
                             if is_segmentation and has_segmentation:
                                 selected_ann_file = ann_file
-                                logger.info(f"Found matching segmentation annotation file {ann_file.id} for dataset {dataset_id}")
+                                logger.info(
+                                    f"Found matching segmentation annotation file {ann_file.id} for dataset {dataset_id}"
+                                )
                                 break
-                            elif not is_segmentation and not has_segmentation:
+                            if not is_segmentation and has_bbox:
                                 selected_ann_file = ann_file
-                                logger.info(f"Found matching bbox annotation file {ann_file.id} for dataset {dataset_id}")
+                                logger.info(
+                                    f"Found matching detection annotation file {ann_file.id} for dataset {dataset_id}"
+                                )
                                 break
                         
                         # Fallback to first if no match found
@@ -854,19 +846,10 @@ async def rerun_training(
                 remove_images_without_annotations=True
             )
 
-            data_yaml = {
-                'path': str(output_dir.absolute()),
-                'train': 'images/train',
-                'val': 'images/val',
-                'test': 'images/test',
-                'names': {i: name for i, name in enumerate(dataset_info['class_names'])},
-                'nc': len(dataset_info['class_names'])
-            }
-
-            yaml_path = output_dir / "data.yaml"
-            with open(yaml_path, 'w') as f:
-                import yaml
-                yaml.dump(data_yaml, f)
+            # prepare_yolo_dataset writes data.yaml (including val→train fallback when needed).
+            yaml_path = Path(dataset_info["yaml_path"])
+            if not yaml_path.is_file():
+                yaml_path = output_dir / "data.yaml"
 
             task.task_metadata = {
                 **task.task_metadata,
@@ -928,7 +911,11 @@ async def rerun_training(
 
         # Default YOLO rerun path
         model_type = model_type_raw
-        
+        orig_model_config = metadata.get("model_config") or {}
+        model_task = orig_model_config.get("task")
+        if not model_task:
+            model_task = "segment" if "-seg" in str(model_type).lower() else "detect"
+
         # Reconstruct YoloTrainingRequest
         request_data = {
             'project_id': original_task.project_id,
@@ -1022,9 +1009,10 @@ async def rerun_training(
                 },
                 "model_config": {
                     "model": request.model_type,
-                    "task": "detect",
+                    "task": model_task,
                     "augmentations": request.augmentations or {}
                 },
+                "remove_images_without_annotations": request.remove_images_without_annotations,
                 "rerun_of_task_id": task_id
             }
         )
@@ -1048,6 +1036,7 @@ async def rerun_training(
             'weight_decay': request.weight_decay,
             'save_period': request.save_period,
             'augmentations': request.augmentations or {},
+            'remove_images_without_annotations': request.remove_images_without_annotations,
             'use_wandb': request.use_wandb,
             'wandb_project': request.wandb_project,
             'wandb_entity': request.wandb_entity,
@@ -1144,22 +1133,10 @@ async def start_rtdetr_training(
             model_type=request.model_type,
             remove_images_without_annotations=True  # RT-DETR should also remove images without annotations
         )
-        
-        # Create data.yaml for RT-DETR
-        data_yaml = {
-            'path': str(output_dir.absolute()),
-            'train': 'images/train',
-            'val': 'images/val',
-            'test': 'images/test',
-            'names': {i: name for i, name in enumerate(dataset_info['class_names'])},
-            'nc': len(dataset_info['class_names'])
-        }
-        
-        yaml_path = output_dir / "data.yaml"
-        with open(yaml_path, 'w') as f:
-            import yaml
-            yaml.dump(data_yaml, f)
-        
+
+        yaml_path = Path(dataset_info["yaml_path"])
+        if not yaml_path.is_file():
+            yaml_path = output_dir / "data.yaml"
         # Update task with dataset info
         task.task_metadata = {
             **task.task_metadata,

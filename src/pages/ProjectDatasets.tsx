@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link, useOutletContext } from 'react-router-dom';
+import { useParams, Link, useOutletContext, useLocation } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import { EditGroupModal } from '@/components/EditGroupModal';
 import { CreateAugmentedDatasetModal } from '@/components/CreateAugmentedDatasetModal';
 import { MergeDatasetsModal } from '@/components/MergeDatasetsModal';
 import { FolderPlus, Search, SlidersHorizontal, Database, Tag, ChevronDown, Users, GitMerge, Image as ImageIcon, Brain, Pencil, Rocket, BookOpen, ArrowRight, CheckCircle2, Activity } from "lucide-react";
-import { HelpHint } from "@/components/ui/help-hint";
+import { LAI_TUTORIALS_URL } from "@/constants/externalLinks";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Dataset, Project, DatasetGroup } from '@/types';
@@ -40,8 +40,28 @@ interface OutletContext {
   refreshProject?: () => void;
 }
 
+/** Keep a freshly uploaded logo when list API omits data: URLs (include_thumbnails=false). */
+type PreservedDatasetThumb = {
+  datasetId: number;
+  thumbnailUrl?: string;
+};
+
+function applyPreservedThumbnails(
+  items: Dataset[],
+  preserved?: PreservedDatasetThumb,
+): Dataset[] {
+  const thumb = preserved?.thumbnailUrl?.trim();
+  if (!preserved || !thumb) return items;
+  return items.map((d) =>
+    d.id === preserved.datasetId
+      ? { ...d, thumbnailUrl: thumb, logo_url: thumb }
+      : d,
+  );
+}
+
 export default function ProjectDatasets() {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const { project, refreshProject } = useOutletContext<OutletContext>();
   const { api } = useApi();
   const { toast } = useToast();
@@ -72,7 +92,7 @@ export default function ProjectDatasets() {
   const [isDeletingGroup, setIsDeletingGroup] = useState(false);
 
   // Fetch datasets for the project
-  const fetchProjectDatasets = async () => {
+  const fetchProjectDatasets = async (preserved?: PreservedDatasetThumb) => {
     if (!id) return;
     
     setIsLoading(true);
@@ -85,7 +105,7 @@ export default function ProjectDatasets() {
       if (response.ok) {
         const result = await response.json();
         if (result.success && result.data) {
-          setDatasets(result.data);
+          setDatasets(applyPreservedThumbnails(result.data, preserved));
         }
       }
     } catch (error) {
@@ -113,7 +133,9 @@ export default function ProjectDatasets() {
   };
 
   useEffect(() => {
-    fetchProjectDatasets();
+    const preserved = (location.state as { preservedDatasetThumb?: PreservedDatasetThumb } | null)
+      ?.preservedDatasetThumb;
+    fetchProjectDatasets(preserved);
     fetchDatasetGroups();
   }, [id]);
 
@@ -289,15 +311,31 @@ export default function ProjectDatasets() {
   };
 
   const handleDatasetUpdated = (updatedDataset?: Dataset) => {
-    // If we have the updated dataset, update it in the local state immediately
-    // This provides instant feedback while the full refresh happens
+    const preserved: PreservedDatasetThumb | undefined = updatedDataset
+      ? {
+          datasetId: updatedDataset.id,
+          thumbnailUrl: updatedDataset.thumbnailUrl ?? updatedDataset.logo_url,
+        }
+      : undefined;
+
     if (updatedDataset) {
-      setDatasets(prevDatasets => 
-        prevDatasets.map(d => d.id === updatedDataset.id ? updatedDataset : d)
+      setDatasets((prevDatasets) =>
+        prevDatasets.map((d) =>
+          d.id === updatedDataset.id ? { ...d, ...updatedDataset } : d,
+        ),
+      );
+      setDatasetGroups((prevGroups) =>
+        prevGroups.map((g) => ({
+          ...g,
+          datasets: g.datasets.map((d) =>
+            d.id === updatedDataset.id ? { ...d, ...updatedDataset } : d,
+          ),
+        })),
       );
     }
-    // Also refresh the full list to ensure consistency
-    fetchProjectDatasets();
+
+    // Refresh counts/metadata; preserve custom logo from PUT response (list API strips data: URLs).
+    fetchProjectDatasets(preserved);
   };
 
   const handleDatasetMoved = (datasetId: number, _targetProjectId: number) => {
@@ -381,21 +419,6 @@ export default function ProjectDatasets() {
               {datasetGroups.length} groups
             </Badge>
           )}
-          <HelpHint ariaLabel="What are datasets?" popover>
-            <div className="space-y-2 text-sm">
-              <p className="font-semibold text-foreground">Datasets</p>
-              <p>
-                A dataset is a collection of images and their annotations. Upload images,
-                label them, then use one or more datasets to train and evaluate models.
-              </p>
-              <Link
-                to="/help/dataset-view"
-                className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
-              >
-                Read the full guide →
-              </Link>
-            </div>
-          </HelpHint>
         </div>
 
         {/* Project health stats strip (1:N aware) */}
@@ -625,10 +648,15 @@ export default function ProjectDatasets() {
                   </Link>
                 </Button>
                 <Button asChild variant="outline" size="lg">
-                  <Link to="/help/dataset-view" className="gap-2">
+                  <a
+                    href={LAI_TUTORIALS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="gap-2 inline-flex items-center"
+                  >
                     <BookOpen className="w-4 h-4" />
-                    Read the guide
-                  </Link>
+                    Watch tutorials
+                  </a>
                 </Button>
               </div>
             </div>
@@ -641,7 +669,7 @@ export default function ProjectDatasets() {
                 icon: ImageIcon,
                 step: "Step 1",
                 title: "Add images",
-                desc: "Upload images, a video, or import an existing dataset (COCO, YOLO).",
+                desc: "Upload images, a video, or import an existing dataset.",
                 cta: "Create dataset",
                 to: `/projects/new/dataset`,
                 primary: true,
@@ -651,45 +679,69 @@ export default function ProjectDatasets() {
                 step: "Step 2",
                 title: "Annotate or auto-annotate",
                 desc: "Draw bounding boxes / polygons, or run a foundation model to pre-label.",
-                cta: "Learn how",
-                to: "/help/dataset-view",
+                cta: "Watch tutorials",
+                href: LAI_TUTORIALS_URL,
+                external: true,
               },
               {
                 icon: Brain,
                 step: "Step 3",
                 title: "Train & evaluate",
-                desc: "Train YOLO, Mask-RCNN, or RT-DETR and compare evaluation metrics.",
-                cta: "Browse docs",
-                to: "/help",
+                desc: "Train a model and compare evaluation metrics.",
+                cta: "Watch tutorials",
+                href: LAI_TUTORIALS_URL,
+                external: true,
               },
-            ].map(({ icon: Icon, step, title, desc, cta, to, primary }) => (
-              <Link
-                key={title}
-                to={to}
-                state={primary ? { projectId: id ? parseInt(id, 10) : undefined } : undefined}
-                className="group glass-card rounded-xl p-5 border border-border/50 hover:border-primary/40 transition-all hover:-translate-y-0.5"
-              >
-                <div className="flex items-start gap-3 mb-3">
-                  <div
-                    className={cn(
-                      "h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0",
-                      primary ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
-                    )}
+            ].map(({ icon: Icon, step, title, desc, cta, to, href, external, primary }) => {
+              const cardBody = (
+                <>
+                  <div className="flex items-start gap-3 mb-3">
+                    <div
+                      className={cn(
+                        "h-10 w-10 rounded-lg flex items-center justify-center flex-shrink-0",
+                        primary ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+                      )}
+                    >
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-muted-foreground mb-0.5">{step}</div>
+                      <h4 className="font-semibold text-foreground leading-tight">{title}</h4>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-4">{desc}</p>
+                  <span className="inline-flex items-center gap-1 text-sm font-medium text-primary group-hover:gap-2 transition-all">
+                    {cta}
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </span>
+                </>
+              );
+              const cardClass =
+                "group glass-card rounded-xl p-5 border border-border/50 hover:border-primary/40 transition-all hover:-translate-y-0.5";
+              if (external) {
+                return (
+                  <a
+                    key={title}
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`${cardClass} block`}
                   >
-                    <Icon className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-muted-foreground mb-0.5">{step}</div>
-                    <h4 className="font-semibold text-foreground leading-tight">{title}</h4>
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground mb-4">{desc}</p>
-                <span className="inline-flex items-center gap-1 text-sm font-medium text-primary group-hover:gap-2 transition-all">
-                  {cta}
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </span>
-              </Link>
-            ))}
+                    {cardBody}
+                  </a>
+                );
+              }
+              return (
+                <Link
+                  key={title}
+                  to={to!}
+                  state={primary ? { projectId: id ? parseInt(id, 10) : undefined } : undefined}
+                  className={cardClass}
+                >
+                  {cardBody}
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

@@ -315,6 +315,7 @@ def list_dataset_annotation_files(dataset_id: int, db: Session = Depends(get_db)
             "id": ann_file.id,
             "name": ann_file.name,
             "file_name": ann_file.name,
+            "type": ann_file.type,
             "annotation_count": effective_count
         })
 
@@ -804,14 +805,22 @@ async def merge_datasets(
         new_thumbnails_dir.mkdir(parents=True, exist_ok=True)
 
         # Tabbed dataset UI loads images via collections — create a default layer.
-        default_collection = models.ImageCollection(
-            dataset_id=new_dataset.id,
-            name="RGB Images",
+        from app.services.dataset_collections_service import ensure_default_image_collection
+
+        default_collection = ensure_default_image_collection(
+            db,
+            new_dataset.id,
             description="Merged images from source datasets",
-            is_default=True,
-            position=0,
         )
-        db.add(default_collection)
+        if default_collection is None:
+            default_collection = (
+                db.query(models.ImageCollection)
+                .filter(
+                    models.ImageCollection.dataset_id == new_dataset.id,
+                    models.ImageCollection.is_default == True,
+                )
+                .first()
+            )
         db.flush()
         
         total_images = 0

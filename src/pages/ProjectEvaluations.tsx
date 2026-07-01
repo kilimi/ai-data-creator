@@ -73,6 +73,8 @@ export default function ProjectEvaluations() {
   const [viewMode, setViewMode] = useState<"list" | "by-model" | "matrix">("list");
   const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
   const [showDeleteFailedConfirm, setShowDeleteFailedConfirm] = useState(false);
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
+  const [deletingAllTasks, setDeletingAllTasks] = useState(false);
 
   const evaluationTasksRef = useRef<any[]>([]);
   evaluationTasksRef.current = evaluationTasks;
@@ -225,6 +227,11 @@ export default function ProjectEvaluations() {
     failed: parentEvaluations.filter(t => t.status === "failed").length,
   };
 
+  const failedEvaluationsCount = evaluationTasks.filter(t => t.status === 'failed').length;
+  const runningEvaluationsCount = evaluationTasks.filter(
+    (t) => t.status === 'running' || t.status === 'pending'
+  ).length;
+
   const selectedTasksForCompare = parentEvaluations.filter(t => selectedForCompare.has(t.id));
 
   const toggleCompareSelect = (taskId: number) => {
@@ -257,6 +264,36 @@ export default function ProjectEvaluations() {
 
   const handleDelete = (task: any) => {
     setPendingDeleteTask(task);
+  };
+
+  const handleDeleteAllEvaluations = async () => {
+    if (evaluationTasks.length === 0) return;
+
+    setDeletingAllTasks(true);
+    try {
+      for (const task of evaluationTasks) {
+        const response = await fetch(buildApiUrl(`/tasks/${task.id}`), { method: 'DELETE' });
+        if (!response.ok) {
+          throw new Error(`Failed to delete task ${task.id}`);
+        }
+      }
+      toast({
+        title: "All Evaluations Deleted",
+        description: `${evaluationTasks.length} evaluation task(s) have been deleted.`,
+      });
+      setSelectedTaskId(null);
+      setSelectedForCompare(new Set());
+      fetchEvaluationTasks();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete some tasks",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAllTasks(false);
+      setShowDeleteAllConfirm(false);
+    }
   };
 
   const handleStop = async (task: any) => {
@@ -396,22 +433,31 @@ export default function ProjectEvaluations() {
             New Evaluation
           </Button>
 
-          {(() => {
-            const failedCount = evaluationTasks.filter(t => t.status === 'failed').length;
-            if (failedCount === 0) return null;
-            return (
-              <Button
-                variant="destructive"
-                size="sm"
-                className="whitespace-nowrap ml-2"
-                disabled={deletingFailedTasks}
-                onClick={() => setShowDeleteFailedConfirm(true)}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${failedCount})`}
-              </Button>
-            );
-          })()}
+          {evaluationTasks.length > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="whitespace-nowrap ml-2"
+              disabled={deletingAllTasks || deletingFailedTasks}
+              onClick={() => setShowDeleteAllConfirm(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              {deletingAllTasks ? 'Deleting...' : `Delete All (${evaluationTasks.length})`}
+            </Button>
+          )}
+
+          {failedEvaluationsCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="whitespace-nowrap ml-2 text-destructive hover:text-destructive"
+              disabled={deletingFailedTasks || deletingAllTasks}
+              onClick={() => setShowDeleteFailedConfirm(true)}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              {deletingFailedTasks ? 'Deleting...' : `Delete Failed (${failedEvaluationsCount})`}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -843,11 +889,14 @@ export default function ProjectEvaluations() {
         open={showDeleteFailedConfirm}
         onOpenChange={setShowDeleteFailedConfirm}
         title="Delete all failed evaluations?"
-        description={(() => {
-          const c = evaluationTasks.filter(t => t.status === 'failed').length;
-          return <>This will permanently delete <span className="font-semibold text-foreground">{c}</span> failed evaluation task{c !== 1 ? 's' : ''}.</>;
-        })()}
-        confirmLabel="Delete failed"
+        description={
+          <>
+            This will permanently delete{" "}
+            <span className="font-semibold text-foreground">{failedEvaluationsCount}</span> failed
+            evaluation task{failedEvaluationsCount !== 1 ? "s" : ""}.
+          </>
+        }
+        confirmLabel={`Delete ${failedEvaluationsCount} task${failedEvaluationsCount !== 1 ? 's' : ''}`}
         isLoading={deletingFailedTasks}
         onConfirm={async () => {
           const failed = evaluationTasks.filter(t => t.status === 'failed');
@@ -866,6 +915,35 @@ export default function ProjectEvaluations() {
             setShowDeleteFailedConfirm(false);
           }
         }}
+      />
+
+      {/* Delete all evaluations confirm */}
+      <ConfirmDeleteDialog
+        open={showDeleteAllConfirm}
+        onOpenChange={setShowDeleteAllConfirm}
+        title="Delete all evaluations?"
+        description={
+          <>
+            This will permanently delete all{" "}
+            <span className="font-semibold text-foreground">{evaluationTasks.length}</span>{" "}
+            evaluation task{evaluationTasks.length !== 1 ? "s" : ""} in this project, including
+            multi-dataset child tasks and their results.
+            {runningEvaluationsCount > 0 && (
+              <>
+                {" "}
+                <span className="font-semibold text-foreground">{runningEvaluationsCount}</span>{" "}
+                running task{runningEvaluationsCount !== 1 ? "s" : ""} will be stopped first.
+              </>
+            )}
+          </>
+        }
+        consequences={[
+          "All evaluation metrics and result files will be removed.",
+          "This action cannot be undone.",
+        ]}
+        confirmLabel={`Delete all ${evaluationTasks.length} evaluation${evaluationTasks.length !== 1 ? "s" : ""}`}
+        isLoading={deletingAllTasks}
+        onConfirm={handleDeleteAllEvaluations}
       />
     </div>
   );

@@ -85,5 +85,7 @@ def fix_env_compose_file_for_platform(env_path: Path) -> bool:
 
 
 def ensure_compose_env(bundle_root: Path) -> None:
-    """Normalize COMPOSE_FILE in bundle .env for the current platform."""
-    fix_env_compose_file_for_platform(bundle_root / ".env")
+    """Normalize COMPOSE_FILE in user .env for the current platform."""
+    from lai.paths import resolve_env_file
+
+    fix_env_compose_file_for_platform(resolve_env_file(bundle_root))
