@@ -113,7 +113,7 @@ export function Navbar() {
             <img
               src={APP_LOGO_SRC}
               alt="LAI"
-              className="h-9 w-auto max-w-[180px] object-contain drop-shadow-[0_0_16px_rgba(143,200,230,0.28)] transition-transform duration-300 group-hover:scale-105"
+              className="h-9 w-auto max-w-[180px] object-contain drop-shadow-[0_0_16px_rgba(143,200,230,0.28)] transition-transform duration-300 group-hover:scale-105 group-hover:animate-spin-slow"
             />
             <span className="text-xl font-bold tracking-tight">LAI</span>
           </Link>
