@@ -836,18 +836,80 @@ export function DatasetEvalPicker({
           </section>
         )}
 
-        {others.length > 0 && (
+        {compatibleOthers.length > 0 && (
           <section className="space-y-2">
-            {(recent.length > 0 || groups.length > 0) && (
-              <h4 className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
-                All datasets
-              </h4>
+            <button
+              type="button"
+              onClick={() => setOpenSection((s) => ({ ...s, compatible: !s.compatible }))}
+              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground"
+            >
+              {openSection.compatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              {(recent.length > 0 || groups.length > 0) ? "Compatible datasets" : "Datasets"}
+              <Badge variant="secondary" className="text-[10px] ml-1">{compatibleOthers.length}</Badge>
+            </button>
+            {openSection.compatible && (
+              <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
+                {compatibleOthers.map((d) => (
+                  <DatasetRow key={d.id} d={d} />
+                ))}
+              </div>
             )}
-            <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
-              {others.map((d) => (
-                <DatasetRow key={d.id} d={d} />
-              ))}
-            </div>
+          </section>
+        )}
+
+        {incompatibleOthers.length > 0 && (
+          <section className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setOpenSection((s) => ({ ...s, incompatible: !s.incompatible }))}
+              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400 font-semibold hover:opacity-80"
+            >
+              {openSection.incompatible ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <FileWarning className="h-3.5 w-3.5" />
+              Not compatible with {compatTaskType ?? "task"}
+              <Badge variant="outline" className="text-[10px] ml-1 border-amber-500/40 text-amber-600 dark:text-amber-400">
+                {incompatibleOthers.length}
+              </Badge>
+            </button>
+            {openSection.incompatible && (
+              <>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  These datasets have annotation files, but none match the selected task. They can't be added.
+                </p>
+                <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
+                  {incompatibleOthers.map((d) => (
+                    <DatasetRow key={d.id} d={d} />
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {emptyOthers.length > 0 && !isTrainMode && (
+          <section className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setOpenSection((s) => ({ ...s, empty: !s.empty }))}
+              className="w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground font-semibold hover:text-foreground"
+            >
+              {openSection.empty ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              <AlertTriangle className="h-3.5 w-3.5" />
+              No annotations yet
+              <Badge variant="outline" className="text-[10px] ml-1">{emptyOthers.length}</Badge>
+            </button>
+            {openSection.empty && (
+              <>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  Datasets without annotation files. Add annotations first if you need ground truth.
+                </p>
+                <div className={density === "grid" ? "grid grid-cols-2 lg:grid-cols-3 gap-2" : "space-y-2"}>
+                  {emptyOthers.map((d) => (
+                    <DatasetRow key={d.id} d={d} />
+                  ))}
+                </div>
+              </>
+            )}
           </section>
         )}
 
